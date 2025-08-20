@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: Local JSON Dashboards
+    type: file
+    editable: true
+    options:
+      path: /opt/grafana/dashboard
+      foldersFromFilesStructure: true

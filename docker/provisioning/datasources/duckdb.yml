@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: DuckDB (Parquet)
+    type: motherduck-duckdb-datasource
+    access: proxy
+    isDefault: true
+
+    # initSQLは“薄く”。可変パスはパネル側で切替える想定
+    jsonDataEncoded:
+      initSQL: |
+        -- ここではプレースホルダの空ビューのみ作成（重い処理はしない）
+        CREATE OR REPLACE VIEW eval_flat AS SELECT 1 AS dummy WHERE 1=0;
