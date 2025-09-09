@@ -1,2230 +1,2230 @@
 {
-    "annotations": {
-      "list": [
-        {
-          "builtIn": 1,
-          "datasource": {
-            "type": "grafana",
-            "uid": "-- Grafana --"
-          },
-          "enable": true,
-          "hide": true,
-          "iconColor": "rgba(0, 211, 255, 1)",
-          "name": "Annotations & Alerts",
-          "type": "dashboard"
-        }
-      ]
-    },
-    "description": "Report comparison",
-    "editable": true,
-    "fiscalYearStartMonth": 0,
-    "graphTooltip": 0,
-    "id": 2,
-    "links": [],
-    "panels": [
+  "annotations": {
+    "list": [
       {
+        "builtIn": 1,
         "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "continuous-GrYlRd"
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 5,
-          "w": 9,
-          "x": 0,
-          "y": 0
-        },
-        "id": 22,
-        "options": {
-          "displayMode": "lcd",
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "bottom",
-            "showLegend": false
-          },
-          "maxVizHeight": 300,
-          "minVizHeight": 16,
-          "minVizWidth": 8,
-          "namePlacement": "auto",
-          "orientation": "horizontal",
-          "reduceOptions": {
-            "calcs": [],
-            "fields": "",
-            "values": true
-          },
-          "showUnfilled": true,
-          "sizing": "auto",
-          "valueMode": "color"
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "-- create view: views are defined in variable --\n${pretask:raw}\n${pretask_comp:raw}\n\n-- visualization plot --\nWITH base AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${target_file} AS series\n  FROM view_eval_flat\n  WHERE ${topic_source_label_id_filter:raw}\n),\ncomp AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${compared_target_file} AS series\n  FROM view_eval_flat_comp\n  WHERE ${topic_source_label_id_filter:raw}\n)\nSELECT * FROM base\nUNION ALL\nSELECT * FROM comp;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "t4dataset summary and data parse",
-        "type": "bargauge"
-      },
-      {
-        "collapsed": false,
-        "gridPos": {
-          "h": 1,
-          "w": 24,
-          "x": 0,
-          "y": 5
-        },
-        "id": 17,
-        "panels": [],
-        "title": "Row title",
-        "type": "row"
-      },
-      {
-        "description": "",
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 4,
-          "w": 18,
-          "x": 0,
-          "y": 6
-        },
-        "id": 14,
-        "options": {
-          "code": {
-            "language": "plaintext",
-            "showLineNumbers": false,
-            "showMiniMap": false
-          },
-          "content": "## How to\n1. Choose your `target_file` and `compared_target_file` to analyze\n2. Then top panel will be updated and show t4dataset\n3. You can check target topic to be compared\n\n## design\n- to compare\n",
-          "mode": "markdown"
-        },
-        "pluginVersion": "12.1.0",
-        "title": "README",
-        "type": "text"
-      },
-      {
-        "collapsed": false,
-        "gridPos": {
-          "h": 1,
-          "w": 24,
-          "x": 0,
-          "y": 10
-        },
-        "id": 15,
-        "panels": [],
-        "title": "Comparison View",
-        "type": "row"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "max": 1,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 7,
-          "w": 10,
-          "x": 0,
-          "y": 11
-        },
-        "id": 11,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "always",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\nGROUP BY \n  label\nORDER BY \n  label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Total TP rate within ${max_eval_range} [m] with target data",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "max": 1,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 7,
-          "w": 10,
-          "x": 10,
-          "y": 11
-        },
-        "id": 21,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "always",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat_comp\nWHERE\n  ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\nGROUP BY \n  label\nORDER BY \n  label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Total TP rate within ${max_eval_range} [m] with compared data",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "TP rate for selected value",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisGridShow": true,
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "max": 1,
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 9,
-          "w": 20,
-          "x": 0,
-          "y": 18
-        },
-        "id": 6,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xField": "distance_bin",
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr_comp,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.tpr AS tp_rate_before,\n  -- b.fpr,\n  c.tpr_comp AS tp_rate_after,\n  -- c.fpr_comp,\n  (c.tpr_comp - b.tpr) AS tp_rate_diff,\n  -- (c.fpr_comp - b.fpr) AS fpr_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "TPrate and FPrate by distance bin",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "Mean absolute error panel",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "[m] or [rad]",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 7,
-          "w": 10,
-          "x": 0,
-          "y": 27
-        },
-        "id": 12,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "-- This query creates a summary of the True Positive Rate (TPR) and error metrics for each class label.\n-- It aggregates counts and calculates mean absolute errors across all datasets, topics, and distance bins.\nSELECT\n  label,\n  -- Calculate the mean absolute x_error for True Positives\n  AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS mean_abs_x_error,\n  -- Calculate the mean absolute y_error for True Positives\n  AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS mean_abs_y_error,\n  -- Calculate the mean absolute yaw_error for True Positives\n  AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS mean_abs_yaw_error,\n  -- Calculate the mean absolute vx error\n  -- AVG(ABS(vx_error)) FILTER (WHERE status = 'TP') AS mean_abs_vx_error\nFROM \n  view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range)\nGROUP BY \n  label\nORDER BY \n  label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "TargetFile Mean Error within ${max_eval_range} [m]",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "Mean absolute error panel",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "[m] or [rad]",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 7,
-          "w": 10,
-          "x": 10,
-          "y": 27
-        },
-        "id": 23,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "-- This query creates a summary of the True Positive Rate (TPR) and error metrics for each class label.\n-- It aggregates counts and calculates mean absolute errors across all datasets, topics, and distance bins.\nSELECT\n  label,\n  -- Calculate the mean absolute x_error for True Positives\n  AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS mean_abs_x_error,\n  -- Calculate the mean absolute y_error for True Positives\n  AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS mean_abs_y_error,\n  -- Calculate the mean absolute yaw_error for True Positives\n  AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS mean_abs_yaw_error,\n  -- Calculate the mean absolute vx error\n  -- AVG(ABS(vx_error)) FILTER (WHERE status = 'TP') AS mean_abs_vx_error\nFROM \n  view_eval_flat_comp\nWHERE\n  ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range)\nGROUP BY \n  label\nORDER BY \n  label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "ComparedFile Mean Error within ${max_eval_range} [m]",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "Mean absolute error panel",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "[m] or [rad]",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 6,
-          "w": 20,
-          "x": 0,
-          "y": 34
-        },
-        "id": 24,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_b,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_b,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_b\n    FROM view_eval_flat_comp\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n)\nSELECT\n    a.label,\n    (x_b - x_a) AS x_diff,\n    (y_b - y_a) AS y_diff,\n    (yaw_b - yaw_a) AS yaw_diff\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Difference of mean absolute error within ${max_eval_range} [m] (comp - target) ",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "tp/fp rate with each t4dataset\ndescending with tprate",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "continuous-GrYlRd"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "tp/fp rate",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 11,
-          "w": 12,
-          "x": 0,
-          "y": 40
-        },
-        "id": 7,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.96,
-          "fullHighlight": false,
-          "groupWidth": 0.76,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "bottom",
-            "showLegend": true
-          },
-          "orientation": "horizontal",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xField": "t4dataset_id",
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 100
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "dataset": "default",
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "${tpfp_rate_by_t4dataset_view:raw}\nSELECT * FROM tpfp_rate_by_t4dataset_view;",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [
-                    {
-                      "name": "*",
-                      "type": "functionParameter"
-                    }
-                  ],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            },
-            "table": "x2_gen2_komatsu_sample_current.main.view_eval_flat"
-          }
-        ],
-        "title": "t4dataset_wise_tp/fp_rate_visualization",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 11,
-          "w": 8,
-          "x": 12,
-          "y": 40
-        },
-        "id": 13,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "horizontal",
-          "showValue": "never",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "-- Show worst t4dataset_id\nSELECT t4dataset_id, tpr FROM tpfp_rate_by_t4dataset_view\nORDER BY tpr ASC\nLIMIT 10\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Worst 10 tp rate scenario list ",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "object number per distance",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "fillOpacity": 80,
-              "gradientMode": "hue",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "stacking": {
-                "group": "A",
-                "mode": "none"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 8,
-          "w": 9,
-          "x": 0,
-          "y": 51
-        },
-        "id": 5,
-        "options": {
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          }
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "SELECT dist_h, label FROM view_eval_flat\nWHERE\n  ${topic_source_label_id_filter:raw}",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "object count with distance",
-        "type": "histogram"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "object number per distance",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 8,
-          "w": 9,
-          "x": 9,
-          "y": 51
-        },
-        "id": 9,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "hide": false,
-            "rawQuery": true,
-            "rawSql": "SELECT\n  label,\n  COUNT(label) AS unique_label_count\nFROM\n  view_eval_flat\nWHERE\n('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))\n  AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))\n  AND source = 'GT'\nGROUP BY\n  label\nORDER BY\n  label\n--ORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Distinct GT Objects Label Number",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "xy error description based on absolute xy error",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": [
-            {
-              "__systemRef": "hideSeriesFrom",
-              "matcher": {
-                "id": "byNames",
-                "options": {
-                  "mode": "exclude",
-                  "names": [
-                    "x_error_abs_p50",
-                    "x_error_abs_p90",
-                    "y_error_abs_p50",
-                    "y_error_abs_p90",
-                    "x_error_abs_mean",
-                    "x_error_abs_std",
-                    "y_error_abs_std"
-                  ],
-                  "prefix": "All except:",
-                  "readOnly": true
-                }
-              },
-              "properties": [
-                {
-                  "id": "custom.hideFrom",
-                  "value": {
-                    "legend": false,
-                    "tooltip": false,
-                    "viz": true
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        "gridPos": {
-          "h": 10,
-          "w": 18,
-          "x": 0,
-          "y": 59
-        },
-        "id": 10,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "never",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "SELECT\n    distance_bin,\n    quantile_cont(ABS(x_error), 0.5) AS x_error_abs_p50,\n    quantile_cont(ABS(x_error), 0.9) AS x_error_abs_p90,\n    quantile_cont(ABS(y_error), 0.5) AS y_error_abs_p50,\n    quantile_cont(ABS(y_error), 0.9) AS y_error_abs_p90,\n    AVG(ABS(x_error)) AS x_error_abs_mean,\n    AVG(ABS(y_error)) AS y_error_abs_mean,\n    STDDEV_SAMP(ABS(x_error)) AS x_error_abs_std,\n    STDDEV_SAMP(ABS(y_error)) AS y_error_abs_std,\nFROM view_eval_flat\nWHERE source='EST' AND status='TP'\n  AND ${topic_label_id_filter:raw}\nGROUP BY distance_bin\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Detailed XY error panel",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "object number per distance",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 8,
-          "w": 18,
-          "x": 0,
-          "y": 69
-        },
-        "id": 8,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "bottom",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "hide": false,
-            "rawQuery": true,
-            "rawSql": "SELECT\n  distance_bin,\n  COUNT(DISTINCT uuid) AS unique_uuid_count\nFROM\n  x2_gen2_komatsu_sample_current.main.view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw}\nGROUP BY\n  distance_bin\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Distinct object number",
-        "type": "barchart"
-      },
-      {
-        "collapsed": false,
-        "gridPos": {
-          "h": 1,
-          "w": 24,
-          "x": 0,
-          "y": 77
-        },
-        "id": 4,
-        "panels": [],
-        "title": "Topic Comparison View",
-        "type": "row"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "TP rate for selected value",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisGridShow": true,
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 9,
-          "w": 18,
-          "x": 0,
-          "y": 78
-        },
-        "id": 18,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "always",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xField": "distance_bin",
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n\nWITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS tpr_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "TPrate comparison in distance bin",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "FP rate for selected value",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisGridShow": true,
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 9,
-          "w": 18,
-          "x": 0,
-          "y": 87
-        },
-        "id": 20,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "always",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xField": "distance_bin",
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "WITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    fpr_a AS ${topic_name},\n    fpr_b AS ${compared_topic_name},\n    (fpr_b - fpr_a) AS fpr_diff,\n    CASE\n      WHEN (fpr_b - fpr_a) > 0 THEN '↑'\n      WHEN (fpr_b - fpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "FPrate comparison in distance bin",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 9,
-          "w": 18,
-          "x": 0,
-          "y": 96
-        },
-        "id": 16,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_b\n    FROM view_eval_flat\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n)\nSELECT\n    a.label,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS TPrate_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "TP rate comparison within ${max_eval_range} [m]",
-        "type": "barchart"
-      },
-      {
-        "datasource": {
-          "type": "motherduck-duckdb-datasource",
-          "uid": "beurnluka4ruoa"
-        },
-        "description": "Mean absolute error panel",
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "custom": {
-              "axisBorderShow": false,
-              "axisCenteredZero": false,
-              "axisColorMode": "text",
-              "axisLabel": "[m] or [rad]",
-              "axisPlacement": "auto",
-              "fillOpacity": 80,
-              "gradientMode": "none",
-              "hideFrom": {
-                "legend": false,
-                "tooltip": false,
-                "viz": false
-              },
-              "lineWidth": 1,
-              "scaleDistribution": {
-                "type": "linear"
-              },
-              "thresholdsStyle": {
-                "mode": "off"
-              }
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {
-                  "color": "green",
-                  "value": 0
-                },
-                {
-                  "color": "red",
-                  "value": 80
-                }
-              ]
-            },
-            "unit": "short"
-          },
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 6,
-          "w": 18,
-          "x": 0,
-          "y": 105
-        },
-        "id": 19,
-        "options": {
-          "barRadius": 0,
-          "barWidth": 0.97,
-          "fullHighlight": false,
-          "groupWidth": 0.7,
-          "legend": {
-            "calcs": [],
-            "displayMode": "list",
-            "placement": "right",
-            "showLegend": true
-          },
-          "orientation": "auto",
-          "showValue": "auto",
-          "stacking": "none",
-          "tooltip": {
-            "hideZeros": false,
-            "mode": "single",
-            "sort": "none"
-          },
-          "xTickLabelRotation": 0,
-          "xTickLabelSpacing": 0
-        },
-        "pluginVersion": "12.1.0",
-        "targets": [
-          {
-            "editorMode": "code",
-            "format": 1,
-            "rawQuery": true,
-            "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_b,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_b,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_b\n    FROM view_eval_flat_comp\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n)\nSELECT\n    a.label,\n    (x_b - x_a) AS x_diff,\n    (y_b - y_a) AS y_diff,\n    (yaw_b - yaw_a) AS yaw_diff\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
-            "refId": "A",
-            "sql": {
-              "columns": [
-                {
-                  "parameters": [],
-                  "type": "function"
-                }
-              ],
-              "groupBy": [
-                {
-                  "property": {
-                    "type": "string"
-                  },
-                  "type": "groupBy"
-                }
-              ],
-              "limit": 50
-            }
-          }
-        ],
-        "title": "Difference of mean absolute error within ${max_eval_range} [m] (comp - target) ",
-        "type": "barchart"
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
       }
-    ],
-    "preload": false,
-    "schemaVersion": 41,
-    "tags": [],
-    "templating": {
-      "list": [
-        {
-          "allValue": "'__all'",
-          "current": {
-            "text": "perception.object_recognition.detection.centerpoint.objects",
-            "value": "perception.object_recognition.detection.centerpoint.objects"
+    ]
+  },
+  "description": "Report comparison",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 2,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
           },
-          "definition": "SELECT DISTINCT topic_name FROM view_eval_flat ORDER BY 1;",
-          "description": "topic name list",
-          "includeAll": true,
-          "name": "topic_name",
-          "options": [],
-          "query": "SELECT DISTINCT topic_name FROM view_eval_flat ORDER BY 1;",
-          "refresh": 2,
-          "regex": "",
-          "sort": 1,
-          "type": "query"
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
         },
-        {
-          "current": {
-            "text": "perception.object_recognition.detection.centerpoint.objects",
-            "value": "perception.object_recognition.detection.centerpoint.objects"
-          },
-          "definition": "SELECT DISTINCT topic_name FROM view_eval_flat ORDER BY 1;",
-          "name": "compared_topic_name",
-          "options": [],
-          "query": "SELECT DISTINCT topic_name FROM view_eval_flat ORDER BY 1;",
-          "refresh": 2,
-          "regex": "",
-          "type": "query"
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 9,
+        "x": 0,
+        "y": 0
+      },
+      "id": 22,
+      "options": {
+        "displayMode": "lcd",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
         },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
         {
-          "allValue": "'__all'",
-          "current": {
-            "text": "$__all",
-            "value": "$__all"
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "-- create view: views are defined in variable --\n${pretask:raw}\n${pretask_comp:raw}\n\n-- visualization plot --\nWITH base AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${target_file} AS series\n  FROM view_eval_flat\n  WHERE ${topic_source_label_id_filter:raw}\n),\ncomp AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${compared_target_file} AS series\n  FROM view_eval_flat_comp\n  WHERE ${compared_topic_source_label_id_filter:raw}\n)\nSELECT * FROM base\nUNION ALL\nSELECT * FROM comp;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "t4dataset summary and data parse",
+      "type": "bargauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 17,
+      "panels": [],
+      "title": "Row title",
+      "type": "row"
+    },
+    {
+      "description": "",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 18,
+        "x": 0,
+        "y": 6
+      },
+      "id": 14,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "## How to\n1. Choose your `target_file` and `compared_target_file` to analyze\n2. Then top panel will be updated and show t4dataset\n3. You can check target topic to be compared\n\n## design\n- to compare\n",
+        "mode": "markdown"
+      },
+      "pluginVersion": "12.1.0",
+      "title": "README",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Comparison View",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "includeAll": true,
-          "name": "source",
-          "options": [
-            {
-              "selected": false,
-              "text": "GT",
-              "value": "GT"
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
             },
-            {
-              "selected": false,
-              "text": "EST",
-              "value": "EST"
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
-          ],
-          "query": "GT, EST",
-          "type": "custom"
-        },
-        {
-          "allValue": "'__all'",
-          "current": {
-            "text": "All",
-            "value": "$__all"
           },
-          "definition": "SELECT DISTINCT label FROM view__binned_src ORDER BY 1;",
-          "includeAll": true,
-          "name": "label",
-          "options": [],
-          "query": "SELECT DISTINCT label FROM view__binned_src ORDER BY 1;",
-          "refresh": 1,
-          "regex": "",
-          "type": "query"
-        },
-        {
-          "allValue": "'__all'",
-          "current": {
-            "text": "All",
-            "value": "$__all"
+          "mappings": [],
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
-          "definition": "SELECT DISTINCT t4dataset_id FROM tpfp_rate_by_t4dataset_view ORDER BY tpr DESC;",
-          "description": "t4dataset_id by tpr order for target file",
-          "includeAll": true,
-          "name": "t4dataset_id",
-          "options": [],
-          "query": "SELECT DISTINCT t4dataset_id FROM tpfp_rate_by_t4dataset_view ORDER BY tpr DESC;",
-          "refresh": 1,
-          "regex": "",
-          "type": "query"
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 0,
+        "y": 11
+      },
+      "id": 11,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
         {
-          "current": {
-            "text": "/opt/grafana/data/x2_v4.3_odaiba_current.parquet",
-            "value": "/opt/grafana/data/x2_v4.3_odaiba_current.parquet"
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\nGROUP BY \n  label\nORDER BY \n  label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Total TP rate within ${max_eval_range} [m] with target data",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "definition": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
-          "name": "target_file",
-          "options": [],
-          "query": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
-          "refresh": 2,
-          "regex": "",
-          "type": "query"
-        },
-        {
-          "current": {
-            "text": "/opt/grafana/data/x2_v4.3_odaiba_polar_filter_current.parquet",
-            "value": "/opt/grafana/data/x2_v4.3_odaiba_polar_filter_current.parquet"
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
-          "definition": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
-          "name": "compared_target_file",
-          "options": [],
-          "query": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
-          "refresh": 2,
-          "regex": "",
-          "type": "query"
-        },
-        {
-          "current": {
-            "text": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))",
-            "value": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))"
+          "mappings": [],
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
-          "description": "Filter by its topic/source/label/t4dataset_id",
-          "hide": 2,
-          "name": "topic_source_label_id_filter",
-          "query": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))",
-          "skipUrlSync": true,
-          "type": "constant"
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 10,
+        "y": 11
+      },
+      "id": 21,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
         {
-          "current": {
-            "text": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${compared_topic_name:sqlstring}))",
-            "value": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${compared_topic_name:sqlstring}))"
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat_comp\nWHERE\n  ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\nGROUP BY \n  label\nORDER BY \n  label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Total TP rate within ${max_eval_range} [m] with compared data",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "TP rate for selected value",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "description": "Filter by its topic/source/label/t4dataset_id",
-          "hide": 2,
-          "name": "compared_topic_source_label_id_filter",
-          "query": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${compared_topic_name:sqlstring}))",
-          "skipUrlSync": true,
-          "type": "constant"
-        },
-        {
-          "current": {
-            "text": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))",
-            "value": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))"
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
-          "description": "",
-          "hide": 2,
-          "name": "topic_label_id_filter",
-          "query": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))",
-          "skipUrlSync": true,
-          "type": "constant"
-        },
-        {
-          "current": {
-            "text": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${compared_topic_name:sqlstring}))",
-            "value": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${compared_topic_name:sqlstring}))"
+          "mappings": [],
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
-          "description": "",
-          "hide": 2,
-          "name": "compared_topic_label_id_filter",
-          "query": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${compared_topic_name:sqlstring}))",
-          "skipUrlSync": true,
-          "type": "constant"
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 20,
+        "x": 0,
+        "y": 18
+      },
+      "id": 6,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "distance_bin",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
         {
-          "current": {
-            "text": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
-            "value": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;"
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr_comp,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.tpr AS tp_rate_before,\n  -- b.fpr,\n  c.tpr_comp AS tp_rate_after,\n  -- c.fpr_comp,\n  (c.tpr_comp - b.tpr) AS tp_rate_diff,\n  -- (c.fpr_comp - b.fpr) AS fpr_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "TPrate and FPrate by distance bin",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "Mean absolute error panel",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "description": "",
-          "hide": 2,
-          "name": "pretask",
-          "query": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
-          "skipUrlSync": true,
-          "type": "constant"
-        },
-        {
-          "current": {
-            "text": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
-            "value": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;"
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "[m] or [rad]",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
-          "description": "",
-          "hide": 2,
-          "name": "pretask_comp",
-          "query": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
-          "skipUrlSync": true,
-          "type": "constant"
-        },
-        {
-          "current": {
-            "text": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
-            "value": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;"
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
-          "description": "",
-          "hide": 2,
-          "name": "view_eval_flat",
-          "query": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
-          "skipUrlSync": true,
-          "type": "constant"
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 0,
+        "y": 27
+      },
+      "id": 12,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
         {
-          "current": {
-            "text": "CREATE OR REPLACE VIEW tpfp_rate_by_t4dataset_view AS SELECT     t4dataset_id,      CASE          WHEN SUM(gt_total) > 0          THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)         ELSE 0     END AS tpr,      CASE          WHEN SUM(est_total) > 0          THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)         ELSE 0     END AS fpr  FROM view_tpr_fpr_by_class_dist_topic WHERE ${topic_label_id_filter:raw} GROUP BY t4dataset_id ORDER BY tpr DESC;",
-            "value": "CREATE OR REPLACE VIEW tpfp_rate_by_t4dataset_view AS SELECT     t4dataset_id,      CASE          WHEN SUM(gt_total) > 0          THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)         ELSE 0     END AS tpr,      CASE          WHEN SUM(est_total) > 0          THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)         ELSE 0     END AS fpr  FROM view_tpr_fpr_by_class_dist_topic WHERE ${topic_label_id_filter:raw} GROUP BY t4dataset_id ORDER BY tpr DESC;"
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "-- This query creates a summary of the True Positive Rate (TPR) and error metrics for each class label.\n-- It aggregates counts and calculates mean absolute errors across all datasets, topics, and distance bins.\nSELECT\n  label,\n  -- Calculate the mean absolute x_error for True Positives\n  AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS mean_abs_x_error,\n  -- Calculate the mean absolute y_error for True Positives\n  AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS mean_abs_y_error,\n  -- Calculate the mean absolute yaw_error for True Positives\n  AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS mean_abs_yaw_error,\n  -- Calculate the mean absolute vx error\n  -- AVG(ABS(vx_error)) FILTER (WHERE status = 'TP') AS mean_abs_vx_error\nFROM \n  view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range)\nGROUP BY \n  label\nORDER BY \n  label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "TargetFile Mean Error within ${max_eval_range} [m]",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "Mean absolute error panel",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
           },
-          "hide": 2,
-          "name": "tpfp_rate_by_t4dataset_view",
-          "query": "CREATE OR REPLACE VIEW tpfp_rate_by_t4dataset_view AS SELECT     t4dataset_id,      CASE          WHEN SUM(gt_total) > 0          THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)         ELSE 0     END AS tpr,      CASE          WHEN SUM(est_total) > 0          THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)         ELSE 0     END AS fpr  FROM view_tpr_fpr_by_class_dist_topic WHERE ${topic_label_id_filter:raw} GROUP BY t4dataset_id ORDER BY tpr DESC;",
-          "skipUrlSync": true,
-          "type": "constant"
-        },
-        {
-          "current": {
-            "text": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
-            "value": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;"
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "[m] or [rad]",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
-          "description": "",
-          "hide": 2,
-          "name": "view_tpr_fpr_by_class_dist_topic",
-          "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
-          "skipUrlSync": true,
-          "type": "constant"
-        },
-        {
-          "current": {
-            "text": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
-            "value": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;"
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
-          "description": "",
-          "hide": 2,
-          "name": "view_tpr_fpr_by_class_dist_topic_c",
-          "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
-          "skipUrlSync": true,
-          "type": "constant"
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 10,
+        "y": 27
+      },
+      "id": 23,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
         {
-          "current": {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "-- This query creates a summary of the True Positive Rate (TPR) and error metrics for each class label.\n-- It aggregates counts and calculates mean absolute errors across all datasets, topics, and distance bins.\nSELECT\n  label,\n  -- Calculate the mean absolute x_error for True Positives\n  AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS mean_abs_x_error,\n  -- Calculate the mean absolute y_error for True Positives\n  AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS mean_abs_y_error,\n  -- Calculate the mean absolute yaw_error for True Positives\n  AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS mean_abs_yaw_error,\n  -- Calculate the mean absolute vx error\n  -- AVG(ABS(vx_error)) FILTER (WHERE status = 'TP') AS mean_abs_vx_error\nFROM \n  view_eval_flat_comp\nWHERE\n  ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range)\nGROUP BY \n  label\nORDER BY \n  label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "ComparedFile Mean Error within ${max_eval_range} [m]",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "Mean absolute error panel",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "[m] or [rad]",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 20,
+        "x": 0,
+        "y": 34
+      },
+      "id": 24,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_b,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_b,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_b\n    FROM view_eval_flat_comp\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n)\nSELECT\n    a.label,\n    (x_b - x_a) AS x_diff,\n    (y_b - y_a) AS y_diff,\n    (yaw_b - yaw_a) AS yaw_diff\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Difference of mean absolute error within ${max_eval_range} [m] (comp - target) ",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "tp/fp rate with each t4dataset\ndescending with tprate",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "tp/fp rate",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "id": 7,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.96,
+        "fullHighlight": false,
+        "groupWidth": 0.76,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "t4dataset_id",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 100
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "dataset": "default",
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "${tpfp_rate_by_t4dataset_view:raw}\nSELECT * FROM tpfp_rate_by_t4dataset_view;",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [
+                  {
+                    "name": "*",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          },
+          "table": "x2_gen2_komatsu_sample_current.main.view_eval_flat"
+        }
+      ],
+      "title": "t4dataset_wise_tp/fp_rate_visualization",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 8,
+        "x": 12,
+        "y": 40
+      },
+      "id": 13,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "horizontal",
+        "showValue": "never",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "-- Show worst t4dataset_id\nSELECT t4dataset_id, tpr FROM tpfp_rate_by_t4dataset_view\nORDER BY tpr ASC\nLIMIT 10\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Worst 10 tp rate scenario list ",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "object number per distance",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "gradientMode": "hue",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 0,
+        "y": 51
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "SELECT dist_h, label FROM view_eval_flat\nWHERE\n  ${topic_source_label_id_filter:raw}",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "object count with distance",
+      "type": "histogram"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "object number per distance",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 9,
+        "y": 51
+      },
+      "id": 9,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "hide": false,
+          "rawQuery": true,
+          "rawSql": "SELECT\n  label,\n  COUNT(label) AS unique_label_count\nFROM\n  view_eval_flat\nWHERE\n('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))\n  AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))\n  AND source = 'GT'\nGROUP BY\n  label\nORDER BY\n  label\n--ORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Distinct GT Objects Label Number",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "xy error description based on absolute xy error",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "x_error_abs_p50",
+                  "x_error_abs_p90",
+                  "y_error_abs_p50",
+                  "y_error_abs_p90",
+                  "x_error_abs_mean",
+                  "x_error_abs_std",
+                  "y_error_abs_std"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 18,
+        "x": 0,
+        "y": 59
+      },
+      "id": 10,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "never",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "SELECT\n    distance_bin,\n    quantile_cont(ABS(x_error), 0.5) AS x_error_abs_p50,\n    quantile_cont(ABS(x_error), 0.9) AS x_error_abs_p90,\n    quantile_cont(ABS(y_error), 0.5) AS y_error_abs_p50,\n    quantile_cont(ABS(y_error), 0.9) AS y_error_abs_p90,\n    AVG(ABS(x_error)) AS x_error_abs_mean,\n    AVG(ABS(y_error)) AS y_error_abs_mean,\n    STDDEV_SAMP(ABS(x_error)) AS x_error_abs_std,\n    STDDEV_SAMP(ABS(y_error)) AS y_error_abs_std,\nFROM view_eval_flat\nWHERE source='EST' AND status='TP'\n  AND ${topic_label_id_filter:raw}\nGROUP BY distance_bin\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Detailed XY error panel",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "object number per distance",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 0,
+        "y": 69
+      },
+      "id": 8,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "hide": false,
+          "rawQuery": true,
+          "rawSql": "SELECT\n  distance_bin,\n  COUNT(DISTINCT uuid) AS unique_uuid_count\nFROM\n  x2_gen2_komatsu_sample_current.main.view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw}\nGROUP BY\n  distance_bin\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Distinct object number",
+      "type": "barchart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "id": 4,
+      "panels": [],
+      "title": "Topic Comparison View",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "TP rate for selected value",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 18,
+        "x": 0,
+        "y": 78
+      },
+      "id": 18,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "distance_bin",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n\nWITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS tpr_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "TPrate comparison in distance bin",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "FP rate for selected value",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 18,
+        "x": 0,
+        "y": 87
+      },
+      "id": 20,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "distance_bin",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "WITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    fpr_a AS ${topic_name},\n    fpr_b AS ${compared_topic_name},\n    (fpr_b - fpr_a) AS fpr_diff,\n    CASE\n      WHEN (fpr_b - fpr_a) > 0 THEN '↑'\n      WHEN (fpr_b - fpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "FPrate comparison in distance bin",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 18,
+        "x": 0,
+        "y": 96
+      },
+      "id": 16,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_b\n    FROM view_eval_flat\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n)\nSELECT\n    a.label,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS TPrate_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "TP rate comparison within ${max_eval_range} [m]",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "beurnluka4ruoa"
+      },
+      "description": "Mean absolute error panel",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "[m] or [rad]",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 18,
+        "x": 0,
+        "y": 105
+      },
+      "id": 19,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_b,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_b,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_b\n    FROM view_eval_flat_comp\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n)\nSELECT\n    a.label,\n    (x_b - x_a) AS x_diff,\n    (y_b - y_a) AS y_diff,\n    (yaw_b - yaw_a) AS yaw_diff\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Difference of mean absolute error within ${max_eval_range} [m] (comp - target) ",
+      "type": "barchart"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allValue": "'__all'",
+        "current": {
+          "text": "perception.object_recognition.detection.bevfusion.objects",
+          "value": "perception.object_recognition.detection.bevfusion.objects"
+        },
+        "definition": "SELECT DISTINCT topic_name FROM view_eval_flat ORDER BY 1;",
+        "description": "topic name list",
+        "includeAll": true,
+        "name": "topic_name",
+        "options": [],
+        "query": "SELECT DISTINCT topic_name FROM view_eval_flat ORDER BY 1;",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "perception.object_recognition.detection.centerpoint_short_range.objects",
+          "value": "perception.object_recognition.detection.centerpoint_short_range.objects"
+        },
+        "definition": "SELECT DISTINCT topic_name FROM view_eval_flat_comp ORDER BY 1;",
+        "name": "compared_topic_name",
+        "options": [],
+        "query": "SELECT DISTINCT topic_name FROM view_eval_flat_comp ORDER BY 1;",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "'__all'",
+        "current": {
+          "text": "$__all",
+          "value": "$__all"
+        },
+        "includeAll": true,
+        "name": "source",
+        "options": [
+          {
+            "selected": false,
+            "text": "GT",
+            "value": "GT"
+          },
+          {
+            "selected": false,
+            "text": "EST",
+            "value": "EST"
+          }
+        ],
+        "query": "GT, EST",
+        "type": "custom"
+      },
+      {
+        "allValue": "'__all'",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "definition": "SELECT DISTINCT label FROM view_eval_flat ORDER BY 1;",
+        "includeAll": true,
+        "name": "label",
+        "options": [],
+        "query": "SELECT DISTINCT label FROM view_eval_flat ORDER BY 1;",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "'__all'",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "definition": "SELECT DISTINCT t4dataset_id FROM tpfp_rate_by_t4dataset_view ORDER BY tpr DESC;",
+        "description": "t4dataset_id by tpr order for target file",
+        "includeAll": true,
+        "name": "t4dataset_id",
+        "options": [],
+        "query": "SELECT DISTINCT t4dataset_id FROM tpfp_rate_by_t4dataset_view ORDER BY tpr DESC;",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "/opt/grafana/data/komatsu_bevfusion.parquet",
+          "value": "/opt/grafana/data/komatsu_bevfusion.parquet"
+        },
+        "definition": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
+        "name": "target_file",
+        "options": [],
+        "query": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "/opt/grafana/data/x2_v4.3_odaiba_short_range_current.parquet",
+          "value": "/opt/grafana/data/x2_v4.3_odaiba_short_range_current.parquet"
+        },
+        "definition": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
+        "name": "compared_target_file",
+        "options": [],
+        "query": "SELECT DISTINCT file_name\nFROM parquet_metadata('/opt/grafana/data/*.parquet')\nORDER BY file_name;",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))",
+          "value": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))"
+        },
+        "description": "Filter by its topic/source/label/t4dataset_id",
+        "hide": 2,
+        "name": "topic_source_label_id_filter",
+        "query": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${compared_topic_name:sqlstring}))",
+          "value": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${compared_topic_name:sqlstring}))"
+        },
+        "description": "Filter by its topic/source/label/t4dataset_id",
+        "hide": 2,
+        "name": "compared_topic_source_label_id_filter",
+        "query": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${compared_topic_name:sqlstring}))",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))",
+          "value": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "topic_label_id_filter",
+        "query": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${topic_name:sqlstring}))",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${compared_topic_name:sqlstring}))",
+          "value": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${compared_topic_name:sqlstring}))"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "compared_topic_label_id_filter",
+        "query": "('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring})) AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring})) AND ('__all' IN (${topic_name:sqlstring})   OR topic_name   IN (${compared_topic_name:sqlstring}))",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+          "value": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "pretask",
+        "query": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+          "value": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "pretask_comp",
+        "query": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+          "value": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "view_eval_flat",
+        "query": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "CREATE OR REPLACE VIEW tpfp_rate_by_t4dataset_view AS SELECT     t4dataset_id,      CASE          WHEN SUM(gt_total) > 0          THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)         ELSE 0     END AS tpr,      CASE          WHEN SUM(est_total) > 0          THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)         ELSE 0     END AS fpr  FROM view_tpr_fpr_by_class_dist_topic WHERE ${topic_label_id_filter:raw} GROUP BY t4dataset_id ORDER BY tpr DESC;",
+          "value": "CREATE OR REPLACE VIEW tpfp_rate_by_t4dataset_view AS SELECT     t4dataset_id,      CASE          WHEN SUM(gt_total) > 0          THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)         ELSE 0     END AS tpr,      CASE          WHEN SUM(est_total) > 0          THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)         ELSE 0     END AS fpr  FROM view_tpr_fpr_by_class_dist_topic WHERE ${topic_label_id_filter:raw} GROUP BY t4dataset_id ORDER BY tpr DESC;"
+        },
+        "hide": 2,
+        "name": "tpfp_rate_by_t4dataset_view",
+        "query": "CREATE OR REPLACE VIEW tpfp_rate_by_t4dataset_view AS SELECT     t4dataset_id,      CASE          WHEN SUM(gt_total) > 0          THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)         ELSE 0     END AS tpr,      CASE          WHEN SUM(est_total) > 0          THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)         ELSE 0     END AS fpr  FROM view_tpr_fpr_by_class_dist_topic WHERE ${topic_label_id_filter:raw} GROUP BY t4dataset_id ORDER BY tpr DESC;",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+          "value": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "view_tpr_fpr_by_class_dist_topic",
+        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+          "value": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;"
+        },
+        "description": "",
+        "hide": 2,
+        "name": "view_tpr_fpr_by_class_dist_topic_c",
+        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "50",
+          "value": "50"
+        },
+        "description": "max evaluation range [m]",
+        "name": "max_eval_range",
+        "options": [
+          {
+            "selected": true,
             "text": "50",
             "value": "50"
           },
-          "description": "max evaluation range [m]",
-          "name": "max_eval_range",
-          "options": [
-            {
-              "selected": true,
-              "text": "50",
-              "value": "50"
-            },
-            {
-              "selected": false,
-              "text": "80",
-              "value": "80"
-            },
-            {
-              "selected": false,
-              "text": "100",
-              "value": "100"
-            },
-            {
-              "selected": false,
-              "text": "120",
-              "value": "120"
-            },
-            {
-              "selected": false,
-              "text": "150",
-              "value": "150"
-            }
-          ],
-          "query": "50, 80, 100, 120, 150",
-          "type": "custom"
-        }
-      ]
-    },
-    "time": {
-      "from": "now-2d",
-      "to": "now"
-    },
-    "timepicker": {},
-    "timezone": "browser",
-    "title": "ComparisonDashboard",
-    "uid": "96742df1-c5de-42ce-aa4a-6e14b7ea2e6f",
-    "version": 8
-  }
+          {
+            "selected": false,
+            "text": "80",
+            "value": "80"
+          },
+          {
+            "selected": false,
+            "text": "100",
+            "value": "100"
+          },
+          {
+            "selected": false,
+            "text": "120",
+            "value": "120"
+          },
+          {
+            "selected": false,
+            "text": "150",
+            "value": "150"
+          }
+        ],
+        "query": "50, 80, 100, 120, 150",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now/M",
+    "to": "now/M"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ComparisonDashboard",
+  "uid": "96742df1-c5de-42ce-aa4a-6e14b7ea2e6f",
+  "version": 10
+}
