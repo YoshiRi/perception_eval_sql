@@ -1,9 +1,15 @@
-# Ubuntuベースの公式Grafana
+# Ubuntuベースの公式Grafana（※Ubuntu版必須）
 FROM grafana/grafana:10.4.2-ubuntu
 
+# --------------- build args ---------------
+ARG PLUGIN_VERSION=0.3.1
+ARG TARGETARCH
+# -----------------------------------------
+
 USER root
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git \
+RUN set -eux \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/*
 
 # ディレクトリ作成
@@ -16,22 +22,23 @@ COPY dashboard /opt/grafana/dashboard
 COPY data      /opt/grafana/data
 COPY sql       /opt/grafana/sql
 
-# DuckDBプラグイン導入（未署名）
-RUN git clone --depth=1 https://github.com/motherduckdb/grafana-duckdb-datasource \
-    /var/lib/grafana/plugins/motherduck-duckdb-datasource
+# DuckDBプラグイン（ビルド済みZIPを取得して展開）
+RUN set -eux; \
+  curl -fL -o /tmp/duckdb-plugin.zip \
+    "https://github.com/motherduckdb/grafana-duckdb-datasource/releases/download/v${PLUGIN_VERSION}/motherduck-duckdb-datasource-${PLUGIN_VERSION}.zip" \
+  && mkdir -p /var/lib/grafana/plugins/motherduck-duckdb-datasource \
+  && unzip -q /tmp/duckdb-plugin.zip -d /var/lib/grafana/plugins/motherduck-duckdb-datasource \
+  && rm /tmp/duckdb-plugin.zip
 
 # プロビジョニング
 COPY docker/provisioning/datasources/duckdb.yml    /etc/grafana/provisioning/datasources/duckdb.yml
 COPY docker/provisioning/dashboards/dashboards.yml /etc/grafana/provisioning/dashboards/dashboards.yml
 
-# 未署名プラグイン許可（※パスワードはDockerfileに焼かない）
+# 未署名プラグイン許可（IDは "motherduck-duckdb-datasource"）
 ENV GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=motherduck-duckdb-datasource
 
-# 権限：Grafanaは uid=472, gid=0(root) を想定
-# ここを 'grafana:grafana' ではなく '472:0' にするのがポイント
+# 権限：Grafanaは uid=472, gid=0(root)
 RUN chown -R 472:0 /opt/grafana /var/lib/grafana /etc/grafana
 
-# 実行ユーザーを grafana に戻す
 USER grafana
-
 EXPOSE 3000
