@@ -1,8 +1,10 @@
 # Ubuntuベースの公式Grafana（※Ubuntu版必須）
-FROM grafana/grafana:10.4.2-ubuntu
+ARG GRAFANA_VERSION=12.1.0-ubuntu
+FROM grafana/grafana:${GRAFANA_VERSION}
 
 # --------------- build args ---------------
-ARG PLUGIN_VERSION=0.3.1
+# for DuckDB plugin
+ARG PLUGIN_VERSION=0.3.1 
 # -----------------------------------------
 
 USER root
@@ -28,17 +30,6 @@ RUN set -eux; \
   && mkdir -p /var/lib/grafana/plugins \
   && unzip -q /tmp/duckdb-plugin.zip -d /var/lib/grafana/plugins \
   && rm /tmp/duckdb-plugin.zip
-
-# --- Dockerfileで直接ダウンロードすると失敗するcaseではホストのzip_pluginフォルダに事前に置いておき、COPYでコンテナにコピーしてから展開する
-# Copy pre-downloaded DuckDB plugin zip file to the container
-# Run in Host: 
-# mkdir -p zip_plugin
-# curl -fL -o zip_plugin/motherduck-duckdb-datasource.zip \
-#   "https://github.com/motherduckdb/grafana-duckdb-datasource/releases/download/v0.3.1/motherduck-duckdb-datasource-0.3.1.zip"
-# Run in Dockerfile:
-# COPY zip_plugin/motherduck-duckdb-datasource.zip /tmp/plugin.zip
-# RUN unzip -q /tmp/plugin.zip -d /var/lib/grafana/plugins/ && \
-#     rm /tmp/plugin.zip
 
 # プロビジョニング
 COPY docker/provisioning/datasources/duckdb.yml    /etc/grafana/provisioning/datasources/duckdb.yml

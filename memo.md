@@ -8,6 +8,28 @@ This file memorize small tips and sqls for visualization in Grafana.
 
 Somehow grafana can not recognize `''` as empty string and it seems it ignore `''` in query.
 
+### docker plugin load error
+
+I've encountered following error when I tried to load duckdb plugin in grafana docker container.
+
+```dockerfile
+# --- Dockerfileで直接ダウンロードすると失敗するcaseではホストのzip_pluginフォルダに事前に置いておき、COPYでコンテナにコピーしてから展開する
+# Copy pre-downloaded DuckDB plugin zip file to the container
+# Run in Host: 
+# mkdir -p zip_plugin
+# curl -fL -o zip_plugin/motherduck-duckdb-datasource.zip \
+#   "https://github.com/motherduckdb/grafana-duckdb-datasource/releases/download/v0.3.1/motherduck-duckdb-datasource-0.3.1.zip"
+# Run in Dockerfile:
+COPY zip_plugin/motherduck-duckdb-datasource.zip /tmp/plugin.zip
+RUN unzip -q /tmp/plugin.zip -d /var/lib/grafana/plugins/ && \
+    rm /tmp/plugin.zip
+```
+
+### grafana version issue
+
+This board expect grafana version higher than 12.1.
+It seems older grafana can not handle multiple layer variable expansion.
+
 ## TBD
 
 ## Look at the table
