@@ -19,13 +19,13 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 2,
+  "id": 1,
   "links": [],
   "panels": [
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "fieldConfig": {
         "defaults": {
@@ -84,7 +84,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "-- create view: views are defined in variable --\n${pretask:raw}\n${pretask_comp:raw}\n\n-- visualization plot --\nWITH base AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${target_file} AS series\n  FROM view_eval_flat\n  WHERE ${topic_source_label_id_filter:raw}\n),\ncomp AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${compared_target_file} AS series\n  FROM view_eval_flat_comp\n  WHERE ${compared_topic_source_label_id_filter:raw}\n)\nSELECT * FROM base\nUNION ALL\nSELECT * FROM comp;\n",
+          "rawSql": "-- create view: views are defined in variable --\n${pretask:raw}\n${pretask_comp:raw}\n\n-- visualization plot --\nWITH base AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${target_file} AS series\n  FROM view_eval_flat\n),\ncomp AS (\n  SELECT COUNT(DISTINCT t4dataset_id) AS id_num, ${compared_target_file} AS series\n  FROM view_eval_flat_comp\n)\nSELECT * FROM base\nUNION ALL\nSELECT * FROM comp;\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -163,7 +163,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "fieldConfig": {
         "defaults": {
@@ -272,7 +272,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "fieldConfig": {
         "defaults": {
@@ -381,7 +381,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "description": "TP rate for selected value",
       "fieldConfig": {
@@ -487,13 +487,125 @@
           }
         }
       ],
-      "title": "TPrate and FPrate by distance bin",
+      "title": "TPrate comparison by distance bin",
       "type": "barchart"
     },
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
+      },
+      "description": "TP rate for selected value",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 20,
+        "x": 0,
+        "y": 27
+      },
+      "id": 25,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "distance_bin",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.fpr        AS fp_rate_before,\n  c.fpr_comp   AS fp_rate_after,\n  (c.fpr_comp - b.fpr) AS fp_rate_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "FPrate by distance bin",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "P651FBA4E292AABDC"
       },
       "description": "Mean absolute error panel",
       "fieldConfig": {
@@ -544,7 +656,7 @@
         "h": 7,
         "w": 10,
         "x": 0,
-        "y": 27
+        "y": 36
       },
       "id": 12,
       "options": {
@@ -602,7 +714,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "description": "Mean absolute error panel",
       "fieldConfig": {
@@ -653,7 +765,7 @@
         "h": 7,
         "w": 10,
         "x": 10,
-        "y": 27
+        "y": 36
       },
       "id": 23,
       "options": {
@@ -762,7 +874,7 @@
         "h": 6,
         "w": 20,
         "x": 0,
-        "y": 34
+        "y": 43
       },
       "id": 24,
       "options": {
@@ -870,7 +982,7 @@
         "h": 11,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 49
       },
       "id": 7,
       "options": {
@@ -986,7 +1098,7 @@
         "h": 11,
         "w": 8,
         "x": 12,
-        "y": 40
+        "y": 49
       },
       "id": 13,
       "options": {
@@ -1087,7 +1199,7 @@
         "h": 8,
         "w": 9,
         "x": 0,
-        "y": 51
+        "y": 60
       },
       "id": 5,
       "options": {
@@ -1187,7 +1299,7 @@
         "h": 8,
         "w": 9,
         "x": 9,
-        "y": 51
+        "y": 60
       },
       "id": 9,
       "options": {
@@ -1328,7 +1440,7 @@
         "h": 10,
         "w": 18,
         "x": 0,
-        "y": 59
+        "y": 68
       },
       "id": 10,
       "options": {
@@ -1436,7 +1548,7 @@
         "h": 8,
         "w": 18,
         "x": 0,
-        "y": 69
+        "y": 78
       },
       "id": 8,
       "options": {
@@ -1498,7 +1610,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 86
       },
       "id": 4,
       "panels": [],
@@ -1560,7 +1672,7 @@
         "h": 9,
         "w": 18,
         "x": 0,
-        "y": 78
+        "y": 87
       },
       "id": 18,
       "options": {
@@ -1671,7 +1783,7 @@
         "h": 9,
         "w": 18,
         "x": 0,
-        "y": 87
+        "y": 96
       },
       "id": 20,
       "options": {
@@ -1780,7 +1892,7 @@
         "h": 9,
         "w": 18,
         "x": 0,
-        "y": 96
+        "y": 105
       },
       "id": 16,
       "options": {
@@ -1889,7 +2001,7 @@
         "h": 6,
         "w": 18,
         "x": 0,
-        "y": 105
+        "y": 114
       },
       "id": 19,
       "options": {
@@ -2226,5 +2338,5 @@
   "timezone": "browser",
   "title": "ComparisonDashboard",
   "uid": "96742df1-c5de-42ce-aa4a-6e14b7ea2e6f",
-  "version": 10
+  "version": 1
 }
