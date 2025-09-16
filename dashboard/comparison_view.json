@@ -466,7 +466,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr_comp,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.tpr AS tp_rate_before,\n  -- b.fpr,\n  c.tpr_comp AS tp_rate_after,\n  -- c.fpr_comp,\n  (c.tpr_comp - b.tpr) AS tp_rate_diff,\n  -- (c.fpr_comp - b.fpr) AS fpr_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate} \n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr_comp,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.tpr AS tp_rate_before,\n  -- b.fpr,\n  c.tpr_comp AS tp_rate_after,\n  -- c.fpr_comp,\n  (c.tpr_comp - b.tpr) AS tp_rate_diff,\n  -- (c.fpr_comp - b.fpr) AS fpr_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -607,6 +607,103 @@
         "type": "motherduck-duckdb-datasource",
         "uid": "P651FBA4E292AABDC"
       },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "t4dataset_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 498
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 18,
+        "x": 0,
+        "y": 36
+      },
+      "id": 26,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "12.1.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "format": 1,
+          "rawQuery": true,
+          "rawSql": "-- base/comp の GT 行だけを (t4dataset_id, uuid) で突き合わせて TP の成否を比較\nWITH base_gt AS (\n  SELECT\n    t4dataset_id,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status='TP') > 0 AS tp_base\n  FROM view_eval_flat\n  WHERE source='GT' AND uuid IS NOT NULL\n  GROUP BY 1,2\n),\ncomp_gt AS (\n  SELECT\n    t4dataset_id,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status='TP') > 0 AS tp_comp\n  FROM view_eval_flat_comp\n  WHERE source='GT' AND uuid IS NOT NULL\n  GROUP BY 1,2\n),\njoined AS (\n  SELECT\n    COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,\n    COALESCE(b.gt_uuid,      c.gt_uuid)      AS gt_uuid,\n    COALESCE(b.tp_base, FALSE)               AS tp_base,\n    COALESCE(c.tp_comp, FALSE)               AS tp_comp\n  FROM base_gt b\n  FULL OUTER JOIN comp_gt c\n    ON b.t4dataset_id = c.t4dataset_id\n   AND b.gt_uuid      = c.gt_uuid\n)\nSELECT\n  t4dataset_id,\n  COUNT(*)                                                    AS total_gt,\n  COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp)             AS improved_cnt,   -- FN→TP\n  COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp)             AS degraded_cnt,   -- TP→FN\n  COUNT(*) FILTER (WHERE tp_base AND tp_comp)                 AS both_tp_cnt,    -- TP維持\n  COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp)         AS both_fn_cnt,    -- 両方検出不可\nFROM joined\nGROUP BY 1\nORDER BY improved_cnt DESC;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "New panel",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "motherduck-duckdb-datasource",
+        "uid": "P651FBA4E292AABDC"
+      },
       "description": "Mean absolute error panel",
       "fieldConfig": {
         "defaults": {
@@ -656,7 +753,7 @@
         "h": 7,
         "w": 10,
         "x": 0,
-        "y": 36
+        "y": 43
       },
       "id": 12,
       "options": {
@@ -765,7 +862,7 @@
         "h": 7,
         "w": 10,
         "x": 10,
-        "y": 36
+        "y": 43
       },
       "id": 23,
       "options": {
@@ -874,7 +971,7 @@
         "h": 6,
         "w": 20,
         "x": 0,
-        "y": 43
+        "y": 50
       },
       "id": 24,
       "options": {
@@ -982,7 +1079,7 @@
         "h": 11,
         "w": 12,
         "x": 0,
-        "y": 49
+        "y": 56
       },
       "id": 7,
       "options": {
@@ -1098,7 +1195,7 @@
         "h": 11,
         "w": 8,
         "x": 12,
-        "y": 49
+        "y": 56
       },
       "id": 13,
       "options": {
@@ -1199,7 +1296,7 @@
         "h": 8,
         "w": 9,
         "x": 0,
-        "y": 60
+        "y": 67
       },
       "id": 5,
       "options": {
@@ -1299,7 +1396,7 @@
         "h": 8,
         "w": 9,
         "x": 9,
-        "y": 60
+        "y": 67
       },
       "id": 9,
       "options": {
@@ -1440,7 +1537,7 @@
         "h": 10,
         "w": 18,
         "x": 0,
-        "y": 68
+        "y": 75
       },
       "id": 10,
       "options": {
@@ -1548,7 +1645,7 @@
         "h": 8,
         "w": 18,
         "x": 0,
-        "y": 78
+        "y": 85
       },
       "id": 8,
       "options": {
@@ -1610,7 +1707,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 86
+        "y": 93
       },
       "id": 4,
       "panels": [],
@@ -1672,7 +1769,7 @@
         "h": 9,
         "w": 18,
         "x": 0,
-        "y": 87
+        "y": 94
       },
       "id": 18,
       "options": {
@@ -1783,7 +1880,7 @@
         "h": 9,
         "w": 18,
         "x": 0,
-        "y": 96
+        "y": 103
       },
       "id": 20,
       "options": {
@@ -1892,7 +1989,7 @@
         "h": 9,
         "w": 18,
         "x": 0,
-        "y": 105
+        "y": 112
       },
       "id": 16,
       "options": {
@@ -2001,7 +2098,7 @@
         "h": 6,
         "w": 18,
         "x": 0,
-        "y": 114
+        "y": 121
       },
       "id": 19,
       "options": {
@@ -2275,7 +2372,7 @@
         "description": "",
         "hide": 2,
         "name": "view_tpr_fpr_by_class_dist_topic",
-        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,   topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
         "skipUrlSync": true,
         "type": "constant"
       },
@@ -2327,6 +2424,27 @@
         ],
         "query": "50, 80, 100, 120, 150",
         "type": "custom"
+      },
+      {
+        "allValue": "__all",
+        "current": {
+          "text": [
+            "FULL"
+          ],
+          "value": [
+            "FULL"
+          ]
+        },
+        "definition": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
+        "description": "Distinct visibility",
+        "includeAll": true,
+        "multi": true,
+        "name": "visibility",
+        "options": [],
+        "query": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
       }
     ]
   },
