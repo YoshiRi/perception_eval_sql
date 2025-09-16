@@ -24,10 +24,14 @@ This repository provides SQL queries and Grafana configuration for analysing per
 
    ```bash
    docker run --rm -p 3000:3000 \
-      -v /path/to/data:/opt/grafana/data \
-      -v /path/to/sql:/opt/grafana/sql \
+      -v $PWD/data:/opt/grafana/data \
+      -v $PWD/sql:/opt/grafana/sql \
+      -e GF_SECURITY_ADMIN_USER=admin \
+      -e GF_SECURITY_ADMIN_PASSWORD=secret \
+        -e GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=motherduck-duckdb-datasource\
       perception-eval
    ```
+   username: `admin`, password: `secret`
 
 3. Access Grafana at [http://localhost:3000](http://localhost:3000) and open dashboards under **Local JSON Dashboards**.
 
