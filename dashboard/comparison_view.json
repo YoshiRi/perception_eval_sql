@@ -245,7 +245,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\nGROUP BY \n  label\nORDER BY \n  label;\n",
+          "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat\nWHERE\n  ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range ) AND ${visibility_filter:raw}\nGROUP BY \n  label\nORDER BY \n  label;\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -354,7 +354,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat_comp\nWHERE\n  ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\nGROUP BY \n  label\nORDER BY \n  label;\n",
+          "rawSql": "SELECT\n  label,\n  CASE \n    WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n    THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n    ELSE 0\n  END AS tpr\nFROM \n  view_eval_flat_comp\nWHERE\n  ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range ) AND ${visibility_filter:raw}\nGROUP BY \n  label\nORDER BY \n  label;\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -466,7 +466,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate} \n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr_comp,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.tpr AS tp_rate_before,\n  -- b.fpr,\n  c.tpr_comp AS tp_rate_after,\n  -- c.fpr_comp,\n  (c.tpr_comp - b.tpr) AS tp_rate_diff,\n  -- (c.fpr_comp - b.fpr) AS fpr_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n${view_tpr_fpr_by_class_dist_topic_c:raw}\n\nWITH base AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr\n  FROM view_tpr_fpr_by_class_dist_topic\n  WHERE ${topic_label_id_filter:singlequate} AND ${visibility_filter:raw}\n  GROUP BY distance_bin\n),\ncomp AS (\n  SELECT\n    distance_bin,\n    CASE \n      WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n      ELSE 0\n    END AS tpr_comp,\n    CASE \n      WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n      ELSE 0\n    END AS fpr_comp\n  FROM view_tpr_fpr_by_class_dist_topic_c\n  WHERE ${compared_topic_label_id_filter:singlequate} AND ${visibility_filter:raw}\n  GROUP BY distance_bin\n)\nSELECT\n  b.distance_bin,\n  b.tpr AS tp_rate_before,\n  -- b.fpr,\n  c.tpr_comp AS tp_rate_after,\n  -- c.fpr_comp,\n  (c.tpr_comp - b.tpr) AS tp_rate_diff,\n  -- (c.fpr_comp - b.fpr) AS fpr_diff\nFROM base b\nJOIN comp c USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(b.distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -2270,6 +2270,29 @@
         "type": "query"
       },
       {
+        "allValue": "'__all'",
+        "current": {
+          "text": [
+            "FULL",
+            "MOST"
+          ],
+          "value": [
+            "FULL",
+            "MOST"
+          ]
+        },
+        "definition": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
+        "description": "Distinct visibility",
+        "includeAll": false,
+        "multi": true,
+        "name": "visibility",
+        "options": [],
+        "query": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
         "current": {
           "text": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))",
           "value": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))"
@@ -2278,6 +2301,18 @@
         "hide": 2,
         "name": "topic_source_label_id_filter",
         "query": "('__all' IN (${source:sqlstring})      OR source       IN (${source:sqlstring}))  AND ('__all' IN (${label:sqlstring})       OR label        IN (${label:sqlstring}))  AND ('__all' IN (${t4dataset_id:sqlstring}) OR t4dataset_id IN (${t4dataset_id:sqlstring}))  AND ('__all' IN (${topic_name:sqlstring})  OR topic_name   IN (${topic_name:sqlstring}))",
+        "skipUrlSync": true,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "text": "('__all' IN (${visibility:sqlstring})   OR coalesce(try(visibility IN (${visibility:sqlstring})), FALSE))",
+          "value": "('__all' IN (${visibility:sqlstring})   OR coalesce(try(visibility IN (${visibility:sqlstring})), FALSE))"
+        },
+        "description": "Filter by its visibility",
+        "hide": 2,
+        "name": "visibility_filter",
+        "query": "('__all' IN (${visibility:sqlstring})   OR coalesce(try(visibility IN (${visibility:sqlstring})), FALSE))",
         "skipUrlSync": true,
         "type": "constant"
       },
@@ -2325,7 +2360,7 @@
         "description": "",
         "hide": 2,
         "name": "pretask",
-        "query": "CREATE OR REPLACE VIEW view_eval_flat AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+        "query": "CREATE OR REPLACE VIEW view_eval_flat AS WITH src AS (   SELECT * FROM parquet_scan(${target_file:sqlstring})   UNION BY NAME   SELECT CAST(NULL AS VARCHAR) AS visibility   WHERE FALSE ), base AS (   SELECT     * REPLACE (coalesce(CAST(visibility AS VARCHAR), 'not available') AS visibility),     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM src   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
         "skipUrlSync": true,
         "type": "constant"
       },
@@ -2337,7 +2372,7 @@
         "description": "",
         "hide": 2,
         "name": "pretask_comp",
-        "query": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH base AS (   SELECT     *,     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM parquet_scan(${compared_target_file:sqlstring})   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
+        "query": "CREATE OR REPLACE VIEW view_eval_flat_comp AS WITH src AS (   SELECT * FROM parquet_scan(${compared_target_file:sqlstring})   UNION BY NAME   SELECT CAST(NULL AS VARCHAR) AS visibility   WHERE FALSE ), base AS (   SELECT     * REPLACE (coalesce(CAST(visibility AS VARCHAR), 'not available') AS visibility),     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h   FROM src   WHERE x IS NOT NULL AND y IS NOT NULL ), bins AS (   SELECT * FROM (     VALUES       (0.0,   10.0,   '[0,10)',     10),       (10.0,  20.0,   '[10,20)',    20),       (20.0,  30.0,   '[20,30)',    30),       (30.0,  40.0,   '[30,40)',    40),       (40.0,  50.0,   '[40,50)',    50),       (50.0,  60.0,   '[50,60)',    60),       (60.0,  70.0,   '[60,70)',    70),       (70.0,  80.0,   '[70,80)',    80),       (80.0,  90.0,   '[80,90)',    90),       (90.0,  100.0,  '[90,100)',  100),       (100.0, 110.0,  '[100,110)', 110),       (110.0, 120.0,  '[110,120)', 120),       (120.0, 130.0,  '[120,130)', 130),       (130.0, 140.0,  '[130,140)', 140),       (140.0, 150.0,  '[140,150)', 150),       (150.0, 1e12,   '[150,inf)', 160)   ) AS t(bin_start, bin_end, distance_bin, bin_idx) ) SELECT   bse.*,   b.distance_bin,   b.bin_idx,   (status = 'TP') AS is_tp,   (status = 'FP') AS is_fp,   (status = 'FN') AS is_fn FROM base bse JOIN bins b   ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end;",
         "skipUrlSync": true,
         "type": "constant"
       },
@@ -2372,7 +2407,7 @@
         "description": "",
         "hide": 2,
         "name": "view_tpr_fpr_by_class_dist_topic",
-        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (   SELECT     t4dataset_id,   topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic AS WITH stats AS (     SELECT         t4dataset_id,         topic_name,         label,         distance_bin,         bin_idx,         coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility,         COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,         COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,         COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,         COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est     FROM view_eval_flat     GROUP BY         t4dataset_id, topic_name, label, distance_bin, bin_idx,         coalesce(try(CAST(visibility AS VARCHAR)), 'not available') ) SELECT     *,     CASE         WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total         ELSE NULL     END AS tpr,     CASE         WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total         ELSE NULL     END AS fpr FROM stats;",
         "skipUrlSync": true,
         "type": "constant"
       },
@@ -2384,7 +2419,7 @@
         "description": "",
         "hide": 2,
         "name": "view_tpr_fpr_by_class_dist_topic_c",
-        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY t4dataset_id, topic_name, label, distance_bin, bin_idx ) SELECT   *,   CASE      WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total     ELSE NULL   END AS tpr,   CASE      WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total     ELSE NULL   END AS fpr FROM stats;",
+        "query": "CREATE OR REPLACE VIEW view_tpr_fpr_by_class_dist_topic_c AS WITH stats AS (   SELECT     t4dataset_id,     topic_name,     label,     distance_bin,     bin_idx,     coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility,     COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) AS gt_total,     COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS tp_gt,     COUNT(*) FILTER (WHERE source='EST' AND status IN ('TP','FP')) AS est_total,     COUNT(*) FILTER (WHERE source='EST' AND status='FP') AS fp_est   FROM view_eval_flat_comp   GROUP BY     t4dataset_id, topic_name, label, distance_bin, bin_idx,     coalesce(try(CAST(visibility AS VARCHAR)), 'not available') ) SELECT   *,   CASE WHEN gt_total > 0 THEN CAST(tp_gt AS DOUBLE) / gt_total ELSE NULL END AS tpr,   CASE WHEN est_total > 0 THEN CAST(fp_est AS DOUBLE) / est_total ELSE NULL END AS fpr FROM stats;",
         "skipUrlSync": true,
         "type": "constant"
       },
@@ -2424,27 +2459,6 @@
         ],
         "query": "50, 80, 100, 120, 150",
         "type": "custom"
-      },
-      {
-        "allValue": "__all",
-        "current": {
-          "text": [
-            "FULL"
-          ],
-          "value": [
-            "FULL"
-          ]
-        },
-        "definition": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
-        "description": "Distinct visibility",
-        "includeAll": true,
-        "multi": true,
-        "name": "visibility",
-        "options": [],
-        "query": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
-        "refresh": 1,
-        "regex": "",
-        "type": "query"
       }
     ]
   },

@@ -1,9 +1,15 @@
 CREATE OR REPLACE VIEW view_eval_flat AS
-WITH base AS (
+WITH src AS (
+  SELECT * FROM parquet_scan(${target_file:sqlstring})
+  UNION BY NAME
+  SELECT CAST(NULL AS VARCHAR) AS visibility
+  WHERE FALSE
+),
+base AS (
   SELECT
-    *,
+    * REPLACE (coalesce(CAST(visibility AS VARCHAR), 'not available') AS visibility),
     sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h
-  FROM parquet_scan(${target_file:sqlstring})
+  FROM src
   WHERE x IS NOT NULL AND y IS NOT NULL
 ),
 bins AS (
