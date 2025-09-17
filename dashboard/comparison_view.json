@@ -192,7 +192,7 @@
             }
           },
           "mappings": [],
-          "max": 1,
+          "max": 1.2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -301,7 +301,7 @@
             }
           },
           "mappings": [],
-          "max": 1,
+          "max": 1.2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2274,11 +2274,13 @@
         "current": {
           "text": [
             "FULL",
-            "MOST"
+            "MOST",
+            "PARTIAL"
           ],
           "value": [
             "FULL",
-            "MOST"
+            "MOST",
+            "PARTIAL"
           ]
         },
         "definition": "SELECT DISTINCT\n  coalesce(try(CAST(visibility AS VARCHAR)), 'not available') AS visibility_option\nFROM view_eval_flat\nORDER BY 1;\n",
