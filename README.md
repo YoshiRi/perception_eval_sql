@@ -35,6 +35,21 @@ This repository provides SQL queries and Grafana configuration for analysing per
 
 3. Access Grafana at [http://localhost:3000](http://localhost:3000) and open dashboards under **Local JSON Dashboards**.
 
+### option: when you allow access from your local network
+
+```bash
+docker run -d --name grafana-perception -p 3000:3000 \
+        -v "$PWD/data:/opt/grafana/data" \
+        -v "$PWD/sql:/opt/grafana/sql" \
+        -v "$PWD/dashboard:/opt/grafana/dashboard" \
+        -e GF_AUTH_ANONYMOUS_ENABLED=true \
+        -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+        -e GF_SECURITY_ADMIN_USER=admin \
+        -e GF_SECURITY_ADMIN_PASSWORD=secret \
+        -e GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=motherduck-duckdb-datasource \
+        perception-eval
+```
+
 ## SQL Views
 
 The SQL files define reusable views that simplify analysis. For example, `view_eval_flat.sql` computes horizontal distance for each detection and marks whether it is TP/FP/FN in fixed distance bins. `view_tpr_fpr.sql` builds on this view to calculate true positive rate (TPR) and false positive rate (FPR) for each combination of dataset, topic, class and distance bin.
