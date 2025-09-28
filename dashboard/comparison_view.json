@@ -607,6 +607,7 @@
         "type": "motherduck-duckdb-datasource",
         "uid": "P651FBA4E292AABDC"
       },
+      "description": "compare by object id/t4dataset/.frame number and check degrade and improve",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -675,7 +676,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "-- base/comp の GT 行だけを (t4dataset_id, uuid) で突き合わせて TP の成否を比較\nWITH base_gt AS (\n  SELECT\n    t4dataset_id,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status='TP') > 0 AS tp_base\n  FROM view_eval_flat\n  WHERE source='GT' AND uuid IS NOT NULL\n  GROUP BY 1,2\n),\ncomp_gt AS (\n  SELECT\n    t4dataset_id,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status='TP') > 0 AS tp_comp\n  FROM view_eval_flat_comp\n  WHERE source='GT' AND uuid IS NOT NULL\n  GROUP BY 1,2\n),\njoined AS (\n  SELECT\n    COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,\n    COALESCE(b.gt_uuid,      c.gt_uuid)      AS gt_uuid,\n    COALESCE(b.tp_base, FALSE)               AS tp_base,\n    COALESCE(c.tp_comp, FALSE)               AS tp_comp\n  FROM base_gt b\n  FULL OUTER JOIN comp_gt c\n    ON b.t4dataset_id = c.t4dataset_id\n   AND b.gt_uuid      = c.gt_uuid\n)\nSELECT\n  t4dataset_id,\n  COUNT(*)                                                    AS total_gt,\n  COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp)             AS improved_cnt,   -- FN→TP\n  COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp)             AS degraded_cnt,   -- TP→FN\n  COUNT(*) FILTER (WHERE tp_base AND tp_comp)                 AS both_tp_cnt,    -- TP維持\n  COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp)         AS both_fn_cnt,    -- 両方検出不可\nFROM joined\nGROUP BY 1\nORDER BY improved_cnt DESC;\n",
+          "rawSql": "-- base と comp の GT行を (t4dataset_id, frame_index, uuid) で比較\nWITH base_gt AS (\n  SELECT\n    t4dataset_id,\n    frame_index,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base\n  FROM view_eval_flat\n  WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND ${topic_label_id_filter:raw} AND ${visibility_filter:raw} AND ( dist_h < $max_eval_range )\n  GROUP BY 1,2,3\n),\ncomp_gt AS (\n  SELECT\n    t4dataset_id,\n    frame_index,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp\n  FROM view_eval_flat_comp\n  WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND ${compared_topic_label_id_filter:raw} AND ${visibility_filter:raw} AND ( dist_h < $max_eval_range )\n  GROUP BY 1,2,3\n),\njoined AS (\n  SELECT\n    COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,\n    COALESCE(b.frame_index, c.frame_index)   AS frame_index,\n    COALESCE(b.gt_uuid,      c.gt_uuid)      AS gt_uuid,\n    COALESCE(b.tp_base, FALSE) AS tp_base,\n    COALESCE(c.tp_comp, FALSE) AS tp_comp\n  FROM base_gt b\n  FULL OUTER JOIN comp_gt c\n    ON b.t4dataset_id = c.t4dataset_id\n   AND b.frame_index   = c.frame_index\n   AND b.gt_uuid       = c.gt_uuid\n)\nSELECT\n  t4dataset_id,\n  CAST(COUNT(*) FILTER (WHERE TRUE)                          AS DOUBLE) AS total_gt,\n  CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp)       AS DOUBLE) AS improved_cnt,   -- FN→TP\n  CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp)       AS DOUBLE) AS degraded_cnt,   -- TP→FN\n  CAST(COUNT(*) FILTER (WHERE tp_base AND tp_comp)           AS DOUBLE) AS both_tp_cnt,    -- TP維持\n  CAST(COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp)   AS DOUBLE) AS both_fn_cnt,    -- 両方検出不可\n  CAST(SUM( (CASE WHEN tp_comp THEN 1 ELSE 0 END)\n           - (CASE WHEN tp_base THEN 1 ELSE 0 END))          AS DOUBLE) AS net_tp_delta\nFROM joined\nGROUP BY 1\nORDER BY improved_cnt DESC;\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -696,7 +697,7 @@
           }
         }
       ],
-      "title": "New panel",
+      "title": "Improved and Degraded count by objects",
       "type": "table"
     },
     {
