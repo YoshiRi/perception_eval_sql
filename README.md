@@ -17,7 +17,7 @@ This repository provides SQL queries and Grafana configuration for analysing per
 1. Build the Docker image:
 
    ```bash
-   docker build -t perception-eval .
+   docker build -t grafana-perception .
    ```
 
 2. Run the container, mounting your data and SQL directories and exposing Grafana:
@@ -29,7 +29,7 @@ This repository provides SQL queries and Grafana configuration for analysing per
       -e GF_SECURITY_ADMIN_USER=admin \
       -e GF_SECURITY_ADMIN_PASSWORD=secret \
         -e GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=motherduck-duckdb-datasource\
-      perception-eval
+      grafana-perception
    ```
    username: `admin`, password: `secret`
 
@@ -39,15 +39,14 @@ This repository provides SQL queries and Grafana configuration for analysing per
 
 ```bash
 docker run -d --name grafana-perception -p 3000:3000 \
-        -v "$PWD/data:/opt/grafana/data" \
-        -v "$PWD/sql:/opt/grafana/sql" \
-        -v "$PWD/dashboard:/opt/grafana/dashboard" \
-        -e GF_AUTH_ANONYMOUS_ENABLED=true \
-        -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
-        -e GF_SECURITY_ADMIN_USER=admin \
-        -e GF_SECURITY_ADMIN_PASSWORD=secret \
-        -e GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=motherduck-duckdb-datasource \
-        perception-eval
+              -v "$PWD/data:/opt/grafana/data" \
+              -v "$PWD/sql:/opt/grafana/sql" \
+              -v "$PWD/dashboard:/opt/grafana/dashboard" \
+              -e GF_AUTH_ANONYMOUS_ENABLED=true \
+              -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+              -e GF_SECURITY_ADMIN_USER=admin \
+              -e GF_SECURITY_ADMIN_PASSWORD=secret \
+              grafana-perception
 ```
 
 ## SQL Views
