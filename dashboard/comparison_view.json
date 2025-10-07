@@ -651,8 +651,8 @@
         ]
       },
       "gridPos": {
-        "h": 7,
-        "w": 18,
+        "h": 12,
+        "w": 20,
         "x": 0,
         "y": 36
       },
@@ -676,7 +676,7 @@
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "-- base と comp の GT行を (t4dataset_id, frame_index, uuid) で比較\nWITH base_gt AS (\n  SELECT\n    t4dataset_id,\n    frame_index,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base\n  FROM view_eval_flat\n  WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND ${topic_label_id_filter:raw} AND ${visibility_filter:raw} AND ( dist_h < $max_eval_range )\n  GROUP BY 1,2,3\n),\ncomp_gt AS (\n  SELECT\n    t4dataset_id,\n    frame_index,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp\n  FROM view_eval_flat_comp\n  WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND ${compared_topic_label_id_filter:raw} AND ${visibility_filter:raw} AND ( dist_h < $max_eval_range )\n  GROUP BY 1,2,3\n),\njoined AS (\n  SELECT\n    COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,\n    COALESCE(b.frame_index, c.frame_index)   AS frame_index,\n    COALESCE(b.gt_uuid,      c.gt_uuid)      AS gt_uuid,\n    COALESCE(b.tp_base, FALSE) AS tp_base,\n    COALESCE(c.tp_comp, FALSE) AS tp_comp\n  FROM base_gt b\n  FULL OUTER JOIN comp_gt c\n    ON b.t4dataset_id = c.t4dataset_id\n   AND b.frame_index   = c.frame_index\n   AND b.gt_uuid       = c.gt_uuid\n)\nSELECT\n  t4dataset_id,\n  CAST(COUNT(*) FILTER (WHERE TRUE)                          AS DOUBLE) AS total_gt,\n  CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp)       AS DOUBLE) AS improved_cnt,   -- FN→TP\n  CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp)       AS DOUBLE) AS degraded_cnt,   -- TP→FN\n  CAST(COUNT(*) FILTER (WHERE tp_base AND tp_comp)           AS DOUBLE) AS both_tp_cnt,    -- TP維持\n  CAST(COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp)   AS DOUBLE) AS both_fn_cnt,    -- 両方検出不可\n  CAST(SUM( (CASE WHEN tp_comp THEN 1 ELSE 0 END)\n           - (CASE WHEN tp_base THEN 1 ELSE 0 END))          AS DOUBLE) AS net_tp_delta\nFROM joined\nGROUP BY 1\nORDER BY improved_cnt DESC;\n",
+          "rawSql": "-- base と comp の GT行を (t4dataset_id, frame_index, uuid) で比較\nWITH base_gt AS (\n  SELECT\n    t4dataset_id,\n    frame_index,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base\n  FROM view_eval_flat\n  WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND ${topic_label_id_filter:raw} AND ${visibility_filter:raw} AND ( dist_h < $max_eval_range )\n  GROUP BY 1,2,3\n),\ncomp_gt AS (\n  SELECT\n    t4dataset_id,\n    frame_index,\n    uuid AS gt_uuid,\n    COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp\n  FROM view_eval_flat_comp\n  WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND ${compared_topic_label_id_filter:raw} AND ${visibility_filter:raw} AND ( dist_h < $max_eval_range )\n  GROUP BY 1,2,3\n),\njoined AS (\n  SELECT\n    COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,\n    COALESCE(b.frame_index, c.frame_index)   AS frame_index,\n    COALESCE(b.gt_uuid,      c.gt_uuid)      AS gt_uuid,\n    COALESCE(b.tp_base, FALSE) AS tp_base,\n    COALESCE(c.tp_comp, FALSE) AS tp_comp\n  FROM base_gt b\n  FULL OUTER JOIN comp_gt c\n    ON b.t4dataset_id = c.t4dataset_id\n   AND b.frame_index   = c.frame_index\n   AND b.gt_uuid       = c.gt_uuid\n)\nSELECT\n  t4dataset_id,\n  CAST(COUNT(*) FILTER (WHERE TRUE)                          AS DOUBLE) AS total_gt,\n  CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp)       AS DOUBLE) AS improved_cnt,   -- FN→TP\n  CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp)       AS DOUBLE) AS degraded_cnt,   -- TP→FN\n  CAST(COUNT(*) FILTER (WHERE tp_base AND tp_comp)           AS DOUBLE) AS both_tp_cnt,    -- TP維持\n  CAST(COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp)   AS DOUBLE) AS both_fn_cnt,    -- 両方検出不可\n  CAST(SUM( (CASE WHEN tp_comp THEN 1 ELSE 0 END)\n           - (CASE WHEN tp_base THEN 1 ELSE 0 END))          AS DOUBLE) AS net_tp_delta\nFROM joined\nGROUP BY 1\nORDER BY net_tp_delta DESC;\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -754,7 +754,7 @@
         "h": 7,
         "w": 10,
         "x": 0,
-        "y": 43
+        "y": 48
       },
       "id": 12,
       "options": {
@@ -863,7 +863,7 @@
         "h": 7,
         "w": 10,
         "x": 10,
-        "y": 43
+        "y": 48
       },
       "id": 23,
       "options": {
@@ -972,7 +972,7 @@
         "h": 6,
         "w": 20,
         "x": 0,
-        "y": 50
+        "y": 55
       },
       "id": 24,
       "options": {
@@ -1030,7 +1030,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "description": "tp/fp rate with each t4dataset\ndescending with tprate",
       "fieldConfig": {
@@ -1080,7 +1080,7 @@
         "h": 11,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 61
       },
       "id": 7,
       "options": {
@@ -1146,7 +1146,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "fieldConfig": {
         "defaults": {
@@ -1196,7 +1196,7 @@
         "h": 11,
         "w": 8,
         "x": 12,
-        "y": 56
+        "y": 61
       },
       "id": 13,
       "options": {
@@ -1254,7 +1254,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "description": "object number per distance",
       "fieldConfig": {
@@ -1297,7 +1297,7 @@
         "h": 8,
         "w": 9,
         "x": 0,
-        "y": 67
+        "y": 72
       },
       "id": 5,
       "options": {
@@ -1346,7 +1346,7 @@
     {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "description": "object number per distance",
       "fieldConfig": {
@@ -1397,7 +1397,7 @@
         "h": 8,
         "w": 9,
         "x": 9,
-        "y": 67
+        "y": 72
       },
       "id": 9,
       "options": {
@@ -1538,7 +1538,7 @@
         "h": 10,
         "w": 18,
         "x": 0,
-        "y": 75
+        "y": 80
       },
       "id": 10,
       "options": {
@@ -1646,7 +1646,7 @@
         "h": 8,
         "w": 18,
         "x": 0,
-        "y": 85
+        "y": 90
       },
       "id": 8,
       "options": {
@@ -1703,434 +1703,62 @@
       "type": "barchart"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 93
-      },
-      "id": 4,
-      "panels": [],
-      "title": "Topic Comparison View",
-      "type": "row"
-    },
-    {
       "datasource": {
         "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
-      },
-      "description": "TP rate for selected value",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisGridShow": true,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 18,
-        "x": 0,
-        "y": 94
-      },
-      "id": 18,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
-        },
-        "orientation": "auto",
-        "showValue": "always",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xField": "distance_bin",
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.1.0",
-      "targets": [
-        {
-          "editorMode": "code",
-          "format": 1,
-          "rawQuery": true,
-          "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n\nWITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS tpr_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "TPrate comparison in distance bin",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
-      },
-      "description": "FP rate for selected value",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisGridShow": true,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 18,
-        "x": 0,
-        "y": 103
-      },
-      "id": 20,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
-        },
-        "orientation": "auto",
-        "showValue": "always",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xField": "distance_bin",
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.1.0",
-      "targets": [
-        {
-          "editorMode": "code",
-          "format": 1,
-          "rawQuery": true,
-          "rawSql": "WITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    fpr_a AS ${topic_name},\n    fpr_b AS ${compared_topic_name},\n    (fpr_b - fpr_a) AS fpr_diff,\n    CASE\n      WHEN (fpr_b - fpr_a) > 0 THEN '↑'\n      WHEN (fpr_b - fpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "FPrate comparison in distance bin",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
+        "uid": "P651FBA4E292AABDC"
       },
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 18,
-        "x": 0,
-        "y": 112
-      },
-      "id": 16,
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
-        },
-        "orientation": "auto",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "12.1.0",
-      "targets": [
-        {
-          "editorMode": "code",
-          "format": 1,
-          "rawQuery": true,
-          "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_b\n    FROM view_eval_flat\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n)\nSELECT\n    a.label,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS TPrate_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "TP rate comparison within ${max_eval_range} [m]",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "motherduck-duckdb-datasource",
-        "uid": "beurnluka4ruoa"
-      },
-      "description": "Mean absolute error panel",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "[m] or [rad]",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
+        "defaults": {},
         "overrides": []
       },
       "gridPos": {
         "h": 6,
-        "w": 18,
+        "w": 14,
         "x": 0,
-        "y": 121
+        "y": 98
       },
-      "id": 19,
+      "id": 27,
       "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true
+        "allData": {},
+        "config": {},
+        "data": [],
+        "imgFormat": "png",
+        "layout": {
+          "font": {
+            "family": "Inter, Helvetica, Arial, sans-serif"
+          },
+          "margin": {
+            "b": 0,
+            "l": 0,
+            "r": 0,
+            "t": 0
+          },
+          "title": {
+            "automargin": true
+          },
+          "xaxis": {
+            "automargin": true,
+            "autorange": true,
+            "type": "date"
+          },
+          "yaxis": {
+            "automargin": true,
+            "autorange": true
+          }
         },
-        "orientation": "auto",
-        "showValue": "auto",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
+        "onclick": "// Event handling\n/*\n// 'data', 'variables', 'options', 'utils', and 'event' are passed as arguments\n\ntry {\n  const { type: eventType, data: eventData } = event;\n  const { timeZone, dayjs, locationService, getTemplateSrv } = utils;\n\n  switch (eventType) {\n    case 'click':\n      console.log('Click event:', eventData.points);\n      break;\n    case 'select':\n      console.log('Selection event:', eventData.range);\n      break;\n    case 'zoom':\n      console.log('Zoom event:', eventData);\n      break;\n    default:\n      console.log('Unhandled event type:', eventType, eventData);\n  }\n\n  console.log('Current time zone:', timeZone);\n  console.log('From time:', dayjs(variables.__from).format());\n  console.log('To time:', dayjs(variables.__to).format());\n\n  // Example of using locationService\n  // locationService.partial({ 'var-example': 'test' }, true);\n\n} catch (error) {\n  console.error('Error in onclick handler:', error);\n}\n*/\n  ",
+        "resScale": 2,
+        "script": "const d = (typeof data !== 'undefined') ? data : (arguments && arguments.data);\nconst info = !d ? 'no d' : `series=${d.series?.length}, fields=${d.series?.[0]?.fields?.map(f=>f.name).join(',')}, lenGuess=${(d.series?.[0]?.length ?? d.series?.[0]?.fields?.[0]?.values?.length ?? 'NA')}`;\nreturn { data: [], layout: { title: info } };\n",
+        "syncTimeRange": false,
+        "timeCol": ""
       },
-      "pluginVersion": "12.1.0",
+      "pluginVersion": "1.8.1",
       "targets": [
         {
           "editorMode": "code",
           "format": 1,
           "rawQuery": true,
-          "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_b,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_b,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_b\n    FROM view_eval_flat_comp\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n)\nSELECT\n    a.label,\n    (x_b - x_a) AS x_diff,\n    (y_b - y_a) AS y_diff,\n    (yaw_b - yaw_a) AS yaw_diff\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
+          "rawSql": "-- 回転BBOX（4隅）を持つスナップショットテーブルに更新\nCREATE OR REPLACE TABLE bev_bboxes AS\nWITH base AS (\n  SELECT\n    frame_index AS ts,\n    x, y, width, length, yaw,      -- yaw はラジアン\n    label,\n    source,\n    dist_h,\n    topic_name,\n    t4dataset_id,\n    visibility\n  FROM view_eval_flat\n),\nparam AS (\n  SELECT\n    *,\n    width  / 2.0 AS hx,            -- half width\n    length / 2.0 AS hy             -- half length\n  FROM base\n)\nSELECT\n  ts,\n  x, y, width, length, yaw,\n  -- 4隅（時計回り: FR, FL, BL, BR）\n  ( x + ( +hx * cos(yaw) - +hy * sin(yaw) ) ) AS x1,\n  ( y + ( +hx * sin(yaw) + +hy * cos(yaw) ) ) AS y1,  -- Front-Right\n  ( x + ( -hx * cos(yaw) - +hy * sin(yaw) ) ) AS x2,\n  ( y + ( -hx * sin(yaw) + +hy * cos(yaw) ) ) AS y2,  -- Front-Left\n  ( x + ( -hx * cos(yaw) - -hy * sin(yaw) ) ) AS x3,\n  ( y + ( -hx * sin(yaw) + -hy * cos(yaw) ) ) AS y3,  -- Back-Left\n  ( x + ( +hx * cos(yaw) - -hy * sin(yaw) ) ) AS x4,\n  ( y + ( +hx * sin(yaw) + -hy * cos(yaw) ) ) AS y4,  -- Back-Right\n  label,\n  source,\n  dist_h,\n  topic_name,\n  t4dataset_id,\n  visibility\nFROM param;\n\nSELECT *\nFROM bev_bboxes\nWHERE\n  ${topic_label_id_filter:raw}\n  AND (dist_h < $max_eval_range)\n  AND ${visibility_filter:raw}\nORDER BY ts;\n",
           "refId": "A",
           "sql": {
             "columns": [
@@ -2151,8 +1779,461 @@
           }
         }
       ],
-      "title": "Difference of mean absolute error within ${max_eval_range} [m] (comp - target) ",
-      "type": "barchart"
+      "title": "Plotly",
+      "type": "nline-plotlyjs-panel"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 104
+      },
+      "id": 4,
+      "panels": [
+        {
+          "datasource": {
+            "type": "motherduck-duckdb-datasource",
+            "uid": "beurnluka4ruoa"
+          },
+          "description": "TP rate for selected value",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisGridShow": true,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 18,
+            "x": 0,
+            "y": 100
+          },
+          "id": 18,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.97,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "always",
+            "stacking": "none",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xField": "distance_bin",
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.1.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "format": 1,
+              "rawQuery": true,
+              "rawSql": "${view_tpr_fpr_by_class_dist_topic:raw}\n\nWITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total)\n        ELSE 0\n      END AS tpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS tpr_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+              "refId": "A",
+              "sql": {
+                "columns": [
+                  {
+                    "parameters": [],
+                    "type": "function"
+                  }
+                ],
+                "groupBy": [
+                  {
+                    "property": {
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "limit": 50
+              }
+            }
+          ],
+          "title": "TPrate comparison in distance bin",
+          "type": "barchart"
+        },
+        {
+          "datasource": {
+            "type": "motherduck-duckdb-datasource",
+            "uid": "beurnluka4ruoa"
+          },
+          "description": "FP rate for selected value",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisGridShow": true,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 18,
+            "x": 0,
+            "y": 109
+          },
+          "id": 20,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.97,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "always",
+            "stacking": "none",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xField": "distance_bin",
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.1.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "format": 1,
+              "rawQuery": true,
+              "rawSql": "WITH topic_a AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_a\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${topic_label_id_filter:raw}\n    GROUP BY distance_bin\n),\ntopic_b AS (\n    SELECT\n      distance_bin,\n      CASE \n        WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total)\n        ELSE 0\n      END AS fpr_b\n    FROM view_tpr_fpr_by_class_dist_topic\n    WHERE ${compared_topic_label_id_filter:raw}\n    GROUP BY distance_bin\n)\nSELECT\n    a.distance_bin,\n    fpr_a AS ${topic_name},\n    fpr_b AS ${compared_topic_name},\n    (fpr_b - fpr_a) AS fpr_diff,\n    CASE\n      WHEN (fpr_b - fpr_a) > 0 THEN '↑'\n      WHEN (fpr_b - fpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (distance_bin)\nORDER BY CAST(REPLACE(SPLIT_PART(distance_bin, ',', 1), '[', ' ') AS INTEGER);\n",
+              "refId": "A",
+              "sql": {
+                "columns": [
+                  {
+                    "parameters": [],
+                    "type": "function"
+                  }
+                ],
+                "groupBy": [
+                  {
+                    "property": {
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "limit": 50
+              }
+            }
+          ],
+          "title": "FPrate comparison in distance bin",
+          "type": "barchart"
+        },
+        {
+          "datasource": {
+            "type": "motherduck-duckdb-datasource",
+            "uid": "beurnluka4ruoa"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 18,
+            "x": 0,
+            "y": 118
+          },
+          "id": 16,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.97,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.1.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "format": 1,
+              "rawQuery": true,
+              "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      CASE \n        WHEN COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN')) > 0 \n        THEN CAST(COUNT(*) FILTER (WHERE source='GT' AND status='TP') AS DOUBLE) \n             / COUNT(*) FILTER (WHERE source='GT' AND status IN ('TP','FN'))\n        ELSE 0\n      END AS tpr_b\n    FROM view_eval_flat\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < ${max_eval_range})\n    GROUP BY label\n)\nSELECT\n    a.label,\n    tpr_a AS ${topic_name},\n    tpr_b AS ${compared_topic_name},\n    (tpr_b - tpr_a) AS TPrate_diff,\n    CASE\n      WHEN (tpr_b - tpr_a) > 0 THEN '↑'\n      WHEN (tpr_b - tpr_a) < 0 THEN '↓'\n      ELSE '='\n    END AS trend\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
+              "refId": "A",
+              "sql": {
+                "columns": [
+                  {
+                    "parameters": [],
+                    "type": "function"
+                  }
+                ],
+                "groupBy": [
+                  {
+                    "property": {
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "limit": 50
+              }
+            }
+          ],
+          "title": "TP rate comparison within ${max_eval_range} [m]",
+          "type": "barchart"
+        },
+        {
+          "datasource": {
+            "type": "motherduck-duckdb-datasource",
+            "uid": "beurnluka4ruoa"
+          },
+          "description": "Mean absolute error panel",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "[m] or [rad]",
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineWidth": 1,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 18,
+            "x": 0,
+            "y": 127
+          },
+          "id": 19,
+          "options": {
+            "barRadius": 0,
+            "barWidth": 0.97,
+            "fullHighlight": false,
+            "groupWidth": 0.7,
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "right",
+              "showLegend": true
+            },
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            },
+            "xTickLabelRotation": 0,
+            "xTickLabelSpacing": 0
+          },
+          "pluginVersion": "12.1.0",
+          "targets": [
+            {
+              "editorMode": "code",
+              "format": 1,
+              "rawQuery": true,
+              "rawSql": "WITH topic_a AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a\n    FROM view_eval_flat\n    WHERE ${topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n),\ntopic_b AS (\n    SELECT\n      label,\n      AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_b,\n      AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_b,\n      AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_b\n    FROM view_eval_flat_comp\n    WHERE ${compared_topic_label_id_filter:raw} AND (dist_h < $max_eval_range )\n    GROUP BY label\n)\nSELECT\n    a.label,\n    (x_b - x_a) AS x_diff,\n    (y_b - y_a) AS y_diff,\n    (yaw_b - yaw_a) AS yaw_diff\nFROM topic_a a\nJOIN topic_b b USING (label)\nORDER BY label;\n",
+              "refId": "A",
+              "sql": {
+                "columns": [
+                  {
+                    "parameters": [],
+                    "type": "function"
+                  }
+                ],
+                "groupBy": [
+                  {
+                    "property": {
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "limit": 50
+              }
+            }
+          ],
+          "title": "Difference of mean absolute error within ${max_eval_range} [m] (comp - target) ",
+          "type": "barchart"
+        }
+      ],
+      "title": "Topic Comparison View",
+      "type": "row"
     }
   ],
   "preload": false,
