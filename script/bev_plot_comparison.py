@@ -1,10 +1,11 @@
 import duckdb
 import streamlit as st
 import plotly.graph_objects as go
+import pandas as pd
 import numpy as np
 import glob
 import os
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 
 st.set_page_config(layout="wide")
 st.title("BEV Bounding Box Viewer (A/B Comparison)")
@@ -12,6 +13,16 @@ st.title("BEV Bounding Box Viewer (A/B Comparison)")
 # =============================
 # 汎用ユーティリティ
 # =============================
+def _base_diff(t: str) -> str:
+    """'GT_IMPROVED' などを 'IMPROVED' に正規化。未知はそのまま返す。"""
+    if not isinstance(t, str):
+        return t
+    if t.startswith("GT_"):
+        return t[3:]
+    if t.startswith("EST_"):
+        return t[4:]
+    return t
+
 def rotated_rect(x: float, y: float, length: float, width: float, yaw: float) -> Tuple[np.ndarray, np.ndarray]:
     """yawはラジアン。中心(x,y)、長さlength(前後)、幅width(左右)。BEVの進行方向合わせのため+pi/2回転。"""
     dx, dy = length / 2.0, width / 2.0
@@ -65,31 +76,38 @@ def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag
         ))
 
 def plot_diff(fig: go.Figure, df_diff, palette, types: List[str] | None = None, width: int = 3, opacity: float = 0.45):
-    """types を指定すればそのdiffだけ描画（例: ['IMPROVED','DEGRADED']）。"""
-    import pandas as pd
+    """types はベース型で指定（例: ['IMPROVED','DEGRADED']）。GT_/EST_ は内部で正規化してフィルタ。"""
     if df_diff is None or df_diff.empty or "diff_type" not in df_diff.columns:
         return
-    ddf = df_diff if types is None else df_diff[df_diff["diff_type"].isin(types)]
-    if ddf.empty:
-        return
+
+    # 正規化列を作成
+    ddf = df_diff.copy()
+    ddf["_base"] = ddf["diff_type"].map(_base_diff)
+
+    if types is not None:
+        ddf = ddf[ddf["_base"].isin(types)]
+        if ddf.empty:
+            return
+
     shown = set()
     for _, r in ddf.iterrows():
         x_poly, y_poly = rotated_rect(r.x, r.y, r.length, r.width, r.yaw)
-        key = ("DIFF", r.diff_type)
-        name = f"Δ {r.diff_type}"
-        lg = name not in shown
+        base = r._base                       # IMRPOVED / DEGRADED / NEW_FP / FIXED_FP
+        color = palette.get(("DIFF", base), "#777777")
+        # レジェンドは GT/EST を見分けたいので diff_type そのまま使う
+        name = f"Δ {r.diff_type.replace('_', ' ')}"  # 例: 'Δ GT IMPROVED'
+        show = name not in shown
         shown.add(name)
         fig.add_trace(go.Scatter(
             x=x_poly, y=y_poly, mode='lines', fill='toself', opacity=opacity,
-            line=dict(color=palette.get(key, "#777777"), width=width),
-            name=name, showlegend=lg, legendgroup=name
+            line=dict(color=color, width=width),
+            name=name, showlegend=show, legendgroup=name
         ))
 
 def summarize_diff(df_diff):
-    import pandas as pd
     if df_diff is None or df_diff.empty or "diff_type" not in df_diff.columns:
         return 0, 0, 0, 0
-    s = df_diff["diff_type"].value_counts()
+    s = df_diff["diff_type"].map(_base_diff).value_counts()
     return int(s.get("IMPROVED", 0)), int(s.get("DEGRADED", 0)), int(s.get("NEW_FP", 0)), int(s.get("FIXED_FP", 0))
 
 # =============================
@@ -199,7 +217,7 @@ def load_filtered_df(pq: str, t4: str, topic: str, labels, sel_vis, has_vis: boo
 
     q = f"""
         SELECT CAST(frame_index AS INT) AS frame_index,
-               x, y, length, width, yaw, label, topic_name, source, status,
+               x, y, length, width, yaw, label, topic_name, source, status, uuid,
                {vis_select} {pair_select}
         FROM parquet_scan('{pq}')
         WHERE {where}
@@ -207,116 +225,130 @@ def load_filtered_df(pq: str, t4: str, topic: str, labels, sel_vis, has_vis: boo
     """
     return duckdb.connect().execute(q).df()
 
-# 共有フィルタ + 個別topic を適用
-dfA = load_filtered_df(file_A, selected_t4, topic_A, selected_labels, selected_visibility, has_vis_A, has_pair_A)
-dfB = load_filtered_df(file_B, selected_t4, topic_B, selected_labels, selected_visibility, has_vis_B, has_pair_B)
-
-if dfA.empty and dfB.empty:
-    st.warning("A/Bともに該当データがありません。条件を見直してください。")
-    st.stop()
-
-# 共通フレーム範囲（無ければAを優先）
-fmin = int(min([x for x in [dfA.frame_index.min() if not dfA.empty else None,
-                            dfB.frame_index.min() if not dfB.empty else None] if x is not None]))
-fmax = int(max([x for x in [dfA.frame_index.max() if not dfA.empty else None,
-                            dfB.frame_index.max() if not dfB.empty else None] if x is not None]))
-frame = st.slider("Frame index", fmin, fmax, step=1)
-
-dfA_f = dfA[dfA.frame_index == frame].copy()
-dfB_f = dfB[dfB.frame_index == frame].copy()
 
 # =============================
 # 差分判定（frame単位）
 # =============================
-import pandas as pd
+def _norm_status(s: pd.Series) -> pd.Series:
+    return s.astype(str).str.upper().str.strip()
 
-def compute_diff(dfAf, dfBf):
+def compute_diff(
+    dfA: pd.DataFrame,
+    dfB: pd.DataFrame,
+    gt_id_col: str = "uuid",         # UIで選んで渡す（例: "object_id" など）。NoneならGT軸はスキップ
+    est_pair_col: str = "pair_uuid",  # ESTの対応ID列（既定: pair_uuid）
+    include_extra: Optional[List[str]] = None,  # 例: ["frame_index","label"] を含めて返したい時
+) -> pd.DataFrame:
     """
-    改善: A:FN -> B:TP
-    悪化: A:TP -> B:FN
-    NEW_FP: Aに無いFP（BのみFP, pair_uuid NULL）
-    FIXED_FP: Bに無いFP（AのみFP, pair_uuid NULL）
+    入力: 同一 frame_index / t4dataset_id でスライス済みの dfA/dfB
+    出力: 必須6列 + （必要なら extra）を持つ DataFrame
+      必須6列: diff_type, x, y, length, width, yaw
+      diff_type ∈ { GT_IMPROVED, GT_DEGRADED, EST_IMPROVED, EST_DEGRADED, EST_NEW_FP, EST_FIXED_FP }
     """
-    cols = ["diff_type", "x", "y", "length", "width", "yaw"]
-    out = []
+    cols = ["diff_type","x","y","length","width","yaw"]
+    extras = include_extra or []
+    rows = []
 
-    # --- EST側のTP/FN推移（pair_uuidで突き合わせ） ---
-    estA = dfAf[(dfAf["source"] == "EST") & (dfAf["status"].isin(["TP","FN"]))].copy()
-    estB = dfBf[(dfBf["source"] == "EST") & (dfBf["status"].isin(["TP","FN"]))].copy()
+    # ---------- GT軸: 同一GT-IDでの TP/FN 推移 ----------
+    if gt_id_col is not None and gt_id_col in dfA.columns and gt_id_col in dfB.columns:
+        gtA = dfA[(dfA["source"]=="GT") & (dfA["status"].isin(["TP","FN"]))].copy()
+        gtB = dfB[(dfB["source"]=="GT") & (dfB["status"].isin(["TP","FN"]))].copy()
+        if not gtA.empty and not gtB.empty:
+            gtA["status"] = _norm_status(gtA["status"])
+            gtB["status"] = _norm_status(gtB["status"])
+            a = gtA[[gt_id_col,"frame_index","status","x","y","length","width","yaw"] + [c for c in extras if c in gtA.columns]].rename(
+                columns={gt_id_col:"gt_id","status":"status_A","x":"x_A","y":"y_A","length":"length_A","width":"width_A","yaw":"yaw_A"}
+            )
+            b = gtB[[gt_id_col,"frame_index","status","x","y","length","width","yaw"] + [c for c in extras if c in gtB.columns]].rename(
+                columns={gt_id_col:"gt_id","status":"status_B","x":"x_B","y":"y_B","length":"length_B","width":"width_B","yaw":"yaw_B"}
+            )
+            j = a.merge(b, on=["gt_id","frame_index"] + [c for c in extras if c != "frame_index"], how="inner", suffixes=("_A","_B"))
 
-    # joinキー：pair_uuid が無ければ比較不能なので除外
-    if "pair_uuid" not in estA.columns:
-        estA["pair_uuid"] = np.nan
-    if "pair_uuid" not in estB.columns:
-        estB["pair_uuid"] = np.nan
-    estA = estA[pd.notna(estA["pair_uuid"])]
-    estB = estB[pd.notna(estB["pair_uuid"])]
+            for _, r in j.iterrows():
+                sa, sb = r["status_A"], r["status_B"]
+                if sa=="FN" and sb=="TP":
+                    rows.append(dict(
+                        diff_type="GT_IMPROVED",
+                        x=r.get("x_B", r.get("x_A")), y=r.get("y_B", r.get("y_A")),
+                        length=r.get("length_B", r.get("length_A")),
+                        width=r.get("width_B", r.get("width_A")),
+                        yaw=r.get("yaw_B", r.get("yaw_A")),
+                        **{k: r[k] for k in extras if k in r}
+                    ))
+                elif sa=="TP" and sb=="FN":
+                    rows.append(dict(
+                        diff_type="GT_DEGRADED",
+                        x=r.get("x_A", r.get("x_B")), y=r.get("y_A", r.get("y_B")),
+                        length=r.get("length_A", r.get("length_B")),
+                        width=r.get("width_A", r.get("width_B")),
+                        yaw=r.get("yaw_A", r.get("yaw_B")),
+                        **{k: r[k] for k in extras if k in r}
+                    ))
 
+    # ---------- EST軸: 同一pairでの TP/FP 推移 ----------
+    estA = dfA[(dfA["source"]=="EST") & (dfA["status"].isin(["TP","FP"]))].copy()
+    estB = dfB[(dfB["source"]=="EST") & (dfB["status"].isin(["TP","FP"]))].copy()
+    if est_pair_col not in estA.columns: estA[est_pair_col] = np.nan
+    if est_pair_col not in estB.columns: estB[est_pair_col] = np.nan
     if not estA.empty or not estB.empty:
-        join_keys = ["pair_uuid", "label"]
-        j = estA.merge(estB, on=join_keys, how="outer", suffixes=("_A","_B"))
+        estA["status"] = _norm_status(estA["status"])
+        estB["status"] = _norm_status(estB["status"])
 
-        for _, r in j.iterrows():
-            pa = r.get("pair_uuid")
-            if pd.isna(pa):
-                continue
-            sa = r.get("status_A")
-            sb = r.get("status_B")
+        a = estA[estA[est_pair_col].notna()][[est_pair_col,"frame_index","status","x","y","length","width","yaw"] + [c for c in extras if c in estA.columns]].rename(
+            columns={est_pair_col:"pair_uuid","status":"status_A","x":"x_A","y":"y_A","length":"length_A","width":"width_A","yaw":"yaw_A"}
+        )
+        b = estB[estB[est_pair_col].notna()][[est_pair_col,"frame_index","status","x","y","length","width","yaw"] + [c for c in extras if c in estB.columns]].rename(
+            columns={est_pair_col:"pair_uuid","status":"status_B","x":"x_B","y":"y_B","length":"length_B","width":"width_B","yaw":"yaw_B"}
+        )
+        jb = a.merge(b, on=["pair_uuid","frame_index"] + [c for c in extras if c != "frame_index"], how="inner", suffixes=("_A","_B"))
 
-            # 改善/悪化の位置は「見える側」を優先（BにあるならB、無ければA）
-            if sa == "FN" and sb == "TP":
-                out.append({"diff_type":"IMPROVED",
-                            "x": r.get("x_B", r.get("x_A")), "y": r.get("y_B", r.get("y_A")),
-                            "length": r.get("length_B", r.get("length_A")),
-                            "width":  r.get("width_B",  r.get("width_A")),
-                            "yaw":    r.get("yaw_B",    r.get("yaw_A"))})
-            elif sa == "TP" and sb == "FN":
-                out.append({"diff_type":"DEGRADED",
-                            "x": r.get("x_A", r.get("x_B")), "y": r.get("y_A", r.get("y_B")),
-                            "length": r.get("length_A", r.get("length_B")),
-                            "width":  r.get("width_A",  r.get("width_B")),
-                            "yaw":    r.get("yaw_A",    r.get("yaw_B"))})
+        for _, r in jb.iterrows():
+            sa, sb = r["status_A"], r["status_B"]
+            if sa=="FP" and sb=="TP":
+                rows.append(dict(
+                    diff_type="EST_IMPROVED",
+                    x=r.get("x_B", r.get("x_A")), y=r.get("y_B", r.get("y_A")),
+                    length=r.get("length_B", r.get("length_A")),
+                    width=r.get("width_B", r.get("width_A")),
+                    yaw=r.get("yaw_B", r.get("yaw_A")),
+                    **{k: r[k] for k in extras if k in r}
+                ))
+            elif sa=="TP" and sb=="FP":
+                rows.append(dict(
+                    diff_type="EST_DEGRADED",
+                    x=r.get("x_A", r.get("x_B")), y=r.get("y_A", r.get("y_B")),
+                    length=r.get("length_A", r.get("length_B")),
+                    width=r.get("width_A", r.get("width_B")),
+                    yaw=r.get("yaw_A", r.get("yaw_B")),
+                    **{k: r[k] for k in extras if k in r}
+                ))
 
-    # --- 新規/解消FP（pair_uuid が NULL の EST/FP） ---
-    fpA = dfAf[(dfAf["source"] == "EST") & (dfAf["status"] == "FP")].copy()
-    fpB = dfBf[(dfBf["source"] == "EST") & (dfBf["status"] == "FP")].copy()
+        # NEW_FP / FIXED_FP（pair_uuidがNaNで来るFPはここでは扱わない） 
+        # This part won't work currently because duckdb does not support isin() with NaN
+        a_fp_ids = set(estA[(estA["status"]=="FP") & estA[est_pair_col].notna()][est_pair_col].astype(str))
+        b_fp_ids = set(estB[(estB["status"]=="FP") & estB[est_pair_col].notna()][est_pair_col].astype(str))
+        new_fp_ids   = b_fp_ids - a_fp_ids
+        fixed_fp_ids = a_fp_ids - b_fp_ids
 
-    def fp_key(df):
-        # NaN安全化
-        def to_key(v):
-            try:
-                if pd.isna(v):
-                    return None
-            except Exception:
-                pass
-            return int(round(float(v)*2))
-        keys = set()
-        for _, rr in df.iterrows():
-            keys.add((rr.label, to_key(rr.x), to_key(rr.y)))
-        return keys
+        if new_fp_ids:
+            for _, r in estB[(estB["status"]=="FP") & (estB[est_pair_col].astype(str).isin(new_fp_ids))].iterrows():
+                rows.append(dict(
+                    diff_type="EST_NEW_FP",
+                    x=r.x, y=r.y, length=r.length, width=r.width, yaw=r.yaw,
+                    **{k: r[k] for k in extras if k in r}
+                ))
+        if fixed_fp_ids:
+            for _, r in estA[(estA["status"]=="FP") & (estA[est_pair_col].astype(str).isin(fixed_fp_ids))].iterrows():
+                rows.append(dict(
+                    diff_type="EST_FIXED_FP",
+                    x=r.x, y=r.y, length=r.length, width=r.width, yaw=r.yaw,
+                    **{k: r[k] for k in extras if k in r}
+                ))
 
-    keyA, keyB = fp_key(fpA), fp_key(fpB)
-    new_fp_keys   = keyB - keyA
-    fixed_fp_keys = keyA - keyB
-
-    for _, r in fpB.iterrows():
-        k = (r.label,
-             None if pd.isna(r.x) else int(round(float(r.x)*2)),
-             None if pd.isna(r.y) else int(round(float(r.y)*2)))
-        if k in new_fp_keys:
-            out.append({"diff_type":"NEW_FP", "x":r.x, "y":r.y,
-                        "length":r.length, "width":r.width, "yaw":r.yaw})
-
-    for _, r in fpA.iterrows():
-        k = (r.label,
-             None if pd.isna(r.x) else int(round(float(r.x)*2)),
-             None if pd.isna(r.y) else int(round(float(r.y)*2)))
-        if k in fixed_fp_keys:
-            out.append({"diff_type":"FIXED_FP", "x":r.x, "y":r.y,
-                        "length":r.length, "width":r.width, "yaw":r.yaw})
-
-    # ★ 重要：空でも必ず列を揃えて返す
-    return pd.DataFrame(out, columns=cols)
+    # 6列(+必要ならextra)で返す
+    df_out = pd.DataFrame(rows)
+    want_cols = cols + [c for c in extras if c in df_out.columns]
+    return df_out[want_cols] if not df_out.empty else pd.DataFrame(columns=want_cols)
 
 def compute_diff_all(dfA_all, dfB_all):
     if (dfA_all is None or dfA_all.empty) and (dfB_all is None or dfB_all.empty):
@@ -334,12 +366,30 @@ def compute_diff_all(dfA_all, dfB_all):
         return pd.DataFrame(columns=["diff_type","x","y","length","width","yaw","frame_index"])
     return pd.concat(outs, ignore_index=True)
 
+# =============================
+# 共有フィルタ + 個別topic を適用
+dfA = load_filtered_df(file_A, selected_t4, topic_A, selected_labels, selected_visibility, has_vis_A, has_pair_A)
+dfB = load_filtered_df(file_B, selected_t4, topic_B, selected_labels, selected_visibility, has_vis_B, has_pair_B)
+df_diff_all = compute_diff_all(dfA, dfB)
+imp_all, deg_all, newfp_all, fixfp_all = summarize_diff(df_diff_all)
+
+if dfA.empty and dfB.empty:
+    st.warning("A/Bともに該当データがありません。条件を見直してください。")
+    st.stop()
+
+# 共通フレーム範囲（無ければAを優先）
+fmin = int(min([x for x in [dfA.frame_index.min() if not dfA.empty else None,
+                            dfB.frame_index.min() if not dfB.empty else None] if x is not None]))
+fmax = int(max([x for x in [dfA.frame_index.max() if not dfA.empty else None,
+                            dfB.frame_index.max() if not dfB.empty else None] if x is not None]))
+frame = st.slider("Frame index", fmin, fmax, step=1)
+
+dfA_f = dfA[dfA.frame_index == frame].copy()
+dfB_f = dfB[dfB.frame_index == frame].copy()
+
 # 差分計算
 df_diff = compute_diff(dfA_f, dfB_f)
 imp, deg, newfp, fixfp = summarize_diff(df_diff)
-
-df_diff_all = compute_diff_all(dfA, dfB)
-imp_all, deg_all, newfp_all, fixfp_all = summarize_diff(df_diff_all)
 
 
 # =============================
