@@ -55,13 +55,13 @@ def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag
         else:
             status_key = r.status
         key = (r.source, status_key)
-        name = f"{r.source}/{status_key}"
+        name = f"{r.source}/{status_key}_{tag}"
         lg = (name not in shown) and showlegend
         shown.add(name)
         fig.add_trace(go.Scatter(
             x=x_poly, y=y_poly, mode='lines', fill='toself', opacity=opacity,
             line=dict(color=palette.get(key, "#999999"), dash=dash),
-            name=name, showlegend=lg
+            name=name, showlegend=lg, legendgroup=name
         ))
 
 def plot_diff(fig: go.Figure, df_diff, palette, types: List[str] | None = None, width: int = 3, opacity: float = 0.45):
@@ -82,7 +82,7 @@ def plot_diff(fig: go.Figure, df_diff, palette, types: List[str] | None = None, 
         fig.add_trace(go.Scatter(
             x=x_poly, y=y_poly, mode='lines', fill='toself', opacity=opacity,
             line=dict(color=palette.get(key, "#777777"), width=width),
-            name=name, showlegend=lg
+            name=name, showlegend=lg, legendgroup=name
         ))
 
 def summarize_diff(df_diff):
@@ -318,9 +318,29 @@ def compute_diff(dfAf, dfBf):
     # ★ 重要：空でも必ず列を揃えて返す
     return pd.DataFrame(out, columns=cols)
 
+def compute_diff_all(dfA_all, dfB_all):
+    if (dfA_all is None or dfA_all.empty) and (dfB_all is None or dfB_all.empty):
+        return pd.DataFrame(columns=["diff_type","x","y","length","width","yaw","frame_index"])
+    frames = sorted(set(dfA_all["frame_index"].unique()).union(set(dfB_all["frame_index"].unique())))
+    outs = []
+    for fr in frames:
+        da = dfA_all[dfA_all["frame_index"] == fr]
+        db = dfB_all[dfB_all["frame_index"] == fr]
+        d = compute_diff(da, db)            # 既存のフレーム単位関数を使う
+        if not d.empty:
+            d = d.assign(frame_index=int(fr))
+            outs.append(d)
+    if not outs:
+        return pd.DataFrame(columns=["diff_type","x","y","length","width","yaw","frame_index"])
+    return pd.concat(outs, ignore_index=True)
+
 # 差分計算
 df_diff = compute_diff(dfA_f, dfB_f)
 imp, deg, newfp, fixfp = summarize_diff(df_diff)
+
+df_diff_all = compute_diff_all(dfA, dfB)
+imp_all, deg_all, newfp_all, fixfp_all = summarize_diff(df_diff_all)
+
 
 # =============================
 # 描画
@@ -412,3 +432,19 @@ with col2:
     st.metric("B this frame: Total / Valid", f"{trB} / {vrB}")
 with col3:
     st.metric("Δ (Imp / Deg / NewFP / FixFP)", f"{imp} / {deg} / {newfp} / {fixfp}")
+
+
+# =============================
+# 参考: 全フレームのサマリ
+# =============================
+c1, c2 = st.columns(2)
+with c1:
+    st.metric("Δ(全フレーム合算) Imp / Deg", f"{imp_all} / {deg_all}")
+with c2:
+    st.metric("Δ(全フレーム合算) NewFP / FixedFP", f"{newfp_all} / {fixfp_all}")
+
+if not df_diff_all.empty:
+    byf = df_diff_all.groupby(["frame_index","diff_type"]).size().reset_index(name="count")
+    st.dataframe(byf, use_container_width=True)
+else:
+    st.info("全フレームでの差分は検出されませんでした。")
