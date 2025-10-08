@@ -6,6 +6,18 @@ import numpy as np
 import glob
 import os
 from typing import Tuple, List, Dict, Optional
+# 既存 import 群の下に追記
+try:
+    from streamlit_plotly_events import plotly_events
+    HAS_PLOTLY_EVENTS = True
+except Exception:
+    HAS_PLOTLY_EVENTS = False
+    plotly_events = None
+
+# セッションキーを明示的に分離
+FRAME_VALUE_KEY  = "frame_value"   # ← 正規のフレーム値（アプリのソース・オブ・トゥルース）
+FRAME_SLIDER_KEY = "frame_slider"  # ← スライダーウィジェット用のキー（※frameは使わない）
+
 
 st.set_page_config(layout="wide")
 st.title("BEV Bounding Box Viewer (A/B Comparison)")
@@ -382,7 +394,27 @@ fmin = int(min([x for x in [dfA.frame_index.min() if not dfA.empty else None,
                             dfB.frame_index.min() if not dfB.empty else None] if x is not None]))
 fmax = int(max([x for x in [dfA.frame_index.max() if not dfA.empty else None,
                             dfB.frame_index.max() if not dfB.empty else None] if x is not None]))
-frame = st.slider("Frame index", fmin, fmax, step=1)
+
+# --- 初期化（1回だけ） ---
+if FRAME_VALUE_KEY not in st.session_state:
+    st.session_state[FRAME_VALUE_KEY] = int(fmin)
+
+# スライダー生成前に、正規値→スライダー値を毎回同期（範囲もクランプ）
+st.session_state[FRAME_SLIDER_KEY] = int(
+    max(fmin, min(fmax, st.session_state[FRAME_VALUE_KEY]))
+)
+
+def _on_frame_slider_change():
+    # ウィジェット変更 → 正規値へ反映
+    st.session_state[FRAME_VALUE_KEY] = int(st.session_state[FRAME_SLIDER_KEY])
+
+# スライダー本体（keyはFRAME_SLIDER_KEY）
+st.slider("Frame index", fmin, fmax, step=1,
+          key=FRAME_SLIDER_KEY, on_change=_on_frame_slider_change)
+
+# 以降は正規値を参照
+frame = int(st.session_state[FRAME_VALUE_KEY])
+
 
 dfA_f = dfA[dfA.frame_index == frame].copy()
 dfB_f = dfB[dfB.frame_index == frame].copy()
@@ -485,16 +517,54 @@ with col3:
 
 
 # =============================
-# 参考: 全フレームのサマリ
+# フレーム別 diff_type 件数（簡素な折れ線）
 # =============================
-c1, c2 = st.columns(2)
-with c1:
-    st.metric("Δ(全フレーム合算) Imp / Deg", f"{imp_all} / {deg_all}")
-with c2:
-    st.metric("Δ(全フレーム合算) NewFP / FixedFP", f"{newfp_all} / {fixfp_all}")
-
+# =============================
+# フレーム別 diff_type 件数（折れ線）＋ クリックでフレーム移動（任意）
+# =============================
 if not df_diff_all.empty:
-    byf = df_diff_all.groupby(["frame_index","diff_type"]).size().reset_index(name="count")
-    st.dataframe(byf, use_container_width=True)
+    # frame_index × diff_type の件数ピボット
+    df_line = (
+        df_diff_all
+        .groupby(["frame_index", "diff_type"]).size()
+        .unstack(fill_value=0)              # 列: diff_type（GT_* / EST_* そのまま）
+        .sort_index()
+    )
+
+    # 折れ線プロット
+    fig_counts = go.Figure()
+    palette = get_color_map()
+    for col in df_line.columns:
+        base = col.split("_", 1)[1] if "_" in col else col   # e.g., GT_IMPROVED -> IMPROVED
+        color = palette.get(("DIFF", base), "#777777")
+        fig_counts.add_trace(go.Scatter(
+            x=df_line.index, y=df_line[col],
+            mode="lines+markers",
+            name=col.replace("_", " "),
+            line=dict(color=color)
+        ))
+
+    # 現在フレームの縦線（UI用）
+    cur_frame = int(st.session_state.get(FRAME_VALUE_KEY, fmin))
+    fig_counts.add_vline(
+        x=cur_frame, line_width=2, line_dash="dash", line_color="black",
+        annotation_text=f"frame={cur_frame}", annotation_position="top left"
+    )
+
+    if HAS_PLOTLY_EVENTS:
+        clicks = plotly_events(
+            fig_counts,
+            click_event=True, hover_event=False, select_event=False,
+            override_height=360,
+            key="counts_clicks"
+        )
+        if clicks:
+            x = clicks[0].get("x")
+            if x is not None:
+                # ← ウィジェットkeyは触らない。正規値だけ更新して rerun
+                st.session_state[FRAME_VALUE_KEY] = int(x)
+                st.rerun()
+    else:
+        st.plotly_chart(fig_counts, use_container_width=True)
 else:
     st.info("全フレームでの差分は検出されませんでした。")
