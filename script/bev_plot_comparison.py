@@ -35,14 +35,56 @@ def _base_diff(t: str) -> str:
         return t[4:]
     return t
 
-def rotated_rect(x: float, y: float, length: float, width: float, yaw: float) -> Tuple[np.ndarray, np.ndarray]:
-    """yawはラジアン。中心(x,y)、長さlength(前後)、幅width(左右)。BEVの進行方向合わせのため+pi/2回転。"""
+# def rotated_rect(x: float, y: float, length: float, width: float, yaw: float) -> Tuple[np.ndarray, np.ndarray]:
+#     """yawはラジアン。中心(x,y)、長さlength(前後)、幅width(左右)。BEVの進行方向合わせのため+pi/2回転。"""
+#     dx, dy = length / 2.0, width / 2.0
+#     corners = np.array([[-dx, -dy], [-dx,  dy], [ dx,  dy], [ dx, -dy], [-dx, -dy]])
+#     c, s = np.cos(yaw + np.pi/2), np.sin(yaw + np.pi/2)
+#     rot = np.array([[c, -s], [s, c]])
+#     rotated = corners @ rot.T
+#     return rotated[:, 0] + x, rotated[:, 1] + y
+
+def rotated_rect(
+    x: float, y: float,
+    length: float, width: float,
+    yaw: float,
+    step_depth_ratio: float = 0.25,
+    step_width_ratio: float = 0.4
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    前方左側に段差（凹み）を入れて向きを表す矩形Polylineを返す。
+    - yaw: ラジアン
+    - step_depth_ratio: 凹みの「奥行き」（length比）
+    - step_width_ratio: 凹みの「横幅」（width比）
+    """
+    if length < width:
+        # something is wrong, fix size
+        length, width = max(length, width), min(length, width)
+
     dx, dy = length / 2.0, width / 2.0
-    corners = np.array([[-dx, -dy], [-dx,  dy], [ dx,  dy], [ dx, -dy], [-dx, -dy]])
-    c, s = np.cos(yaw + np.pi/2), np.sin(yaw + np.pi/2)
+    step_depth = length * step_depth_ratio
+    step_width = width * step_width_ratio
+
+    # 頂点順序（時計回り）
+    # 後ろ左 → 前左(手前側) → 凹み奥 → 前中央左 → 前右 → 後右 → 後ろ左
+    corners = np.array([
+        [-dx, -dy],                      # 後ろ左
+        [ dx, -dy],                      # 前左端
+        [ dx, 0],         # 段差上部
+        [ dx - step_depth, 0],  # 凹み奥左
+        [dx, 0],
+        [dx,  dy],                      # 前右端
+        [-dx,  dy],                      # 後右
+        [-dx, -dy]                       # 戻る
+    ])
+
+    # 回転 (+π/2 でBEV向き調整)
+    c, s = np.cos(yaw), np.sin(yaw)
     rot = np.array([[c, -s], [s, c]])
     rotated = corners @ rot.T
-    return rotated[:, 0] + x, rotated[:, 1] + y
+
+    xs, ys = rotated[:, 0] + x, rotated[:, 1] + y
+    return xs, ys
 
 def get_color_map() -> Dict[Tuple[str, str], str]:
     # 既存色 + A/B強調色（ESTのTP/FPはA/Bで濃淡）
