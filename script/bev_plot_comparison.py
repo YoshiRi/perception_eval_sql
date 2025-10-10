@@ -120,24 +120,85 @@ def add_ego(fig: go.Figure):
                              fillcolor='gray', name='Ego', showlegend=True))
 
 def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag: str,
-               opacity: float = 0.55, dash: str | None = None, showlegend: bool = True):
+               opacity: float = 0.55, dash: str | None = None, showlegend: bool = True, show_invalid: bool = False):
     """tag は 'A' or 'B'。ESTのTP/FPにA/Bのサフィックスを付けて色分け。dash='dash' などでBの描画を差別化可。"""
+    if df_frame.empty:
+        return
+
+    df = df_frame.copy()
+
+    # --- 1. ベクタライズ処理で描画に必要な情報を事前に追加 ---
+    cond_est_tp_fp = (df['source'] == 'EST') & (df['status'].isin(['TP', 'FP']))
+    df['status_key'] = np.where(cond_est_tp_fp, df['status'] + f"_{tag}", df['status'])
+    df['color_key'] = list(zip(df['source'], df['status_key']))
+    df['name'] = df['source'] + '/' + df['status_key'] + f"_{tag}"
+    df['color'] = df['color_key'].map(palette).fillna("#999999")
+    
+    # --- 2. 共通のホバーテンプレートを定義 ---
+    hovertemplate = (
+        "Label: %{customdata[0]}<br>"
+        "size: %{customdata[1]:.2f} x %{customdata[2]:.2f}<br>"
+        "X: %{x}<br>"
+        "Y: %{y}<br>"
+        "<extra></extra>" # Plotlyの余分な情報を非表示にする
+    )
+
+    # --- 3. オブジェクトの形状に応じてDataFrameを分割し、描画 ---
+    mask_both_invalid = (df['length'] <= 0) & (df['width'] <= 0)
+    mask_one_invalid = ((df['length'] <= 0) | (df['width'] <= 0)) & ~mask_both_invalid
+    mask_valid = (df['length'] > 0) & (df['width'] > 0)
+
     shown = set()
-    for _, r in df_frame.iterrows():
-        x_poly, y_poly = rotated_rect(r.x, r.y, r.length, r.width, r.yaw)
-        if r.source == "EST":
-            status_key = f"{r.status}_{tag}" if r.status in ("TP","FP") else r.status
-        else:
-            status_key = r.status
-        key = (r.source, status_key)
-        name = f"{r.source}/{status_key}_{tag}"
-        lg = (name not in shown) and showlegend
-        shown.add(name)
+
+    # --- Case A: 両方が無効なオブジェクト (xマーカー) ---
+    if show_invalid and mask_both_invalid.any():
+        df_invalid = df[mask_both_invalid]
         fig.add_trace(go.Scatter(
-            x=x_poly, y=y_poly, mode='lines', fill='toself', opacity=opacity,
-            line=dict(color=palette.get(key, "#999999"), dash=dash),
-            name=name, showlegend=lg, legendgroup=name
+            x=df_invalid['x'], y=df_invalid['y'],
+            mode="markers",
+            marker=dict(symbol="x", size=8, color=df_invalid['color']),
+            opacity=0.9, showlegend=False, name="invalid_marker",
+            hovertemplate=hovertemplate,
+            customdata=df_invalid[['label', 'length', 'width']].values
         ))
+
+    # --- Case B: 片方が無効なオブジェクト (円マーカー) ---
+    if mask_one_invalid.any():
+        df_cylinder = df[mask_one_invalid]
+        for name, group in df_cylinder.groupby('name'):
+            lg = (name not in shown) and showlegend
+            fig.add_trace(go.Scatter(
+                x=group['x'], y=group['y'],
+                mode="markers",
+                marker=dict(
+                    symbol="circle",
+                    size=group[['length', 'width']].max(axis=1),
+                    color=group.iloc[0]['color']
+                ),
+                opacity=opacity, name=name, legendgroup=name, showlegend=lg,
+                hovertemplate=hovertemplate,
+                customdata=group[['label', 'length', 'width']].values
+            ))
+            shown.add(name)
+
+    # --- Case C: 有効なオブジェクト (矩形ポリゴン) ---
+    if mask_valid.any():
+        df_poly = df[mask_valid]
+        for name, group in df_poly.groupby('name'):
+            lg = (name not in shown) and showlegend
+            for _, r in group.iterrows():
+                x_poly, y_poly = rotated_rect(r.x, r.y, r.length, r.width, r.yaw)
+                fig.add_trace(go.Scatter(
+                    x=x_poly, y=y_poly,
+                    mode='lines', fill='toself', opacity=opacity,
+                    line=dict(color=r['color'], dash=dash),
+                    name=name, legendgroup=name, showlegend=lg,
+                    hovertemplate=hovertemplate,
+                    # customdataは各ポリゴンに個別に設定
+                    customdata=np.array([[r.label, r.length, r.width]] * len(x_poly))
+                ))
+                lg = False
+            shown.add(name)
 
 def plot_diff(fig: go.Figure, df_diff, palette, types: List[str] | None = None, width: int = 3, opacity: float = 0.45):
     """types はベース型で指定（例: ['IMPROVED','DEGRADED']）。GT_/EST_ は内部で正規化してフィルタ。"""
@@ -264,6 +325,9 @@ with st.sidebar:
     # 描画モード
     view_mode = st.radio("View mode", ["Overlay (通常)", "Overlay (Δフォーカス: Improved/Degraded)", "Side-by-side (横並び)"])
     show_diff = st.checkbox("差分レイヤ (Δ: Improved/Degraded/NewFP/FIxedFP) を重ねる", value=True)
+
+    # --- invalidオブジェクト表示オプション ---
+    show_invalid = st.sidebar.checkbox("Show invalid (zero-size) objects", value=False)
 
 def load_filtered_df(pq: str, t4: str, topic: str, labels, sel_vis, has_vis: bool, has_pair: bool):
     label_filter = "', '".join(labels) if labels else ""
@@ -517,10 +581,10 @@ if view_mode == "Overlay (通常)":
     fig = get_bev_figure(view_mode)
     fig.data = []  # 既存キャッシュをクリア
     if not dfA_f.empty:
-        plot_frame(fig, dfA_f, palette, tag="A", opacity=0.55, dash=None)
+        plot_frame(fig, dfA_f, palette, tag="A", opacity=0.55, dash=None, show_invalid=show_invalid)
     if not dfB_f.empty:
         # Bは点線で差別化
-        plot_frame(fig, dfB_f, palette, tag="B", opacity=0.55, dash="dash")
+        plot_frame(fig, dfB_f, palette, tag="B", opacity=0.55, dash="dash", show_invalid=show_invalid)
     if show_diff and not df_diff.empty:
         plot_diff(fig, df_diff, palette)
     add_ego(fig)
@@ -539,9 +603,9 @@ elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
     fig.data = []  # 既存キャッシュをクリア
     # 背景としてA/Bを淡く（Bは点線）
     if not dfA_f.empty:
-        plot_frame(fig, dfA_f, palette, tag="A", opacity=0.15, dash=None, showlegend=False)
+        plot_frame(fig, dfA_f, palette, tag="A", opacity=0.15, dash=None, showlegend=False, show_invalid=show_invalid)
     if not dfB_f.empty:
-        plot_frame(fig, dfB_f, palette, tag="B", opacity=0.15, dash="dash", showlegend=False)
+        plot_frame(fig, dfB_f, palette, tag="B", opacity=0.15, dash="dash", showlegend=False, show_invalid=show_invalid)
     # 改善/悪化のみ強調描画
     plot_diff(fig, df_diff, palette, types=["IMPROVED","DEGRADED"], width=4, opacity=0.75)
     add_ego(fig)
@@ -561,7 +625,7 @@ else:  # Side-by-side
         figA = get_bev_figure("side_A")
         figA.data = []  # 既存キャッシュをクリア
         if not dfA_f.empty:
-            plot_frame(figA, dfA_f, palette, tag="A")
+            plot_frame(figA, dfA_f, palette, tag="A", show_invalid=show_invalid)
         add_ego(figA)
         figA.update_layout(
             title=f"A | {os.path.basename(file_A)} / {selected_t4} / {topic_A} | Frame {frame}",
@@ -575,7 +639,7 @@ else:  # Side-by-side
         figB = get_bev_figure("side_B")
         figB.data = []  # 既存キャッシュをクリア
         if not dfB_f.empty:
-            plot_frame(figB, dfB_f, palette, tag="B", dash="dash")
+            plot_frame(figB, dfB_f, palette, tag="B", dash="dash", show_invalid=show_invalid)
         add_ego(figB)
         if show_diff and not df_diff.empty:
             plot_diff(figB, df_diff, palette)  # 右側に差分を重ねて見せるのもアリ

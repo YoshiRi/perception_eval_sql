@@ -86,6 +86,11 @@ if not selected_labels:
     st.warning("No label selected.")
     st.stop()
 
+# --- invalidオブジェクト表示オプション ---
+with st.sidebar:
+    show_invalid = st.sidebar.checkbox("Show invalid (zero-size) objects", value=False)
+
+
 # ----------------------------
 # Build query safely & load data
 # ----------------------------
@@ -191,21 +196,83 @@ def rotated_rect(
 fig = go.Figure()
 shown = set()
 
-for _, row in df_frame.iterrows():
-    # 描けないBBoxはスキップ
-    if not (row.length > 0 and row.width > 0):
-        continue
+# 1. 条件に応じたマスクを作成
+mask_both_invalid = (df_frame['length'] <= 0) & (df_frame['width'] <= 0)
+mask_one_invalid = ((df_frame['length'] <= 0) | (df_frame['width'] <= 0)) & ~mask_both_invalid
+mask_valid = (df_frame['length'] > 0) & (df_frame['width'] > 0)
 
-    x_poly, y_poly = rotated_rect(row.x, row.y, row.length, row.width, row.yaw)
-    name = f"{row.source}/{row.status}"
-    show = name not in shown; shown.add(name)
+# 共通のhover template
+hovertemplate = (
+    "X: %{x}<br>"
+    "Y: %{y}<br>"
+    "Label: %{customdata[0]}<br>"
+    "size: %{customdata[1]:.2f} x %{customdata[2]:.2f}<br>"
+)
+
+# --- Case A: 両方のサイズが無効なオブジェクト (xマーカー) ---
+if show_invalid and not df_frame[mask_both_invalid].empty:
+    df_invalid = df_frame[mask_both_invalid]
+    # legendに表示しないため、グループ化は不要
     fig.add_trace(go.Scatter(
-        x=x_poly, y=y_poly, mode="lines",
-        name=name, legendgroup=name,
-        fill="toself", opacity=0.6,
-        line=dict(color=get_color(row.source, row.status)),
-        showlegend=show
+        x=df_invalid['x'],
+        y=df_invalid['y'],
+        mode="markers",
+        marker=dict(symbol="x", size=8, color=df_invalid.apply(lambda row: get_color(row.source, row.status), axis=1)),
+        opacity=0.9,
+        showlegend=False,
+        hovertemplate=hovertemplate,
+        customdata=df_invalid[['label', 'length', 'width']].values,
+        name="invalid" # legendには出ないが、内部的な名前として設定
     ))
+
+# --- Case B: 片方のサイズが無効なオブジェクト (円マーカー) ---
+if not df_frame[mask_one_invalid].empty:
+    df_cylinder = df_frame[mask_one_invalid]
+    df_cylinder['name'] = df_cylinder['source'] + '/' + df_cylinder['status']
+    
+    # name ごとにグループ化してプロット (legend の重複を避けるため)
+    for name, group in df_cylinder.groupby('name'):
+        fig.add_trace(go.Scatter(
+            x=group['x'],
+            y=group['y'],
+            mode="markers",
+            marker=dict(
+                symbol="circle",
+                size=group[['length', 'width']].max(axis=1),
+                color=get_color(group.iloc[0].source, group.iloc[0].status)
+            ),
+            opacity=0.6,
+            name=name,
+            legendgroup=name,
+            showlegend=name not in shown,
+            hovertemplate=hovertemplate,
+            customdata=group[['label', 'length', 'width']].values
+        ))
+        shown.add(name)
+
+# --- Case C: 有効なオブジェクト (矩形ポリゴン) ---
+if not df_frame[mask_valid].empty:
+    df_valid = df_frame[mask_valid].copy() # SettingWithCopyWarning を避けるため copy()
+    df_valid['name'] = df_valid['source'] + '/' + df_valid['status']
+    
+    # name ごとにグループ化してプロット
+    for name, group in df_valid.groupby('name'):
+        show = name not in shown
+        for _, row in group.iterrows(): # ポリゴン生成は行ごとに行う必要がある
+            x_poly, y_poly = rotated_rect(row.x, row.y, row.length, row.width, row.yaw)
+            fig.add_trace(go.Scatter(
+                x=x_poly, y=y_poly, mode="lines",
+                fill="toself", opacity=0.6,
+                line=dict(color=get_color(row.source, row.status)),
+                name=name,
+                legendgroup=name,
+                showlegend=show,
+                hovertemplate=hovertemplate,
+                # customdataはトレース全体で1つしか設定できないため、代表点を設定
+                customdata=[[row.label, row.length, row.width]] 
+            ))
+            show = False # 同じグループの2つ目以降はlegendを非表示
+        shown.add(name)
 
 # Ego marker（固定三角形）
 fig.add_trace(go.Scatter(
