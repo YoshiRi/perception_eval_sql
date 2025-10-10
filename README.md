@@ -14,6 +14,12 @@ This repository provides SQL queries and Grafana configuration for analysing per
 
 ## Getting Started
 
+### Grafana with DuckDB in Docker viewer
+
+If you are in the TIER IV network, you can access the view at `http://10.0.7.9:3000/` to see the dashboard. (please ask yoshiri about login)
+
+```bash
+
 1. Build the Docker image:
 
    ```bash
@@ -48,6 +54,29 @@ docker run -d --name grafana-perception -p 3000:3000 \
               -e GF_SECURITY_ADMIN_PASSWORD=secret \
               grafana-perception
 ```
+
+
+### BEV plot script with streamlit
+
+In `script/` directory, there is a `bev_plot_comparison.py` script that uses Streamlit to plot bird's-eye view (BEV) comparisons between two result files. You can run it as follows:
+
+- comparison between two result files:
+```bash
+streamlit run script/bev_plot_comparison.py
+```
+
+- single result file:
+```bash
+streamlit run script/bev_plotter.py
+```
+
+you may need to install dependencies first: (I will create a requirements.txt later)
+```bash
+pip install streamlit numpy pandas plotly streamlit-plotly-events
+```
+
+(TODO)
+- add options to launch these scripts 
 
 ## SQL Views
 
