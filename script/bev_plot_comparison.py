@@ -458,11 +458,20 @@ fmax = int(max([x for x in [dfA.frame_index.max() if not dfA.empty else None,
 # --- 初期化（1回だけ） ---
 if FRAME_VALUE_KEY not in st.session_state:
     st.session_state[FRAME_VALUE_KEY] = int(fmin)
+if FRAME_SLIDER_KEY not in st.session_state:
+    st.session_state[FRAME_SLIDER_KEY] = int(fmin)
 
-# スライダー生成前に、正規値→スライダー値を毎回同期（範囲もクランプ）
-st.session_state[FRAME_SLIDER_KEY] = int(
-    max(fmin, min(fmax, st.session_state[FRAME_VALUE_KEY]))
-)
+# --- クリックイベントなどで "次回反映予定" の値が入っている場合 ---
+# この時点ではウィジェットまだ作られていないため、直接代入してOK
+if FRAME_SLIDER_KEY + "_next" in st.session_state:
+    st.session_state[FRAME_SLIDER_KEY] = int(
+        max(fmin, min(fmax, st.session_state.pop(FRAME_SLIDER_KEY + "_next")))
+    )
+else:
+    # 通常時は正規値に追従させる（クリック→rerun直後に効く）
+    st.session_state[FRAME_SLIDER_KEY] = int(
+        max(fmin, min(fmax, st.session_state[FRAME_VALUE_KEY]))
+    )
 
 def _on_frame_slider_change():
     # ウィジェット変更 → 正規値へ反映
@@ -488,16 +497,12 @@ imp, deg, newfp, fixfp = summarize_diff(df_diff)
 # 描画
 # =============================
 palette = get_color_map()
-_bev_fig_cache = {} # フレームごとにキャッシュする場合の辞書
-def get_bev_figure(view_mode: str):
-    """
-    view_modeに応じたFigureオブジェクトをグローバルキャッシュから取得。
-    初回は新規作成し、以降は同じインスタンスを返す。
-    """
-    global _bev_fig_cache
+if "bev_fig_cache" not in st.session_state:
+    st.session_state.bev_fig_cache = {}
 
-    if view_mode not in _bev_fig_cache:
-        # 初回生成
+def get_bev_figure(view_mode: str):
+    cache = st.session_state.bev_fig_cache
+    if view_mode not in cache:
         fig = go.Figure()
         fig.update_layout(
             xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
@@ -505,12 +510,12 @@ def get_bev_figure(view_mode: str):
             width=1100, height=900,
             uirevision="bev_fixed",
         )
-        _bev_fig_cache[view_mode] = fig
-
-    return _bev_fig_cache[view_mode]
+        cache[view_mode] = fig
+    return cache[view_mode]
 
 if view_mode == "Overlay (通常)":
     fig = get_bev_figure(view_mode)
+    fig.data = []  # 既存キャッシュをクリア
     if not dfA_f.empty:
         plot_frame(fig, dfA_f, palette, tag="A", opacity=0.55, dash=None)
     if not dfB_f.empty:
@@ -531,6 +536,7 @@ if view_mode == "Overlay (通常)":
 
 elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
     fig = get_bev_figure(view_mode)
+    fig.data = []  # 既存キャッシュをクリア
     # 背景としてA/Bを淡く（Bは点線）
     if not dfA_f.empty:
         plot_frame(fig, dfA_f, palette, tag="A", opacity=0.15, dash=None, showlegend=False)
@@ -553,6 +559,7 @@ else:  # Side-by-side
     c1, c2 = st.columns(2)
     with c1:
         figA = get_bev_figure("side_A")
+        figA.data = []  # 既存キャッシュをクリア
         if not dfA_f.empty:
             plot_frame(figA, dfA_f, palette, tag="A")
         add_ego(figA)
@@ -566,6 +573,7 @@ else:  # Side-by-side
         st.plotly_chart(figA, use_container_width=True, key="side_A")
     with c2:
         figB = get_bev_figure("side_B")
+        figB.data = []  # 既存キャッシュをクリア
         if not dfB_f.empty:
             plot_frame(figB, dfB_f, palette, tag="B", dash="dash")
         add_ego(figB)
@@ -644,10 +652,16 @@ if not df_diff_all.empty:
             override_height=360,
             key="counts_clicks",
         )
+        # --- クリックイベントが前回処理済みなら無視する ---
         if clicks and (x := clicks[0].get("x")) is not None:
-            # ← ウィジェットkeyは触らない。正規値だけ更新して rerun
-            st.session_state[FRAME_VALUE_KEY] = int(x)
-            st.rerun()
+            new_val = int(x)
+            # 「前回クリック値」が存在し、同じならスキップ
+            prev_val = st.session_state.get("last_click_frame")
+            if new_val != prev_val:
+                st.session_state["last_click_frame"] = new_val
+                st.session_state[FRAME_VALUE_KEY] = new_val
+                st.session_state[FRAME_SLIDER_KEY + "_next"] = new_val
+                st.rerun()
     else:
         st.plotly_chart(fig_counts, use_container_width=True)
 else:
