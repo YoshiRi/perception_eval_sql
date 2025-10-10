@@ -103,7 +103,7 @@ if has_visibility and selected_visibility:
     params.extend(selected_visibility)
 
 sql = f"""
-SELECT frame_index, x, y, length, width, yaw, label, topic_name, source, status
+SELECT frame_index, x, y, length, width, yaw, label, topic_name, source, status, uuid
 {select_vis}
 FROM parquet_scan(?)
 WHERE {" AND ".join(where)}
@@ -224,5 +224,135 @@ fig.update_layout(
     legend=dict(groupclick="togglegroup", title="Source / Status"),
     height=900
 )
-
 st.plotly_chart(fig, use_container_width=True)
+
+# === Frame別 TP/FN カウントと比率 ===
+st.markdown("## 📈 Detection Stability over Frames")
+
+# TP/FN集計
+frame_stats = (
+    df.query("source == 'GT' and status in ['TP', 'FN']")
+      .groupby(["frame_index", "status"])
+      .size()
+      .unstack(fill_value=0)
+      .reset_index()
+)
+
+# 比率 (TP率 = TP / (TP+FN))
+frame_stats["TPR"] = frame_stats["TP"] / (frame_stats["TP"] + frame_stats["FN"]).replace(0, np.nan)
+
+# Plotlyで折れ線プロット
+import plotly.express as px
+# --- 時系列グラフ ---
+fig_tpr = px.line(
+    frame_stats,
+    x="frame_index",
+    y=["TP", "FN"],
+    title="TP / FN Counts per Frame",
+    labels={"value": "Count", "frame_index": "Frame Index", "variable": "Status"},
+)
+fig_tpr.update_layout(height=400, legend_title="Status")
+
+# --- 現在Frameに縦破線を追加 ---
+fig_tpr.add_vline(
+    x=frame,
+    line=dict(color="black", dash="dash", width=2),
+    annotation_text=f"Frame {frame}",
+    annotation_position="top left"
+)
+
+st.plotly_chart(fig_tpr, use_container_width=True)
+
+# TPR比率の推移を別グラフで
+fig_ratio = px.line(
+    frame_stats,
+    x="frame_index",
+    y="TPR",
+    title="True Positive Rate (TPR) per Frame",
+    labels={"TPR": "True Positive Rate", "frame_index": "Frame Index"},
+)
+fig_ratio.update_yaxes(range=[0, 1])
+fig_ratio.add_vline(
+    x=frame,
+    line=dict(color="black", dash="dash", width=2),
+    annotation_text=f"Frame {frame}",
+    annotation_position="top left"
+)
+st.plotly_chart(fig_ratio, use_container_width=True)
+
+# === Worst-performing objects by FN rate ===
+st.markdown("## 🚨 Objects with High FN Rate (GT-based)")
+
+# uuid + label ごとにTP/FNをカウント
+uuid_perf = (
+    df.query("source == 'GT' and status in ['TP','FN']")
+      .groupby(["uuid", "label"])["status"]
+      .value_counts()
+      .unstack(fill_value=0)
+      .reset_index()
+)
+
+uuid_perf["total"] = uuid_perf["TP"] + uuid_perf["FN"]
+uuid_perf["FN_rate"] = uuid_perf["FN"] / uuid_perf["total"].replace(0, np.nan)
+
+# total > 0 だけ残す
+uuid_perf = uuid_perf[uuid_perf["total"] > 0]
+
+# FN率でソート
+uuid_perf_sorted = uuid_perf.sort_values("FN_rate", ascending=False)
+
+# 表示
+st.dataframe(
+    uuid_perf_sorted[["uuid", "label", "TP", "FN", "total", "FN_rate"]]
+        .head(30)
+        .style.format({"FN_rate": "{:.2%}"})
+)
+
+st.markdown("### 🔍 Inspect a Specific GT Object")
+
+bad_uuid = st.selectbox("Select UUID to visualize", uuid_perf_sorted["uuid"].head(50))
+
+uuid_traj = (
+    df[(df["uuid"] == bad_uuid) & (df["source"] == "GT")]
+    .sort_values("frame_index")
+)
+
+if not uuid_traj.empty:
+    # --- marker symbol by status ---
+    symbol_map = {"TP": "circle", "FN": "x", "FP": "triangle-up"}
+    uuid_traj["marker_symbol"] = uuid_traj["status"].map(symbol_map).fillna("circle")
+
+    fig_traj = go.Figure()
+
+    # --- 全点を線で繋ぐ ---
+    fig_traj.add_trace(go.Scatter(
+        x=uuid_traj["x"], y=uuid_traj["y"],
+        mode="lines",
+        line=dict(color="gray", width=1),
+        name=f"Trajectory ({uuid_traj['label'].iloc[0]})"
+    ))
+
+    # --- 各点（TP/FN別symbol） ---
+    for status, group in uuid_traj.groupby("status"):
+        fig_traj.add_trace(go.Scatter(
+            x=group["x"], y=group["y"],
+            mode="markers",
+            marker=dict(
+                symbol=symbol_map.get(status, "circle"),
+                size=[10 if f == frame else 6 for f in group["frame_index"]],
+                color=["red" if f == frame else ("orange" if status == "FN" else "green") for f in group["frame_index"]],
+                line=dict(width=1, color="black")
+            ),
+            name=f"{status} points"
+        ))
+
+    fig_traj.update_layout(
+        title=f"Trajectory of UUID {bad_uuid} ({uuid_traj['label'].iloc[0]})",
+        xaxis=dict(title="X [m]", scaleanchor="y", scaleratio=1),
+        yaxis=dict(title="Y [m]", scaleanchor="x", scaleratio=1),
+        height=600,
+        legend=dict(title="Status")
+    )
+    st.plotly_chart(fig_traj, use_container_width=True)
+else:
+    st.info("No GT trajectory data for the selected UUID.")
