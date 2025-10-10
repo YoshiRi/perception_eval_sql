@@ -488,9 +488,29 @@ imp, deg, newfp, fixfp = summarize_diff(df_diff)
 # 描画
 # =============================
 palette = get_color_map()
+_bev_fig_cache = {} # フレームごとにキャッシュする場合の辞書
+def get_bev_figure(view_mode: str):
+    """
+    view_modeに応じたFigureオブジェクトをグローバルキャッシュから取得。
+    初回は新規作成し、以降は同じインスタンスを返す。
+    """
+    global _bev_fig_cache
+
+    if view_mode not in _bev_fig_cache:
+        # 初回生成
+        fig = go.Figure()
+        fig.update_layout(
+            xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
+            yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
+            width=1100, height=900,
+            uirevision="bev_fixed",
+        )
+        _bev_fig_cache[view_mode] = fig
+
+    return _bev_fig_cache[view_mode]
 
 if view_mode == "Overlay (通常)":
-    fig = go.Figure()
+    fig = get_bev_figure(view_mode)
     if not dfA_f.empty:
         plot_frame(fig, dfA_f, palette, tag="A", opacity=0.55, dash=None)
     if not dfB_f.empty:
@@ -507,10 +527,10 @@ if view_mode == "Overlay (通常)":
         width=1100, height=900,
         uirevision="bev_view",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="overlay_normal")
 
 elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
-    fig = go.Figure()
+    fig = get_bev_figure(view_mode)
     # 背景としてA/Bを淡く（Bは点線）
     if not dfA_f.empty:
         plot_frame(fig, dfA_f, palette, tag="A", opacity=0.15, dash=None, showlegend=False)
@@ -527,12 +547,12 @@ elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
         width=1100, height=900,
         uirevision="bev_view",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="overlay_diff_focus")
 
 else:  # Side-by-side
     c1, c2 = st.columns(2)
     with c1:
-        figA = go.Figure()
+        figA = get_bev_figure("side_A")
         if not dfA_f.empty:
             plot_frame(figA, dfA_f, palette, tag="A")
         add_ego(figA)
@@ -543,9 +563,9 @@ else:  # Side-by-side
             width=700, height=800,
             uirevision="bev_view",
         )
-        st.plotly_chart(figA, use_container_width=True)
+        st.plotly_chart(figA, use_container_width=True, key="side_A")
     with c2:
-        figB = go.Figure()
+        figB = get_bev_figure("side_B")
         if not dfB_f.empty:
             plot_frame(figB, dfB_f, palette, tag="B", dash="dash")
         add_ego(figB)
@@ -559,7 +579,7 @@ else:  # Side-by-side
             width=700, height=800,
             uirevision="bev_view",
         )
-        st.plotly_chart(figB, use_container_width=True)
+        st.plotly_chart(figB, use_container_width=True, key="side_B")
 
 # =============================
 # 参考: このフレームのサマリ
