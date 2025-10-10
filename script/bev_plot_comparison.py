@@ -133,14 +133,23 @@ def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag
     df['color_key'] = list(zip(df['source'], df['status_key']))
     df['name'] = df['source'] + '/' + df['status_key'] + f"_{tag}"
     df['color'] = df['color_key'].map(palette).fillna("#999999")
-    
-    # --- 2. 共通のホバーテンプレートを定義 ---
-    hovertemplate = (
+
+    # --- 2. 2種類のホバーテンプレートを定義 ---
+    # マーカー用
+    hovertemplate_marker = (
         "Label: %{customdata[0]}<br>"
         "size: %{customdata[1]:.2f} x %{customdata[2]:.2f}<br>"
         "X: %{x}<br>"
         "Y: %{y}<br>"
-        "<extra></extra>" # Plotlyの余分な情報を非表示にする
+        "<extra></extra>"
+    )
+    # ポリゴン（塗りつぶし領域）用
+    hovertemplate_poly = (
+        "Label: %{customdata[0]}<br>"
+        "size: %{customdata[1]:.2f} x %{customdata[2]:.2f}<br>"
+        "Center X: %{customdata[3]:.2f}<br>"
+        "Center Y: %{customdata[4]:.2f}<br>"
+        "<extra></extra>"
     )
 
     # --- 3. オブジェクトの形状に応じてDataFrameを分割し、描画 ---
@@ -158,7 +167,7 @@ def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag
             mode="markers",
             marker=dict(symbol="x", size=8, color=df_invalid['color']),
             opacity=0.9, showlegend=False, name="invalid_marker",
-            hovertemplate=hovertemplate,
+            hovertemplate=hovertemplate_marker,
             customdata=df_invalid[['label', 'length', 'width']].values
         ))
 
@@ -170,13 +179,9 @@ def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag
             fig.add_trace(go.Scatter(
                 x=group['x'], y=group['y'],
                 mode="markers",
-                marker=dict(
-                    symbol="circle",
-                    size=group[['length', 'width']].max(axis=1),
-                    color=group.iloc[0]['color']
-                ),
+                marker=dict(symbol="circle", size=group[['length', 'width']].max(axis=1), color=group.iloc[0]['color']),
                 opacity=opacity, name=name, legendgroup=name, showlegend=lg,
-                hovertemplate=hovertemplate,
+                hovertemplate=hovertemplate_marker,
                 customdata=group[['label', 'length', 'width']].values
             ))
             shown.add(name)
@@ -193,9 +198,10 @@ def plot_frame(fig: go.Figure, df_frame, palette: Dict[Tuple[str,str], str], tag
                     mode='lines', fill='toself', opacity=opacity,
                     line=dict(color=r['color'], dash=dash),
                     name=name, legendgroup=name, showlegend=lg,
-                    hovertemplate=hovertemplate,
-                    # customdataは各ポリゴンに個別に設定
-                    customdata=np.array([[r.label, r.length, r.width]] * len(x_poly))
+                    hoveron='fills',  # 塗りつぶし領域でホバーを有効にする
+                    hovertemplate=hovertemplate_poly, # ポリゴン用のテンプレートを使用
+                    # customdataに中心座標(r.x, r.y)を追加
+                    customdata=np.array([[r.label, r.length, r.width, r.x, r.y]] * len(x_poly))
                 ))
                 lg = False
             shown.add(name)
