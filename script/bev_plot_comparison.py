@@ -14,6 +14,16 @@ except Exception:
     HAS_PLOTLY_EVENTS = False
     plotly_events = None
 
+_duckdb_connection: Optional[duckdb.DuckDBPyConnection] = None
+
+
+def get_duckdb_connection() -> duckdb.DuckDBPyConnection:
+    """Return a shared DuckDB connection for all queries."""
+    global _duckdb_connection
+    if _duckdb_connection is None:
+        _duckdb_connection = duckdb.connect()
+    return _duckdb_connection
+
 # セッションキーを明示的に分離
 FRAME_VALUE_KEY  = "frame_value"   # ← 正規のフレーム値（アプリのソース・オブ・トゥルース）
 FRAME_SLIDER_KEY = "frame_slider"  # ← スライダーウィジェット用のキー（※frameは使わない）
@@ -181,7 +191,7 @@ with st.sidebar:
     with colB:
         file_B = st.selectbox("Parquet B (同じでも可)", parquet_files, index=min(1, len(parquet_files)-1), key="fileB")
 
-    con = duckdb.connect()
+    con = get_duckdb_connection()
 
     # ---- 共通ユーティリティ（SELECT DISTINCTの1列目だけ返す） ----
     def list_values(pq, expr, where=None):
@@ -277,7 +287,8 @@ def load_filtered_df(pq: str, t4: str, topic: str, labels, sel_vis, has_vis: boo
         WHERE {where}
         ORDER BY frame_index
     """
-    return duckdb.connect().execute(q).df()
+    con = get_duckdb_connection()
+    return con.execute(q).df()
 
 
 # =============================
@@ -407,18 +418,25 @@ def compute_diff(
 def compute_diff_all(dfA_all, dfB_all):
     if (dfA_all is None or dfA_all.empty) and (dfB_all is None or dfB_all.empty):
         return pd.DataFrame(columns=["diff_type","x","y","length","width","yaw","frame_index"])
-    frames = sorted(set(dfA_all["frame_index"].unique()).union(set(dfB_all["frame_index"].unique())))
-    outs = []
-    for fr in frames:
-        da = dfA_all[dfA_all["frame_index"] == fr]
-        db = dfB_all[dfB_all["frame_index"] == fr]
-        d = compute_diff(da, db)            # 既存のフレーム単位関数を使う
-        if not d.empty:
-            d = d.assign(frame_index=int(fr))
-            outs.append(d)
-    if not outs:
+    frame_sources = []
+    if dfA_all is not None and "frame_index" in dfA_all.columns:
+        frame_sources.append(dfA_all["frame_index"])
+    if dfB_all is not None and "frame_index" in dfB_all.columns:
+        frame_sources.append(dfB_all["frame_index"])
+    if not frame_sources:
         return pd.DataFrame(columns=["diff_type","x","y","length","width","yaw","frame_index"])
-    return pd.concat(outs, ignore_index=True)
+    frames = pd.concat(frame_sources, ignore_index=True).dropna().unique()
+    results = [
+        diff.assign(frame_index=int(fr))
+        for fr in sorted(frames)
+        if not (diff := compute_diff(
+            dfA_all[dfA_all["frame_index"] == fr],
+            dfB_all[dfB_all["frame_index"] == fr]
+        )).empty
+    ]
+    if not results:
+        return pd.DataFrame(columns=["diff_type","x","y","length","width","yaw","frame_index"])
+    return pd.concat(results, ignore_index=True)
 
 # =============================
 # 共有フィルタ + 個別topic を適用
@@ -486,7 +504,8 @@ if view_mode == "Overlay (通常)":
               f"| Δ(Improved:{imp}, Degraded:{deg}, NewFP:{newfp}, FixedFP:{fixfp})",
         xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
         yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-        width=1100, height=900
+        width=1100, height=900,
+        uirevision="bev_view",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -505,7 +524,8 @@ elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
               f"| Δ(Imp:{imp}, Deg:{deg})",
         xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
         yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-        width=1100, height=900
+        width=1100, height=900,
+        uirevision="bev_view",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -520,7 +540,8 @@ else:  # Side-by-side
             title=f"A | {os.path.basename(file_A)} / {selected_t4} / {topic_A} | Frame {frame}",
             xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
             yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-            width=700, height=800
+            width=700, height=800,
+            uirevision="bev_view",
         )
         st.plotly_chart(figA, use_container_width=True)
     with c2:
@@ -535,7 +556,8 @@ else:  # Side-by-side
                   f"| Δ(Improved:{imp}, Degraded:{deg}, NewFP:{newfp}, FixedFP:{fixfp})",
             xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
             yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-            width=700, height=800
+            width=700, height=800,
+            uirevision="bev_view",
         )
         st.plotly_chart(figB, use_container_width=True)
 
@@ -574,17 +596,17 @@ if not df_diff_all.empty:
     )
 
     # 折れ線プロット
-    fig_counts = go.Figure()
-    palette = get_color_map()
-    for col in df_line.columns:
-        base = col.split("_", 1)[1] if "_" in col else col   # e.g., GT_IMPROVED -> IMPROVED
-        color = palette.get(("DIFF", base), "#777777")
-        fig_counts.add_trace(go.Scatter(
-            x=df_line.index, y=df_line[col],
+    palette_diff = get_color_map()
+    fig_counts = go.Figure([
+        go.Scatter(
+            x=df_line.index,
+            y=df_line[col],
             mode="lines+markers",
             name=col.replace("_", " "),
-            line=dict(color=color)
-        ))
+            line=dict(color=palette_diff.get(("DIFF", col.split("_", 1)[-1]), "#777777"))
+        )
+        for col in df_line.columns
+    ])
 
     # 現在フレームの縦線（UI用）
     cur_frame = int(st.session_state.get(FRAME_VALUE_KEY, fmin))
@@ -596,16 +618,16 @@ if not df_diff_all.empty:
     if HAS_PLOTLY_EVENTS:
         clicks = plotly_events(
             fig_counts,
-            click_event=True, hover_event=False, select_event=False,
+            click_event=True,
+            hover_event=False,
+            select_event=False,
             override_height=360,
-            key="counts_clicks"
+            key="counts_clicks",
         )
-        if clicks:
-            x = clicks[0].get("x")
-            if x is not None:
-                # ← ウィジェットkeyは触らない。正規値だけ更新して rerun
-                st.session_state[FRAME_VALUE_KEY] = int(x)
-                st.rerun()
+        if clicks and (x := clicks[0].get("x")) is not None:
+            # ← ウィジェットkeyは触らない。正規値だけ更新して rerun
+            st.session_state[FRAME_VALUE_KEY] = int(x)
+            st.rerun()
     else:
         st.plotly_chart(fig_counts, use_container_width=True)
 else:
