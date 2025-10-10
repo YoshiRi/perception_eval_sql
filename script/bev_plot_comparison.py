@@ -504,7 +504,8 @@ if view_mode == "Overlay (通常)":
               f"| Δ(Improved:{imp}, Degraded:{deg}, NewFP:{newfp}, FixedFP:{fixfp})",
         xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
         yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-        width=1100, height=900
+        width=1100, height=900,
+        uirevision="bev_view",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -523,7 +524,8 @@ elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
               f"| Δ(Imp:{imp}, Deg:{deg})",
         xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
         yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-        width=1100, height=900
+        width=1100, height=900,
+        uirevision="bev_view",
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -538,7 +540,8 @@ else:  # Side-by-side
             title=f"A | {os.path.basename(file_A)} / {selected_t4} / {topic_A} | Frame {frame}",
             xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
             yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-            width=700, height=800
+            width=700, height=800,
+            uirevision="bev_view",
         )
         st.plotly_chart(figA, use_container_width=True)
     with c2:
@@ -553,7 +556,8 @@ else:  # Side-by-side
                   f"| Δ(Improved:{imp}, Degraded:{deg}, NewFP:{newfp}, FixedFP:{fixfp})",
             xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
             yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
-            width=700, height=800
+            width=700, height=800,
+            uirevision="bev_view",
         )
         st.plotly_chart(figB, use_container_width=True)
 
