@@ -585,7 +585,7 @@ def get_bev_figure(view_mode: str):
 
 if view_mode == "Overlay (通常)":
     fig = get_bev_figure(view_mode)
-    fig.data = []  # 既存キャッシュをクリア
+    fig.data = tuple()  # 既存キャッシュをクリア
     if not dfA_f.empty:
         plot_frame(fig, dfA_f, palette, tag="A", opacity=0.55, dash=None, show_invalid=show_invalid)
     if not dfB_f.empty:
@@ -597,16 +597,14 @@ if view_mode == "Overlay (通常)":
     fig.update_layout(
         title=f"A: {os.path.basename(file_A)} / {selected_t4} / {topic_A}  vs  B: {os.path.basename(file_B)} / {selected_t4} / {topic_B} | Frame {frame} "
               f"| Δ(Improved:{imp}, Degraded:{deg}, NewFP:{newfp}, FixedFP:{fixfp})",
-        xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
-        yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
         width=1100, height=900,
         uirevision="bev_view",
     )
-    st.plotly_chart(fig, use_container_width=True, key="overlay_normal")
+    st.plotly_chart(fig, use_container_width=True, key="overlay_normal", config={"staticPlot": False})
 
 elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
     fig = get_bev_figure(view_mode)
-    fig.data = []  # 既存キャッシュをクリア
+    fig.data = tuple()  # 既存キャッシュをクリア
     # 背景としてA/Bを淡く（Bは点線）
     if not dfA_f.empty:
         plot_frame(fig, dfA_f, palette, tag="A", opacity=0.15, dash=None, showlegend=False, show_invalid=show_invalid)
@@ -618,32 +616,30 @@ elif view_mode == "Overlay (Δフォーカス: Improved/Degraded)":
     fig.update_layout(
         title=f"Δ Focus (Improved/Degraded) | A: {topic_A} vs B: {topic_B} | Frame {frame} "
               f"| Δ(Imp:{imp}, Deg:{deg})",
-        xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
-        yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
         width=1100, height=900,
         uirevision="bev_view",
     )
-    st.plotly_chart(fig, use_container_width=True, key="overlay_diff_focus")
+    st.plotly_chart(fig, use_container_width=True, key="overlay_diff_focus", config={"staticPlot": False})
 
 else:  # Side-by-side
     c1, c2 = st.columns(2)
     with c1:
         figA = get_bev_figure("side_A")
-        figA.data = []  # 既存キャッシュをクリア
+        figA.data = tuple()  # 既存キャッシュをクリア
         if not dfA_f.empty:
             plot_frame(figA, dfA_f, palette, tag="A", show_invalid=show_invalid)
         add_ego(figA)
         figA.update_layout(
             title=f"A | {os.path.basename(file_A)} / {selected_t4} / {topic_A} | Frame {frame}",
-            xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
-            yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
+            # xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
+            # yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
             width=700, height=800,
             uirevision="bev_view",
         )
         st.plotly_chart(figA, use_container_width=True, key="side_A")
     with c2:
         figB = get_bev_figure("side_B")
-        figB.data = []  # 既存キャッシュをクリア
+        figB.data = tuple()  # 既存キャッシュをクリア
         if not dfB_f.empty:
             plot_frame(figB, dfB_f, palette, tag="B", dash="dash", show_invalid=show_invalid)
         add_ego(figB)
@@ -652,8 +648,8 @@ else:  # Side-by-side
         figB.update_layout(
             title=f"B | {os.path.basename(file_B)} / {selected_t4} / {topic_B} | Frame {frame} "
                   f"| Δ(Improved:{imp}, Degraded:{deg}, NewFP:{newfp}, FixedFP:{fixfp})",
-            xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
-            yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
+            # xaxis=dict(scaleanchor="y", scaleratio=1, title="X [m]"),
+            # yaxis=dict(scaleanchor="x", scaleratio=1, title="Y [m]"),
             width=700, height=800,
             uirevision="bev_view",
         )
