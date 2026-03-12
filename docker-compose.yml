@@ -1,0 +1,20 @@
+services:
+  grafana-perception:
+    image: grafana-perception
+    container_name: grafana-perception
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - ./evaluation_dashboard_app/data:/opt/grafana/data
+      - ./sql:/opt/grafana/sql
+      - ./dashboard:/opt/grafana/dashboard
+
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: secret
+
+    restart: unless-stopped
