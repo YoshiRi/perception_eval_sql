@@ -223,12 +223,25 @@ def list_containers_for_debug(client) -> Tuple[List[Dict[str, str]], Optional[st
         rows: List[Dict[str, str]] = []
         for c in containers:
             cid = c.id or ""
+            attrs = getattr(c, "attrs", None) or {}
+            state = attrs.get("State") or {}
+            state_status = (state.get("Status") or getattr(c, "status", "") or "").strip()
+            health_obj = state.get("Health") or {}
+            health_s = (health_obj.get("Status") or "").strip()
+            labels = (attrs.get("Config") or {}).get("Labels") or {}
+            if not isinstance(labels, dict):
+                labels = {}
+            compose_service = (labels.get("com.docker.compose.service") or "").strip()
+            compose_project = (labels.get("com.docker.compose.project") or "").strip()
             rows.append(
                 {
                     "id": cid[:12] if len(cid) >= 12 else cid,
                     "full_id": cid,
                     "name": (c.name or "").lstrip("/"),
-                    "status": getattr(c, "status", "") or "",
+                    "state": state_status or "unknown",
+                    "health": health_s if health_s else "—",
+                    "compose_service": compose_service or "—",
+                    "compose_project": compose_project or "—",
                     "image": c.image.tags[0] if c.image and c.image.tags else (c.image.id[:12] if c.image else ""),
                 }
             )

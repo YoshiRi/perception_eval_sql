@@ -5,7 +5,7 @@ Must live as a top-level pages/*.py file so st.page_link can resolve it. Outside
 sidebar entry is hidden via CSS in lib/ui/styles_global.py; Overview shows a page_link only in Docker.
 """
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -27,6 +27,8 @@ from lib.deploy_debug import (
     running_in_docker,
     task_counts_by_status,
 )
+from lib.docker_live_structure import live_containers_mermaid
+from lib.mermaid_render import render_mermaid
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
 
 st.set_page_config(
@@ -106,7 +108,7 @@ def _render_docker_disabled(reason: str) -> None:
         """
 **Enable Docker debug (trusted operators only)**
 
-1. From the `deploy/` directory, ensure `docker-compose.yml` mounts `/var/run/docker.sock` into the `streamlit` service and sets `EVAL_DEPLOYMENT_DEBUG_DOCKER=1`, then run `docker compose up -d` (or `docker compose up -d --force-recreate streamlit` after editing compose).
+1. From the `deploy/` directory, ensure `docker-compose.yml` mounts `/var/run/docker.sock` into each Streamlit service (`streamlit1`, `streamlit2`) and sets `EVAL_DEPLOYMENT_DEBUG_DOCKER=1`, then run `docker compose up -d` (or recreate those services after editing compose).
 
 2. Set `EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT` in `.env` to your Compose project name
    (same value as in `docker compose ls`) so the UI lists only this stack’s containers.
@@ -158,10 +160,37 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
-with tab_docker:
-    section_header("Containers & logs", "Requires `EVAL_DEPLOYMENT_DEBUG_DOCKER` and `/var/run/docker.sock` in the Streamlit container.")
+def _display_columns_for_containers(rows: list) -> pd.DataFrame:
+    """Column order for the live Docker table (hide internal full_id)."""
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    preferred = [
+        "name",
+        "state",
+        "health",
+        "compose_service",
+        "compose_project",
+        "image",
+        "id",
+    ]
+    cols = [c for c in preferred if c in df.columns]
+    rest = [c for c in df.columns if c not in cols and c != "full_id"]
+    return df[cols + rest]
 
+
+def _render_live_stack_mermaid(rows: list) -> None:
+    """Help-style Mermaid (Clients / Edge / App Tier / …) with live container labels."""
+    if not rows:
+        return
+
+    mh = min(800, 280 + 52 * len(rows))
+    render_mermaid(live_containers_mermaid(rows), height=mh)
+
+
+with tab_docker:
     client = docker_client_or_none()
+
     if client is None:
         if not _env_flag("EVAL_DEPLOYMENT_DEBUG_DOCKER"):
             _render_docker_disabled(
@@ -187,13 +216,6 @@ with tab_docker:
                 )
     else:
         proj = compose_project_filter()
-        if proj:
-            st.caption(f"Filtering by Compose project label: `{proj}`")
-        else:
-            st.warning(
-                "Listing all containers on this Docker host. Set `EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT` in `.env` "
-                "to match `docker compose ls` and restrict the list."
-            )
 
         _use_fragment = getattr(st, "fragment", None) is not None
 
@@ -202,6 +224,7 @@ with tab_docker:
             @st.fragment(run_every=timedelta(seconds=6))
             def _docker_fragment():
                 rows, list_warn = list_containers_for_debug(client)
+                st.caption(f"Last refreshed (server clock): **{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}** — updates about every 6 s.")
                 if list_warn and isinstance(list_warn, str) and list_warn.startswith("Docker list failed"):
                     st.error(list_warn)
                     return
@@ -210,8 +233,10 @@ with tab_docker:
                 if not rows:
                     st.info("No containers match the current filter.")
                     return
-                display_df = pd.DataFrame(rows).drop(columns=["full_id"], errors="ignore")
+                section_header("Live container table", "Sortable columns; `full_id` stays internal for log/exec.")
+                display_df = _display_columns_for_containers(rows)
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
+                _render_live_stack_mermaid(rows)
 
                 options = [f"{r['name']} ({r['id']})" for r in rows]
                 id_by_label = {f"{r['name']} ({r['id']})": r["full_id"] for r in rows}
@@ -228,6 +253,7 @@ with tab_docker:
                 full_id = id_by_label[pick]
                 st.session_state.deploy_debug_cid = full_id
 
+                section_header("Logs", "Stdout/stderr from the selected container.")
                 tail = st.slider(
                     "Log tail (lines)",
                     min_value=50,
@@ -237,13 +263,13 @@ with tab_docker:
                     key="deploy_debug_tail",
                 )
                 logs = container_logs_tail(client, full_id, tail)
-                st.markdown("**Logs**")
                 st.code(logs or "(empty)", language=None)
                 _render_docker_exec_ui(client, full_id)
 
             _docker_fragment()
         else:
             rows, list_warn = list_containers_for_debug(client)
+            st.caption(f"Loaded at **{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}** — use Refresh to re-query.")
             if list_warn and isinstance(list_warn, str) and list_warn.startswith("Docker list failed"):
                 st.error(list_warn)
             elif list_warn:
@@ -251,15 +277,14 @@ with tab_docker:
             if not rows:
                 st.info("No containers match the current filter.")
             else:
-                df = pd.DataFrame(rows)
-                st.dataframe(
-                    df.drop(columns=["full_id"], errors="ignore"),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                _render_live_stack_mermaid(rows)
+                section_header("Live container table", "Sortable columns; `full_id` stays internal for log/exec.")
+                display_df = _display_columns_for_containers(rows)
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
                 options = [f"{r['name']} ({r['id']})" for r in rows]
                 id_by_label = {f"{r['name']} ({r['id']})": r["full_id"] for r in rows}
                 pick = st.selectbox("Container", options=options, key="deploy_debug_pick_legacy")
+                section_header("Logs", "Stdout/stderr from the selected container.")
                 tail = st.slider(
                     "Log tail (lines)",
                     min_value=50,
@@ -270,8 +295,9 @@ with tab_docker:
                 )
                 full_id_legacy = id_by_label[pick]
                 logs = container_logs_tail(client, full_id_legacy, tail)
-                st.markdown("**Logs**")
                 st.code(logs or "(empty)", language=None)
                 _render_docker_exec_ui(client, full_id_legacy)
                 if st.button("Refresh container list"):
                     st.rerun()
+
+    st.page_link("pages/10_Help.py", label="Help & guide (full README, including static stack Mermaid)", icon="❔")

@@ -72,6 +72,7 @@ Heavy operations (download results, download scenarios, run eval_result, generat
 | `EVAL_DEPLOYMENT_DEBUG_DOCKER` | Set to `1` in [`deploy/docker-compose.yml`](deploy/docker-compose.yml) for Streamlit; enables the **Docker** tab when the host socket is mounted. Override in `.env` only if you change compose. | `1` in compose |
 | `EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT` | Compose project name (`docker compose ls`) to filter containers by `com.docker.compose.project`. Strongly recommended when the host runs other stacks. | (empty) |
 | `EVAL_DEPLOYMENT_DEBUG_EXEC` | When `1`/`true`, the Deployment debug **Docker** tab shows **Run command** (`sh -c` via `docker exec`). Default `0` in compose — enable in `.env` only briefly on trusted networks. | `0` |
+| `EVAL_COMPOSE_SCALE_WORKER` | Default number of `worker` replicas when using [`deploy/04_START.sh`](deploy/04_START.sh) / [`08_REBUILD_AND_START.sh`](deploy/08_REBUILD_AND_START.sh). | `2` |
 
 ## Build
 
@@ -113,26 +114,23 @@ docker compose build --no-cache
    docker compose up -d
    ```
 
-   To run multiple workers, use `--scale worker=N` (e.g. 3 workers):
+   The stack defaults to **two Streamlit** containers (`streamlit1`, `streamlit2`) behind Nginx and **two workers** (`EVAL_COMPOSE_SCALE_WORKER=2` in `.env`, applied by [`04_START.sh`](deploy/04_START.sh)). Override worker count with `--scale worker=N` (last flag wins) or change `EVAL_COMPOSE_SCALE_WORKER`.
 
    ```sh
-   docker-compose up -d --scale worker=3
+   docker compose up -d --scale worker=3
    ```
 
-   Default is one worker. All worker replicas share the same RQ queue.
+   All worker replicas share the same RQ queue.
 
 4. **Access the app**
 
    - Via Nginx: **http://localhost** (port 80)
-   - Streamlit directly (if you expose it): port 8501 on the `streamlit` service (not exposed by default when using Nginx)
+   - Streamlit directly (if you expose ports in compose): 8501 on `streamlit1` / `streamlit2` (not exposed by default when using Nginx)
 
 ## Scaling
 
-- **Workers**: Use Docker Compose `--scale` to run more worker containers. From the `deploy/` directory:
-  - **Default (1 worker):** `docker-compose up -d`
-  - **N workers:** `docker-compose up -d --scale worker=N`  
-    Example: `docker-compose up -d --scale worker=3` runs three workers; all consume from the same RQ queue.
-- **Streamlit replicas**: In `deploy/docker-compose.yml`, duplicate the `streamlit` service (e.g. `streamlit2`) and add `server streamlit2:8501;` to `deploy/nginx/nginx.conf` in the `upstream streamlit` block.
+- **Workers**: Default replica count is `EVAL_COMPOSE_SCALE_WORKER` (see `.env.example`; [`04_START.sh`](deploy/04_START.sh) passes `--scale worker=…`). From the `deploy/` directory you can also run `docker compose up -d --scale worker=N` (e.g. three workers); all consume from the same RQ queue.
+- **Streamlit replicas**: By default, `streamlit1` and `streamlit2` share one Nginx `upstream` with `ip_hash` for session stickiness. To add more, duplicate the `x-streamlit-app` service in [`deploy/docker-compose.yml`](deploy/docker-compose.yml), add `depends_on` for Nginx, and add `server streamlit3:8501;` (etc.) in [`deploy/nginx/nginx.conf`](deploy/nginx/nginx.conf).
 
 ## TLS (HTTPS)
 
@@ -151,18 +149,18 @@ To serve over HTTPS, configure Nginx with SSL certificates (e.g. Let's Encrypt) 
 | "Failed to enqueue task" | `REDIS_URL` and `DATABASE_URL` are set; Redis and Postgres containers are running; `USE_TASK_QUEUE=true`. |
 | Tasks stay "pending" | Worker container is running; same `REDIS_URL` and `RQ_QUEUE` as Streamlit; worker logs for errors. |
 | Postgres connection refused | Postgres is healthy (`docker-compose ps`); `DATABASE_URL` uses hostname `postgres` and correct port (5432). |
-| Nginx 502 Bad Gateway | Streamlit container is up and listening on 8501; Nginx `upstream` points to `streamlit:8501`. |
+| Nginx 502 Bad Gateway | Streamlit containers are up and listening on 8501; Nginx `upstream` lists `streamlit1:8501` and `streamlit2:8501`. |
 
 ## Deployment debug page (Docker socket)
 
 The Streamlit page **Deployment debug** (`pages/99_Deployment_Debug.py` — required at top level so `st.page_link` works; default sidebar entry is hidden outside Docker via CSS; **Overview** adds a sidebar link when running in Docker) shows redacted environment variables, Postgres/Redis/RQ checks, task counts, and Docker container status and log tails.
 
-- [`deploy/docker-compose.yml`](deploy/docker-compose.yml) mounts `/var/run/docker.sock` into the `streamlit` service and sets `EVAL_DEPLOYMENT_DEBUG_DOCKER=1`. After `docker compose up -d`, restart or recreate Streamlit if you change compose or env.
+- [`deploy/docker-compose.yml`](deploy/docker-compose.yml) mounts `/var/run/docker.sock` into each Streamlit service (`streamlit1`, `streamlit2`) and sets `EVAL_DEPLOYMENT_DEBUG_DOCKER=1`. After `docker compose up -d`, restart or recreate those services if you change compose or env.
 - Set `EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT` in `.env` to your Compose project name (from `docker compose ls`) so the UI lists only this stack’s containers. If it is unset, the page lists every container visible to the daemon and shows a warning.
-- Rebuild the image after adding the `docker` PyPI package to `requirements-docker.txt` (or `docker compose build streamlit`).
+- Rebuild the image after adding the `docker` PyPI package to `requirements-docker.txt` (or `docker compose build streamlit1`).
 - **Exec**: set `EVAL_DEPLOYMENT_DEBUG_EXEC=1` in `.env` and recreate Streamlit to enable one-shot `sh -c` commands in the selected container (same power as `docker exec`). Leave at `0` when you only need logs.
 
-**Risk**: any user who can open the app with socket access can read logs for containers matched by the filter. With `EVAL_DEPLOYMENT_DEBUG_EXEC=1`, they can also run shell commands inside those containers. Restrict access with VPN, SSO/auth proxy, or remove the socket mount and debug env from the `streamlit` service in compose if that risk is unacceptable.
+**Risk**: any user who can open the app with socket access can read logs for containers matched by the filter. With `EVAL_DEPLOYMENT_DEBUG_EXEC=1`, they can also run shell commands inside those containers. Restrict access with VPN, SSO/auth proxy, or remove the socket mount and debug env from the Streamlit services in compose if that risk is unacceptable.
 
 ## Data on the host (bind mounts)
 
@@ -198,7 +196,7 @@ Rebuild the image only when you change dependencies (e.g. `requirements-docker.t
 
 ```
 deploy/
-  docker-compose.yml                  # full stack; streamlit includes Docker socket for Deployment debug
+  docker-compose.yml                  # full stack; streamlit1/streamlit2 + Docker socket for Deployment debug
   .env.example
   nginx/
     nginx.conf

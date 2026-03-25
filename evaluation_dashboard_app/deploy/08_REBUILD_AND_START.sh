@@ -8,4 +8,4 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 docker compose --env-file .env build "$@"
-docker compose --env-file .env up -d
+exec "$DEPLOY_DIR/04_START.sh"

@@ -1,8 +1,9 @@
-# Production-style stack: Nginx -> Streamlit, Redis, Worker, Postgres.
+# Production-style stack: Nginx -> Streamlit (x2) + Workers (default scale via EVAL_COMPOSE_SCALE_WORKER in .env / 04_START.sh).
 # Helper scripts (run from deploy/): 01_SETUP_ENV.sh 02_BUILD.sh 03_INIT_DB.sh 04_START.sh 05_STOP.sh
 #   06_STATUS.sh 07_LOGS.sh 08_REBUILD_AND_START.sh 09_RESTART_WORKER.sh
 # Run from deploy/: docker compose --env-file .env up -d
-# Scale workers: docker-compose up -d --scale worker=3  (default 1 worker)
+# Plain `up -d` uses one worker unless you pass --scale worker=N; 04_START.sh defaults to EVAL_COMPOSE_SCALE_WORKER (2).
+# More Streamlit boxes: duplicate x-streamlit-app block as streamlit3, add server to nginx upstream.
 # Build image from repo root: docker build -t evaluation-dashboard . (see Readme)
 #
 # Data is bind-mounted to the host so you can access it directly:
@@ -11,13 +12,55 @@
 #   - ${HOME}/.webauto -> Download/Scenario API credentials (streamlit + worker)
 #
 # App source is mounted so you can edit Python code without rebuilding the image.
-# Streamlit will reload on file changes. Restart the worker to pick up changes: docker compose restart worker
+# Streamlit will reload on file changes. Restart workers: docker compose restart worker
 #
 # Deployment debug (pages/99_Deployment_Debug.py; nav hidden outside Docker via CSS; sidebar link on Overview in Docker): Streamlit mounts the host
 # Docker socket and sets EVAL_DEPLOYMENT_DEBUG_DOCKER=1. Anyone who can use the dashboard
 # can read logs for containers the UI filter exposes; restrict with auth/VPN on untrusted
 # networks. Set EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT in .env (see .env.example).
 # EVAL_DEPLOYMENT_DEBUG_EXEC=1 in .env enables one-shot shell (docker exec) from the UI.
+
+x-streamlit-app: &streamlit-app
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    secrets:
+      - ssh
+  image: evaluation-dashboard
+  command: ["/app/docker-entrypoint.sh"]
+  environment:
+    - TZ=Asia/Tokyo
+    - EVAL_DASHBOARD_DATA_ROOT=${EVAL_DASHBOARD_DATA_ROOT:-/app/data}
+    - EVAL_DASHBOARD_CONFIG=/app/docker_config/autoware_evaluator_dl_config.json
+    - USE_TASK_QUEUE=${USE_TASK_QUEUE:-true}
+    - DATABASE_URL=${DATABASE_URL}
+    - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    - RQ_QUEUE=${RQ_QUEUE:-default}
+    - EVAL_DEPLOYMENT_DEBUG_DOCKER=1
+    - EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT=${EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT:-}
+    # One-shot shell in selected container (docker exec). Default off; set to 1 in .env only when needed.
+    - EVAL_DEPLOYMENT_DEBUG_EXEC=${EVAL_DEPLOYMENT_DEBUG_EXEC:-0}
+  volumes:
+    - ../data:/app/data
+    - ${HOME}/.webauto:/root/.webauto
+    # Docker-only config (separate from your local configs)
+    - ./configs:/app/docker_config
+    # Mount app source so code changes apply without rebuild (Streamlit auto-reloads)
+    - ../Overview.py:/app/Overview.py
+    - ../pages:/app/pages
+    - ../Readme.md:/app/Readme.md
+    - ../lib:/app/lib
+    - ../worker:/app/worker
+    - ../configs:/app/configs
+    - /var/run/docker.sock:/var/run/docker.sock
+  env_file:
+    - .env
+  depends_on:
+    redis:
+      condition: service_started
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
 
 services:
   nginx:
@@ -27,50 +70,15 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - streamlit
+      - streamlit1
+      - streamlit2
     restart: unless-stopped
 
-  streamlit:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      secrets:
-        - ssh
-    image: evaluation-dashboard
-    command: ["/app/docker-entrypoint.sh"]
-    environment:
-      - TZ=Asia/Tokyo
-      - EVAL_DASHBOARD_DATA_ROOT=${EVAL_DASHBOARD_DATA_ROOT:-/app/data}
-      - EVAL_DASHBOARD_CONFIG=/app/docker_config/autoware_evaluator_dl_config.json
-      - USE_TASK_QUEUE=${USE_TASK_QUEUE:-true}
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - RQ_QUEUE=${RQ_QUEUE:-default}
-      - EVAL_DEPLOYMENT_DEBUG_DOCKER=1
-      - EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT=${EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT:-}
-      # One-shot shell in selected container (docker exec). Default off; set to 1 in .env only when needed.
-      - EVAL_DEPLOYMENT_DEBUG_EXEC=${EVAL_DEPLOYMENT_DEBUG_EXEC:-0}
-    volumes:
-      - ../data:/app/data
-      - ${HOME}/.webauto:/root/.webauto
-      # Docker-only config (separate from your local configs)
-      - ./configs:/app/docker_config
-      # Mount app source so code changes apply without rebuild (Streamlit auto-reloads)
-      - ../Overview.py:/app/Overview.py
-      - ../pages:/app/pages
-      - ../Readme.md:/app/Readme.md
-      - ../lib:/app/lib
-      - ../worker:/app/worker
-      - ../configs:/app/configs
-      - /var/run/docker.sock:/var/run/docker.sock
-    env_file:
-      - .env
-    depends_on:
-      redis:
-        condition: service_started
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
+  streamlit1:
+    <<: *streamlit-app
+
+  streamlit2:
+    <<: *streamlit-app
 
   redis:
     image: redis:7-alpine

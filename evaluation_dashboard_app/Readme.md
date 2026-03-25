@@ -295,7 +295,7 @@ flowchart LR
   W2 --> DataRoot
 ```
 
-- **ビルド**: 上記「ビルド手順」のとおり `evaluation_dashboard_app/` で `docker build ... -t evaluation-dashboard .`（compose の `streamlit` / `worker` はこのイメージを参照します）。
+- **ビルド**: 上記「ビルド手順」のとおり `evaluation_dashboard_app/` で `docker build ... -t evaluation-dashboard .`（compose の `streamlit1` / `streamlit2` / `worker` はこのイメージを参照します）。
 - **推奨フロー（`deploy/` の番号付きスクリプト）**: `deploy/` に移動して順に実行します（すべて `docker compose --env-file .env` を使います）。
 
   | スクリプト | 内容 |
@@ -303,11 +303,11 @@ flowchart LR
   | `01_SETUP_ENV.sh` | `.env` が無ければ `.env.example` から作成（**編集は手動**） |
   | `02_BUILD.sh` | イメージビルド（引数で `--no-cache` など可） |
   | `03_INIT_DB.sh` | **初回のみ**: Postgres 起動後に `init_db` でタスク用テーブル作成 |
-  | `04_START.sh` | スタック起動（例: `./04_START.sh --scale worker=3`） |
+  | `04_START.sh` | スタック起動（デフォルト worker 数は `.env` の `EVAL_COMPOSE_SCALE_WORKER`、例: `./04_START.sh --scale worker=3` で上書き可） |
   | `05_STOP.sh` | 停止 |
   | `06_STATUS.sh` | 状態確認 |
   | `07_LOGS.sh` | `docker compose logs -f`（省略時は全サービス、例: `./07_LOGS.sh worker`） |
-  | `08_REBUILD_AND_START.sh` | ビルド後に `up -d` |
+  | `08_REBUILD_AND_START.sh` | ビルド後に `04_START.sh` と同じ起動（worker 既定本数あり） |
   | `09_RESTART_WORKER.sh` | ワーカー再起動（コード変更を worker に反映） |
 
 - **手動でも同じことは可能**: `cd deploy && cp .env.example .env` → `.env` を編集 → `docker compose --env-file .env up -d`。初回のみ `docker compose --env-file .env run --rm init_db`（`03_INIT_DB.sh` と同等）。
