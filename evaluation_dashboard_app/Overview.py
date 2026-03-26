@@ -6,7 +6,7 @@ from lib.path_utils import get_data_root, get_data_root_display, list_run_direct
 import plotly.express as px
 import plotly.graph_objects as go
 from lib.user_config import UserConfig
-from lib.summary_compare import build_summary_delta
+from lib.summary_compare import build_summary_delta, summary_delta_overlap_stats
 from lib.page_chrome import (
     inject_app_page_styles,
     render_loaded_data_section,
@@ -30,12 +30,12 @@ url_compare_runs = [
 # ====== CONFIG AND CONSTANTS ======
 st.set_page_config(page_title="Overview", layout="wide", initial_sidebar_state="expanded")
 inject_app_page_styles()
-if running_in_docker():
-    st.sidebar.page_link(
-        "pages/99_Deployment_Debug.py",
-        label="Deployment debug",
-        icon="🐳",
-    )
+# if running_in_docker():
+#     st.sidebar.page_link(
+#         "pages/99_Deployment_Debug.py",
+#         label="Deployment debug",
+#         icon="🐳",
+#     )
 RUN_ROOT = get_data_root()
 PRODUCT_LABEL_JA = {
     "Occlusion-Case": "遮蔽ケース",
@@ -407,6 +407,78 @@ if mode == "Compare Mode" and compare_run_dirs:
     for i in range(1, len(all_runs)):
         _ov_entries.append((f"Candidate · {run_labels[i]}", path_display(all_runs[i]["path"])))
 render_loaded_data_section(_ov_entries)
+
+if mode == "Compare Mode" and compare_run_dirs:
+    _all_r = st.session_state.get("all_runs")
+    _lbls = st.session_state.get("run_labels")
+    if _all_r and _lbls and all(r.get("summary") is not None for r in _all_r):
+        _cand_stats: list[tuple[str, dict]] = []
+        _overlap_rows: list[dict] = []
+        _empty_labels: list[str] = []
+        _invalid_msgs: list[str] = []
+        for i in range(1, len(_all_r)):
+            cand = _lbls[i]
+            stt = summary_delta_overlap_stats(_all_r[0]["summary"], _all_r[i]["summary"])
+            _cand_stats.append((cand, stt))
+            if not stt.get("valid"):
+                _invalid_msgs.append(f"**{cand}:** {stt.get('error', 'Unknown error')}")
+                continue
+            join_s = " + ".join(stt["key_cols"])
+            _overlap_rows.append(
+                {
+                    "Candidate": cand,
+                    "Join keys": join_s,
+                    "Baseline rows": stt["n_rows_baseline"],
+                    "Candidate rows": stt["n_rows_candidate"],
+                    "Matched (Δ rows)": stt["n_matched_keys"],
+                    "Keys only in A": stt["n_only_baseline"],
+                    "Keys only in candidate": stt["n_only_candidate"],
+                }
+            )
+            if stt["matched_empty"]:
+                _empty_labels.append(cand)
+        if _invalid_msgs:
+            st.warning(
+                "Cannot compute Summary delta alignment for some runs:\n\n"
+                + "\n\n".join(_invalid_msgs)
+            )
+        if _empty_labels:
+            _join_cols = next(
+                (" + ".join(f"`{c}`" for c in s["key_cols"]) for cnd, s in _cand_stats if cnd in _empty_labels and s.get("valid")),
+                "`id` (or `id` + `perception_label` when both have it)",
+            )
+            st.warning(
+                "**TP Summary delta views will be empty** for candidate(s) "
+                f"**{', '.join(_empty_labels)}**: baseline **A** and those runs share **no** overlapping "
+                f"Summary join keys ({_join_cols}). "
+                "The inner join drops every row; use **Baseline** or **Candidate** in the TP Summary sidebar, "
+                "or choose runs whose Summary rows use the same keys. "
+                "Open **Summary key overlap (delta alignment)** below for row counts and sample keys "
+                "that appear on only one side."
+            )
+            with st.expander("Summary key overlap (delta alignment) — details", expanded=False):
+                st.markdown(
+                    "Delta tables on **TP Summary** inner-join baseline **A** to each candidate on the "
+                    "same keys as here: **`id`**, or **`id` + `perception_label`** when both summaries "
+                    "include `perception_label`. Only **matched** keys produce rows; the rest are ignored."
+                )
+                st.dataframe(pd.DataFrame(_overlap_rows), width="stretch", hide_index=True)
+                for cand, stt in _cand_stats:
+                    if not stt.get("valid"):
+                        continue
+                    sb = stt["sample_only_baseline"]
+                    sc = stt["sample_only_candidate"]
+                    if not sb and not sc:
+                        continue
+                    st.markdown(f"**Examples — candidate {cand}**")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.caption("Up to 5 keys only in baseline A")
+                        st.code("\n".join(sb) if sb else "(none)")
+                    with c2:
+                        st.caption(f"Up to 5 keys only in {cand}")
+                        st.code("\n".join(sc) if sc else "(none)")
+
 share_q = f"mode={'compare' if mode == 'Compare Mode' else 'single'}&run_a={run_a_dir.name}"
 if mode == "Compare Mode" and compare_run_names:
     for j, name in enumerate(compare_run_names):

@@ -120,6 +120,18 @@ tp_col = "TP_delta" if use_delta else "TP"
 if tp_col not in df_active.columns:
     st.warning(f"Missing required column: {tp_col}")
     st.stop()
+
+if df_active.empty:
+    if use_delta:
+        _keys = "id and perception_label" if "perception_label" in df_active.columns else "id"
+        st.warning(
+            f"No delta rows: baseline and candidate share no common Summary keys ({_keys}). "
+            "Pick Baseline or Candidate in the sidebar, or load runs with overlapping rows."
+        )
+    else:
+        st.warning("The active Summary has no rows for this view.")
+    st.stop()
+
 tp_values = df_active[tp_col]
 tp_min_val = float(tp_values.min())
 tp_max_val = float(tp_values.max())
@@ -153,7 +165,7 @@ clip_vel = st.sidebar.checkbox("Clip velocity outliers", value=True)
 # ========== Data Filtering ==========
 df_f = df_active[(df_active[tp_col] >= tp_min) & (df_active[tp_col] <= tp_max)].copy()
 
-if clip_vel:
+if clip_vel and not df_f.empty:
     vx_col = "vx_delta" if use_delta else "vx"
     vy_col = "vy_delta" if use_delta else "vy"
     for c in (vx_col, vy_col):

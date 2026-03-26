@@ -49,21 +49,21 @@ def inject_app_page_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
-    try:
-        from lib.deploy_debug import running_in_docker
+    # try:
+    #     from lib.deploy_debug import running_in_docker
 
-        if not running_in_docker():
-            st.markdown(
-                """
-                <style>
-                /* 99_Deployment_Debug.py is registered for st.page_link in Docker; hide default nav outside containers. */
-                section[data-testid="stSidebar"] a[href*="Deployment_Debug"],
-                section[data-testid="stSidebar"] a[href*="deployment_debug"] {
-                    display: none !important;
-                }
-                </style>
-                """,
-                unsafe_allow_html=True,
-            )
-    except Exception:
-        pass
+    #     if not running_in_docker():
+    #         st.markdown(
+    #             """
+    #             <style>
+    #             /* 99_Deployment_Debug.py is registered for st.page_link in Docker; hide default nav outside containers. */
+    #             section[data-testid="stSidebar"] a[href*="Deployment_Debug"],
+    #             section[data-testid="stSidebar"] a[href*="deployment_debug"] {
+    #                 display: none !important;
+    #             }
+    #             </style>
+    #             """,
+    #             unsafe_allow_html=True,
+    #         )
+    # except Exception:
+    #     pass
