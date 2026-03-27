@@ -1,0 +1,13 @@
+# Streamlit project config (used for local `streamlit run` and Docker WORKDIR=/app).
+# See https://docs.streamlit.io/develop/api-reference/configuration/config.toml
+
+[server]
+# Container / headless deployments (no local browser)
+headless = true
+
+# Behind nginx or other proxies, per-message WebSocket compression can break or stall
+# some setups (see Streamlit troubleshooting: "App is not loading when running remotely").
+enableWebsocketCompression = false
+
+# cookieSecret: MUST be identical on every Streamlit replica behind a load balancer.
+# Set via environment in Docker: STREAMLIT_SERVER_COOKIE_SECRET (see deploy/docker-compose.yml).

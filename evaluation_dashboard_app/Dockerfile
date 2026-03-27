@@ -42,6 +42,9 @@ RUN --mount=type=secret,id=ssh,dst=/tmp/ssh_key \
 COPY requirements-docker.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements-docker.txt
 
+# Streamlit server options (WebSocket proxy, headless, etc.)
+COPY .streamlit/ .streamlit/
+
 # Copy application code and config
 COPY Overview.py .
 COPY pages/ pages/

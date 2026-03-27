@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from lib.path_utils import path_display
+from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import (
     inject_app_page_styles,
     render_loaded_data_section,
@@ -33,7 +34,7 @@ st.set_page_config(
     page_icon="📊",
     initial_sidebar_state="expanded",
 )
-
+try_hydrate_session_from_overview_query_params()
 
 # Plotly theme (multi-run palette aligned with Overview / run cards)
 _COMPARE_RUN_COLORS = ["#312e81", "#0f766e", "#e86a33", "#6b8e23", "#9b59b6", "#1abc9c"]
@@ -143,7 +144,10 @@ def _apply_gate_data_filters(
 # Safety check
 # =========================
 if "runA" not in st.session_state:
-    st.warning("Please load data from the Overview page first.")
+    st.warning(
+        "Please load data from the Overview page first. "
+        "If you already did, open Overview once so the URL includes `run_a=...`, then return (multiple Streamlit replicas)."
+    )
     st.stop()
 
 mode = st.session_state.get("mode", "Single Run")

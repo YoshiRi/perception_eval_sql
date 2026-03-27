@@ -2,15 +2,20 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 from lib.path_utils import path_display
+from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero, section_header
 from lib.summary_compare import build_summary_delta
 
 st.set_page_config(layout="wide", page_title="TP Summary", page_icon="📈", initial_sidebar_state="expanded")
+try_hydrate_session_from_overview_query_params()
 inject_app_page_styles()
 
 # ========== Safety Check ==========
 if "runA" not in st.session_state:
-    st.warning("Please load data from the Overview page first.")
+    st.warning(
+        "Please load data from the Overview page first. "
+        "If you already did, open Overview once so the URL includes `run_a=...`, then return (multiple Streamlit replicas)."
+    )
     st.stop()
 
 mode = st.session_state.get("mode", "Single Run")

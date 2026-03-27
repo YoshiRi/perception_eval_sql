@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 from contextlib import contextmanager
 
 import streamlit as st
@@ -272,25 +271,15 @@ def section_header_html(title: str, caption: str = "") -> str:
     return f'<div class="section-header">{title}</div>'
 
 
-def ds_spot_loading_markup(label: str) -> str:
-    """Compact inline HTML: shows where the app is busy (Streamlit runs top-to-bottom, so this “moves” down the page)."""
-    safe = html.escape(label)
-    return f"""<div class="ds-spot-loader" role="status" aria-live="polite">
-  <span class="ds-spot-ping" aria-hidden="true"></span>
-  <span class="ds-spot-working">Working here</span>
-  <span class="ds-spot-label">{safe}</span>
-  <span class="ds-spot-bar"><span class="ds-spot-bar-inner"></span></span>
-</div>"""
+def ds_spot_loading_markup(_label: str) -> str:
+    """Spot loader HTML disabled (was: “Working here” + label); returns empty string."""
+    return ""
 
 
 @contextmanager
-def ds_spot_loading(label: str):
-    slot = st.empty()
-    slot.markdown(ds_spot_loading_markup(label), unsafe_allow_html=True)
-    try:
-        yield
-    finally:
-        slot.empty()
+def ds_spot_loading(_label: str):
+    """Spot loader context manager disabled (no-op); kept for call-site compatibility."""
+    yield
 
 def detection_stats_page_loading_banner_markup() -> str:
     """Top-of-page banner while queries and charts stream in."""
