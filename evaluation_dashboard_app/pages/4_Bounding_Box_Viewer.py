@@ -12,6 +12,15 @@ from lib.path_utils import path_display
 from lib.parquet_schema import schema_flags
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
 from lib.ui.bounding_box_viewer_ui import bev_overlay_line_and_status_legend_markup, bev_status_legend_markup
+from lib.t4_visualizer_client import (
+    DEFAULT_BASE_URL,
+    ENV_BASE_URL,
+    RenderRequest,
+    TargetObjectIn,
+    T4VisualizerClient,
+    T4VisualizerError,
+    target_object_from_gt_row,
+)
 
 st.set_page_config(
     layout="wide",
@@ -329,9 +338,14 @@ if has_visibility and selected_visibility:
     params.extend(selected_visibility)
 
 select_extras = (", " + ", ".join(hover_extra_cols)) if hover_extra_cols else ""
+# Optional columns for T4 server overlay (z/height) and resolving dataset / scenario per row
+_geom_for_t4 = [c for c in ("z", "height") if c in cols and c not in hover_extra_cols]
+_geom_select = (", " + ", ".join(_geom_for_t4)) if _geom_for_t4 else ""
+_t4_meta_cols = [c for c in ("t4dataset_id", "t4dataset_name", "scenario_name") if c in cols]
+_t4_meta_select = (", " + ", ".join(_t4_meta_cols)) if _t4_meta_cols else ""
 sql = f"""
 SELECT frame_index, x, y, length, width, yaw, label, topic_name, source, status, uuid
-{select_vis}{select_extras}
+{select_vis}{select_extras}{_geom_select}{_t4_meta_select}
 FROM parquet_scan(?)
 WHERE {" AND ".join(where)}
 ORDER BY frame_index
@@ -446,6 +460,129 @@ with k2: st.metric("FN (this frame)", fn_count)
 with k3: st.metric("FP (this frame)", fp_count)
 with k4: st.metric("TP (EST)", tp_est_count)
 with k5: st.metric("TPR", f"{tpr_frame:.2%}" if tpr_frame is not None else "—")
+
+# ----------------------------
+# T4 visualizer (HTTP server): camera PNGs for current frame
+# ----------------------------
+def _bbox_resolve_t4_dataset_id(dff: pd.DataFrame) -> str:
+    if dff is None or dff.empty:
+        return ""
+    if "t4dataset_id" in dff.columns and dff["t4dataset_id"].notna().any():
+        return str(dff["t4dataset_id"].dropna().astype(str).iloc[0])
+    if "t4dataset_name" in dff.columns and dff["t4dataset_name"].notna().any():
+        return str(dff["t4dataset_name"].dropna().iloc[0])
+    return ""
+
+
+def _bbox_resolve_t4_scenario(dff: pd.DataFrame, scenario_from_sidebar: Optional[str]) -> str:
+    if scenario_from_sidebar is not None and str(scenario_from_sidebar).strip() != "":
+        return str(scenario_from_sidebar)
+    if dff is not None and not dff.empty and "scenario_name" in dff.columns and dff["scenario_name"].notna().any():
+        return str(dff["scenario_name"].dropna().iloc[0])
+    return ""
+
+
+with st.expander("T4 visualizer — camera renders (external server)", expanded=False):
+    if "bbox_t4_base_url" not in st.session_state:
+        st.session_state["bbox_t4_base_url"] = (
+            (os.environ.get(ENV_BASE_URL) or DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
+        )
+    base_url_t4 = st.text_input(
+        "T4 server base URL",
+        key="bbox_t4_base_url",
+        help=f"Default from env `{ENV_BASE_URL}`; must reach the FastAPI app (GET /health, POST /render).",
+    )
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        t4_crop = st.checkbox("Crop cameras", value=True, key="bbox_t4_crop_cameras")
+    with c2:
+        t4_show_ann = st.checkbox("Show dataset annotations", value=True, key="bbox_t4_show_ann")
+    with c3:
+        t4_overlay_gt = st.checkbox("Draw GT rows as target boxes", value=True, key="bbox_t4_overlay_gt")
+
+    _ds_t4 = _bbox_resolve_t4_dataset_id(df_frame)
+    if not _ds_t4 and selected_t4dataset is not None:
+        _ds_t4 = str(selected_t4dataset)
+    _sc_t4 = _bbox_resolve_t4_scenario(df_frame, selected_scenario)
+
+    st.caption(
+        f"API params: **t4dataset_id** `{_ds_t4 or '—'}` · **scenario_name** `{_sc_t4 or '—'}` · **frame_index** `{frame}`"
+    )
+    if not _ds_t4 or not _sc_t4:
+        st.info(
+            "Set a scene with **scenario_name** in the sidebar and ensure parquet includes **t4dataset_id** or "
+            "**t4dataset_name** (or pick **t4dataset_name** when multiple datasets exist). "
+            "The T4 server must have that dataset under its `--data-dir`."
+        )
+
+    fetch_t4 = st.button("Fetch camera renders from T4 server", key="bbox_t4_fetch_btn", type="primary")
+
+    if fetch_t4:
+        if not _ds_t4 or not _sc_t4:
+            st.error("Cannot call T4 server: missing t4dataset id or scenario name.")
+        else:
+            try:
+                client = T4VisualizerClient(
+                    base_url=(base_url_t4 or "").strip() or DEFAULT_BASE_URL,
+                    timeout=120.0,
+                )
+                targets: List[TargetObjectIn] = []
+                if t4_overlay_gt:
+                    for _, row in df_frame[df_frame["source"] == "GT"].iterrows():
+                        d = target_object_from_gt_row(row.to_dict())
+                        targets.append(TargetObjectIn(**d))
+                req = RenderRequest(
+                    t4dataset_id=_ds_t4,
+                    scenario_name=_sc_t4,
+                    frame_index=int(frame),
+                    target_objects=targets,
+                    crop_cameras=t4_crop,
+                    show_annotations=t4_show_ann,
+                )
+                with st.spinner("Calling T4 visualizer (POST /render)…"):
+                    t4_res = client.render(req)
+                st.session_state["bbox_t4_last_images"] = t4_res.decode_all_images()
+                st.session_state["bbox_t4_last_meta"] = {
+                    "sample_token": t4_res.sample_token,
+                    "timestamp_us": t4_res.timestamp_us,
+                    "frame_index": int(frame),
+                    "t4dataset_id": _ds_t4,
+                    "scenario_name": _sc_t4,
+                }
+            except T4VisualizerError as ex:
+                st.session_state.pop("bbox_t4_last_images", None)
+                st.session_state.pop("bbox_t4_last_meta", None)
+                st.error(f"T4 server error ({ex.status_code}): {ex}")
+            except OSError as ex:
+                st.session_state.pop("bbox_t4_last_images", None)
+                st.session_state.pop("bbox_t4_last_meta", None)
+                st.error(f"Network error: {ex}")
+
+    _meta = st.session_state.get("bbox_t4_last_meta")
+    _imgs = st.session_state.get("bbox_t4_last_images")
+    if _meta and _imgs:
+        if int(_meta.get("frame_index", -1)) != int(frame):
+            st.warning(
+                f"Images below are from **frame {_meta['frame_index']}**; current slider is **{frame}**. "
+                "Click **Fetch** again to update."
+            )
+        st.success(
+            f"**sample_token:** `{_meta.get('sample_token', '')}` · "
+            f"**timestamp_us:** `{_meta.get('timestamp_us', '')}`"
+        )
+        _nc = min(3, max(1, len(_imgs)))
+        for _row_start in range(0, len(_imgs), _nc):
+            _cols_img = st.columns(_nc)
+            for _j, _k in enumerate(range(_row_start, min(_row_start + _nc, len(_imgs)))):
+                _lbl, _png = _imgs[_k]
+                with _cols_img[_j]:
+                    st.caption(_lbl)
+                    st.image(_png, use_container_width=True)
+
+    st.caption(
+        "Runs the Tier4 HTTP visualizer (`t4-server`); does not bundle t4_devkit. "
+        "Point **T4 server base URL** at your instance or set `T4_VISUALIZER_BASE_URL`."
+    )
 
 # ----------------------------
 # Quick view: switch between "All (comparison)" and single-run view
