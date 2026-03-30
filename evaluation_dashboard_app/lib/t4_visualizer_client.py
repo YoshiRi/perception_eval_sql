@@ -199,6 +199,29 @@ class T4VisualizerClient:
         except ValueError as exc:
             raise T4VisualizerError("Invalid JSON from /datasets") from exc
 
+    def list_dataset_scenarios(
+        self, t4dataset_id: str, version: Optional[str] = None
+    ) -> dict:
+        """GET /datasets/{t4dataset_id}/scenarios — scene names and ``nbr_samples`` (frame counts).
+
+        Response keys typically include ``t4dataset_id``, ``scenarios`` (list of dicts with
+        ``name``, ``token``, ``description``, ``nbr_samples``), and optional ``version``.
+        """
+        from urllib.parse import quote
+
+        tid = quote(str(t4dataset_id), safe="")
+        params = {"version": version} if version is not None else None
+        resp = self._session.get(
+            self._url(f"/datasets/{tid}/scenarios"),
+            params=params,
+            timeout=self.timeout,
+        )
+        self._raise_for_status(resp)
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise T4VisualizerError("Invalid JSON from /datasets/.../scenarios") from exc
+
     def render(self, payload: RenderRequest) -> RenderResult:
         """POST /render with a :class:`RenderRequest`."""
         body = render_request_to_json_body(payload)

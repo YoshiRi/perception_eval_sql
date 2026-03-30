@@ -1,5 +1,6 @@
 """
-Exercise the T4 visualizer HTTP API (``t4-server``): ``GET /health``, ``GET /datasets``, ``POST /render``.
+Exercise the T4 visualizer HTTP API (``t4-server``): ``GET /health``, ``GET /datasets``,
+``GET /datasets/{t4dataset_id}/scenarios``, and ``POST /render``.
 Build embeddable JSON / query strings for T4 dataset context and render payloads.
 """
 from __future__ import annotations
@@ -9,6 +10,7 @@ import os
 import shlex
 from typing import Any, List, Optional
 
+import pandas as pd
 import streamlit as st
 
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
@@ -42,8 +44,8 @@ render_page_hero(
     title="T4 dataset server & embed helpers",
     description=(
         "Call the Tier4 visualizer HTTP service (same client as Bounding Box Viewer): health, dataset list, "
-        "and camera render. Generate JSON and query strings to embed T4dataset id, scenario, and frame "
-        "in tooling or documentation."
+        "scenarios per dataset (names and frame counts), camera render. Generate JSON and query strings to "
+        "embed T4dataset id, scenario, and frame in tooling or documentation."
     ),
     mode="Single Run",
 )
@@ -63,8 +65,8 @@ def _client() -> T4VisualizerClient:
     return T4VisualizerClient(base_url=(base_url or "").strip() or DEFAULT_BASE_URL, timeout=float(timeout_s))
 
 
-tab_health, tab_ds, tab_render, tab_embed = st.tabs(
-    ["Health", "Datasets", "Render", "Embed JSON"]
+tab_health, tab_ds, tab_scenarios, tab_render, tab_embed = st.tabs(
+    ["Health", "Datasets", "Scenarios", "Render", "Embed JSON"]
 )
 
 with tab_health:
@@ -97,6 +99,53 @@ with tab_ds:
                 st.code(ex.response_text[:4000], language="text")
         except OSError as ex:
             st.error(f"Network error: {ex}")
+
+with tab_scenarios:
+    section_header(
+        "/datasets/{t4dataset_id}/scenarios",
+        "GET — scene **name** (use as ``scenario_name`` in ``POST /render``), token, description, "
+        "and **nbr_samples** (frame count; valid ``frame_index`` is ``0 .. nbr_samples - 1``).",
+    )
+    s1, s2 = st.columns([2, 1])
+    with s1:
+        scen_ds_id = st.text_input(
+            "t4dataset_id",
+            value="",
+            key="t4_scenarios_ds",
+            placeholder="dataset id as listed by GET /datasets",
+        )
+    with s2:
+        scen_version = st.text_input(
+            "version (optional)",
+            value="",
+            key="t4_scenarios_ver",
+            help="Same as Tier4 / POST /render ``version`` (annotation dir); leave empty to omit.",
+        )
+
+    if st.button("GET /datasets/…/scenarios", type="primary", key="t4_btn_scenarios"):
+        _tid = (scen_ds_id or "").strip()
+        if not _tid:
+            st.warning("Enter a t4dataset_id.")
+        else:
+            try:
+                _ver = (scen_version or "").strip() or None
+                out = _client().list_dataset_scenarios(_tid, version=_ver)
+                st.success("OK")
+                st.json(out)
+                rows = out.get("scenarios")
+                if isinstance(rows, list) and rows:
+                    st.subheader("Scenarios table")
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.caption(
+                        "Use **name** as **scenario_name** when calling **Render** or **Embed JSON**. "
+                        "**nbr_samples** is the number of frames in that scene."
+                    )
+            except T4VisualizerError as ex:
+                st.error(f"{ex} (status={ex.status_code})")
+                if ex.response_text:
+                    st.code(ex.response_text[:4000], language="text")
+            except OSError as ex:
+                st.error(f"Network error: {ex}")
 
 with tab_render:
     section_header("POST /render", "Request camera PNGs; optional ``target_objects`` from JSON below.")

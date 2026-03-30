@@ -69,6 +69,33 @@ def test_list_datasets_success():
     assert d["data_dir"] == "/data"
 
 
+def test_list_dataset_scenarios_success():
+    session = MagicMock()
+    session.get.return_value = _ok_response(
+        {
+            "t4dataset_id": "ds1",
+            "scenarios": [
+                {
+                    "name": "scene-a",
+                    "token": "tok",
+                    "description": "",
+                    "nbr_samples": 42,
+                }
+            ],
+            "version": None,
+        }
+    )
+    c = T4VisualizerClient(base_url="http://test", session=session)
+    out = c.list_dataset_scenarios("ds1")
+    assert out["t4dataset_id"] == "ds1"
+    assert len(out["scenarios"]) == 1
+    assert out["scenarios"][0]["name"] == "scene-a"
+    assert out["scenarios"][0]["nbr_samples"] == 42
+    session.get.assert_called_once()
+    call_url = session.get.call_args[0][0]
+    assert "ds1" in call_url and "scenarios" in call_url
+
+
 def test_render_success_decode():
     session = MagicMock()
     session.post.return_value = _ok_response(
