@@ -60,6 +60,8 @@ x-streamlit-app: &streamlit-app
     - ../configs:/app/configs
     - ../.streamlit:/app/.streamlit
     - /var/run/docker.sock:/var/run/docker.sock
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   env_file:
     - .env
   depends_on:
@@ -124,6 +126,8 @@ services:
       - ../lib:/app/lib
       - ../worker:/app/worker
       - ../configs:/app/configs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     depends_on:
