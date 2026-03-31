@@ -3,7 +3,8 @@
 Default base URL: ``T4_VISUALIZER_BASE_URL`` environment variable, or ``http://127.0.0.1:8000``.
 
 Does not import t4_devkit or t4_visualizer; only uses ``requests`` against the server's
-``GET /health``, ``GET /datasets``, and ``POST /render`` endpoints.
+``GET /health``, ``GET /datasets``, ``GET /datasets/{id}/availability``, ``GET /datasets/{id}/scenarios``,
+and ``POST /render`` endpoints.
 """
 
 from __future__ import annotations
@@ -249,6 +250,24 @@ class T4VisualizerClient:
             return resp.json()
         except ValueError as exc:
             raise T4VisualizerError("Invalid JSON from /datasets/.../scenarios") from exc
+
+    def dataset_availability(self, t4dataset_id: str) -> dict:
+        """GET /datasets/{t4dataset_id}/availability — whether the dataset is on disk for this server.
+
+        Typical JSON: ``t4dataset_id``, ``available`` (bool), ``dataset_path`` (str or null).
+        """
+        from urllib.parse import quote
+
+        tid = quote(str(t4dataset_id), safe="")
+        resp = self._session.get(
+            self._url(f"/datasets/{tid}/availability"),
+            timeout=self.timeout,
+        )
+        self._raise_for_status(resp)
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise T4VisualizerError("Invalid JSON from /datasets/.../availability") from exc
 
     def render(self, payload: RenderRequest) -> RenderResult:
         """POST /render with a :class:`RenderRequest`."""

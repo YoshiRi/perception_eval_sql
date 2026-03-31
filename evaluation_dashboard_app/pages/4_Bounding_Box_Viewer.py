@@ -327,7 +327,7 @@ if multi_run and len(runs_to_show) >= 2:
 # --- T4 visualizer (base URL + preview mode in sidebar)
 with st.sidebar:
     st.markdown("##### T4 visualizer")
-    st.caption("Choose HTML iframe or in-app PNGs (POST); both use the same server URL.")
+    st.caption("Uses **GET /datasets/{id}/availability** first; preview runs only if the server reports the dataset is available.")
     if "bbox_t4_base_url" not in st.session_state:
         st.session_state["bbox_t4_base_url"] = (
             (os.environ.get(ENV_BASE_URL) or DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
@@ -536,18 +536,7 @@ def _bbox_t4_request_key(
     )
 
 
-st.markdown("##### T4 camera renders")
 _t4_preview_mode = st.session_state.get("bbox_t4_preview_mode", "html_iframe")
-if _t4_preview_mode == "html_iframe":
-    st.caption(
-        "Mode: **HTML iframe**. Loads in the browser without blocking the rest of the page. "
-        f"**T4 server base URL** is in the sidebar (or `{ENV_BASE_URL}`)."
-    )
-else:
-    st.caption(
-        "Mode: **POST** — camera PNGs fetched in-app. "
-        f"**T4 server base URL** is in the sidebar (or `{ENV_BASE_URL}`)."
-    )
 
 base_url_t4 = (st.session_state.get("bbox_t4_base_url") or "").strip() or DEFAULT_BASE_URL
 
@@ -563,6 +552,7 @@ if not _ds_t4:
         "bbox_t4_success_key",
         "bbox_t4_error_key",
         "bbox_t4_error_msg",
+        "bbox_t4_availability",
     ):
         st.session_state.pop(_k, None)
     st.caption("T4 camera preview is not available for this scene.")
@@ -573,137 +563,194 @@ if not _ds_t4:
             "The Tier4 HTTP visualizer (`t4-server`) must serve that dataset. "
             f"Set **T4 server base URL** in the sidebar or `{ENV_BASE_URL}`."
         )
-elif _t4_preview_mode == "html_iframe":
-    _q = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
-    _render_html_url = f"{base_url_t4.rstrip('/')}/render/html?{_q}"
-    st.caption(
-        f"**Request:** t4dataset_id `{_ds_t4}` · scenario_name `{_sc_t4 or '—'}` · frame_index `{frame}`"
-    )
-    st.markdown(f"[Open in new tab]({_render_html_url})")
-    _iframe_h = 900
-    components.html(
-        f'<iframe src="{html.escape(_render_html_url, quote=True)}" '
-        f'width="100%" height="{_iframe_h}" style="border:none;border-radius:8px;background:#141418" '
-        f'loading="lazy" title="T4 camera render" referrerpolicy="no-referrer-when-downgrade"></iframe>',
-        height=_iframe_h + 24,
-        scrolling=True,
-    )
-elif not _sc_t4:
-    st.caption("POST /render mode needs **scenario_name** (sidebar or parquet) for this scene.")
-    with st.expander("Details", expanded=False):
-        st.markdown(
-            "Pick a **Scenario name** in the sidebar or ensure parquet includes **scenario_name**. "
-            "Alternatively switch to **HTML iframe** mode if the server accepts an empty scenario for your dataset."
-        )
 else:
-    t4_crop = bool(st.session_state.get("bbox_t4_crop_cameras", True))
-    t4_show_ann = bool(st.session_state.get("bbox_t4_show_ann", True))
-    t4_overlay_gt = bool(st.session_state.get("bbox_t4_overlay_gt", True))
-
-    _req_key = _bbox_t4_request_key(
-        _ds_t4,
-        _sc_t4,
-        int(frame),
-        base_url_t4,
-        t4_crop,
-        t4_show_ann,
-        t4_overlay_gt,
-    )
-    _ok_key = st.session_state.get("bbox_t4_success_key")
-    _bad_key = st.session_state.get("bbox_t4_error_key")
-
-    _should_fetch = _req_key != _ok_key and _req_key != _bad_key
-
-    if _should_fetch:
+    _t4_avail_cache_key = f"{base_url_t4.rstrip('/')}|{_ds_t4}"
+    _cached_av = st.session_state.get("bbox_t4_availability")
+    _need_avail_fetch = _cached_av is None or _cached_av.get("cache_key") != _t4_avail_cache_key
+    if _need_avail_fetch:
         try:
-            with st.spinner("Loading T4 camera renders… (usually ~2 seconds)"):
-                client = T4VisualizerClient(
-                    base_url=base_url_t4,
-                    timeout=120.0,
+            with st.spinner("Checking T4 dataset on the server…"):
+                _av_client = T4VisualizerClient(base_url=base_url_t4, timeout=30.0)
+                _av_data = _av_client.dataset_availability(_ds_t4)
+            st.session_state["bbox_t4_availability"] = {
+                "cache_key": _t4_avail_cache_key,
+                "ok": True,
+                "available": bool(_av_data.get("available")),
+                "data": _av_data,
+                "error": None,
+            }
+        except T4VisualizerError as ex:
+            st.session_state["bbox_t4_availability"] = {
+                "cache_key": _t4_avail_cache_key,
+                "ok": False,
+                "available": False,
+                "data": None,
+                "error": f"T4 server error ({ex.status_code}): {ex}",
+            }
+        except (OSError, requests.RequestException) as ex:
+            st.session_state["bbox_t4_availability"] = {
+                "cache_key": _t4_avail_cache_key,
+                "ok": False,
+                "available": False,
+                "data": None,
+                "error": f"Network error: {ex}",
+            }
+        except Exception as ex:
+            st.session_state["bbox_t4_availability"] = {
+                "cache_key": _t4_avail_cache_key,
+                "ok": False,
+                "available": False,
+                "data": None,
+                "error": f"Availability check failed: {ex}",
+            }
+
+    _av = st.session_state.get("bbox_t4_availability") or {}
+
+    if not _av.get("ok"):
+        st.caption("T4 preview skipped — could not verify dataset on the visualizer server.")
+        with st.expander("Details", expanded=False):
+            st.markdown(_av.get("error") or "Unknown error.")
+    elif not _av.get("available"):
+        st.caption("T4 preview skipped — this dataset is not on the visualizer server host.")
+        with st.expander("Details", expanded=False):
+            _d = _av.get("data")
+            if isinstance(_d, dict) and _d:
+                st.json(_d)
+            else:
+                st.markdown(
+                    "The server reported **available: false** (no local dataset path for this id on the machine "
+                    "running `t4-server`)."
                 )
-                targets = []
-                if t4_overlay_gt:
-                    for _, row in df_frame[df_frame["source"] == "GT"].iterrows():
-                        d = target_object_from_gt_row(row.to_dict())
-                        targets.append(TargetObjectIn(**d))
-                req = RenderRequest(
-                    t4dataset_id=_ds_t4,
-                    scenario_name=_sc_t4,
-                    frame_index=int(frame),
-                    target_objects=targets,
-                    crop_cameras=t4_crop,
-                    show_annotations=t4_show_ann,
-                )
-                t4_res = client.render(req)
-                _imgs = t4_res.decode_all_images()
-            if not _imgs:
+    elif _t4_preview_mode == "html_iframe":
+        _q = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
+        _render_html_url = f"{base_url_t4.rstrip('/')}/render/html?{_q}"
+        st.markdown(f"[Open in new tab]({_render_html_url})")
+        _iframe_h = 900
+        # Iframe shell: neutral gray while the document loads (avoid #141418 — reads as a black box for ~2s until
+        # the large /render/html response paints; inner page still sets its own dark background).
+        components.html(
+            f'<iframe src="{html.escape(_render_html_url, quote=True)}" '
+            f'width="100%" height="{_iframe_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'loading="lazy" title="T4 camera render" referrerpolicy="no-referrer-when-downgrade"></iframe>',
+            height=_iframe_h + 24,
+            scrolling=True,
+        )
+    elif not _sc_t4:
+        st.caption("POST /render mode needs **scenario_name** (sidebar or parquet) for this scene.")
+        with st.expander("Details", expanded=False):
+            st.markdown(
+                "Pick a **Scenario name** in the sidebar or ensure parquet includes **scenario_name**. "
+                "Alternatively switch to **HTML iframe** mode if the server accepts an empty scenario for your dataset."
+            )
+    else:
+        t4_crop = bool(st.session_state.get("bbox_t4_crop_cameras", True))
+        t4_show_ann = bool(st.session_state.get("bbox_t4_show_ann", True))
+        t4_overlay_gt = bool(st.session_state.get("bbox_t4_overlay_gt", True))
+
+        _req_key = _bbox_t4_request_key(
+            _ds_t4,
+            _sc_t4,
+            int(frame),
+            base_url_t4,
+            t4_crop,
+            t4_show_ann,
+            t4_overlay_gt,
+        )
+        _ok_key = st.session_state.get("bbox_t4_success_key")
+        _bad_key = st.session_state.get("bbox_t4_error_key")
+
+        _should_fetch = _req_key != _ok_key and _req_key != _bad_key
+
+        if _should_fetch:
+            try:
+                with st.spinner("Loading T4 camera renders… (usually ~2 seconds)"):
+                    client = T4VisualizerClient(
+                        base_url=base_url_t4,
+                        timeout=120.0,
+                    )
+                    targets = []
+                    if t4_overlay_gt:
+                        for _, row in df_frame[df_frame["source"] == "GT"].iterrows():
+                            d = target_object_from_gt_row(row.to_dict())
+                            targets.append(TargetObjectIn(**d))
+                    req = RenderRequest(
+                        t4dataset_id=_ds_t4,
+                        scenario_name=_sc_t4,
+                        frame_index=int(frame),
+                        target_objects=targets,
+                        crop_cameras=t4_crop,
+                        show_annotations=t4_show_ann,
+                    )
+                    t4_res = client.render(req)
+                    _imgs = t4_res.decode_all_images()
+                if not _imgs:
+                    st.session_state.pop("bbox_t4_last_images", None)
+                    st.session_state.pop("bbox_t4_last_meta", None)
+                    st.session_state["bbox_t4_error_key"] = _req_key
+                    st.session_state["bbox_t4_error_msg"] = (
+                        "T4 server returned no camera images for this frame. "
+                        "Check that the dataset and scenario exist on the server and the frame index is valid."
+                    )
+                    st.session_state.pop("bbox_t4_success_key", None)
+                else:
+                    st.session_state["bbox_t4_last_images"] = _imgs
+                    st.session_state["bbox_t4_last_meta"] = {
+                        "sample_token": t4_res.sample_token,
+                        "timestamp_us": t4_res.timestamp_us,
+                        "frame_index": int(frame),
+                        "t4dataset_id": _ds_t4,
+                        "scenario_name": _sc_t4,
+                    }
+                    st.session_state["bbox_t4_success_key"] = _req_key
+                    st.session_state.pop("bbox_t4_error_key", None)
+                    st.session_state.pop("bbox_t4_error_msg", None)
+            except T4VisualizerError as ex:
                 st.session_state.pop("bbox_t4_last_images", None)
                 st.session_state.pop("bbox_t4_last_meta", None)
-                st.session_state["bbox_t4_error_key"] = _req_key
-                st.session_state["bbox_t4_error_msg"] = (
-                    "T4 server returned no camera images for this frame. "
-                    "Check that the dataset and scenario exist on the server and the frame index is valid."
-                )
                 st.session_state.pop("bbox_t4_success_key", None)
-            else:
-                st.session_state["bbox_t4_last_images"] = _imgs
-                st.session_state["bbox_t4_last_meta"] = {
-                    "sample_token": t4_res.sample_token,
-                    "timestamp_us": t4_res.timestamp_us,
-                    "frame_index": int(frame),
-                    "t4dataset_id": _ds_t4,
-                    "scenario_name": _sc_t4,
-                }
-                st.session_state["bbox_t4_success_key"] = _req_key
-                st.session_state.pop("bbox_t4_error_key", None)
-                st.session_state.pop("bbox_t4_error_msg", None)
-        except T4VisualizerError as ex:
-            st.session_state.pop("bbox_t4_last_images", None)
-            st.session_state.pop("bbox_t4_last_meta", None)
-            st.session_state.pop("bbox_t4_success_key", None)
-            st.session_state["bbox_t4_error_key"] = _req_key
-            st.session_state["bbox_t4_error_msg"] = f"T4 server error ({ex.status_code}): {ex}"
-        except (OSError, requests.RequestException) as ex:
-            st.session_state.pop("bbox_t4_last_images", None)
-            st.session_state.pop("bbox_t4_last_meta", None)
-            st.session_state.pop("bbox_t4_success_key", None)
-            st.session_state["bbox_t4_error_key"] = _req_key
-            st.session_state["bbox_t4_error_msg"] = f"Network error: {ex}"
-        except Exception as ex:
-            st.session_state.pop("bbox_t4_last_images", None)
-            st.session_state.pop("bbox_t4_last_meta", None)
-            st.session_state.pop("bbox_t4_success_key", None)
-            st.session_state["bbox_t4_error_key"] = _req_key
-            st.session_state["bbox_t4_error_msg"] = f"T4 render failed: {ex}"
+                st.session_state["bbox_t4_error_key"] = _req_key
+                st.session_state["bbox_t4_error_msg"] = f"T4 server error ({ex.status_code}): {ex}"
+            except (OSError, requests.RequestException) as ex:
+                st.session_state.pop("bbox_t4_last_images", None)
+                st.session_state.pop("bbox_t4_last_meta", None)
+                st.session_state.pop("bbox_t4_success_key", None)
+                st.session_state["bbox_t4_error_key"] = _req_key
+                st.session_state["bbox_t4_error_msg"] = f"Network error: {ex}"
+            except Exception as ex:
+                st.session_state.pop("bbox_t4_last_images", None)
+                st.session_state.pop("bbox_t4_last_meta", None)
+                st.session_state.pop("bbox_t4_success_key", None)
+                st.session_state["bbox_t4_error_key"] = _req_key
+                st.session_state["bbox_t4_error_msg"] = f"T4 render failed: {ex}"
 
-    _meta = st.session_state.get("bbox_t4_last_meta")
-    _imgs = st.session_state.get("bbox_t4_last_images")
-    _show_err = st.session_state.get("bbox_t4_error_msg")
+        _meta = st.session_state.get("bbox_t4_last_meta")
+        _imgs = st.session_state.get("bbox_t4_last_images")
+        _show_err = st.session_state.get("bbox_t4_error_msg")
 
-    st.caption(
-        f"**Request:** t4dataset_id `{_ds_t4}` · scenario_name `{_sc_t4}` · frame_index `{frame}`"
-    )
-    if _req_key == st.session_state.get("bbox_t4_error_key") and _show_err:
-        st.caption("T4 camera preview could not be loaded.")
-        with st.expander("Details", expanded=False):
-            st.caption(
-                f"t4dataset_id `{_ds_t4}` · scenario_name `{_sc_t4}` · frame_index `{frame}` · "
-                f"server `{base_url_t4}`"
-            )
-            st.markdown(_show_err)
-    elif _meta and _imgs:
         st.caption(
-            f"**sample_token** `{_meta.get('sample_token', '')}` · "
-            f"**timestamp_us** `{_meta.get('timestamp_us', '')}`"
+            f"**Request:** t4dataset_id `{_ds_t4}` · scenario_name `{_sc_t4}` · frame_index `{frame}`"
         )
-        _nc = min(3, max(1, len(_imgs)))
-        for _row_start in range(0, len(_imgs), _nc):
-            _cols_img = st.columns(_nc)
-            for _j, _k in enumerate(range(_row_start, min(_row_start + _nc, len(_imgs)))):
-                _lbl, _png = _imgs[_k]
-                with _cols_img[_j]:
-                    st.caption(_lbl)
-                    st.image(_png, use_container_width=True)
+        if _req_key == st.session_state.get("bbox_t4_error_key") and _show_err:
+            st.caption("T4 camera preview could not be loaded.")
+            with st.expander("Details", expanded=False):
+                st.caption(
+                    f"t4dataset_id `{_ds_t4}` · scenario_name `{_sc_t4}` · frame_index `{frame}` · "
+                    f"server `{base_url_t4}`"
+                )
+                st.markdown(_show_err)
+        elif _meta and _imgs:
+            st.caption(
+                f"**sample_token** `{_meta.get('sample_token', '')}` · "
+                f"**timestamp_us** `{_meta.get('timestamp_us', '')}`"
+            )
+            _nc = min(3, max(1, len(_imgs)))
+            for _row_start in range(0, len(_imgs), _nc):
+                _cols_img = st.columns(_nc)
+                for _j, _k in enumerate(range(_row_start, min(_row_start + _nc, len(_imgs)))):
+                    _lbl, _png = _imgs[_k]
+                    with _cols_img[_j]:
+                        st.caption(_lbl)
+                        st.image(_png, use_container_width=True)
 
 # ----------------------------
 # Quick view: switch between "All (comparison)" and single-run view
