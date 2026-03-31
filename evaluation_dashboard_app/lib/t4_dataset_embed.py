@@ -5,6 +5,7 @@ Use with :mod:`lib.t4_visualizer_client` when wiring eval parquet rows or dashbo
 
 from __future__ import annotations
 
+import json
 from typing import Any, List, Mapping, Optional, Sequence
 from urllib.parse import quote
 
@@ -49,6 +50,12 @@ def t4_share_query_params(
         f"&scenario_name={quote(str(scenario_name), safe='')}"
         f"&frame_index={int(frame_index)}"
     )
+
+
+def t4_share_query_params_from_post_render_json(body: Mapping[str, Any]) -> str:
+    """Query string (no ``?``) with a single ``render_json`` param: same object as curl ``-d`` / ``post_render_json``."""
+    compact = json.dumps(dict(body), separators=(",", ":"), ensure_ascii=False)
+    return f"render_json={quote(compact, safe='')}"
 
 
 def target_objects_from_rows(rows: Sequence[Mapping[str, Any]]) -> List[dict[str, Any]]:

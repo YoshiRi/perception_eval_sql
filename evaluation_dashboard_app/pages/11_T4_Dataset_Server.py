@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 from typing import Any, List, Optional
 
 import pandas as pd
@@ -64,6 +63,51 @@ if "t4_scenario_rows" not in st.session_state:
 if "t4_last_scenarios_payload" not in st.session_state:
     st.session_state["t4_last_scenarios_payload"] = None
 
+
+def _hydrate_t4_from_url() -> None:
+    """Fill context + render/embed widgets from ``?render_json=…`` (same JSON as curl ``-d``)."""
+    qp = st.query_params
+    raw = qp.get("render_json")
+    if raw is None:
+        return
+    if isinstance(raw, list):
+        raw = raw[0] if raw else None
+    if not raw:
+        return
+    sig = f"render_json:{raw}"
+    if st.session_state.get("_t4_hydrate_sig") == sig:
+        return
+    try:
+        body = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return
+    if not isinstance(body, dict):
+        return
+    st.session_state["t4_ctx_ds"] = str(body.get("t4dataset_id", ""))
+    st.session_state["t4_ctx_scen"] = str(body.get("scenario_name", ""))
+    try:
+        st.session_state["t4_ctx_frame"] = int(body.get("frame_index", 0))
+    except (TypeError, ValueError):
+        st.session_state["t4_ctx_frame"] = 0
+    ver = body.get("version")
+    st.session_state["t4_ctx_ver"] = "" if ver is None else str(ver)
+    to = body.get("target_objects")
+    if isinstance(to, list):
+        tgt = json.dumps(to, ensure_ascii=False, indent=2)
+        st.session_state["t4_emb_rows"] = tgt
+        st.session_state["t4_render_targets"] = tgt
+        st.session_state["t4_render_use_tgt"] = len(to) > 0
+    else:
+        st.session_state["t4_emb_rows"] = "[]"
+        st.session_state["t4_render_targets"] = "[]"
+        st.session_state["t4_render_use_tgt"] = False
+    st.session_state["t4_render_crop"] = bool(body.get("crop_cameras", False))
+    st.session_state["t4_render_ann"] = bool(body.get("show_annotations", True))
+    st.session_state["_t4_hydrate_sig"] = sig
+
+
+_hydrate_t4_from_url()
+
 base_url = st.sidebar.text_input(
     "Server base URL",
     key="t4_test_base_url",
@@ -74,6 +118,11 @@ timeout_s = st.sidebar.number_input("HTTP timeout (s)", min_value=5.0, max_value
 
 def _client() -> T4VisualizerClient:
     return T4VisualizerClient(base_url=(base_url or "").strip() or DEFAULT_BASE_URL, timeout=float(timeout_s))
+
+
+def _bash_single_quoted(s: str) -> str:
+    """Wrap *s* for safe use as a bash single-quoted string (e.g. ``-d '…'``)."""
+    return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
 def _on_dataset_pick() -> None:
@@ -191,7 +240,7 @@ if _name_rows:
         "Valid **frame_index** for each scene is **0 … nbr_samples − 1** (see table). "
         "Use **Render & embed** to request PNGs."
     )
-    st.dataframe(pd.DataFrame(_name_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(_name_rows), width='stretch', hide_index=True)
 
 st.divider()
 
@@ -315,7 +364,7 @@ with tab_render:
                 cols = st.columns(n)
                 for i in range(n):
                     label, png = imgs[i]
-                    cols[i].image(png, caption=label, use_container_width=True)
+                    cols[i].image(png, caption=label, width='stretch')
                 if len(imgs) > n:
                     st.caption(f"Showing first {n} of {len(imgs)} images.")
         except T4VisualizerError as ex:
@@ -362,33 +411,37 @@ with tab_render:
         st.warning(rows_err)
 
     ctx = t4_dataset_context(emb_ds, emb_scen, frame_index=emb_frame)
-    q = t4_share_query_params(emb_ds, emb_scen, frame_index=emb_frame)
-
-    st.subheader("t4_dataset_context")
-    st.json(ctx)
-
-    st.subheader("Shareable query fragment")
-    st.code(q, language="text")
-
+    emb_ver = (st.session_state.get("t4_ctx_ver") or "").strip()
     full = build_render_request_embed(
         emb_ds,
         emb_scen,
         emb_frame,
         target_rows=rows_list if rows_list else None,
-        show_annotations=True,
-        crop_cameras=False,
+        show_annotations=bool(st.session_state.get("t4_render_ann", True)),
+        crop_cameras=bool(st.session_state.get("t4_render_crop", False)),
+        version=emb_ver if emb_ver else None,
     )
-    st.subheader("context + post_render_json")
-    st.json(full)
+    viz_base = (base_url or "").strip().rstrip("/") or DEFAULT_BASE_URL
+    q = t4_share_query_params(emb_ds, emb_scen, frame_index=emb_frame)
+    render_get_url = f"{viz_base}/render?{q}"
+
+    st.subheader("Render GET URL")
+    st.caption(
+        "GET-style URL on the **visualizer server** (same **Server base URL** as API calls). "
+        "Requires **GET /render** with ``t4dataset_id``, ``scenario_name``, ``frame_index``; otherwise use **curl** (POST JSON) below."
+    )
+    st.markdown(f"[{render_get_url}]({render_get_url})")
 
     if rows_list:
         st.subheader("target_objects_from_rows (preview)")
         st.json(target_objects_from_rows(rows_list))
 
-    curl_base = shlex.quote((base_url or "").strip() or DEFAULT_BASE_URL)
-    body_s = json.dumps(full["post_render_json"])
-    st.subheader("Example curl")
-    st.code(
-        f"curl -sS {curl_base}/render -H 'Content-Type: application/json' -d {shlex.quote(body_s)}",
-        language="bash",
+    curl_base = (base_url or "").strip() or DEFAULT_BASE_URL
+    body_pretty = json.dumps(full["post_render_json"], indent=2, ensure_ascii=False)
+    curl_lines = (
+        f"curl -sS {curl_base}/render \\\n"
+        f"  -H 'Content-Type: application/json' \\\n"
+        f"  -d {_bash_single_quoted(body_pretty)}"
     )
+    st.subheader("curl")
+    st.code(curl_lines, language="bash")

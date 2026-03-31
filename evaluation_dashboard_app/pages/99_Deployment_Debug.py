@@ -60,7 +60,7 @@ tab_env, tab_dep, tab_tasks, tab_docker = st.tabs(
 with tab_env:
     section_header("Deployment environment", "Sensitive connection strings are redacted.")
     env_df = pd.DataFrame(redacted_deployment_env_rows(), columns=["Variable", "Value"])
-    st.dataframe(env_df, use_container_width=True, hide_index=True)
+    st.dataframe(env_df, width='stretch', hide_index=True)
 
 with tab_dep:
     section_header("Postgres")
@@ -95,7 +95,7 @@ with tab_tasks:
         cdf = pd.DataFrame(
             [{"status": k, "count": v} for k, v in sorted(counts.items())]
         )
-        st.dataframe(cdf, use_container_width=True, hide_index=True)
+        st.dataframe(cdf, width='stretch', hide_index=True)
     elif ok_t:
         st.success("No task rows yet (empty table).")
     else:
@@ -235,7 +235,7 @@ with tab_docker:
                     return
                 section_header("Live container table", "Sortable columns; `full_id` stays internal for log/exec.")
                 display_df = _display_columns_for_containers(rows)
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, width='stretch', hide_index=True)
                 _render_live_stack_mermaid(rows)
 
                 options = [f"{r['name']} ({r['id']})" for r in rows]
@@ -280,7 +280,7 @@ with tab_docker:
                 _render_live_stack_mermaid(rows)
                 section_header("Live container table", "Sortable columns; `full_id` stays internal for log/exec.")
                 display_df = _display_columns_for_containers(rows)
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                st.dataframe(display_df, width='stretch', hide_index=True)
                 options = [f"{r['name']} ({r['id']})" for r in rows]
                 id_by_label = {f"{r['name']} ({r['id']})": r["full_id"] for r in rows}
                 pick = st.selectbox("Container", options=options, key="deploy_debug_pick_legacy")
