@@ -15,7 +15,7 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 import requests
 
-DEFAULT_BASE_URL = "http://10.0.6.148:8000"
+DEFAULT_BASE_URL = "http://localhost:8000"
 ENV_BASE_URL = "T4_VISUALIZER_BASE_URL"
 
 
@@ -80,6 +80,11 @@ class RenderResult:
     sample_token: str
     timestamp_us: int
     images: List[ImageResult]
+    raw_json: Optional[dict] = None
+    # Optional server-reported timings (newer t4-server JSON body)
+    elapsed_ms: Optional[float] = None
+    tier4_load_ms: Optional[float] = None
+    render_ms: Optional[float] = None
 
     def decode_png(self, label: str) -> bytes:
         """Decode base64 PNG bytes for the image with the given label."""
@@ -91,6 +96,29 @@ class RenderResult:
     def decode_all_images(self) -> List[Tuple[str, bytes]]:
         """Decode all images to ``(label, png_bytes)``."""
         return [(img.label, base64.b64decode(img.png_base64)) for img in self.images]
+
+
+def render_response_json_for_debug(
+    data: Mapping[str, Any], *, max_b64_preview: int = 120
+) -> dict[str, Any]:
+    """Copy of a ``POST /render`` JSON object with ``png_base64`` truncated for UI/debug."""
+    out: dict[str, Any] = dict(data)
+    imgs = out.get("images")
+    if not isinstance(imgs, list):
+        return out
+    trimmed: list[Any] = []
+    for item in imgs:
+        if not isinstance(item, dict):
+            trimmed.append(item)
+            continue
+        row = dict(item)
+        b64 = row.get("png_base64")
+        if isinstance(b64, str) and len(b64) > max_b64_preview:
+            row["png_base64"] = f"{b64[:max_b64_preview]}…"
+            row["png_base64_len"] = len(b64)
+        trimmed.append(row)
+    out["images"] = trimmed
+    return out
 
 
 def _default_base_url() -> str:
@@ -242,10 +270,21 @@ class T4VisualizerClient:
                 ImageResult(label=str(x["label"]), png_base64=str(x["png_base64"]))
                 for x in images_raw
             ]
+
+            def _opt_float(key: str) -> Optional[float]:
+                v = data.get(key)
+                if v is None:
+                    return None
+                return float(v)
+
             return RenderResult(
                 sample_token=str(data["sample_token"]),
                 timestamp_us=int(data["timestamp_us"]),
                 images=imgs,
+                raw_json=dict(data),
+                elapsed_ms=_opt_float("elapsed_ms"),
+                tier4_load_ms=_opt_float("tier4_load_ms"),
+                render_ms=_opt_float("render_ms"),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise T4VisualizerError(f"Unexpected /render response shape: {data!r}") from exc

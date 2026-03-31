@@ -28,6 +28,7 @@ from lib.t4_visualizer_client import (
     T4VisualizerError,
     TargetObjectIn,
     render_request_to_json_body,
+    render_response_json_for_debug,
     target_object_from_gt_row,
 )
 
@@ -44,14 +45,24 @@ render_page_hero(
     title="T4 dataset server & embed helpers",
     description=(
         "Call the Tier4 visualizer HTTP service (same client as Bounding Box Viewer): health, dataset list, "
-        "scenarios per dataset (names and frame counts), camera render. Generate JSON and query strings to "
-        "embed T4dataset id, scenario, and frame in tooling or documentation."
+        "scenarios per dataset (names and frame counts), camera render. Fetch lists, pick ids from the server "
+        "or type your own, then render or copy embed JSON."
     ),
     mode="Single Run",
 )
 
 if "t4_test_base_url" not in st.session_state:
     st.session_state["t4_test_base_url"] = os.environ.get(ENV_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
+
+# Cached API results for pickers
+if "t4_dataset_ids" not in st.session_state:
+    st.session_state["t4_dataset_ids"] = []
+if "t4_last_datasets_payload" not in st.session_state:
+    st.session_state["t4_last_datasets_payload"] = None
+if "t4_scenario_rows" not in st.session_state:
+    st.session_state["t4_scenario_rows"] = []
+if "t4_last_scenarios_payload" not in st.session_state:
+    st.session_state["t4_last_scenarios_payload"] = None
 
 base_url = st.sidebar.text_input(
     "Server base URL",
@@ -65,12 +76,129 @@ def _client() -> T4VisualizerClient:
     return T4VisualizerClient(base_url=(base_url or "").strip() or DEFAULT_BASE_URL, timeout=float(timeout_s))
 
 
-tab_health, tab_ds, tab_scenarios, tab_render, tab_embed = st.tabs(
-    ["Health", "Datasets", "Scenarios", "Render", "Embed JSON"]
+def _on_dataset_pick() -> None:
+    sel = st.session_state.get("t4_pick_ds", "—")
+    if sel != "—":
+        st.session_state["t4_ctx_ds"] = sel
+
+
+def _on_scenario_pick() -> None:
+    sel = st.session_state.get("t4_pick_scen", "—")
+    if sel != "—":
+        st.session_state["t4_ctx_scen"] = sel
+
+
+# --- Shared context (dataset, version, scenario, frame) ---------------------------------
+section_header(
+    "Context",
+    "Fetch lists from the server, then choose **t4dataset_id** and **scenario_name** from the dropdowns "
+    "or type any value in the text fields.",
 )
 
-with tab_health:
-    section_header("/health", "GET — server liveness and any metadata the service returns.")
+row_fetch = st.columns([1, 1, 2])
+with row_fetch[0]:
+    if st.button("GET /datasets", type="primary", key="t4_btn_datasets"):
+        try:
+            d = _client().list_datasets()
+            st.session_state["t4_last_datasets_payload"] = d
+            ds = d.get("datasets")
+            st.session_state["t4_dataset_ids"] = [str(x) for x in ds] if isinstance(ds, list) else []
+            st.session_state["t4_scenario_rows"] = []
+            st.session_state["t4_last_scenarios_payload"] = None
+            st.success(f"OK — {len(st.session_state['t4_dataset_ids'])} dataset id(s).")
+        except T4VisualizerError as ex:
+            st.error(f"{ex} (status={ex.status_code})")
+            if ex.response_text:
+                st.code(ex.response_text[:4000], language="text")
+        except OSError as ex:
+            st.error(f"Network error: {ex}")
+
+with row_fetch[1]:
+    if st.button("GET /datasets/…/scenarios", type="primary", key="t4_btn_scenarios"):
+        _tid = (st.session_state.get("t4_ctx_ds") or "").strip()
+        if not _tid:
+            st.warning("Set **t4dataset_id** first.")
+        else:
+            try:
+                _ver = (st.session_state.get("t4_ctx_ver") or "").strip() or None
+                out = _client().list_dataset_scenarios(_tid, version=_ver)
+                st.session_state["t4_last_scenarios_payload"] = out
+                rows = out.get("scenarios")
+                st.session_state["t4_scenario_rows"] = rows if isinstance(rows, list) else []
+                st.success(f"OK — {len(st.session_state['t4_scenario_rows'])} scenario(s).")
+            except T4VisualizerError as ex:
+                st.error(f"{ex} (status={ex.status_code})")
+                if ex.response_text:
+                    st.code(ex.response_text[:4000], language="text")
+            except OSError as ex:
+                st.error(f"Network error: {ex}")
+
+with row_fetch[2]:
+    if st.session_state.get("t4_last_datasets_payload") is not None:
+        with st.expander("Last GET /datasets JSON", expanded=False):
+            st.json(st.session_state["t4_last_datasets_payload"])
+    if st.session_state.get("t4_last_scenarios_payload") is not None:
+        with st.expander("Last GET /datasets/…/scenarios JSON", expanded=False):
+            st.json(st.session_state["t4_last_scenarios_payload"])
+
+_ids = st.session_state["t4_dataset_ids"]
+_ds_options = ["—"] + sorted(_ids)
+_name_rows = st.session_state["t4_scenario_rows"]
+_scen_names: List[str] = []
+for r in _name_rows:
+    if isinstance(r, dict) and r.get("name") is not None:
+        _scen_names.append(str(r["name"]))
+_scen_options = ["—"] + sorted(set(_scen_names))
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.selectbox(
+        "Pick dataset (from last /datasets)",
+        options=_ds_options,
+        key="t4_pick_ds",
+        on_change=_on_dataset_pick,
+        help="Choose a server-reported id, or leave as — and type below.",
+    )
+    st.text_input(
+        "t4dataset_id",
+        key="t4_ctx_ds",
+        placeholder="uuid or folder id",
+    )
+with c2:
+    st.text_input(
+        "version (optional)",
+        key="t4_ctx_ver",
+        help="Annotation dir version; passed to scenarios and render when non-empty.",
+    )
+with c3:
+    st.selectbox(
+        "Pick scenario (from last /scenarios)",
+        options=_scen_options,
+        key="t4_pick_scen",
+        on_change=_on_scenario_pick,
+        help="Choose **name** from the server, or type any scenario below.",
+    )
+    st.text_input(
+        "scenario_name",
+        key="t4_ctx_scen",
+        placeholder="scene name for POST /render",
+    )
+with c4:
+    st.number_input("frame_index", min_value=0, value=0, step=1, key="t4_ctx_frame")
+
+if _name_rows:
+    st.caption(
+        "Valid **frame_index** for each scene is **0 … nbr_samples − 1** (see table). "
+        "Use **Render & embed** to request PNGs."
+    )
+    st.dataframe(pd.DataFrame(_name_rows), use_container_width=True, hide_index=True)
+
+st.divider()
+
+tab_overview, tab_render = st.tabs(["Overview", "Render & embed JSON"])
+
+with tab_overview:
+    section_header("/health", "GET — server liveness.")
     if st.button("GET /health", type="primary", key="t4_btn_health"):
         try:
             h = _client().health()
@@ -83,79 +211,19 @@ with tab_health:
         except OSError as ex:
             st.error(f"Network error: {ex}")
 
-with tab_ds:
-    section_header("/datasets", "GET — ``data_dir`` and registered dataset ids under the server.")
-    if st.button("GET /datasets", type="primary", key="t4_btn_datasets"):
-        try:
-            d = _client().list_datasets()
-            st.success("OK")
-            st.json(d)
-            ds = d.get("datasets")
-            if isinstance(ds, list) and ds:
-                st.caption(f"{len(ds)} dataset id(s) returned.")
-        except T4VisualizerError as ex:
-            st.error(f"{ex} (status={ex.status_code})")
-            if ex.response_text:
-                st.code(ex.response_text[:4000], language="text")
-        except OSError as ex:
-            st.error(f"Network error: {ex}")
-
-with tab_scenarios:
-    section_header(
-        "/datasets/{t4dataset_id}/scenarios",
-        "GET — scene **name** (use as ``scenario_name`` in ``POST /render``), token, description, "
-        "and **nbr_samples** (frame count; valid ``frame_index`` is ``0 .. nbr_samples - 1``).",
-    )
-    s1, s2 = st.columns([2, 1])
-    with s1:
-        scen_ds_id = st.text_input(
-            "t4dataset_id",
-            value="",
-            key="t4_scenarios_ds",
-            placeholder="dataset id as listed by GET /datasets",
-        )
-    with s2:
-        scen_version = st.text_input(
-            "version (optional)",
-            value="",
-            key="t4_scenarios_ver",
-            help="Same as Tier4 / POST /render ``version`` (annotation dir); leave empty to omit.",
-        )
-
-    if st.button("GET /datasets/…/scenarios", type="primary", key="t4_btn_scenarios"):
-        _tid = (scen_ds_id or "").strip()
-        if not _tid:
-            st.warning("Enter a t4dataset_id.")
-        else:
-            try:
-                _ver = (scen_version or "").strip() or None
-                out = _client().list_dataset_scenarios(_tid, version=_ver)
-                st.success("OK")
-                st.json(out)
-                rows = out.get("scenarios")
-                if isinstance(rows, list) and rows:
-                    st.subheader("Scenarios table")
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-                    st.caption(
-                        "Use **name** as **scenario_name** when calling **Render** or **Embed JSON**. "
-                        "**nbr_samples** is the number of frames in that scene."
-                    )
-            except T4VisualizerError as ex:
-                st.error(f"{ex} (status={ex.status_code})")
-                if ex.response_text:
-                    st.code(ex.response_text[:4000], language="text")
-            except OSError as ex:
-                st.error(f"Network error: {ex}")
-
 with tab_render:
     section_header("POST /render", "Request camera PNGs; optional ``target_objects`` from JSON below.")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        ds_id = st.text_input("t4dataset_id", value="", key="t4_render_ds", placeholder="dataset folder id")
-    with c2:
-        scen = st.text_input("scenario_name", value="", key="t4_render_scen", placeholder="scenario")
-    with c3:
-        frame = st.number_input("frame_index", min_value=0, value=0, step=1, key="t4_render_frame")
+    ds_id = (st.session_state.get("t4_ctx_ds") or "").strip()
+    scen = (st.session_state.get("t4_ctx_scen") or "").strip()
+    frame = int(st.session_state.get("t4_ctx_frame") or 0)
+    ver_raw = (st.session_state.get("t4_ctx_ver") or "").strip()
+    version_opt: Optional[str] = ver_raw if ver_raw else None
+
+    st.caption(
+        f"Using context: **t4dataset_id**=`{ds_id or '…'}` · **scenario_name**=`{scen or '…'}` · "
+        f"**frame_index**={frame}"
+        + (f" · **version**=`{version_opt}`" if version_opt else "")
+    )
 
     tgt_json = st.text_area(
         "target_objects (JSON array, optional)",
@@ -189,23 +257,25 @@ with tab_render:
                     objs.append(TargetObjectIn(**d))
                 if parse_err is None:
                     req = RenderRequest(
-                        t4dataset_id=ds_id.strip(),
-                        scenario_name=scen.strip(),
-                        frame_index=int(frame),
+                        t4dataset_id=ds_id,
+                        scenario_name=scen,
+                        frame_index=frame,
                         target_objects=objs,
                         crop_cameras=crop,
                         show_annotations=show_ann,
+                        version=version_opt,
                     )
         except json.JSONDecodeError as ex:
             parse_err = f"Invalid JSON: {ex}"
     else:
         req = RenderRequest(
-            t4dataset_id=ds_id.strip(),
-            scenario_name=scen.strip(),
-            frame_index=int(frame),
+            t4dataset_id=ds_id,
+            scenario_name=scen,
+            frame_index=frame,
             target_objects=[],
             crop_cameras=crop,
             show_annotations=show_ann,
+            version=version_opt,
         )
 
     if parse_err:
@@ -224,7 +294,20 @@ with tab_render:
             with st.spinner("Rendering…"):
                 res = _client().render(req)
             imgs = res.decode_all_images()
-            st.caption(f"sample_token={res.sample_token!r} · timestamp_us={res.timestamp_us}")
+            cap_parts = [
+                f"sample_token={res.sample_token!r}",
+                f"timestamp_us={res.timestamp_us}",
+            ]
+            if res.elapsed_ms is not None:
+                cap_parts.append(f"elapsed_ms={res.elapsed_ms}")
+            if res.tier4_load_ms is not None:
+                cap_parts.append(f"tier4_load_ms={res.tier4_load_ms}")
+            if res.render_ms is not None:
+                cap_parts.append(f"render_ms={res.render_ms}")
+            st.caption(" · ".join(cap_parts))
+            if res.raw_json is not None:
+                with st.expander("Response JSON (debug)", expanded=False):
+                    st.json(render_response_json_for_debug(res.raw_json))
             if not imgs:
                 st.info("No images in response.")
             else:
@@ -242,18 +325,15 @@ with tab_render:
         except OSError as ex:
             st.error(f"Network error: {ex}")
 
-with tab_embed:
+    st.divider()
     section_header(
         "Embed helpers",
-        "Copy structured context, query strings, and full ``POST /render`` JSON for scripts or docs.",
+        "Same **context** fields as above. Copy structured context, query strings, and full ``POST /render`` JSON.",
     )
-    e1, e2, e3 = st.columns(3)
-    with e1:
-        emb_ds = st.text_input("t4dataset_id", value="", key="t4_emb_ds")
-    with e2:
-        emb_scen = st.text_input("scenario_name", value="", key="t4_emb_scen")
-    with e3:
-        emb_frame = st.number_input("frame_index", min_value=0, value=0, step=1, key="t4_emb_frame")
+
+    emb_ds = (st.session_state.get("t4_ctx_ds") or "").strip()
+    emb_scen = (st.session_state.get("t4_ctx_scen") or "").strip()
+    emb_frame = int(st.session_state.get("t4_ctx_frame") or 0)
 
     emb_ta = st.text_area(
         "Optional GT rows as JSON array (for target_objects_from_rows)",
@@ -281,8 +361,8 @@ with tab_embed:
     if rows_err:
         st.warning(rows_err)
 
-    ctx = t4_dataset_context(emb_ds.strip(), emb_scen.strip(), frame_index=int(emb_frame))
-    q = t4_share_query_params(emb_ds.strip(), emb_scen.strip(), frame_index=int(emb_frame))
+    ctx = t4_dataset_context(emb_ds, emb_scen, frame_index=emb_frame)
+    q = t4_share_query_params(emb_ds, emb_scen, frame_index=emb_frame)
 
     st.subheader("t4_dataset_context")
     st.json(ctx)
@@ -291,9 +371,9 @@ with tab_embed:
     st.code(q, language="text")
 
     full = build_render_request_embed(
-        emb_ds.strip(),
-        emb_scen.strip(),
-        int(emb_frame),
+        emb_ds,
+        emb_scen,
+        emb_frame,
         target_rows=rows_list if rows_list else None,
         show_annotations=True,
         crop_cameras=False,
