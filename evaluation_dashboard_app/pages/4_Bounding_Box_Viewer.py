@@ -540,12 +540,12 @@ st.markdown("##### T4 camera renders")
 _t4_preview_mode = st.session_state.get("bbox_t4_preview_mode", "html_iframe")
 if _t4_preview_mode == "html_iframe":
     st.caption(
-        "Mode: **HTML iframe** (**GET /render/html**). Loads in the browser without blocking the rest of the page. "
+        "Mode: **HTML iframe**. Loads in the browser without blocking the rest of the page. "
         f"**T4 server base URL** is in the sidebar (or `{ENV_BASE_URL}`)."
     )
 else:
     st.caption(
-        "Mode: **POST /render** — camera PNGs fetched in-app (~2s). "
+        "Mode: **POST** — camera PNGs fetched in-app. "
         f"**T4 server base URL** is in the sidebar (or `{ENV_BASE_URL}`)."
     )
 
