@@ -2,8 +2,8 @@
 # See https://docs.streamlit.io/develop/api-reference/configuration/config.toml
 
 [server]
-# Container / headless deployments (no local browser)
-headless = true
+# Local default: open browser when running outside Docker
+headless = false
 
 # Behind nginx or other proxies, per-message WebSocket compression can break or stall
 # some setups (see Streamlit troubleshooting: "App is not loading when running remotely").
