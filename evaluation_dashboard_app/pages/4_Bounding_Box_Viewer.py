@@ -1,4 +1,5 @@
 import html
+import json
 import duckdb
 import requests
 import streamlit as st
@@ -536,6 +537,53 @@ def _bbox_t4_request_key(
     )
 
 
+def _build_three_layer_payload(df_frame: pd.DataFrame) -> dict:
+    """Build GT/Pred/Matched overlay payload for `/viewer/three` iframe."""
+    if df_frame is None or df_frame.empty:
+        return {"type": "bbox_layers_clear"}
+
+    def _row_to_box(row: pd.Series) -> dict:
+        return {
+            "x": float(row.get("x", 0.0) or 0.0),
+            "y": float(row.get("y", 0.0) or 0.0),
+            "z": float(row.get("z", 0.0) or 0.0),
+            "width": float(row.get("width", 0.0) or 0.0),
+            "length": float(row.get("length", 0.0) or 0.0),
+            "height": float(row.get("height", 1.5) or 1.5),
+            "yaw": float(row.get("yaw", 0.0) or 0.0),
+            "label": str(row.get("label", "") or ""),
+            "uuid": str(row.get("uuid", "") or ""),
+            "status": str(row.get("status", "") or ""),
+        }
+
+    gt_df = df_frame[df_frame["source"] == "GT"].copy()
+    pred_df = df_frame[df_frame["source"] == "EST"].copy()
+    gt_boxes = [_row_to_box(r) for _, r in gt_df.iterrows()]
+    pred_boxes = [_row_to_box(r) for _, r in pred_df.iterrows()]
+
+    # Client-side matching: pair GT/EST by UUID for rows marked TP.
+    gt_tp_idx: dict[str, int] = {}
+    for i, b in enumerate(gt_boxes):
+        if b["status"] == "TP" and b["uuid"]:
+            gt_tp_idx.setdefault(b["uuid"], i)
+    pred_tp_idx: dict[str, int] = {}
+    for i, b in enumerate(pred_boxes):
+        if b["status"] == "TP" and b["uuid"]:
+            pred_tp_idx.setdefault(b["uuid"], i)
+    matched_pairs = []
+    for u, gi in gt_tp_idx.items():
+        pi = pred_tp_idx.get(u)
+        if pi is not None:
+            matched_pairs.append({"gt_idx": int(gi), "pred_idx": int(pi)})
+
+    return {
+        "type": "bbox_layers",
+        "gt": gt_boxes,
+        "pred": pred_boxes,
+        "matched_pairs": matched_pairs,
+    }
+
+
 _t4_preview_mode = st.session_state.get("bbox_t4_preview_mode", "html_iframe")
 
 base_url_t4 = (st.session_state.get("bbox_t4_base_url") or "").strip() or DEFAULT_BASE_URL
@@ -626,11 +674,63 @@ else:
         _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
         st.caption("Embedded viewer (/viewer/three)")
         st.markdown(f"[Open embedded viewer in new tab]({_viewer_three_url})")
+        _layer_payload = _build_three_layer_payload(df_frame)
+        _payload_json = json.dumps(_layer_payload, ensure_ascii=True)
+        _payload_b64 = _payload_json.encode("utf-8").hex()
+        with st.expander("Three.js layer debug", expanded=False):
+            st.write(
+                {
+                    "viewer_url": _viewer_three_url,
+                    "payload_type": _layer_payload.get("type"),
+                    "gt_count": len(_layer_payload.get("gt", [])),
+                    "pred_count": len(_layer_payload.get("pred", [])),
+                    "matched_pairs_count": len(_layer_payload.get("matched_pairs", [])),
+                }
+            )
         _viewer_three_h = 700
+        _iframe_src = html.escape(_viewer_three_url, quote=True)
         components.html(
-            f'<iframe src="{html.escape(_viewer_three_url, quote=True)}" '
-            f'width="100%" height="{_viewer_three_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
-            f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>',
+            (
+                f'<iframe id="t4-three-viewer" src="{_iframe_src}" '
+                f'width="100%" height="{_viewer_three_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
+                f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
+                "<script>"
+                "(()=>{"
+                "const iframe=document.getElementById('t4-three-viewer');"
+                f"const payloadHex='{_payload_b64}';"
+                "const hexToUtf8=(hex)=>{"
+                "if(!hex||hex.length%2!==0)return '';"
+                "const bytes=new Uint8Array(hex.length/2);"
+                "for(let i=0;i<hex.length;i+=2){bytes[i/2]=parseInt(hex.slice(i,i+2),16)||0;}"
+                "return new TextDecoder().decode(bytes);"
+                "};"
+                "let payload={type:'bbox_layers_clear'};"
+                "try{"
+                "const payloadJson=hexToUtf8(payloadHex);"
+                "payload=JSON.parse(payloadJson);"
+                "console.info('[bbox-debug] payload prepared', {type:payload.type,gt:(payload.gt||[]).length,pred:(payload.pred||[]).length,matched:(payload.matched_pairs||[]).length});"
+                "}catch(err){"
+                "console.error('[bbox-debug] payload parse failed', err);"
+                "}"
+                "let postCount=0;"
+                "const post=(reason)=>{"
+                "if(!iframe||!iframe.contentWindow)return;"
+                "let targetOrigin='*';"
+                "try{ targetOrigin = new URL(iframe.src, window.location.href).origin || '*'; }catch(_){ targetOrigin='*'; }"
+                "postCount+=1;"
+                "iframe.contentWindow.postMessage(payload,targetOrigin);"
+                "console.info('[bbox-debug] postMessage sent', {reason,postCount,targetOrigin,payloadType:payload.type});"
+                "};"
+                "iframe.addEventListener('load',()=>{"
+                "post('iframe-load');"
+                "let n=0;"
+                "const t=setInterval(()=>{post('retry');n+=1;if(n>12)clearInterval(t);},250);"
+                "});"
+                "setTimeout(()=>post('initial-delay-300ms'),300);"
+                "setTimeout(()=>post('initial-delay-1200ms'),1200);"
+                "})();"
+                "</script>"
+            ),
             height=_viewer_three_h + 24,
             scrolling=True,
         )
