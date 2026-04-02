@@ -621,6 +621,22 @@ else:
                     "The server reported **available: false** (no local dataset path for this id on the machine "
                     "running `t4-server`)."
                 )
+    else:
+        _q_three = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
+        _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
+        st.caption("Embedded viewer (/viewer/three)")
+        st.markdown(f"[Open embedded viewer in new tab]({_viewer_three_url})")
+        _viewer_three_h = 700
+        components.html(
+            f'<iframe src="{html.escape(_viewer_three_url, quote=True)}" '
+            f'width="100%" height="{_viewer_three_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>',
+            height=_viewer_three_h + 24,
+            scrolling=True,
+        )
+
+    if not _av.get("ok") or not _av.get("available"):
+        pass
     elif _t4_preview_mode == "html_iframe":
         _q = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
         _render_html_url = f"{base_url_t4.rstrip('/')}/render/html?{_q}"
