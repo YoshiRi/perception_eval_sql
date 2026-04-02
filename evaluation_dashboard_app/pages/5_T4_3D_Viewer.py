@@ -450,7 +450,7 @@ else:
         _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
         _layer_payload = build_three_layer_payload_all_frames(df)
 
-        _viewer_three_h = 1200
+        _viewer_three_h = 1400
         render_t4_three_js_embed(_viewer_three_url, _layer_payload, height=_viewer_three_h)
 
 st.page_link("pages/4_Bounding_Box_Viewer.py", label="Back to Bounding Box & BEV viewer", icon="🖼️")

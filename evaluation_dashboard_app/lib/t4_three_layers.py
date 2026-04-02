@@ -114,6 +114,7 @@ def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height:
         (
             f'<iframe id="t4-three-viewer" src="{_iframe_src}" '
             f'width="100%" height="{height}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'allowfullscreen allow="fullscreen *" '
             f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
             "<script>"
             "(()=>{"
