@@ -1,5 +1,4 @@
 import html
-import json
 import duckdb
 import requests
 import streamlit as st
@@ -17,6 +16,7 @@ from lib.parquet_schema import schema_flags
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
 from lib.ui.bounding_box_viewer_ui import bev_overlay_line_and_status_legend_markup, bev_status_legend_markup
 from lib.t4_dataset_embed import t4_share_query_params
+from lib.t4_three_layers import resolve_t4_dataset_id, resolve_t4_scenario
 from lib.t4_visualizer_client import (
     DEFAULT_BASE_URL,
     ENV_BASE_URL,
@@ -499,24 +499,6 @@ with k5: st.metric("TPR", f"{tpr_frame:.2%}" if tpr_frame is not None else "—"
 # ----------------------------
 # T4 visualizer (HTTP server): camera PNGs for current frame
 # ----------------------------
-def _bbox_resolve_t4_dataset_id(dff: pd.DataFrame) -> str:
-    if dff is None or dff.empty:
-        return ""
-    if "t4dataset_id" in dff.columns and dff["t4dataset_id"].notna().any():
-        return str(dff["t4dataset_id"].dropna().astype(str).iloc[0])
-    if "t4dataset_name" in dff.columns and dff["t4dataset_name"].notna().any():
-        return str(dff["t4dataset_name"].dropna().iloc[0])
-    return ""
-
-
-def _bbox_resolve_t4_scenario(dff: pd.DataFrame, scenario_from_sidebar: Optional[str]) -> str:
-    if scenario_from_sidebar is not None and str(scenario_from_sidebar).strip() != "":
-        return str(scenario_from_sidebar)
-    if dff is not None and not dff.empty and "scenario_name" in dff.columns and dff["scenario_name"].notna().any():
-        return str(dff["scenario_name"].dropna().iloc[0])
-    return ""
-
-
 def _bbox_t4_request_key(
     ds: str,
     sc: str,
@@ -537,61 +519,14 @@ def _bbox_t4_request_key(
     )
 
 
-def _build_three_layer_payload(df_frame: pd.DataFrame) -> dict:
-    """Build GT/Pred/Matched overlay payload for `/viewer/three` iframe."""
-    if df_frame is None or df_frame.empty:
-        return {"type": "bbox_layers_clear"}
-
-    def _row_to_box(row: pd.Series) -> dict:
-        return {
-            "x": float(row.get("x", 0.0) or 0.0),
-            "y": float(row.get("y", 0.0) or 0.0),
-            "z": float(row.get("z", 0.0) or 0.0),
-            "width": float(row.get("width", 0.0) or 0.0),
-            "length": float(row.get("length", 0.0) or 0.0),
-            "height": float(row.get("height", 1.5) or 1.5),
-            "yaw": float(row.get("yaw", 0.0) or 0.0),
-            "label": str(row.get("label", "") or ""),
-            "uuid": str(row.get("uuid", "") or ""),
-            "status": str(row.get("status", "") or ""),
-        }
-
-    gt_df = df_frame[df_frame["source"] == "GT"].copy()
-    pred_df = df_frame[df_frame["source"] == "EST"].copy()
-    gt_boxes = [_row_to_box(r) for _, r in gt_df.iterrows()]
-    pred_boxes = [_row_to_box(r) for _, r in pred_df.iterrows()]
-
-    # Client-side matching: pair GT/EST by UUID for rows marked TP.
-    gt_tp_idx: dict[str, int] = {}
-    for i, b in enumerate(gt_boxes):
-        if b["status"] == "TP" and b["uuid"]:
-            gt_tp_idx.setdefault(b["uuid"], i)
-    pred_tp_idx: dict[str, int] = {}
-    for i, b in enumerate(pred_boxes):
-        if b["status"] == "TP" and b["uuid"]:
-            pred_tp_idx.setdefault(b["uuid"], i)
-    matched_pairs = []
-    for u, gi in gt_tp_idx.items():
-        pi = pred_tp_idx.get(u)
-        if pi is not None:
-            matched_pairs.append({"gt_idx": int(gi), "pred_idx": int(pi)})
-
-    return {
-        "type": "bbox_layers",
-        "gt": gt_boxes,
-        "pred": pred_boxes,
-        "matched_pairs": matched_pairs,
-    }
-
-
 _t4_preview_mode = st.session_state.get("bbox_t4_preview_mode", "html_iframe")
 
 base_url_t4 = (st.session_state.get("bbox_t4_base_url") or "").strip() or DEFAULT_BASE_URL
 
-_ds_t4 = _bbox_resolve_t4_dataset_id(df_frame)
+_ds_t4 = resolve_t4_dataset_id(df_frame)
 if not _ds_t4 and selected_t4dataset is not None:
     _ds_t4 = str(selected_t4dataset)
-_sc_t4 = _bbox_resolve_t4_scenario(df_frame, selected_scenario)
+_sc_t4 = resolve_t4_scenario(df_frame, selected_scenario)
 
 if not _ds_t4:
     for _k in (
@@ -672,68 +607,12 @@ else:
     else:
         _q_three = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
         _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
-        st.caption("Embedded viewer (/viewer/three)")
-        st.markdown(f"[Open embedded viewer in new tab]({_viewer_three_url})")
-        _layer_payload = _build_three_layer_payload(df_frame)
-        _payload_json = json.dumps(_layer_payload, ensure_ascii=True)
-        _payload_b64 = _payload_json.encode("utf-8").hex()
-        with st.expander("Three.js layer debug", expanded=False):
-            st.write(
-                {
-                    "viewer_url": _viewer_three_url,
-                    "payload_type": _layer_payload.get("type"),
-                    "gt_count": len(_layer_payload.get("gt", [])),
-                    "pred_count": len(_layer_payload.get("pred", [])),
-                    "matched_pairs_count": len(_layer_payload.get("matched_pairs", [])),
-                }
-            )
-        _viewer_three_h = 700
-        _iframe_src = html.escape(_viewer_three_url, quote=True)
-        components.html(
-            (
-                f'<iframe id="t4-three-viewer" src="{_iframe_src}" '
-                f'width="100%" height="{_viewer_three_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
-                f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
-                "<script>"
-                "(()=>{"
-                "const iframe=document.getElementById('t4-three-viewer');"
-                f"const payloadHex='{_payload_b64}';"
-                "const hexToUtf8=(hex)=>{"
-                "if(!hex||hex.length%2!==0)return '';"
-                "const bytes=new Uint8Array(hex.length/2);"
-                "for(let i=0;i<hex.length;i+=2){bytes[i/2]=parseInt(hex.slice(i,i+2),16)||0;}"
-                "return new TextDecoder().decode(bytes);"
-                "};"
-                "let payload={type:'bbox_layers_clear'};"
-                "try{"
-                "const payloadJson=hexToUtf8(payloadHex);"
-                "payload=JSON.parse(payloadJson);"
-                "console.info('[bbox-debug] payload prepared', {type:payload.type,gt:(payload.gt||[]).length,pred:(payload.pred||[]).length,matched:(payload.matched_pairs||[]).length});"
-                "}catch(err){"
-                "console.error('[bbox-debug] payload parse failed', err);"
-                "}"
-                "let postCount=0;"
-                "const post=(reason)=>{"
-                "if(!iframe||!iframe.contentWindow)return;"
-                "let targetOrigin='*';"
-                "try{ targetOrigin = new URL(iframe.src, window.location.href).origin || '*'; }catch(_){ targetOrigin='*'; }"
-                "postCount+=1;"
-                "iframe.contentWindow.postMessage(payload,targetOrigin);"
-                "console.info('[bbox-debug] postMessage sent', {reason,postCount,targetOrigin,payloadType:payload.type});"
-                "};"
-                "iframe.addEventListener('load',()=>{"
-                "post('iframe-load');"
-                "let n=0;"
-                "const t=setInterval(()=>{post('retry');n+=1;if(n>12)clearInterval(t);},250);"
-                "});"
-                "setTimeout(()=>post('initial-delay-300ms'),300);"
-                "setTimeout(()=>post('initial-delay-1200ms'),1200);"
-                "})();"
-                "</script>"
-            ),
-            height=_viewer_three_h + 24,
-            scrolling=True,
-        )
+        st.caption("**3D viewer** (Three.js, GT / pred / matched layers) lives on a dedicated page.")
+        c3d_a, c3d_b = st.columns([1, 2])
+        with c3d_a:
+            st.page_link("pages/5_T4_3D_Viewer.py", label="Open T4 3D Viewer", icon="🧊")
+        with c3d_b:
+            st.markdown(f"[Open `/viewer/three` in new tab]({_viewer_three_url})")
 
     if not _av.get("ok") or not _av.get("available"):
         pass
