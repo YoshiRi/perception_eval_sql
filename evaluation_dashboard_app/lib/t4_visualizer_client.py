@@ -16,7 +16,7 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 import requests
 
-DEFAULT_BASE_URL = "http://localhost:8000"
+DEFAULT_BASE_URL = "http://10.0.6.148:8000"
 ENV_BASE_URL = "T4_VISUALIZER_BASE_URL"
 
 
