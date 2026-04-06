@@ -27,9 +27,14 @@ from lib.deploy_debug import (
     running_in_docker,
     task_counts_by_status,
 )
-from lib.docker_live_structure import live_containers_mermaid
+from lib.docker_live_structure import live_containers_mermaid, rowset_has_t4_compose_service
 from lib.mermaid_render import render_mermaid
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
+from lib.t4_visualizer_client import (
+    ENV_BASE_URL as T4_ENV_BASE_URL,
+    T4VisualizerClient,
+    T4VisualizerError,
+)
 
 st.set_page_config(
     layout="wide",
@@ -48,7 +53,8 @@ render_page_hero(
     description=(
         "Check Postgres, Redis, and the RQ queue; inspect redacted environment variables; "
         "optionally list containers and tail logs when Docker socket access is enabled; "
-        "optional one-shot shell commands when `EVAL_DEPLOYMENT_DEBUG_EXEC=1`."
+        "optional one-shot shell commands when `EVAL_DEPLOYMENT_DEBUG_EXEC=1`. "
+        "The Docker tab’s live diagram includes the T4 dataset server (HTTP 2D/3D rendering) when configured."
     ),
     mode="Single Run",
 )
@@ -180,12 +186,79 @@ def _display_columns_for_containers(rows: list) -> pd.DataFrame:
 
 
 def _render_live_stack_mermaid(rows: list) -> None:
-    """Help-style Mermaid (Clients / Edge / App Tier / …) with live container labels."""
+    """Help-style Mermaid (Clients / Edge / App Tier / T4 / …) with live container labels."""
     if not rows:
         return
 
-    mh = min(800, 280 + 52 * len(rows))
+    t4_env = os.environ.get("T4_VISUALIZER_BASE_URL", "").strip()
+    if t4_env:
+        st.caption(
+            "**T4 dataset server** (2D/3D): HTTP API for `/render`, `/viewer/three`, and dataset availability. "
+            f"`T4_VISUALIZER_BASE_URL` = `{t4_env}`. "
+            "The diagram shows a matching Compose service if present, otherwise a synthetic node for this URL."
+        )
+    else:
+        st.caption(
+            "**T4 dataset server** (optional): used by Bounding Box Viewer and T4 3D Viewer. "
+            "Set `T4_VISUALIZER_BASE_URL` in `.env` to include it in the diagram (synthetic node). "
+            "Compose services named `t4_server`, `t4_visualizer`, or `t4_*` are grouped under **T4 dataset server**."
+        )
+
+    # Taller when URL is set or a t4_* Compose service is present (extra subgraph).
+    t4_svc = rowset_has_t4_compose_service(rows)
+    extra_h = 120 if (t4_env or t4_svc) else 40
+    mh = min(920, 280 + 52 * len(rows) + extra_h)
     render_mermaid(live_containers_mermaid(rows), height=mh)
+
+
+def _render_t4_remote_probe(base_url: str) -> None:
+    """Fetch /health and /server/structure.json from the configured T4 visualizer host."""
+    base = base_url.rstrip("/")
+    section_header(
+        "T4 dataset server (HTTP)",
+        f"Live probe of `{T4_ENV_BASE_URL}` — same service as Bounding Box / T4 3D pages. "
+        "Open the links on the T4 host for the server’s own HTML diagram and diagnostics.",
+    )
+    st.markdown(
+        f"**On the T4 host:** [Structure (HTML)]({base}/server/structure) · "
+        f"[structure.json]({base}/server/structure.json) · "
+        f"[Health]({base}/health) · "
+        f"[Browser diagnostics]({base}/browser/diagnostics)"
+    )
+    try:
+        client = T4VisualizerClient(base_url=base, timeout=8.0)
+        health = client.health()
+    except T4VisualizerError as ex:
+        st.warning(f"Could not reach T4 server (`GET /health`): {ex}")
+        return
+    except OSError as ex:
+        st.warning(f"Could not reach T4 server: {ex}")
+        return
+
+    st.caption("GET /health")
+    st.json(health)
+
+    try:
+        structure = client.server_structure_json()
+    except T4VisualizerError as ex:
+        if ex.status_code == 404:
+            st.info(
+                "This T4 server does not expose `/server/structure.json` yet. "
+                "Upgrade **t4-server** (evaluator_result_parser) or use the links above if the server is older."
+            )
+        else:
+            st.warning(f"`GET /server/structure.json` failed: {ex}")
+        return
+
+    mmd = structure.get("mermaid") or ""
+    if mmd:
+        st.caption("Internal architecture (returned by t4-server — same diagram as `/server/structure`)")
+        mh = min(520, 160 + mmd.count("\n") * 26)
+        render_mermaid(mmd, height=mh)
+    meta = structure.get("meta")
+    if isinstance(meta, dict) and meta:
+        st.caption("Server meta (uptime, caches, diagnostics)")
+        st.json(meta)
 
 
 with tab_docker:
@@ -230,13 +303,18 @@ with tab_docker:
                     return
                 if list_warn:
                     st.markdown(list_warn)
+                t4_probe_url = os.environ.get("T4_VISUALIZER_BASE_URL", "").strip()
                 if not rows:
                     st.info("No containers match the current filter.")
+                    if t4_probe_url:
+                        _render_t4_remote_probe(t4_probe_url)
                     return
                 section_header("Live container table", "Sortable columns; `full_id` stays internal for log/exec.")
                 display_df = _display_columns_for_containers(rows)
                 st.dataframe(display_df, width='stretch', hide_index=True)
                 _render_live_stack_mermaid(rows)
+                if t4_probe_url:
+                    _render_t4_remote_probe(t4_probe_url)
 
                 options = [f"{r['name']} ({r['id']})" for r in rows]
                 id_by_label = {f"{r['name']} ({r['id']})": r["full_id"] for r in rows}
@@ -274,10 +352,15 @@ with tab_docker:
                 st.error(list_warn)
             elif list_warn:
                 st.markdown(list_warn)
+            t4_probe_url = os.environ.get("T4_VISUALIZER_BASE_URL", "").strip()
             if not rows:
                 st.info("No containers match the current filter.")
+                if t4_probe_url:
+                    _render_t4_remote_probe(t4_probe_url)
             else:
                 _render_live_stack_mermaid(rows)
+                if t4_probe_url:
+                    _render_t4_remote_probe(t4_probe_url)
                 section_header("Live container table", "Sortable columns; `full_id` stays internal for log/exec.")
                 display_df = _display_columns_for_containers(rows)
                 st.dataframe(display_df, width='stretch', hide_index=True)

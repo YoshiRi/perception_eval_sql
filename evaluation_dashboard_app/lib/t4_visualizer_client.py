@@ -3,8 +3,8 @@
 Default base URL: ``T4_VISUALIZER_BASE_URL`` environment variable, or ``http://127.0.0.1:8000``.
 
 Does not import t4_devkit or t4_visualizer; only uses ``requests`` against the server's
-``GET /health``, ``GET /datasets``, ``GET /datasets/{id}/availability``, ``GET /datasets/{id}/scenarios``,
-and ``POST /render`` endpoints.
+``GET /health``, ``GET /server/structure.json``, ``GET /datasets``, ``GET /datasets/{id}/availability``,
+``GET /datasets/{id}/scenarios``, and ``POST /render`` endpoints.
 """
 
 from __future__ import annotations
@@ -211,13 +211,24 @@ class T4VisualizerClient:
         )
 
     def health(self) -> dict:
-        """GET /health."""
+        """GET /health — status, ``service``, ``version``, ``data_dir_exists``, structure paths (newer servers)."""
         resp = self._session.get(self._url("/health"), timeout=self.timeout)
+        print(resp.text)
         self._raise_for_status(resp)
         try:
             return resp.json()
         except ValueError as exc:
             raise T4VisualizerError("Invalid JSON from /health") from exc
+
+    def server_structure_json(self) -> dict:
+        """GET /server/structure.json — Mermaid source for the server internals plus cache/runtime meta."""
+        to = min(30.0, float(self.timeout))
+        resp = self._session.get(self._url("/server/structure.json"), timeout=to)
+        self._raise_for_status(resp)
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise T4VisualizerError("Invalid JSON from /server/structure.json") from exc
 
     def list_datasets(self) -> dict:
         """GET /datasets — returns at least ``data_dir`` and ``datasets``."""
