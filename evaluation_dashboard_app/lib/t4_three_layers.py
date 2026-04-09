@@ -4,12 +4,57 @@ from __future__ import annotations
 
 import html
 import json
+import math
 from typing import TYPE_CHECKING
 
 import streamlit.components.v1 as components
 
 if TYPE_CHECKING:
     import pandas as pd
+
+
+_OPTIONAL_NUMERIC_FIELDS = (
+    "vx",
+    "vy",
+    "confidence",
+    "pointcloud_num",
+    "x_error",
+    "y_error",
+    "z_error",
+    "yaw_error",
+    "vx_error",
+    "vy_error",
+    "speed_error",
+    "center_distance",
+    "plane_distance",
+    "pair_dt_sec",
+    "dx_min",
+    "dy_min",
+    "unix_time",
+    "frame_index",
+)
+
+_OPTIONAL_TEXT_FIELDS = (
+    "frame_id",
+    "shape_type",
+    "visibility",
+    "pair_uuid",
+    "topic_name",
+    "t4dataset_id",
+    "suite_name",
+    "t4dataset_name",
+    "scenario_name",
+    "run",
+    "source",
+)
+
+
+def _is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return bool(value != value)
 
 
 def resolve_t4_dataset_id(dff: "pd.DataFrame") -> str:
@@ -37,7 +82,7 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame") -> dict:
         return {"gt": [], "pred": [], "matched_pairs": []}
 
     def _row_to_box(row: "pd.Series") -> dict:
-        return {
+        box = {
             "x": float(row.get("x", 0.0) or 0.0),
             "y": float(row.get("y", 0.0) or 0.0),
             "z": float(row.get("z", 0.0) or 0.0),
@@ -49,6 +94,17 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame") -> dict:
             "uuid": str(row.get("uuid", "") or ""),
             "status": str(row.get("status", "") or ""),
         }
+        for field in _OPTIONAL_NUMERIC_FIELDS:
+            if field in row.index:
+                value = row.get(field)
+                if not _is_missing(value):
+                    box[field] = float(value)
+        for field in _OPTIONAL_TEXT_FIELDS:
+            if field in row.index:
+                value = row.get(field)
+                if not _is_missing(value):
+                    box[field] = str(value)
+        return box
 
     gt_df = df_frame[df_frame["source"] == "GT"].copy()
     pred_df = df_frame[df_frame["source"] == "EST"].copy()
@@ -57,17 +113,19 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame") -> dict:
 
     gt_tp_idx: dict[str, int] = {}
     for i, b in enumerate(gt_boxes):
-        if b["status"] == "TP" and b["uuid"]:
-            gt_tp_idx.setdefault(b["uuid"], i)
+        match_key = str(b.get("pair_uuid") or b.get("uuid") or "")
+        if b["status"] == "TP" and match_key:
+            gt_tp_idx.setdefault(match_key, i)
     pred_tp_idx: dict[str, int] = {}
     for i, b in enumerate(pred_boxes):
-        if b["status"] == "TP" and b["uuid"]:
-            pred_tp_idx.setdefault(b["uuid"], i)
+        match_key = str(b.get("pair_uuid") or b.get("uuid") or "")
+        if b["status"] == "TP" and match_key:
+            pred_tp_idx.setdefault(match_key, i)
     matched_pairs = []
-    for u, gi in gt_tp_idx.items():
-        pi = pred_tp_idx.get(u)
+    for match_key, gi in gt_tp_idx.items():
+        pi = pred_tp_idx.get(match_key)
         if pi is not None:
-            matched_pairs.append({"gt_idx": int(gi), "pred_idx": int(pi)})
+            matched_pairs.append({"gt_idx": int(gi), "pred_idx": int(pi), "pair_uuid": match_key})
 
     return {
         "gt": gt_boxes,

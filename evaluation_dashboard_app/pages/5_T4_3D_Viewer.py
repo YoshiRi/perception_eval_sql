@@ -302,19 +302,55 @@ params = scene_params + [selected_topic]
 where.append(f"label IN ({','.join(['?']*len(selected_labels))})")
 params.extend(selected_labels)
 
-select_vis = ", visibility" if has_visibility else ""
 if has_visibility and selected_visibility:
     where.append(f"COALESCE(visibility,'UNKNOWN') IN ({','.join(['?']*len(selected_visibility))})")
     params.extend(selected_visibility)
 
-select_extras = (", " + ", ".join(hover_extra_cols)) if hover_extra_cols else ""
-_geom_for_t4 = [c for c in ("z", "height") if c in cols and c not in hover_extra_cols]
-_geom_select = (", " + ", ".join(_geom_for_t4)) if _geom_for_t4 else ""
-_t4_meta_cols = [c for c in ("t4dataset_id", "t4dataset_name", "scenario_name") if c in cols]
-_t4_meta_select = (", " + ", ".join(_t4_meta_cols)) if _t4_meta_cols else ""
+_renderer_optional_cols = [
+    "unix_time",
+    "frame_id",
+    "z",
+    "height",
+    "shape_type",
+    "vx",
+    "vy",
+    "confidence",
+    "pointcloud_num",
+    "visibility",
+    "x_error",
+    "y_error",
+    "z_error",
+    "yaw_error",
+    "vx_error",
+    "vy_error",
+    "speed_error",
+    "center_distance",
+    "plane_distance",
+    "pair_dt_sec",
+    "pair_uuid",
+    "dx_min",
+    "dy_min",
+    "t4dataset_id",
+    "suite_name",
+    "t4dataset_name",
+    "scenario_name",
+]
+_select_cols = [
+    "frame_index",
+    "x",
+    "y",
+    "length",
+    "width",
+    "yaw",
+    "label",
+    "topic_name",
+    "source",
+    "status",
+    "uuid",
+]
+_select_cols.extend(c for c in _renderer_optional_cols if c in cols and c not in _select_cols)
 sql = f"""
-SELECT frame_index, x, y, length, width, yaw, label, topic_name, source, status, uuid
-{select_vis}{select_extras}{_geom_select}{_t4_meta_select}
+SELECT {", ".join(_select_cols)}
 FROM parquet_scan(?)
 WHERE {" AND ".join(where)}
 ORDER BY frame_index
@@ -392,7 +428,7 @@ else:
     if _need_avail_fetch:
         try:
             with st.spinner("Checking T4 dataset on the server…"):
-                _av_client = T4VisualizerClient(base_url=base_url_t4, timeout=30.0)
+                _av_client = T4VisualizerClient(base_url=base_url_t4, timeout=2.0)
                 _av_data = _av_client.dataset_availability(_ds_t4)
             st.session_state["bbox_t4_availability"] = {
                 "cache_key": _t4_avail_cache_key,
