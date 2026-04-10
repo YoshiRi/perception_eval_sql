@@ -29,6 +29,8 @@ pip install rq psycopg2-binary
 
 **Docker イメージ**では、公開依存は [`requirements-docker.txt`](requirements-docker.txt) で入り、ビルド時の SSH シークレットで webauto-auth・評価系のプライベートパッケージを追加インストールします（[`Dockerfile`](Dockerfile) 参照）。
 
+PDF エクスポートでは Plotly/Kaleido の静的画像化を使うため、**Docker イメージ内に Chrome もインストール**されます。デプロイ環境で `Kaleido requires Google Chrome to be installed` が出た場合は、最新のイメージへ **再 build / 再 deploy** してください。
+
 ```sh
 # Install CLI tool (評価実行コマンド生成で利用する場合)
 pipx install git+ssh://git@github.com/tier4/v_and_v_util.git

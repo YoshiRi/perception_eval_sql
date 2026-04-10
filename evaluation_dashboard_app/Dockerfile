@@ -12,12 +12,26 @@ WORKDIR /app
 # Make ROS_DISTRO available inside the container at runtime (for entrypoint sourcing)
 ENV ROS_DISTRO=${ROS_DISTRO}
 
-# Install needed system packages: python, geos, git/ssh (for pip install from private repos), pipx, OpenGL for matplotlib
+# Install needed system packages: python, geos, git/ssh (for pip install from private repos), pipx,
+# OpenGL for matplotlib, and Chrome for Kaleido static image export.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive \
     apt-get install -y --no-install-recommends \
-      python3-pip python3-venv libgeos-c1v5 bash git openssh-client libgl1-mesa-glx libgl1-mesa-dri \
+      python3-pip python3-venv libgeos-c1v5 bash git openssh-client \
+      libgl1-mesa-glx libgl1-mesa-dri ca-certificates curl gnupg \
+ && install -d -m 0755 /etc/apt/keyrings \
+ && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+    | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
+ && chmod a+r /etc/apt/keyrings/google-chrome.gpg \
+ && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+    > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends google-chrome-stable \
+ && ln -sf /usr/bin/google-chrome-stable /usr/bin/google-chrome \
  && rm -rf /var/lib/apt/lists/*
+
+ENV CHROME_BIN=/usr/bin/google-chrome-stable
 
 # Upgrade pip, install pipx, ensure pipx path available
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel packaging pipx \
