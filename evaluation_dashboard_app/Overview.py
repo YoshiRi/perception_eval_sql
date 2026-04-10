@@ -7,6 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from lib.user_config import UserConfig
 from lib.summary_compare import build_summary_delta, summary_delta_overlap_stats
+from lib.overview_pdf_report import build_overview_pdf_report, make_report_filename
 from lib.page_chrome import (
     inject_app_page_styles,
     render_loaded_data_section,
@@ -614,3 +615,63 @@ elif runA.get("summary") is not None:
     with st.expander("Show metric breakdowns by label", expanded=False):
         show_grouped_metrics_plot(df_summary, group_col="perception_label", mode="single")
         show_grouped_metrics_plot(df_summary, group_col="product_label", label_map=PRODUCT_LABEL_JA, mode="single")
+
+
+section_header("Export report", "Generate a curated PDF from the current Overview selection and filters.")
+_report_runs = st.session_state.get("all_runs") if mode == "Compare Mode" and compare_run_dirs else [runA]
+_report_labels = st.session_state.get("run_labels") if mode == "Compare Mode" and compare_run_dirs else ["A"]
+_report_filters = {
+    "perception_labels": filters.get("perception_labels", []),
+    "product_labels": filters.get("product_labels", []),
+}
+_report_key = {
+    "mode": mode,
+    "paths": [str(r.get("path")) for r in _report_runs],
+    "perception_labels": list(_report_filters["perception_labels"]),
+    "product_labels": list(_report_filters["product_labels"]),
+}
+
+pdf_col1, pdf_col2 = st.columns([1.2, 2.8])
+with pdf_col1:
+    if st.button("Generate Evaluation Dashboard Report", type="primary", use_container_width=True):
+        _pdf_status = st.empty()
+        try:
+            def _update_pdf_status(message: str) -> None:
+                _pdf_status.info(f"Generating report: {message}")
+
+            _update_pdf_status("starting")
+            pdf_bytes = build_overview_pdf_report(
+                mode=mode,
+                run_records=_report_runs,
+                run_labels=_report_labels,
+                filters=_report_filters,
+                product_label_map=PRODUCT_LABEL_JA,
+                progress_callback=_update_pdf_status,
+            )
+            st.session_state["overview_pdf_report_bytes"] = pdf_bytes
+            st.session_state["overview_pdf_report_key"] = _report_key
+            run_names_for_file = [r["path"].name for r in _report_runs if r.get("path") is not None]
+            st.session_state["overview_pdf_report_name"] = make_report_filename(run_names_for_file)
+            _pdf_status.success("PDF report is ready.")
+            st.success("PDF report is ready.")
+        except Exception as e:
+            st.session_state.pop("overview_pdf_report_bytes", None)
+            st.session_state.pop("overview_pdf_report_key", None)
+            st.session_state.pop("overview_pdf_report_name", None)
+            _pdf_status.error(f"PDF generation failed: {e}")
+            st.error(f"Failed to build PDF report: {e}")
+with pdf_col2:
+    _pdf_ready = (
+        st.session_state.get("overview_pdf_report_bytes") is not None
+        and st.session_state.get("overview_pdf_report_key") == _report_key
+    )
+    if _pdf_ready:
+        st.download_button(
+            "Download Evaluation Dashboard Report",
+            data=st.session_state["overview_pdf_report_bytes"],
+            file_name=st.session_state.get("overview_pdf_report_name", "overview_report.pdf"),
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    else:
+        st.info("Generate the PDF from the current Overview selection, then download it here.")
