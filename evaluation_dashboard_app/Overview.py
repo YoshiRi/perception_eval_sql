@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import io
+import zipfile
 from pathlib import Path
 from lib.run_loader import load_run
 from lib.path_utils import get_data_root, get_data_root_display, list_run_directories, path_display
@@ -8,6 +10,16 @@ import plotly.graph_objects as go
 from lib.user_config import UserConfig
 from lib.summary_compare import build_summary_delta, summary_delta_overlap_stats
 from lib.overview_pdf_report import build_overview_pdf_report, make_report_filename
+from lib.specsheet_report import (
+    DEFAULT_SPECSHEET_LABELS,
+    DEFAULT_SPECSHEET_PROJECT_ID,
+    DEFAULT_SPECSHEET_TOPIC,
+    collect_candidate_specsheet_labels,
+    generate_specsheet_pdf,
+    get_specsheet_artifact_paths,
+    is_specsheet_pdf_fresh,
+    progress_fraction_from_message,
+)
 from lib.page_chrome import (
     inject_app_page_styles,
     render_loaded_data_section,
@@ -617,7 +629,8 @@ elif runA.get("summary") is not None:
         show_grouped_metrics_plot(df_summary, group_col="product_label", label_map=PRODUCT_LABEL_JA, mode="single")
 
 
-section_header("Export report", "Generate a curated PDF from the current Overview selection and filters.")
+st.divider()
+section_header("Export Dashboard Report", "Generate a curated PDF from the current Overview selection and filters.")
 _report_runs = st.session_state.get("all_runs") if mode == "Compare Mode" and compare_run_dirs else [runA]
 _report_labels = st.session_state.get("run_labels") if mode == "Compare Mode" and compare_run_dirs else ["A"]
 _report_filters = {
@@ -630,6 +643,24 @@ _report_key = {
     "perception_labels": list(_report_filters["perception_labels"]),
     "product_labels": list(_report_filters["product_labels"]),
 }
+_specsheet_run_records = _report_runs
+_specsheet_run_labels = _report_labels
+_specsheet_run_options = {
+    f"{label} · {record['path'].name}": record["path"]
+    for label, record in zip(_specsheet_run_labels, _specsheet_run_records)
+}
+_specsheet_run_option_keys = list(_specsheet_run_options.keys())
+_default_specsheet_run_selection = _specsheet_run_option_keys[:1]
+_default_specsheet_labels = list(DEFAULT_SPECSHEET_LABELS)
+_default_specsheet_project_id = st.session_state.get("specsheet_project_id", DEFAULT_SPECSHEET_PROJECT_ID)
+_default_specsheet_topic = st.session_state.get("specsheet_topic_name", DEFAULT_SPECSHEET_TOPIC)
+_detected_specsheet_labels = collect_candidate_specsheet_labels(
+    runA["path"],
+    preferred=_report_filters["perception_labels"],
+)
+_specsheet_label_options = list(dict.fromkeys(_default_specsheet_labels + _detected_specsheet_labels))
+_single_specsheet_run_path = _specsheet_run_records[0]["path"]
+_default_specsheet_version = st.session_state.get("specsheet_version", _single_specsheet_run_path.name)
 
 pdf_col1, pdf_col2 = st.columns([1.2, 2.8])
 with pdf_col1:
@@ -653,13 +684,11 @@ with pdf_col1:
             run_names_for_file = [r["path"].name for r in _report_runs if r.get("path") is not None]
             st.session_state["overview_pdf_report_name"] = make_report_filename(run_names_for_file)
             _pdf_status.success("PDF report is ready.")
-            st.success("PDF report is ready.")
         except Exception as e:
             st.session_state.pop("overview_pdf_report_bytes", None)
             st.session_state.pop("overview_pdf_report_key", None)
             st.session_state.pop("overview_pdf_report_name", None)
             _pdf_status.error(f"PDF generation failed: {e}")
-            st.error(f"Failed to build PDF report: {e}")
 with pdf_col2:
     _pdf_ready = (
         st.session_state.get("overview_pdf_report_bytes") is not None
@@ -673,5 +702,202 @@ with pdf_col2:
             mime="application/pdf",
             use_container_width=True,
         )
+
+specsheet_title = "Export Specsheet Report"
+section_header(
+    specsheet_title,
+    "Generate or reuse the release-oriented spec-sheet PDF. Missing current/future CSV files are auto-created from parquet before building.",
+)
+
+if mode == "Compare Mode":
+    selected_specsheet_run_keys = st.multiselect(
+        "Runs to generate spec-sheet for",
+        options=list(_specsheet_run_options.keys()),
+        default=_default_specsheet_run_selection,
+        key="specsheet_target_runs",
+        help="Spec-sheet generation is single-run, so multiple selected runs are processed one by one.",
+    )
+else:
+    selected_specsheet_run_keys = _specsheet_run_option_keys[:1]
+
+selected_specsheet_run_paths = [
+    _specsheet_run_options[key]
+    for key in selected_specsheet_run_keys
+    if key in _specsheet_run_options
+]
+_active_specsheet_paths = [get_specsheet_artifact_paths(path) for path in selected_specsheet_run_paths]
+
+specsheet_cfg_col1, specsheet_cfg_col2, specsheet_cfg_col3 = st.columns([1.4, 1.2, 1.4])
+with specsheet_cfg_col1:
+    specsheet_project_id = st.text_input(
+        "Project ID",
+        value=_default_specsheet_project_id,
+        key="specsheet_project_id",
+    ).strip()
+with specsheet_cfg_col2:
+    specsheet_version = st.text_input(
+        "Version",
+        value=_default_specsheet_version,
+        key="specsheet_version",
+    ).strip()
+with specsheet_cfg_col3:
+    specsheet_topic_name = st.text_input(
+        "Topic name",
+        value=_default_specsheet_topic,
+        key="specsheet_topic_name",
+    ).strip()
+
+specsheet_labels = st.multiselect(
+    "Spec-sheet labels",
+    options=_specsheet_label_options,
+    default=_default_specsheet_labels,
+    key="specsheet_labels",
+    help="These labels are passed to perception_catalog_analyzer.specsheet.get_blocks().",
+)
+if not specsheet_labels:
+    st.info("Pick at least one label to build the release spec-sheet.")
+if not selected_specsheet_run_paths:
+    st.info("Pick at least one run to build the release spec-sheet.")
+
+specsheet_action_col1, specsheet_action_col2 = st.columns([1.2, 2.8])
+with specsheet_action_col1:
+    if st.button("Generate Release Spec-sheet PDF", type="primary", use_container_width=True):
+        _specsheet_status = st.empty()
+        _specsheet_progress = st.progress(0.0)
+        try:
+            if not specsheet_project_id:
+                raise ValueError("Project ID is required.")
+            if not specsheet_version:
+                raise ValueError("Version is required.")
+            if not specsheet_topic_name:
+                raise ValueError("Topic name is required.")
+            if not specsheet_labels:
+                raise ValueError("At least one label is required.")
+            if not selected_specsheet_run_paths:
+                raise ValueError("At least one run must be selected.")
+
+            stage_progress = {
+                "Using existing up-to-date spec-sheet PDF": 1.0,
+                "Loading CSV files": 0.55,
+                "Building abstract and detail sections": 0.8,
+                "Rendering PDF": 0.95,
+                "Spec-sheet PDF is ready": 1.0,
+            }
+
+            def _update_specsheet_status(message: str) -> None:
+                fraction = progress_fraction_from_message(message)
+                if fraction is None:
+                    fraction = stage_progress.get(message, 0.1)
+                _specsheet_progress.progress(fraction)
+                _specsheet_status.info(f"Generating release spec-sheet: {message}")
+
+            generated_pdfs: list[tuple[Path, bool]] = []
+            for idx, run_path in enumerate(selected_specsheet_run_paths, start=1):
+                _update_specsheet_status(f"Run {idx}/{len(selected_specsheet_run_paths)}: {run_path.name}")
+                pdf_path, generated = generate_specsheet_pdf(
+                    run_path,
+                    project_id=specsheet_project_id,
+                    version=specsheet_version,
+                    labels=specsheet_labels,
+                    topic_name=specsheet_topic_name,
+                    force=True,
+                    progress_callback=_update_specsheet_status,
+                )
+                generated_pdfs.append((pdf_path, generated))
+
+            if len(generated_pdfs) == 1:
+                download_name = generated_pdfs[0][0].name
+                download_bytes = generated_pdfs[0][0].read_bytes()
+                download_mime = "application/pdf"
+            else:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for pdf_path, _ in generated_pdfs:
+                        zf.write(pdf_path, arcname=f"{pdf_path.parent.parent.name}/{pdf_path.name}")
+                download_name = "specsheet_reports.zip"
+                download_bytes = zip_buffer.getvalue()
+                download_mime = "application/zip"
+
+            st.session_state["specsheet_pdf_report_bytes"] = download_bytes
+            st.session_state["specsheet_pdf_report_key"] = {
+                "run_paths": [str(path) for path in selected_specsheet_run_paths],
+                "project_id": specsheet_project_id,
+                "version": specsheet_version,
+                "topic_name": specsheet_topic_name,
+                "labels": list(specsheet_labels),
+                "artifact_kind": "zip" if len(generated_pdfs) > 1 else "pdf",
+            }
+            st.session_state["specsheet_pdf_report_name"] = download_name
+            st.session_state["specsheet_pdf_report_mime"] = download_mime
+            _specsheet_progress.progress(1.0)
+            if any(generated for _, generated in generated_pdfs):
+                if len(generated_pdfs) == 1:
+                    _specsheet_status.success("Release spec-sheet PDF is ready.")
+                else:
+                    _specsheet_status.success("Release spec-sheet files are ready.")
+            else:
+                if len(generated_pdfs) == 1:
+                    _specsheet_status.success("Using the existing up-to-date release spec-sheet PDF.")
+                else:
+                    _specsheet_status.success("Using the existing up-to-date release spec-sheet files.")
+        except Exception as e:
+            st.session_state.pop("specsheet_pdf_report_bytes", None)
+            st.session_state.pop("specsheet_pdf_report_key", None)
+            st.session_state.pop("specsheet_pdf_report_name", None)
+            st.session_state.pop("specsheet_pdf_report_mime", None)
+            _specsheet_status.error(f"Spec-sheet generation failed: {e}")
+with specsheet_action_col2:
+    _specsheet_key = {
+        "run_paths": [str(path) for path in selected_specsheet_run_paths],
+        "project_id": specsheet_project_id,
+        "version": specsheet_version,
+        "topic_name": specsheet_topic_name,
+        "labels": list(specsheet_labels),
+        "artifact_kind": "zip" if len(selected_specsheet_run_paths) > 1 else "pdf",
+    }
+    _specsheet_ready = (
+        st.session_state.get("specsheet_pdf_report_bytes") is not None
+        and st.session_state.get("specsheet_pdf_report_key") == _specsheet_key
+    )
+    _fresh_specsheet_paths = [
+        path_info["specsheet_pdf"]
+        for path_info in _active_specsheet_paths
+        if path_info["specsheet_pdf"].exists() and is_specsheet_pdf_fresh(path_info["run_dir"])
+    ]
+    _all_selected_specsheet_pdfs_fresh = (
+        len(selected_specsheet_run_paths) > 0
+        and len(_fresh_specsheet_paths) == len(selected_specsheet_run_paths)
+    )
+    if _specsheet_ready:
+        st.download_button(
+            "Download Release Spec-sheet",
+            data=st.session_state["specsheet_pdf_report_bytes"],
+            file_name=st.session_state.get("specsheet_pdf_report_name", "specsheet.pdf"),
+            mime=st.session_state.get("specsheet_pdf_report_mime", "application/pdf"),
+            use_container_width=True,
+        )
+    elif _all_selected_specsheet_pdfs_fresh:
+        if len(_fresh_specsheet_paths) == 1:
+            _disk_pdf_path = _fresh_specsheet_paths[0]
+            st.download_button(
+                "Download Release Spec-sheet",
+                data=_disk_pdf_path.read_bytes(),
+                file_name=_disk_pdf_path.name,
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        else:
+            _zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(_zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for pdf_path in _fresh_specsheet_paths:
+                    zf.write(pdf_path, arcname=f"{pdf_path.parent.parent.name}/{pdf_path.name}")
+            st.download_button(
+                "Download Release Spec-sheets",
+                data=_zip_buffer.getvalue(),
+                file_name="specsheet_reports.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
     else:
-        st.info("Generate the PDF from the current Overview selection, then download it here.")
+        if len(selected_specsheet_run_paths) == 1:
+            _single_paths = _active_specsheet_paths[0]
