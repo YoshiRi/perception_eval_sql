@@ -144,6 +144,8 @@ def get_case_simulation_log_info(
                 continue
             if "simulation_archive" not in report.get("logs", {}):
                 continue
+            if "simulation_result_json" not in report.get("logs", {}):
+                continue
             scenario_params = report.get("scenario_parameters") or {}
             result.append({
                 "suite_id": sid,
