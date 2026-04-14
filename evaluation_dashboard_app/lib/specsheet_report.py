@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import re
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -83,6 +84,55 @@ def is_specsheet_pdf_fresh(run_dir: str | Path) -> bool:
 def _notify(progress_callback: Callable[[str], None] | None, message: str) -> None:
     if progress_callback is not None:
         progress_callback(message)
+
+
+@contextmanager
+def _patch_block_generation_progress(
+    progress_callback: Callable[[str], None] | None,
+):
+    if progress_callback is None:
+        yield
+        return
+
+    try:
+        from perception_catalog_analyzer.specsheet import blocks as specsheet_blocks
+    except ImportError:
+        yield
+        return
+
+    original_tqdm = specsheet_blocks.tqdm
+
+    class ProgressTqdm:
+        def __init__(self, iterable, desc: str | None = None, **kwargs):
+            self._items = list(iterable)
+            self._desc = desc or ""
+            self._current_index = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            for idx, item in enumerate(self._items, start=1):
+                self._current_index = idx
+                yield item
+
+        def set_postfix_str(self, text: str) -> None:
+            total = len(self._items)
+            if total <= 0:
+                return
+            _notify(
+                progress_callback,
+                f"{self._desc} {self._current_index}/{total}: {text}",
+            )
+
+    specsheet_blocks.tqdm = ProgressTqdm
+    try:
+        yield
+    finally:
+        specsheet_blocks.tqdm = original_tqdm
 
 
 def _copy_parquet_to_csv(parquet_path: Path, csv_path: Path) -> Path:
@@ -174,14 +224,15 @@ def generate_specsheet_pdf(
         metrics.extend(FUTURE_SPECSHEET_METRICS)
 
     _notify(progress_callback, "Building abstract and detail sections")
-    abstract, detailed = get_blocks(
-        df=df,
-        labels=list(labels),
-        metrics=metrics,
-        topic_name=topic_name,
-        outdir=resource_dir.resolve(),
-        evaluation_type="full",
-    )
+    with _patch_block_generation_progress(progress_callback):
+        abstract, detailed = get_blocks(
+            df=df,
+            labels=list(labels),
+            metrics=metrics,
+            topic_name=topic_name,
+            outdir=resource_dir.resolve(),
+            evaluation_type="full",
+        )
 
     _notify(progress_callback, "Rendering PDF")
     template_dir = Path(template_module.__file__).resolve().parent.parent / "template"

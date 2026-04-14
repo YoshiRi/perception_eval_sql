@@ -778,16 +778,26 @@ with specsheet_action_col1:
 
             stage_progress = {
                 "Using existing up-to-date spec-sheet PDF": 1.0,
-                "Loading CSV files": 0.55,
-                "Building abstract and detail sections": 0.8,
+                "Loading CSV files": 0.15,
+                "Building abstract and detail sections": 0.2,
                 "Rendering PDF": 0.95,
                 "Spec-sheet PDF is ready": 1.0,
             }
 
             def _update_specsheet_status(message: str) -> None:
-                fraction = progress_fraction_from_message(message)
-                if fraction is None:
-                    fraction = stage_progress.get(message, 0.1)
+                fraction = None
+                label_fraction = progress_fraction_from_message(message)
+                if "[Full] Generating blocks for labels" in message and label_fraction is not None:
+                    fraction = 0.2 + (0.7 - 0.2) * label_fraction
+                elif (
+                    "[Full] Generating annotation count blocks for labels" in message
+                    and label_fraction is not None
+                ):
+                    fraction = 0.7 + (0.9 - 0.7) * label_fraction
+                elif label_fraction is not None and "Processing pkl files" in message:
+                    fraction = 0.02 + (0.12 - 0.02) * label_fraction
+                else:
+                    fraction = stage_progress.get(message, 0.05)
                 _specsheet_progress.progress(fraction)
                 _specsheet_status.info(f"Generating release spec-sheet: {message}")
 
