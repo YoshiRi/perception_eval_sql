@@ -141,6 +141,16 @@ def _copy_parquet_to_csv(parquet_path: Path, csv_path: Path) -> Path:
     return csv_path
 
 
+def _prefer_cjk_font_stack(html_lines: Sequence[str]) -> list[str]:
+    rendered = list(html_lines)
+    generic = "font-family: sans-serif;"
+    preferred = (
+        'font-family: "Noto Sans CJK JP", "Noto Sans JP", '
+        '"IPAGothic", "IPA Gothic", sans-serif;'
+    )
+    return [line.replace(generic, preferred) for line in rendered]
+
+
 def ensure_specsheet_csvs(
     run_dir: str | Path,
     *,
@@ -236,7 +246,9 @@ def generate_specsheet_pdf(
 
     _notify(progress_callback, "Rendering PDF")
     template_dir = Path(template_module.__file__).resolve().parent.parent / "template"
-    html = update_template(project_id, version, template_dir=str(template_dir))
+    html = _prefer_cjk_font_stack(
+        update_template(project_id, version, template_dir=str(template_dir))
+    )
     specsheet(
         html=html,
         abstract_html=abstract,

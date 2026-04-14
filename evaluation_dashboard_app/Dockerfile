@@ -5,6 +5,7 @@
 # Build example: docker build --secret id=ssh,src=$HOME/.ssh/id_rsa -t evaluation-dashboard .
 # Match ROS distro at build: --build-arg ROS_DISTRO=humble (or iron, jazzy, etc.)
 ARG ROS_DISTRO=humble
+ARG WEBAUTOAUTHCLI_COMMIT=204629123fa58ab0be0966c795703324e34851ec
 FROM ros:${ROS_DISTRO}
 
 WORKDIR /app
@@ -19,6 +20,7 @@ RUN apt-get update \
     apt-get install -y --no-install-recommends \
       python3-pip python3-venv libgeos-c1v5 bash git openssh-client \
       libgl1-mesa-glx libgl1-mesa-dri ca-certificates curl gnupg \
+      fontconfig fonts-noto-cjk fonts-ipafont-gothic \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
     | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
@@ -29,6 +31,7 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive \
     apt-get install -y --no-install-recommends google-chrome-stable \
  && ln -sf /usr/bin/google-chrome-stable /usr/bin/google-chrome \
+ && fc-cache -f \
  && rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_BIN=/usr/bin/google-chrome-stable
@@ -46,10 +49,19 @@ RUN --mount=type=secret,id=ssh,dst=/tmp/ssh_key \
  && chmod 700 /root/.ssh \
  && chmod 600 /root/.ssh/id_rsa \
  && export GIT_SSH_COMMAND="ssh -i /root/.ssh/id_rsa -o StrictHostKeyChecking=accept-new" \
+ && python3 -m pip install --no-cache-dir "git+ssh://git@github.com/tier4/WebAutoAuthCLI.git@v2.23.1" \
  && python3 -m pip install --no-cache-dir "git+ssh://git@github.com/tier4/webauto-auth-py.git" \
  && pipx install "git+ssh://git@github.com/tier4/v_and_v_util.git" \
  && python3 -m pip install --no-cache-dir "git+ssh://git@github.com/tier4/autoware_perception_evaluation.git" \
- && python3 -m pip install --no-cache-dir "git+ssh://git@github.com/tier4/perception_catalog_analyzer.git" \
+ && python3 -m pip install --no-cache-dir \
+      "bokeh>=3.7.3" \
+      "lz4>=4.4.4" \
+      "pyarrow==19.0.0" \
+      "tabulate>=0.9.0" \
+      "typer>=0.16.0" \
+      "weasyprint>=65.1" \
+ && git clone --depth 1 git@github.com:tier4/perception_catalog_analyzer.git /opt/perception_catalog_analyzer \
+ && python3 -m pip install --no-cache-dir --no-deps -e /opt/perception_catalog_analyzer \
  && rm -rf /root/.ssh # Clean up private key ASAP for security
 
 # Install public dependencies (after SSH deps so SSH failures surface fast)
