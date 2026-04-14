@@ -154,6 +154,7 @@ def generate_specsheet_pdf(
     try:
         from perception_catalog_analyzer.dataframe import SceneDataFrame
         from perception_catalog_analyzer.specsheet import get_blocks, specsheet
+        from perception_catalog_analyzer import template as template_module
         from perception_catalog_analyzer.template import update_template
     except ImportError as exc:
         raise RuntimeError(
@@ -183,7 +184,8 @@ def generate_specsheet_pdf(
     )
 
     _notify(progress_callback, "Rendering PDF")
-    html = update_template(project_id, version)
+    template_dir = Path(template_module.__file__).resolve().parent.parent / "template"
+    html = update_template(project_id, version, template_dir=str(template_dir))
     specsheet(
         html=html,
         abstract_html=abstract,
