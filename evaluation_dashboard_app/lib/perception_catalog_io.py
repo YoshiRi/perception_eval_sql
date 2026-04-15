@@ -451,17 +451,13 @@ def build_scene_dataframe_from_pkl_dir(
             project_id=project_id,
             job_id=job_id,
         )
-        repairs = _sanitize_loaded_pkl(data)
         try:
             df_ = _scenarios_to_df_local(data, scenario_parser_function=scene2df, debug=False)
-        except AttributeError as e:
-            # Malformed PKL objects occasionally omit enum-like metadata that scene2df expects.
-            if on_skip and "'NoneType' object has no attribute 'value'" in str(e):
-                on_skip(pkl_file, f"malformed object fields after sanitize: {e}")
+        except Exception as e:
+            if on_skip:
+                on_skip(pkl_file, f"failed to convert: {e}")
                 continue
             raise
-        if repairs:
-            print(f"[pkl sanitize] repaired {repairs} missing fields in {pkl_file}")
         del data
         if df_.empty():
             if skip_empty:
