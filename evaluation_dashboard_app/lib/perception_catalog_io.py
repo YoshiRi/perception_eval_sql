@@ -256,6 +256,105 @@ def _normalize_loaded_pkl(
     return data
 
 
+def _enum_like(value: Any) -> Any:
+    """Return an enum-like object with a `.value` attribute when the input is missing."""
+    return value if value is not None else SimpleNamespace(value=None)
+
+
+def _label_like(value: Any = "UNKNOWN") -> Any:
+    """Return a label-like object that matches analyzer expectations."""
+    return SimpleNamespace(value=value)
+
+
+def _sanitize_dynamic_object(dynamic_object: Any) -> int:
+    """Repair common missing fields on dynamic objects used by scene2df()."""
+    repairs = 0
+    if dynamic_object is None:
+        return repairs
+
+    try:
+        from perception_eval.common.schema import FrameID
+    except ImportError:
+        FrameID = None
+
+    if getattr(dynamic_object, "frame_id", None) is None and FrameID is not None:
+        dynamic_object.frame_id = FrameID.BASE_LINK
+        repairs += 1
+
+    state = getattr(dynamic_object, "state", None)
+    if state is not None and getattr(state, "shape_type", None) is None:
+        state.shape_type = _label_like("UNKNOWN")
+        repairs += 1
+
+    semantic_label = getattr(dynamic_object, "semantic_label", None)
+    if semantic_label is None:
+        dynamic_object.semantic_label = SimpleNamespace(label=_label_like("UNKNOWN"))
+        repairs += 1
+    elif getattr(semantic_label, "label", None) is None:
+        semantic_label.label = _label_like("UNKNOWN")
+        repairs += 1
+
+    return repairs
+
+
+def _sanitize_object_result(result: Any) -> int:
+    """Repair object-result fields that the analyzer expects to expose `.value`."""
+    repairs = 0
+    if result is None:
+        return repairs
+
+    if getattr(result, "center_distance", None) is None:
+        result.center_distance = _enum_like(None)
+        repairs += 1
+    if getattr(result, "plane_distance", None) is None:
+        result.plane_distance = _enum_like(None)
+        repairs += 1
+
+    repairs += _sanitize_dynamic_object(getattr(result, "estimated_object", None))
+    repairs += _sanitize_dynamic_object(getattr(result, "ground_truth_object", None))
+    return repairs
+
+
+def _sanitize_pass_fail_result(pass_fail_result: Any) -> int:
+    """Repair pass/fail result containers before handing them to scene2df()."""
+    repairs = 0
+    if pass_fail_result is None:
+        return repairs
+
+    for attr in ("tp_object_results", "fp_object_results"):
+        for result in getattr(pass_fail_result, attr, []) or []:
+            repairs += _sanitize_object_result(result)
+
+    for obj in getattr(pass_fail_result, "fn_objects", []) or []:
+        repairs += _sanitize_dynamic_object(obj)
+
+    return repairs
+
+
+def _sanitize_loaded_pkl(data: Any) -> int:
+    """Walk normalized PKL data and repair common missing fields for analyzer compatibility."""
+    repairs = 0
+
+    scenarios = data
+    if not isinstance(scenarios, Iterable) or hasattr(scenarios, "frame_results"):
+        scenarios = [scenarios]
+
+    for scenario in scenarios:
+        frame_results_dict = getattr(scenario, "frame_results", None)
+        if isinstance(frame_results_dict, dict):
+            frame_lists = frame_results_dict.values()
+        elif isinstance(scenario, list):
+            frame_lists = [scenario]
+        else:
+            frame_lists = [[scenario]]
+
+        for frame_list in frame_lists:
+            for frame in frame_list or []:
+                repairs += _sanitize_pass_fail_result(getattr(frame, "pass_fail_result", None))
+
+    return repairs
+
+
 def _require_analyzer() -> None:
     if not _ANALYZER_AVAILABLE:
         raise ImportError(
@@ -352,7 +451,17 @@ def build_scene_dataframe_from_pkl_dir(
             project_id=project_id,
             job_id=job_id,
         )
-        df_ = _scenarios_to_df_local(data, scenario_parser_function=scene2df, debug=False)
+        repairs = _sanitize_loaded_pkl(data)
+        try:
+            df_ = _scenarios_to_df_local(data, scenario_parser_function=scene2df, debug=False)
+        except AttributeError as e:
+            # Malformed PKL objects occasionally omit enum-like metadata that scene2df expects.
+            if on_skip and "'NoneType' object has no attribute 'value'" in str(e):
+                on_skip(pkl_file, f"malformed object fields after sanitize: {e}")
+                continue
+            raise
+        if repairs:
+            print(f"[pkl sanitize] repaired {repairs} missing fields in {pkl_file}")
         del data
         if df_.empty():
             if skip_empty:
