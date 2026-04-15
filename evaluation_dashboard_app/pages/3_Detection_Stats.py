@@ -1,5 +1,6 @@
 import html
 from contextlib import contextmanager
+import hashlib
 
 import duckdb
 import streamlit as st
@@ -80,6 +81,16 @@ PLOTLY_LAYOUT_THEME = dict(
     ),
     showlegend=True,
 )
+
+
+def _banner_html_with_note(note: str) -> str:
+    base = detection_stats_page_loading_banner_markup()
+    if not note:
+        return base
+    return base.replace(
+        '<span class="ds-plb-sub">Hang tight — large Parquet files can take a moment.</span>',
+        f'<span class="ds-plb-sub">Hang tight — large Parquet files can take a moment.<br>{html.escape(note)}</span>',
+    )
 
 
 def apply_chart_theme(fig, **overrides):
@@ -383,12 +394,27 @@ def list_values(con, pq: str, expr: str, where: Optional[str] = None) -> List:
         return []
     return df_.iloc[:, 0].dropna().tolist()
 
+
+def _is_detection_stats_eval_flat_cache(path: str) -> bool:
+    p = Path(path)
+    return p.suffix == ".parquet" and p.name.endswith("_eval_flat.parquet")
+
+
 def create_view_eval_flat(con, target_file: str, view_name: str = "view_eval_flat"):
     """Create view_eval_flat with distance bins."""
-    query = f"""
-    CREATE OR REPLACE VIEW {view_name} AS
+    safe_target = target_file.replace("'", "''")
+    if _is_detection_stats_eval_flat_cache(target_file):
+        query = f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM parquet_scan('{safe_target}')"
+    else:
+        query = f"CREATE OR REPLACE VIEW {view_name} AS {eval_flat_select_sql(target_file)}"
+    con.execute(query)
+
+
+def eval_flat_select_sql(target_file: str) -> str:
+    safe_target = target_file.replace("'", "''")
+    return f"""
     WITH src AS (
-        SELECT * FROM parquet_scan('{target_file}')
+        SELECT * FROM parquet_scan('{safe_target}')
         UNION BY NAME
         SELECT CAST(NULL AS VARCHAR) AS visibility,
                CAST(NULL AS VARCHAR) AS suite_name,
@@ -435,7 +461,43 @@ def create_view_eval_flat(con, target_file: str, view_name: str = "view_eval_fla
     JOIN bins b
         ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end
     """
-    con.execute(query)
+
+
+def _ds_cache_dir_for_run(run_path: Path) -> Path:
+    return run_path / ".dashboard_cache" / "detection_stats_cache"
+
+
+def _ds_cache_key_for_source(source_path: str) -> str:
+    return hashlib.sha1(source_path.encode("utf-8")).hexdigest()[:12]
+
+
+def _ds_cache_path_for_source(run_path: Path, source_path: str) -> Path:
+    src = Path(source_path)
+    return _ds_cache_dir_for_run(run_path) / f"{src.stem}_{_ds_cache_key_for_source(source_path)}_eval_flat.parquet"
+
+
+def _ensure_detection_stats_eval_flat_cache(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    run_path: Path,
+    source_path: str,
+) -> tuple[str, bool]:
+    """
+    Ensure a materialized eval_flat parquet exists for this source parquet.
+    Returns (cached_parquet_path, rebuilt_flag).
+    """
+    cache_dir = _ds_cache_dir_for_run(run_path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = _ds_cache_path_for_source(run_path, source_path)
+    source_stat = Path(source_path).stat()
+    needs_rebuild = (
+        not cache_path.exists()
+        or cache_path.stat().st_mtime < source_stat.st_mtime
+    )
+    if needs_rebuild:
+        safe_out = str(cache_path).replace("'", "''")
+        con.execute(f"COPY ({eval_flat_select_sql(source_path)}) TO '{safe_out}' (FORMAT PARQUET)")
+    return str(cache_path), needs_rebuild
 
 # Per-(dataset, topic, label, bin, visibility, suite) aggregates — shared by distance-bin rate queries.
 _TPR_FPR_STATS_SELECT = """SELECT
@@ -619,6 +681,9 @@ with st.sidebar:
 con = get_duckdb_connection()
 fp = _parquet_selection_fingerprint(target_files)
 cache_hit = st.session_state.get("_ds_parquet_fp") == fp and "_ds_filter_opts" in st.session_state
+selected_run_paths = [Path(r["path"]) for r in runs]
+cached_target_files = list(target_files)
+cache_rebuild_notes: List[str] = []
 
 ds_dlog(
     "duckdb setup: fp=%s cache_hit=%s n_runs=%s target_files=%s",
@@ -637,10 +702,21 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
                 st.sidebar.error(f"**Run ({lbl}) file** cannot be read: {msg}")
                 st.stop()
 
+        # Automatically materialize eval_flat cache parquet(s) under each run.
+        for i, (path, run_path, lbl) in enumerate(zip(target_files, selected_run_paths, run_labels_list)):
+            cached_path, rebuilt = _ensure_detection_stats_eval_flat_cache(
+                con,
+                run_path=run_path,
+                source_path=path,
+            )
+            cached_target_files[i] = cached_path
+            if rebuilt:
+                cache_rebuild_notes.append(f"Run {lbl}: refreshed detection cache from {os.path.basename(path)}")
+
         # One eval_flat view per run. (TPR/FPR layered views are not created: Distance queries inline the same
         # stats from eval_flat — nested view + aggregate can segfault DuckDB, exit 139.)
         try:
-            for i, path in enumerate(target_files):
+            for i, path in enumerate(cached_target_files):
                 v_flat = "view_eval_flat" if i == 0 else f"view_eval_flat_{i}"
                 create_view_eval_flat(con, path, v_flat)
         except Exception as e:
@@ -648,7 +724,7 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
             st.stop()
 
         # Filter options from first file (applied to all runs)
-        target_file = target_files[0]
+        target_file = cached_target_files[0]
         topics = list_values(con, target_file, "topic_name")
         labels = list_values(con, target_file, "label")
         try:
@@ -664,6 +740,8 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
             "suite_options": suite_options,
             "vis_options": vis_options,
             "schema": schema,
+            "cached_target_files": list(cached_target_files),
+            "cache_rebuild_notes": list(cache_rebuild_notes),
         }
     else:
         opts = st.session_state["_ds_filter_opts"]
@@ -673,6 +751,11 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
         vis_options = opts["vis_options"]
         schema = opts["schema"]
         target_file = target_files[0]
+        cached_target_files = opts.get("cached_target_files", list(target_files))
+        cache_rebuild_notes = opts.get("cache_rebuild_notes", [])
+        for i, path in enumerate(cached_target_files):
+            v_flat = "view_eval_flat" if i == 0 else f"view_eval_flat_{i}"
+            create_view_eval_flat(con, path, v_flat)
 
 ds_debug_log_memory("after_duckdb_validate_views")
 
@@ -734,7 +817,8 @@ ds_dlog("filters_base keys=%s filter_clause_preview=%s", list(filters_base.keys(
 
 # Banner while the rest of the page (queries + charts) streams in — cleared in finally (even on errors).
 _ds_loading_banner = st.empty()
-_ds_loading_banner.markdown(detection_stats_page_loading_banner_markup(), unsafe_allow_html=True)
+_cache_note = " ".join(cache_rebuild_notes)
+_ds_loading_banner.markdown(_banner_html_with_note(_cache_note), unsafe_allow_html=True)
 try:
     ds_dlog("main_content_try_enter")
     ds_debug_log_memory("main_content_start")
