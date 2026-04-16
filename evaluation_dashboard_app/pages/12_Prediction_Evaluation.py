@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -357,16 +358,28 @@ def prediction_artifacts_ready(run_path: Path) -> bool:
     return all(get_prediction_table_path(run_path, name).exists() for name in ARTIFACT_TABLES)
 
 
-def save_prediction_artifacts(run_path: Path, artifacts: dict[str, pd.DataFrame]) -> None:
+def _noop_progress(_: float, __: str) -> None:
+    return None
+
+
+def save_prediction_artifacts(
+    run_path: Path,
+    artifacts: dict[str, pd.DataFrame],
+    progress_callback: Callable[[float, str], None] | None = None,
+) -> None:
+    report = progress_callback or _noop_progress
     cache_dir = get_prediction_cache_dir(run_path)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    for name in ARTIFACT_TABLES:
+    total_tables = max(len(ARTIFACT_TABLES), 1)
+    for idx, name in enumerate(ARTIFACT_TABLES, start=1):
+        report(0.88 + (0.09 * idx / total_tables), f"Saving `{name}` summary...")
         artifacts[name].to_parquet(get_prediction_table_path(run_path, name), index=False)
     manifest = {
         "future_mtime_ns": _prediction_source_path(run_path).stat().st_mtime_ns,
         "table_names": ARTIFACT_TABLES,
     }
     get_prediction_manifest_path(run_path).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    report(1.0, "Prediction summary cache is ready.")
 
 
 @st.cache_data(show_spinner=False)
@@ -378,12 +391,16 @@ def load_saved_prediction_artifacts(run_path_str: str) -> dict[str, pd.DataFrame
     return out
 
 
-@st.cache_data(show_spinner=False)
-def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame]:
+def _build_prediction_eval_artifacts_impl(
+    run_path_str: str,
+    progress_callback: Callable[[float, str], None] | None = None,
+) -> dict[str, pd.DataFrame]:
+    report = progress_callback or _noop_progress
     run_path = Path(run_path_str)
     future_path = _prediction_source_path(run_path)
     if future_path is None:
         raise FileNotFoundError(f"No future.parquet or future.csv found in {run_path}")
+    report(0.05, f"Reading `{future_path.name}`...")
     future_cols = [
         "source",
         "label",
@@ -408,13 +425,17 @@ def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame
     else:
         future_df = pd.read_csv(future_path, usecols=lambda c: c in set(future_cols + ["topic_name"]))
     if "topic_name" in future_df.columns:
+        report(0.18, "Filtering the default prediction topic...")
         topic_values = future_df["topic_name"].dropna().astype(str).unique().tolist()
         if DEFAULT_TOPIC in topic_values:
             future_df = future_df[future_df["topic_name"].astype(str) == DEFAULT_TOPIC].copy()
 
+    report(0.3, "Matching prediction tracks against GT...")
     matched_df = prepare_future_matched_df(future_df, time_step=0.1, max_error_m=100.0)
+    report(0.45, "Computing per-track ADE/FDE summaries...")
     track_summary = build_future_mode_track_summary_from_matched(matched_df, checkpoints=CHECKPOINTS)
     if track_summary.empty:
+        report(0.85, "No matched tracks were found. Creating empty summary tables...")
         empty = pd.DataFrame()
         return {
             "label_summary": empty,
@@ -422,6 +443,7 @@ def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame
             "polar_summary": empty,
         }
 
+    report(0.55, "Preparing radial and angular bins...")
     gt_start = future_df[future_df["source"].astype(str).str.upper() == "GT"].copy()
     gt_start["frame_index_num"] = pd.to_numeric(gt_start["frame_index"], errors="coerce")
     gt_start["relative_time_num"] = pd.to_numeric(gt_start["relative_time"], errors="coerce")
@@ -457,7 +479,9 @@ def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame
     distance_rows: list[dict[str, object]] = []
     polar_rows: list[dict[str, object]] = []
 
-    for label_name in labels:
+    total_labels = max(len(labels), 1)
+    for idx, label_name in enumerate(labels, start=1):
+        report(0.62 + (0.2 * idx / total_labels), f"Aggregating metrics for `{label_name}` ({idx}/{total_labels})...")
         scoped = track_summary[track_summary["label_gt"].astype(str) == label_name].copy()
         row: dict[str, object] = {
             "label": label_name,
@@ -504,6 +528,7 @@ def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame
 
     label_summary = pd.DataFrame(label_rows)
     if not label_summary.empty:
+        report(0.84, "Finalizing overall summary row...")
         total_rows = float(label_summary["future_rows"].sum())
         overall_row: dict[str, object] = {
             "label": "All",
@@ -525,6 +550,27 @@ def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame
         "distance_summary": distance_summary,
         "polar_summary": polar_summary,
     }
+
+
+@st.cache_data(show_spinner=False)
+def build_prediction_eval_artifacts(run_path_str: str) -> dict[str, pd.DataFrame]:
+    return _build_prediction_eval_artifacts_impl(run_path_str)
+
+
+def build_prediction_artifacts_with_progress(run_path: Path, build_label: str) -> None:
+    progress_slot = st.empty()
+    status_slot = st.empty()
+    progress_bar = progress_slot.progress(0, text=f"Starting {build_label} prediction summary build...")
+
+    def report(fraction: float, message: str) -> None:
+        bounded_fraction = max(0.0, min(1.0, float(fraction)))
+        progress_bar.progress(int(round(bounded_fraction * 100)), text=message)
+        status_slot.caption(f"{build_label}: {message}")
+
+    artifacts = _build_prediction_eval_artifacts_impl(str(run_path), progress_callback=report)
+    save_prediction_artifacts(run_path, artifacts, progress_callback=report)
+    st.cache_data.clear()
+    st.rerun()
 
 
 def merge_label_compare(label_a: pd.DataFrame, label_b: pd.DataFrame) -> pd.DataFrame:
@@ -645,18 +691,10 @@ with info_col:
         st.info(f"Run `{selected_run_a}` is not cached yet. Press Build A Summary to generate the result.")
 
 if build_clicked_a:
-    with st.spinner("Building A prediction summary. This can take a while once per run."):
-        built_artifacts = build_prediction_eval_artifacts(str(run_path_a))
-        save_prediction_artifacts(run_path_a, built_artifacts)
-    st.cache_data.clear()
-    st.rerun()
+    build_prediction_artifacts_with_progress(run_path_a, "A")
 
 if build_clicked_b and run_path_b is not None:
-    with st.spinner("Building B prediction summary. This can take a while once per run."):
-        built_artifacts = build_prediction_eval_artifacts(str(run_path_b))
-        save_prediction_artifacts(run_path_b, built_artifacts)
-    st.cache_data.clear()
-    st.rerun()
+    build_prediction_artifacts_with_progress(run_path_b, "B")
 
 if (mode == "Single Run" and not cache_ready_a) or (mode == "Compare Mode" and (not cache_ready_a or not cache_ready_b)):
     section_header(
