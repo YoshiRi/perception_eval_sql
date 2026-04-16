@@ -75,6 +75,14 @@ def _noop_progress(_: float, __: str) -> None:
     return None
 
 
+def _parse_r_upper_bound(label: object) -> float:
+    text = str(label)
+    try:
+        return float(text.split("-")[-1])
+    except ValueError:
+        return float("inf")
+
+
 def prepare_future_matched_df(
     future_df: pd.DataFrame,
     *,
@@ -420,13 +428,32 @@ def build_specsheet_aligned_prediction_artifacts(
     max_error_m: float = 100.0,
     progress_callback: Callable[[float, str], None] | None = None,
 ) -> dict[str, pd.DataFrame]:
+    from perception_catalog_analyzer.specsheet.blocks import bin_polar
+    from perception_catalog_analyzer.specsheet.metrics import load_metrics
+    from perception_catalog_analyzer.specsheet.metrics.functional import FUTURE_ARRAY_CACHE
+
     report = progress_callback or _noop_progress
-    report(0.02, "Matching prediction rows to GT trajectories...")
-    matched_df = prepare_future_matched_df(future_df, time_step=time_step, max_error_m=max_error_m)
-    report(0.12, "Computing per-track ADE/FDE summaries...")
-    track_summary = build_future_mode_track_summary_from_matched(matched_df, checkpoints=checkpoints)
-    if track_summary.empty:
-        report(0.9, "No matched tracks were found after track summarization.")
+    FUTURE_ARRAY_CACHE.clear()
+    metric_order = [_metric_label(prefix, checkpoint) for prefix in ("minADE", "minFDE") for checkpoint in checkpoints]
+    metric_map = {metric.name: metric for metric in load_metrics(metric_order)}
+
+    report(0.02, "Binning rows in the same polar grid used by the specsheet...")
+    normalized_future = _ensure_numeric(
+        future_df,
+        ("frame_index", "relative_time", "x", "y", "tx", "ty", "mode", "confidence"),
+    )
+    required_future_cols = ["source", "label", "uuid", "pair_uuid", "frame_index", "relative_time", "tx", "ty"]
+    present_required_cols = [col for col in required_future_cols if col in normalized_future.columns]
+    if present_required_cols:
+        normalized_future = normalized_future.dropna(subset=present_required_cols)
+    normalized_future = normalized_future.sort_values(
+        [col for col in ["label", "frame_index", "pair_uuid", "uuid", "mode", "relative_time"] if col in normalized_future.columns],
+        kind="stable",
+    ).reset_index(drop=True)
+
+    binned_future = bin_polar(normalized_future.copy())
+    if binned_future.empty:
+        report(0.9, "No future rows were available after binning.")
         empty = pd.DataFrame()
         return {
             "label_summary": empty,
@@ -434,47 +461,7 @@ def build_specsheet_aligned_prediction_artifacts(
             "polar_summary": empty,
         }
 
-    report(0.2, "Preparing GT start-position bins for radial and polar summaries...")
-    gt_start = future_df[future_df["source"].astype(str).str.upper() == "GT"].copy()
-    gt_start["frame_index_num"] = pd.to_numeric(gt_start["frame_index"], errors="coerce")
-    gt_start["relative_time_num"] = pd.to_numeric(gt_start["relative_time"], errors="coerce")
-    gt_start["x"] = pd.to_numeric(gt_start["x"], errors="coerce")
-    gt_start["y"] = pd.to_numeric(gt_start["y"], errors="coerce")
-    gt_start = (
-        gt_start.sort_values("relative_time_num")
-        .groupby(["suite_name", "scenario_name", "frame_index_num", "uuid"], dropna=False)
-        .first()
-        .reset_index()
-        .rename(columns={"uuid": "uuid_gt", "label": "label_gt"})
-    )
-
-    r_max, r_step, r_ini = 200, 20, 0
-    theta_step, theta_ini = 60, -60
-    theta_max = theta_ini + 360
-    r_labels = [f"{i}-{i + r_step}" for i in range(r_ini, r_max, r_step)]
-    r_edges = np.arange(r_ini, r_max + r_step, r_step)
-    theta_labels = [f"{i}-{i + theta_step}" for i in range(theta_ini, theta_max, theta_step)]
-    theta_edges_deg = np.arange(theta_ini, theta_max + theta_step, theta_step)
-
-    gt_start["r_val"] = np.hypot(gt_start["x"], gt_start["y"])
-    raw_deg = np.degrees(np.arctan2(gt_start["y"], gt_start["x"]))
-    gt_start["theta_val"] = ((raw_deg - theta_ini) % 360) + theta_ini
-    gt_start["r"] = pd.cut(gt_start["r_val"], bins=r_edges, right=False, include_lowest=True, labels=r_labels)
-    gt_start["theta"] = pd.cut(
-        gt_start["theta_val"],
-        bins=theta_edges_deg,
-        right=False,
-        include_lowest=True,
-        labels=theta_labels,
-    )
-    track_summary = track_summary.merge(
-        gt_start[["suite_name", "scenario_name", "frame_index_num", "uuid_gt", "r", "theta"]],
-        on=["suite_name", "scenario_name", "frame_index_num", "uuid_gt"],
-        how="left",
-    )
-
-    metric_order = [_metric_label(prefix, checkpoint) for prefix in ("minADE", "minFDE") for checkpoint in checkpoints]
-    labels = sorted(str(v) for v in track_summary["label_gt"].dropna().unique() if str(v).strip())
+    labels = sorted(str(v) for v in binned_future["label"].dropna().unique() if str(v).strip())
     total_labels = max(len(labels), 1)
     total_metrics = max(len(metric_order), 1)
 
@@ -487,28 +474,40 @@ def build_specsheet_aligned_prediction_artifacts(
         label_start = 0.3 + (0.52 * (label_idx - 1) / total_labels)
         label_end = 0.3 + (0.52 * label_idx / total_labels)
         report(label_start, f"Aggregating label `{label_name}` ({label_idx}/{total_labels})...")
-        scoped = track_summary[track_summary["label_gt"].astype(str) == label_name].copy()
+        scoped = binned_future[binned_future["label"].astype(str) == label_name].copy()
+        est_scoped = scoped[scoped["source"].astype(str).str.upper() == "EST"].copy()
+
+        label_groups = list(scoped.groupby(["r", "theta"], observed=True))
+        total_groups = max(len(label_groups), 1)
+        for group_idx, ((r_name, theta_name), sub_df) in enumerate(label_groups, start=1):
+            warmup_progress = label_start + ((label_end - label_start) * 0.35 * group_idx / total_groups)
+            report(
+                warmup_progress,
+                f"Preparing label `{label_name}` ({label_idx}/{total_labels}) future arrays: bin `{r_name}` / `{theta_name}` ({group_idx}/{total_groups})...",
+            )
+            for metric_name in metric_order:
+                metric = metric_map[metric_name]
+                metric.apply(sub_df)
+
         row: dict[str, object] = {
             "label": label_name,
-            "future_rows": int(len(scoped)),
+            "future_rows": int(est_scoped[["scenario_name", "frame_index", "uuid"]].drop_duplicates().shape[0])
+            if {"scenario_name", "frame_index", "uuid"}.issubset(est_scoped.columns)
+            else int(len(est_scoped)),
         }
         for metric_idx, metric_name in enumerate(metric_order, start=1):
-            metric_progress = label_start + ((label_end - label_start) * metric_idx / total_metrics)
+            metric_progress = label_start + ((label_end - label_start) * (0.35 + (0.65 * metric_idx / total_metrics)))
             report(
                 metric_progress,
                 f"Aggregating label `{label_name}` ({label_idx}/{total_labels}), metric `{metric_name}` ({metric_idx}/{total_metrics})...",
             )
-            if metric_name not in scoped.columns:
-                row[metric_name] = None
-                continue
-
-            around_df = (
-                scoped.groupby("r", observed=False)[metric_name]
-                .mean()
-                .reset_index()
-                .dropna(subset=[metric_name])
-            )
-            row[metric_name] = float(around_df[metric_name].mean()) if not around_df.empty else None
+            metric = metric_map[metric_name]
+            metric_df = metric.apply(scoped)
+            each_bin_df = metric.get_each_bin(metric_df)
+            around_df = metric.get_all_around(scoped).dropna(subset=[metric_name]).copy()
+            near_mask = around_df["r"].map(_parse_r_upper_bound) <= 60.0
+            near_values = around_df.loc[near_mask, metric_name].dropna()
+            row[metric_name] = float(np.nanmean(near_values.to_numpy(dtype=float))) if not near_values.empty else None
 
             if not around_df.empty:
                 for rec in around_df[["r", metric_name]].to_dict("records"):
@@ -521,12 +520,7 @@ def build_specsheet_aligned_prediction_artifacts(
                         }
                     )
 
-            polar_df = (
-                scoped.groupby(["r", "theta"], observed=False)[metric_name]
-                .mean()
-                .reset_index()
-                .dropna(subset=[metric_name])
-            )
+            polar_df = each_bin_df.dropna(subset=[metric_name]).copy()
             if not polar_df.empty:
                 polar_df["label"] = label_name
                 polar_df["metric"] = metric_name

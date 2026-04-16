@@ -96,7 +96,7 @@ METRIC_ORDER = [
 ]
 APP_CACHE_ROOT = ".dashboard_cache"
 ARTIFACT_DIRNAME = "prediction_eval_cache"
-PREDICTION_CACHE_VERSION = 3
+PREDICTION_CACHE_VERSION = 4
 ARTIFACT_TABLES = ["label_summary", "distance_summary", "polar_summary"]
 R_MAX, R_STEP, R_INI = 200, 20, 0
 THETA_STEP, THETA_INI = 60, -60
