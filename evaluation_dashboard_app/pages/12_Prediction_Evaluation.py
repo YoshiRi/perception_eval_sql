@@ -14,7 +14,7 @@ import streamlit as st
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero, section_header
 from lib.path_utils import list_run_directories, path_display
-from lib.prediction_eval import prepare_future_matched_df, build_future_mode_track_summary_from_matched
+from lib.prediction_eval import build_specsheet_aligned_prediction_artifacts
 
 
 st.set_page_config(
@@ -134,8 +134,9 @@ def render_stat_card(kicker: str, value: str, note: str) -> None:
 
 def ordered_distance_bins(values: list[str] | pd.Index) -> list[str]:
     present = {str(v) for v in values if pd.notna(v)}
-    ordered = [v for v in DISTANCE_BIN_ORDER if v in present]
-    leftovers = sorted(present - set(ordered))
+    canonical_order = DISTANCE_BIN_ORDER + R_LABELS
+    ordered = [v for v in canonical_order if v in present]
+    leftovers = sorted(present - set(ordered), key=lambda v: (len(v), v))
     return ordered + leftovers
 
 
@@ -431,125 +432,24 @@ def _build_prediction_eval_artifacts_impl(
             future_df = future_df[future_df["topic_name"].astype(str) == DEFAULT_TOPIC].copy()
 
     report(0.3, "Matching prediction tracks against GT...")
-    matched_df = prepare_future_matched_df(future_df, time_step=0.1, max_error_m=100.0)
     report(0.45, "Computing per-track ADE/FDE summaries...")
-    track_summary = build_future_mode_track_summary_from_matched(matched_df, checkpoints=CHECKPOINTS)
-    if track_summary.empty:
+    report(0.62, "Aggregating metrics with specsheet-aligned distance-bin averaging...")
+
+    def report_aggregate_progress(inner_fraction: float, message: str) -> None:
+        report(0.3 + (0.54 * inner_fraction), message)
+
+    artifacts = build_specsheet_aligned_prediction_artifacts(
+        future_df,
+        checkpoints=CHECKPOINTS,
+        time_step=0.1,
+        max_error_m=100.0,
+        progress_callback=report_aggregate_progress,
+    )
+    if artifacts["label_summary"].empty:
         report(0.85, "No matched tracks were found. Creating empty summary tables...")
-        empty = pd.DataFrame()
-        return {
-            "label_summary": empty,
-            "distance_summary": empty,
-            "polar_summary": empty,
-        }
-
-    report(0.55, "Preparing radial and angular bins...")
-    gt_start = future_df[future_df["source"].astype(str).str.upper() == "GT"].copy()
-    gt_start["frame_index_num"] = pd.to_numeric(gt_start["frame_index"], errors="coerce")
-    gt_start["relative_time_num"] = pd.to_numeric(gt_start["relative_time"], errors="coerce")
-    gt_start["x"] = pd.to_numeric(gt_start["x"], errors="coerce")
-    gt_start["y"] = pd.to_numeric(gt_start["y"], errors="coerce")
-    gt_start = (
-        gt_start.sort_values("relative_time_num")
-        .groupby(["suite_name", "scenario_name", "frame_index_num", "uuid"], dropna=False)
-        .first()
-        .reset_index()
-        .rename(columns={"uuid": "uuid_gt", "label": "label_gt"})
-    )
-    gt_start["r_val"] = np.hypot(gt_start["x"], gt_start["y"])
-    raw_deg = np.degrees(np.arctan2(gt_start["y"], gt_start["x"]))
-    gt_start["theta_val"] = ((raw_deg - THETA_INI) % 360) + THETA_INI
-    gt_start["r"] = pd.cut(gt_start["r_val"], bins=R_EDGES, right=False, include_lowest=True, labels=R_LABELS)
-    gt_start["theta"] = pd.cut(
-        gt_start["theta_val"],
-        bins=THETA_EDGES_DEG,
-        right=False,
-        include_lowest=True,
-        labels=THETA_LABELS,
-    )
-    track_summary = track_summary.merge(
-        gt_start[["suite_name", "scenario_name", "frame_index_num", "uuid_gt", "r", "theta"]],
-        on=["suite_name", "scenario_name", "frame_index_num", "uuid_gt"],
-        how="left",
-    )
-
-    labels = sorted(str(v) for v in track_summary["label_gt"].dropna().unique() if str(v).strip())
-
-    label_rows: list[dict[str, object]] = []
-    distance_rows: list[dict[str, object]] = []
-    polar_rows: list[dict[str, object]] = []
-
-    total_labels = max(len(labels), 1)
-    for idx, label_name in enumerate(labels, start=1):
-        report(0.62 + (0.2 * idx / total_labels), f"Aggregating metrics for `{label_name}` ({idx}/{total_labels})...")
-        scoped = track_summary[track_summary["label_gt"].astype(str) == label_name].copy()
-        row: dict[str, object] = {
-            "label": label_name,
-            "future_rows": int(len(scoped)),
-        }
-        for metric_name in METRIC_ORDER:
-            if metric_name not in scoped.columns:
-                row[metric_name] = None
-                continue
-
-            near = scoped.loc[scoped["start_distance_m"] <= 60.0, metric_name].dropna()
-            row[metric_name] = float(near.mean()) if not near.empty else None
-
-            around_df = (
-                scoped.groupby("distance_bin", observed=False)[metric_name]
-                .mean()
-                .reset_index()
-                .rename(columns={"distance_bin": "r"})
-            )
-            if not around_df.empty:
-                for rec in around_df[["r", metric_name]].to_dict("records"):
-                    distance_rows.append(
-                        {
-                            "label": label_name,
-                            "metric": metric_name,
-                            "r": rec["r"],
-                            "value": rec[metric_name],
-                        }
-                    )
-
-            polar_df = (
-                scoped.groupby(["r", "theta"], observed=False)[metric_name]
-                .mean()
-                .reset_index()
-                .dropna(subset=[metric_name])
-            )
-            if not polar_df.empty:
-                polar_df["label"] = label_name
-                polar_df["metric"] = metric_name
-                polar_df = polar_df.rename(columns={metric_name: "value"})
-                polar_rows.extend(polar_df[["label", "metric", "r", "theta", "value"]].to_dict("records"))
-
-        label_rows.append(row)
-
-    label_summary = pd.DataFrame(label_rows)
-    if not label_summary.empty:
+    else:
         report(0.84, "Finalizing overall summary row...")
-        total_rows = float(label_summary["future_rows"].sum())
-        overall_row: dict[str, object] = {
-            "label": "All",
-            "future_rows": int(total_rows),
-        }
-        for metric_name in METRIC_ORDER:
-            valid = label_summary[["future_rows", metric_name]].dropna()
-            if valid.empty or float(valid["future_rows"].sum()) <= 0:
-                overall_row[metric_name] = None
-            else:
-                overall_row[metric_name] = float(
-                    (valid["future_rows"] * valid[metric_name]).sum() / valid["future_rows"].sum()
-                )
-        label_summary = pd.concat([pd.DataFrame([overall_row]), label_summary], ignore_index=True)
-    distance_summary = pd.DataFrame(distance_rows)
-    polar_summary = pd.DataFrame(polar_rows)
-    return {
-        "label_summary": label_summary,
-        "distance_summary": distance_summary,
-        "polar_summary": polar_summary,
-    }
+    return artifacts
 
 
 @st.cache_data(show_spinner=False)
