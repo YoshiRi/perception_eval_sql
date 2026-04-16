@@ -96,6 +96,7 @@ METRIC_ORDER = [
 ]
 APP_CACHE_ROOT = ".dashboard_cache"
 ARTIFACT_DIRNAME = "prediction_eval_cache"
+PREDICTION_CACHE_VERSION = 3
 ARTIFACT_TABLES = ["label_summary", "distance_summary", "polar_summary"]
 R_MAX, R_STEP, R_INI = 200, 20, 0
 THETA_STEP, THETA_INI = 60, -60
@@ -297,12 +298,12 @@ def _run_has_prediction_source(run_path: Path) -> bool:
 
 
 def _prediction_source_path(run_path: Path) -> Path | None:
-    parquet_path = run_path / "future.parquet"
-    if parquet_path.exists():
-        return parquet_path
     csv_path = run_path / "future.csv"
     if csv_path.exists():
         return csv_path
+    parquet_path = run_path / "future.parquet"
+    if parquet_path.exists():
+        return parquet_path
     return None
 
 
@@ -354,6 +355,8 @@ def prediction_artifacts_ready(run_path: Path) -> bool:
     future_path = _prediction_source_path(run_path)
     if manifest is None or future_path is None or not future_path.exists():
         return False
+    if manifest.get("cache_version") != PREDICTION_CACHE_VERSION:
+        return False
     if manifest.get("future_mtime_ns") != future_path.stat().st_mtime_ns:
         return False
     return all(get_prediction_table_path(run_path, name).exists() for name in ARTIFACT_TABLES)
@@ -376,6 +379,7 @@ def save_prediction_artifacts(
         report(0.88 + (0.09 * idx / total_tables), f"Saving `{name}` summary...")
         artifacts[name].to_parquet(get_prediction_table_path(run_path, name), index=False)
     manifest = {
+        "cache_version": PREDICTION_CACHE_VERSION,
         "future_mtime_ns": _prediction_source_path(run_path).stat().st_mtime_ns,
         "table_names": ARTIFACT_TABLES,
     }
