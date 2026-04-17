@@ -14,6 +14,11 @@ from typing import Dict, List, Tuple, Any
 import pandas as pd
 import numpy as np
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency fallback
+    yaml = None
+
 
 def _obj_to_dict(obj: Any) -> Any:
     """Recursively convert an object to dict/list primitives for TLR frame structure."""
@@ -34,6 +39,8 @@ class TLREvaluationAnalyzer:
     def __init__(self, result_directory: str):
         self.result_directory = result_directory
         self.scenario_results: Dict[str, List[Dict]] = {}
+        self.scenario_paths: Dict[str, Path] = {}
+        self.scenario_metadata: Dict[str, Dict[str, str]] = {}
         self.criteria_data: Dict[str, Dict] = {}
         self.cached_vehicle_statuses: Dict[str, List[Dict]] = {}
         self.cached_traffic_light_data: Dict[str, List[Dict]] = {}
@@ -58,18 +65,21 @@ class TLREvaluationAnalyzer:
             frames = self._load_pkl_scenario(child)
             if frames:
                 self.scenario_results[child.name] = frames
+                self.scenario_paths[child.name] = child
         # Also support flat layout: root contains *.pkl.z (e.g. archive) — each file = one scenario
         if not self.scenario_results:
             for pkl_path in root.glob("*.pkl.z"):
                 frames = self._load_single_pkl_file(pkl_path)
                 if frames:
                     self.scenario_results[pkl_path.stem] = frames
+                    self.scenario_paths[pkl_path.stem] = pkl_path.parent
             for pkl_path in root.glob("*.pkl"):
                 if pkl_path.name == "scene_result.pkl":
                     continue  # already handled as child/scene_result.pkl
                 frames = self._load_single_pkl_file(pkl_path)
                 if frames:
                     self.scenario_results[pkl_path.stem] = frames
+                    self.scenario_paths[pkl_path.stem] = pkl_path.parent
 
     def _load_pkl_scenario(self, scenario_path: Path) -> List[Dict]:
         """Load one scenario dir: scene_result.pkl or first .pkl.z in that dir."""
@@ -160,6 +170,7 @@ class TLREvaluationAnalyzer:
             if result_file.exists():
                 # Flat: direct child has result.json
                 self.scenario_results[child.name] = self._load_result_jsonl(os.fspath(result_file))
+                self.scenario_paths[child.name] = child
             else:
                 # Suite: child is a suite folder; look for testcase subdirs with result.json
                 for testcase_dir in child.iterdir():
@@ -169,6 +180,7 @@ class TLREvaluationAnalyzer:
                     if tc_result.exists():
                         scenario_key = f"{child.name}/{testcase_dir.name}"
                         self.scenario_results[scenario_key] = self._load_result_jsonl(os.fspath(tc_result))
+                        self.scenario_paths[scenario_key] = testcase_dir
 
     def _load_result_jsonl(self, file_path: str) -> List[Dict]:
         """Load and parse result.json (JSONL format)."""
@@ -664,12 +676,51 @@ class TLREvaluationAnalyzer:
             return True
         return False
 
+    def _get_scenario_metadata(self, scenario_name: str) -> Dict[str, str]:
+        """Load lightweight scenario metadata such as t4dataset_id from scenario.yaml."""
+        if scenario_name in self.scenario_metadata:
+            return self.scenario_metadata[scenario_name]
+
+        metadata: Dict[str, str] = {"t4dataset_id": ""}
+        scenario_path = self.scenario_paths.get(scenario_name)
+        scenario_yaml_path = None
+        if scenario_path:
+            direct_yaml_path = scenario_path / "scenario.yaml"
+            if direct_yaml_path.is_file():
+                scenario_yaml_path = direct_yaml_path
+            else:
+                # Some TLR layouts store result.json in a suffixed sibling dir
+                # (for example ``ScenarioName_4038db04``) while ``scenario.yaml``
+                # lives in the unsuffixed directory next to it.
+                base_name = scenario_path.name
+                if re.fullmatch(r".*_[0-9a-fA-F]{8}", base_name):
+                    sibling_yaml_path = scenario_path.parent / base_name.rsplit("_", 1)[0] / "scenario.yaml"
+                    if sibling_yaml_path.is_file():
+                        scenario_yaml_path = sibling_yaml_path
+        if scenario_yaml_path and scenario_yaml_path.is_file() and yaml is not None:
+            try:
+                with open(scenario_yaml_path, "r", encoding="utf-8") as f:
+                    scenario_doc = yaml.safe_load(f) or {}
+                datasets = scenario_doc.get("Evaluation", {}).get("Datasets", [])
+                if isinstance(datasets, list):
+                    dataset_ids = []
+                    for item in datasets:
+                        if isinstance(item, dict):
+                            dataset_ids.extend(str(k) for k in item.keys())
+                    metadata["t4dataset_id"] = ", ".join(dataset_ids)
+            except (OSError, yaml.YAMLError):
+                pass
+
+        self.scenario_metadata[scenario_name] = metadata
+        return metadata
+
     def get_vehicle_status_details_df(self) -> pd.DataFrame | None:
         """Return a DataFrame of per-frame vehicle status and TLR info for all scenarios."""
         all_status_data = []
         for scenario_name, results in self.scenario_results.items():
             if not results:
                 continue
+            scenario_metadata = self._get_scenario_metadata(scenario_name)
             vehicle_statuses = self.cached_vehicle_statuses.get(scenario_name)
             traffic_light_data = self.cached_traffic_light_data.get(scenario_name)
             if not vehicle_statuses or not traffic_light_data:
@@ -678,6 +729,7 @@ class TLREvaluationAnalyzer:
             for i, (frame_status_info, tlr_info) in enumerate(zip(vehicle_statuses, traffic_light_data)):
                 all_status_data.append({
                     "scenario": scenario_name,
+                    "t4dataset_id": scenario_metadata.get("t4dataset_id", ""),
                     "frame_index": i,
                     "frame_name": tlr_info.get("frame", ""),
                     "status": frame_status_info["status"],

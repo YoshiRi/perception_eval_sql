@@ -5,6 +5,7 @@ Supports Single (one dataset) or Compare (two datasets: Baseline A vs Compare B)
 Supports shareable URLs via query params: mode, path_a, path_b.
 """
 
+import json
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -62,7 +63,7 @@ def get_or_load_analyzer(resolved_path: str):
     """Load analyzer for path; cache in session_state by path."""
     if not resolved_path:
         return None
-    cache_key = "tlr_analyzer_cache"
+    cache_key = "tlr_analyzer_cache_v2"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = {}
     cache = st.session_state[cache_key]
@@ -76,6 +77,17 @@ def get_or_load_analyzer(resolved_path: str):
             analyzer.pre_calculate_all_data()
             cache[resolved_path] = analyzer
     return cache[resolved_path]
+
+
+def _dataframe_to_json_bytes(df: pd.DataFrame, export_kind: str) -> bytes:
+    """Serialize a DataFrame to a stable JSON payload for downstream viewers."""
+    payload = {
+        "format_version": 1,
+        "export_kind": export_kind,
+        "columns": df.columns.tolist(),
+        "records": df.to_dict(orient="records"),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
 
 def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_details):
@@ -137,6 +149,23 @@ def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_d
         if details_df is not None and not details_df.empty:
             st.caption("One row per frame. Use filters to narrow down by scenario, status, or traffic light type.")
             st.dataframe(details_df, width='stretch', hide_index=True)
+            dl_col_csv, dl_col_json = st.columns(2)
+            with dl_col_csv:
+                st.download_button(
+                    "Download as CSV",
+                    data=details_df.to_csv(index=False).encode("utf-8"),
+                    file_name="tlr_details.csv",
+                    mime="text/csv",
+                    key="tlr_dl_single_tab_csv",
+                )
+            with dl_col_json:
+                st.download_button(
+                    "Download as JSON",
+                    data=_dataframe_to_json_bytes(details_df, export_kind="single_dataset_details"),
+                    file_name="tlr_details.json",
+                    mime="application/json",
+                    key="tlr_dl_single_tab_json",
+                )
         else:
             st.info("No vehicle status details available.")
 
@@ -244,11 +273,27 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
         details_b = analyzer_b.get_vehicle_status_details_df()
         if details_a is not None and not details_a.empty and details_b is not None and not details_b.empty:
             merge_keys = ["scenario", "frame_index"]
-            a_sub = details_a[merge_keys + ["frame_name", "status", "traffic_light_type"]].copy()
-            a_sub = a_sub.rename(columns={"frame_name": "frame_name_a", "status": "status_a", "traffic_light_type": f"traffic_light_type ({label_a})"})
-            b_sub = details_b[merge_keys + ["frame_name", "status", "traffic_light_type"]].copy()
-            b_sub = b_sub.rename(columns={"frame_name": "frame_name_b", "status": "status_b", "traffic_light_type": f"traffic_light_type ({label_b})"})
+            a_sub = details_a[merge_keys + ["t4dataset_id", "frame_name", "status", "traffic_light_type"]].copy()
+            a_sub = a_sub.rename(
+                columns={
+                    "t4dataset_id": f"t4dataset_id ({label_a})",
+                    "frame_name": "frame_name_a",
+                    "status": "status_a",
+                    "traffic_light_type": f"traffic_light_type ({label_a})",
+                }
+            )
+            b_sub = details_b[merge_keys + ["t4dataset_id", "frame_name", "status", "traffic_light_type"]].copy()
+            b_sub = b_sub.rename(
+                columns={
+                    "t4dataset_id": f"t4dataset_id ({label_b})",
+                    "frame_name": "frame_name_b",
+                    "status": "status_b",
+                    "traffic_light_type": f"traffic_light_type ({label_b})",
+                }
+            )
             merged = a_sub.merge(b_sub, on=merge_keys, how="inner")
+            dataset_col_a = f"t4dataset_id ({label_a})"
+            dataset_col_b = f"t4dataset_id ({label_b})"
             tlr_col_a = f"traffic_light_type ({label_a})"
             tlr_col_b = f"traffic_light_type ({label_b})"
             merged["_diff"] = merged[tlr_col_a] != merged[tlr_col_b]
@@ -356,7 +401,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                 if not to_show_diff.empty:
                     st.markdown("**Frames where traffic light type differs (A vs B)**")
                     display_df = to_show_diff[[
-                        "scenario", "frame_index",
+                        "scenario", dataset_col_a, dataset_col_b, "frame_index",
                         tlr_col_a, tlr_col_b,
                         "status_a", "status_b",
                     ]].copy()
@@ -373,7 +418,12 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                     st.caption(caption)
                     # Download CSV
                     csv_bytes = display_df.to_csv(index=False).encode("utf-8")
-                    st.download_button("Download as CSV", data=csv_bytes, file_name="tlr_diff_frames.csv", mime="text/csv", key="tlr_dl_diff")
+                    json_bytes = _dataframe_to_json_bytes(display_df, export_kind="compare_diff_frames")
+                    dl_col_csv, dl_col_json = st.columns(2)
+                    with dl_col_csv:
+                        st.download_button("Download as CSV", data=csv_bytes, file_name="tlr_diff_frames.csv", mime="text/csv", key="tlr_dl_diff")
+                    with dl_col_json:
+                        st.download_button("Download as JSON", data=json_bytes, file_name="tlr_diff_frames.json", mime="application/json", key="tlr_dl_diff_json")
                 else:
                     st.info(
                         f"No frames with different traffic light type between {label_a} and {label_b}"
@@ -382,7 +432,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
             else:
                 st.markdown("**All frames (A vs B)** — rows where traffic light type differs are highlighted.")
                 display_df = to_show_merged[[
-                    "scenario", "frame_index",
+                    "scenario", dataset_col_a, dataset_col_b, "frame_index",
                     tlr_col_a, tlr_col_b,
                     "status_a", "status_b",
                 ]].copy()
@@ -402,7 +452,12 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                     caption += " Filters applied."
                 st.caption(caption)
                 csv_bytes = display_df.to_csv(index=False).encode("utf-8")
-                st.download_button("Download as CSV", data=csv_bytes, file_name="tlr_compare_all_frames.csv", mime="text/csv", key="tlr_dl_all")
+                json_bytes = _dataframe_to_json_bytes(display_df, export_kind="compare_all_frames")
+                dl_col_csv, dl_col_json = st.columns(2)
+                with dl_col_csv:
+                    st.download_button("Download as CSV", data=csv_bytes, file_name="tlr_compare_all_frames.csv", mime="text/csv", key="tlr_dl_all")
+                with dl_col_json:
+                    st.download_button("Download as JSON", data=json_bytes, file_name="tlr_compare_all_frames.json", mime="application/json", key="tlr_dl_all_json")
         else:
             st.caption("Need details from both A and B to show traffic light type differences.")
         st.markdown("---")
@@ -425,13 +480,25 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                 details_df = details_df[details_df["scenario"].isin(single_sel)]
             st.dataframe(details_df, width='stretch', hide_index=True)
             if not details_df.empty:
-                st.download_button(
-                    "Download as CSV",
-                    data=details_df.to_csv(index=False).encode("utf-8"),
-                    file_name=f"tlr_details_{view_which.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    key="tlr_dl_single",
-                )
+                csv_name = f"tlr_details_{view_which.replace(' ', '_')}.csv"
+                json_name = f"tlr_details_{view_which.replace(' ', '_')}.json"
+                dl_col_csv, dl_col_json = st.columns(2)
+                with dl_col_csv:
+                    st.download_button(
+                        "Download as CSV",
+                        data=details_df.to_csv(index=False).encode("utf-8"),
+                        file_name=csv_name,
+                        mime="text/csv",
+                        key="tlr_dl_single",
+                    )
+                with dl_col_json:
+                    st.download_button(
+                        "Download as JSON",
+                        data=_dataframe_to_json_bytes(details_df, export_kind="per_dataset_details"),
+                        file_name=json_name,
+                        mime="application/json",
+                        key="tlr_dl_single_json",
+                    )
         else:
             st.info("No vehicle status details available.")
 
