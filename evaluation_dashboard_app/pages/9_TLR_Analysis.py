@@ -6,7 +6,10 @@ Supports shareable URLs via query params: mode, path_a, path_b.
 """
 
 import json
+import html
+import os
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,6 +18,7 @@ from urllib.parse import quote
 
 from lib.tlr_eval_analyzer import TLREvaluationAnalyzer
 from lib.path_utils import get_data_root, path_display, list_tlr_result_directories
+from lib.t4_visualizer_client import DEFAULT_BASE_URL, ENV_BASE_URL
 from lib.page_chrome import (
     inject_app_page_styles,
     render_loaded_data_section,
@@ -90,7 +94,80 @@ def _dataframe_to_json_bytes(df: pd.DataFrame, export_kind: str) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
 
-def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_details):
+def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, key_prefix: str) -> None:
+    st.subheader("Embedded traffic light viewer")
+    st.caption("Pick a dataset from the current TLR details, then load the external `/viewer/tlr` page inline.")
+
+    if f"{key_prefix}_base_url" not in st.session_state:
+        st.session_state[f"{key_prefix}_base_url"] = (
+            (os.environ.get(ENV_BASE_URL) or DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
+        )
+
+    base_url = st.text_input(
+        "T4 server base URL",
+        key=f"{key_prefix}_base_url",
+        help=f"Default from env `{ENV_BASE_URL}`. The viewer URL is `/viewer/tlr?t4dataset_id=...&frame_index=...`.",
+    )
+
+    available_labels = [label for label, df in detail_sources.items() if df is not None and not df.empty]
+    if not available_labels:
+        st.info("No TLR detail rows available to drive the viewer.")
+        return
+
+    source_label = available_labels[0]
+    if len(available_labels) > 1:
+        source_label = st.radio(
+            "Use rows from",
+            available_labels,
+            horizontal=True,
+            key=f"{key_prefix}_source_label",
+        )
+
+    details_df = detail_sources[source_label].copy()
+    details_df = details_df[details_df["t4dataset_id"].fillna("").astype(str) != ""].copy()
+    if details_df.empty:
+        st.info("The selected rows do not contain any `t4dataset_id` values.")
+        return
+
+    dataset_options = sorted(details_df["t4dataset_id"].astype(str).unique().tolist())
+    selected_dataset = st.selectbox(
+        "Candidate t4dataset_id",
+        dataset_options,
+        key=f"{key_prefix}_dataset_id",
+    )
+    dataset_rows = details_df[details_df["t4dataset_id"].astype(str) == selected_dataset].copy()
+
+    if dataset_rows.empty:
+        st.info("No rows match the current dataset selection.")
+        return
+
+    dataset_rows = dataset_rows.sort_values(["scenario", "frame_index"]).reset_index(drop=True)
+    selected_row = dataset_rows.iloc[0]
+    selected_frame = int(selected_row["frame_index"])
+
+    viewer_url = f"{base_url.rstrip('/')}/viewer/tlr?t4dataset_id={quote(selected_dataset, safe='')}&frame_index={selected_frame}"
+    st.markdown(f"[Open `/viewer/tlr` in new tab]({viewer_url})")
+    st.caption(
+        f"Using the first available frame for this dataset: `frame_index={selected_frame}` from `{selected_row['scenario']}`."
+    )
+
+    preview_cols = ["scenario", "frame_index", "status", "traffic_light_type", "criteria"]
+    if "frame_name" in dataset_rows.columns:
+        preview_cols.insert(2, "frame_name")
+    with st.expander("Matching rows", expanded=False):
+        st.dataframe(dataset_rows[preview_cols].sort_values(["scenario", "frame_index"]), width="stretch", hide_index=True)
+
+    iframe_h = 1400
+    components.html(
+        f'<iframe src="{html.escape(viewer_url, quote=True)}" '
+        f'width="100%" height="{iframe_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
+        f'loading="lazy" title="Traffic light viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>',
+        height=iframe_h + 8,
+        scrolling=False,
+    )
+
+
+def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
     with tab_criteria:
         st.subheader("Criteria: TP rate and total frames")
         criteria_df = analyzer.create_criteria_matrix()
@@ -169,8 +246,11 @@ def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_d
         else:
             st.info("No vehicle status details available.")
 
+    with tab_tlr_viewer:
+        _render_tlr_viewer_tab({"Current run": analyzer.get_vehicle_status_details_df()}, key_prefix="tlr_single_viewer")
 
-def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_vehicle, tab_critical, tab_details):
+
+def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
     with tab_criteria:
         st.subheader("Criteria: A vs B (TP rate and delta)")
         df_a = analyzer_a.create_criteria_matrix()
@@ -502,6 +582,15 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
         else:
             st.info("No vehicle status details available.")
 
+    with tab_tlr_viewer:
+        _render_tlr_viewer_tab(
+            {
+                label_a: analyzer_a.get_vehicle_status_details_df(),
+                label_b: analyzer_b.get_vehicle_status_details_df(),
+            },
+            key_prefix="tlr_compare_viewer",
+        )
+
 
 # ----- Sidebar: mode and TLR directory selection -----
 st.sidebar.markdown("##### TLR data")
@@ -635,10 +724,10 @@ if mode == "Single":
             f"Worst: **{stats['worst_criteria']}** (TP rate {stats['worst_tp_rate']:.2%})"
         )
 
-    tab_criteria, tab_vehicle, tab_critical, tab_details = st.tabs([
-        "Criteria matrix", "Vehicle status vs TLR type", "Critical & priority zones", "Vehicle status details",
+    tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
+        "Criteria matrix", "Vehicle status vs TLR type", "Critical & priority zones", "Vehicle status details", "TLR viewer",
     ])
-    _render_single_tabs(analyzer_a, tab_criteria, tab_vehicle, tab_critical, tab_details)
+    _render_single_tabs(analyzer_a, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer)
     st.stop()
 
 # ========== COMPARE MODE ==========
@@ -673,7 +762,7 @@ with col_b:
     st.metric("Total TP", f"{stats_b['total_tp']:,}")
     st.metric("Overall TP rate", f"{stats_b['overall_tp_rate']:.2%}")
 
-tab_criteria, tab_vehicle, tab_critical, tab_details = st.tabs([
-    "Criteria matrix", "Vehicle status vs TLR type", "Critical & priority zones", "Vehicle status details",
+tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
+    "Criteria matrix", "Vehicle status vs TLR type", "Critical & priority zones", "Vehicle status details", "TLR viewer",
 ])
-_render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_vehicle, tab_critical, tab_details)
+_render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer)
