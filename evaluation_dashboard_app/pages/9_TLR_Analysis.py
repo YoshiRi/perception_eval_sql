@@ -94,6 +94,113 @@ def _dataframe_to_json_bytes(df: pd.DataFrame, export_kind: str) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
 
 
+def _build_tlr_eval_payload_by_frame(df: pd.DataFrame | None) -> dict:
+    """Build per-frame TLR evaluation payload for the embedded viewer."""
+    if df is None or df.empty or "frame_index" not in df.columns:
+        return {"type": "tlr_eval_clear"}
+
+    frames: dict[str, dict] = {}
+    ordered = df.sort_values(["frame_index", "scenario"]).reset_index(drop=True)
+    for _, row in ordered.iterrows():
+        try:
+            frame_key = str(int(row.get("frame_index", 0)))
+        except (TypeError, ValueError):
+            continue
+        if frame_key in frames:
+            continue
+
+        def _float_or_none(value):
+            try:
+                return None if pd.isna(value) else float(value)
+            except Exception:
+                return None
+
+        def _string_or_none(value):
+            try:
+                if pd.isna(value) or value == "":
+                    return None
+            except Exception:
+                pass
+            return str(value)
+
+        frames[frame_key] = {
+            "scenario": str(row.get("scenario", "") or ""),
+            "t4dataset_id": str(row.get("t4dataset_id", "") or ""),
+            "frame_name": str(row.get("frame_name", "") or ""),
+            "status": str(row.get("status", "") or ""),
+            "speed_kph": _float_or_none(row.get("speed_kph")),
+            "yaw_rate_deg_s": _float_or_none(row.get("yaw_rate_deg_s")),
+            "current_time": _float_or_none(row.get("current_time")),
+            "current_time_us": (
+                int(round(float(row.get("current_time")) * 1_000_000))
+                if _float_or_none(row.get("current_time")) not in (None, 0.0)
+                else None
+            ),
+            "traffic_light_type": str(row.get("traffic_light_type", "") or ""),
+            "evaluation_result": str(row.get("traffic_light_type", "") or ""),
+            "criteria": str(row.get("criteria", "") or ""),
+            "tp": _string_or_none(row.get("tp")),
+            "fp": _string_or_none(row.get("fp")),
+            "fn": _string_or_none(row.get("fn")),
+            "tn": _string_or_none(row.get("tn")),
+        }
+    return {"type": "tlr_eval_by_frame", "frames": frames}
+
+
+def _render_tlr_viewer_embed(viewer_url: str, payload: dict, *, iframe_id: str, height: int = 1400) -> None:
+    """Embed `/viewer/tlr` and post a frame-indexed evaluation payload into the iframe."""
+    payload_json = json.dumps(payload, ensure_ascii=True)
+    payload_hex = payload_json.encode("utf-8").hex()
+    iframe_src = html.escape(viewer_url, quote=True)
+    components.html(
+        (
+            f'<iframe id="{iframe_id}" src="{iframe_src}" '
+            f'width="100%" height="{height}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'allowfullscreen allow="fullscreen *" '
+            f'loading="lazy" title="Traffic light viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
+            "<script>"
+            "(()=>{"
+            f"const iframe=document.getElementById('{iframe_id}');"
+            f"const payloadHex='{payload_hex}';"
+            "const hexToUtf8=(hex)=>{"
+            "if(!hex||hex.length%2!==0)return '';"
+            "const bytes=new Uint8Array(hex.length/2);"
+            "for(let i=0;i<hex.length;i+=2){bytes[i/2]=parseInt(hex.slice(i,i+2),16)||0;}"
+            "return new TextDecoder().decode(bytes);"
+            "};"
+            "let payload={type:'tlr_eval_clear'};"
+            "try{"
+            "const payloadJson=hexToUtf8(payloadHex);"
+            "payload=JSON.parse(payloadJson);"
+            "const fc=payload.frames&&typeof payload.frames==='object'?Object.keys(payload.frames).length:0;"
+            "console.info('[tlr-debug] payload prepared', {type:payload.type,frames:fc});"
+            "}catch(err){"
+            "console.error('[tlr-debug] payload parse failed', err);"
+            "}"
+            "let postCount=0;"
+            "const post=(reason)=>{"
+            "if(!iframe||!iframe.contentWindow)return;"
+            "let targetOrigin='*';"
+            "try{ targetOrigin = new URL(iframe.src, window.location.href).origin || '*'; }catch(_){ targetOrigin='*'; }"
+            "postCount+=1;"
+            "iframe.contentWindow.postMessage(payload,targetOrigin);"
+            "console.info('[tlr-debug] postMessage sent', {reason,postCount,targetOrigin,payloadType:payload.type});"
+            "};"
+            "iframe.addEventListener('load',()=>{"
+            "post('iframe-load');"
+            "let n=0;"
+            "const t=setInterval(()=>{post('retry');n+=1;if(n>12)clearInterval(t);},250);"
+            "});"
+            "setTimeout(()=>post('initial-delay-300ms'),300);"
+            "setTimeout(()=>post('initial-delay-1200ms'),1200);"
+            "})();"
+            "</script>"
+        ),
+        height=height + 8,
+        scrolling=False,
+    )
+
+
 def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, key_prefix: str) -> None:
     st.subheader("Embedded traffic light viewer")
     st.caption("Pick a dataset from the current TLR details, then load the external `/viewer/tlr` page inline.")
@@ -144,6 +251,7 @@ def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, ke
     dataset_rows = dataset_rows.sort_values(["scenario", "frame_index"]).reset_index(drop=True)
     selected_row = dataset_rows.iloc[0]
     selected_frame = int(selected_row["frame_index"])
+    payload = _build_tlr_eval_payload_by_frame(dataset_rows)
 
     viewer_url = f"{base_url.rstrip('/')}/viewer/tlr?t4dataset_id={quote(selected_dataset, safe='')}&frame_index={selected_frame}"
     st.markdown(f"[Open `/viewer/tlr` in new tab]({viewer_url})")
@@ -157,14 +265,7 @@ def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, ke
     with st.expander("Matching rows", expanded=False):
         st.dataframe(dataset_rows[preview_cols].sort_values(["scenario", "frame_index"]), width="stretch", hide_index=True)
 
-    iframe_h = 1400
-    components.html(
-        f'<iframe src="{html.escape(viewer_url, quote=True)}" '
-        f'width="100%" height="{iframe_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
-        f'loading="lazy" title="Traffic light viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>',
-        height=iframe_h + 8,
-        scrolling=False,
-    )
+    _render_tlr_viewer_embed(viewer_url, payload, iframe_id=f"{key_prefix}_iframe", height=1600)
 
 
 def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
