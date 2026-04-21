@@ -326,12 +326,78 @@ def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_d
         details_df = analyzer.get_vehicle_status_details_df()
         if details_df is not None and not details_df.empty:
             st.caption("One row per frame. Use filters to narrow down by scenario, status, or traffic light type.")
-            st.dataframe(details_df, width='stretch', hide_index=True)
+            filtered_details = details_df.copy()
+            all_scenarios = sorted(filtered_details["scenario"].dropna().astype(str).unique().tolist())
+            all_statuses = sorted(filtered_details["status"].dropna().astype(str).unique().tolist())
+            all_tlr_types = sorted(filtered_details["traffic_light_type"].dropna().astype(str).unique().tolist())
+
+            with st.expander("Filters & sort", expanded=False):
+                f1, f2, f3 = st.columns(3)
+                with f1:
+                    sel_scenarios = st.multiselect(
+                        "Scenario(s)",
+                        options=all_scenarios,
+                        default=[],
+                        key="tlr_single_tab_filter_scenario",
+                        help="Leave empty to show all scenarios.",
+                    )
+                with f2:
+                    sel_statuses = st.multiselect(
+                        "Vehicle status",
+                        options=all_statuses,
+                        default=[],
+                        key="tlr_single_tab_filter_status",
+                        help="Leave empty to show all statuses.",
+                    )
+                with f3:
+                    sel_tlr_types = st.multiselect(
+                        "Traffic light type",
+                        options=all_tlr_types,
+                        default=[],
+                        key="tlr_single_tab_filter_tlr_type",
+                        help="Leave empty to show all traffic light types.",
+                    )
+                sort_by = st.selectbox(
+                    "Sort by",
+                    [
+                        "Scenario, then frame index",
+                        "Frame index only",
+                        "Vehicle status, then scenario, frame index",
+                        "Traffic light type, then scenario, frame index",
+                    ],
+                    key="tlr_single_tab_sort_by",
+                )
+
+            if sel_scenarios:
+                filtered_details = filtered_details[filtered_details["scenario"].astype(str).isin(sel_scenarios)]
+            if sel_statuses:
+                filtered_details = filtered_details[filtered_details["status"].astype(str).isin(sel_statuses)]
+            if sel_tlr_types:
+                filtered_details = filtered_details[
+                    filtered_details["traffic_light_type"].astype(str).isin(sel_tlr_types)
+                ]
+
+            if sort_by == "Scenario, then frame index":
+                filtered_details = filtered_details.sort_values(["scenario", "frame_index"]).reset_index(drop=True)
+            elif sort_by == "Frame index only":
+                filtered_details = filtered_details.sort_values(["frame_index", "scenario"]).reset_index(drop=True)
+            elif sort_by == "Vehicle status, then scenario, frame index":
+                filtered_details = filtered_details.sort_values(["status", "scenario", "frame_index"]).reset_index(drop=True)
+            else:
+                filtered_details = filtered_details.sort_values(
+                    ["traffic_light_type", "scenario", "frame_index"]
+                ).reset_index(drop=True)
+
+            st.dataframe(filtered_details, width='stretch', hide_index=True)
+            caption = f"Showing **{len(filtered_details)}** frame(s). Total before filters: {len(details_df)}."
+            if sel_scenarios or sel_statuses or sel_tlr_types:
+                caption += " Filters applied."
+            st.caption(caption)
             dl_col_csv, dl_col_json = st.columns(2)
             with dl_col_csv:
                 st.download_button(
                     "Download as CSV",
-                    data=details_df.to_csv(index=False).encode("utf-8"),
+                    data=filtered_details.to_csv(index=False).encode("utf-8"),
                     file_name="tlr_details.csv",
                     mime="text/csv",
                     key="tlr_dl_single_tab_csv",
@@ -339,7 +405,7 @@ def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_d
             with dl_col_json:
                 st.download_button(
                     "Download as JSON",
-                    data=_dataframe_to_json_bytes(details_df, export_kind="single_dataset_details"),
+                    data=_dataframe_to_json_bytes(filtered_details, export_kind="single_dataset_details"),
                     file_name="tlr_details.json",
                     mime="application/json",
                     key="tlr_dl_single_tab_json",
