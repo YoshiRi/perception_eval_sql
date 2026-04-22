@@ -55,6 +55,7 @@ x-streamlit-app: &streamlit-app
     - ../Overview.py:/app/Overview.py
     - ../pages:/app/pages
     - ../Readme.md:/app/Readme.md
+    - ../Readme.en.md:/app/Readme.en.md
     - ../lib:/app/lib
     - ../worker:/app/worker
     - ../configs:/app/configs
@@ -123,6 +124,7 @@ services:
       - ../Overview.py:/app/Overview.py
       - ../pages:/app/pages
       - ../Readme.md:/app/Readme.md
+      - ../Readme.en.md:/app/Readme.en.md
       - ../lib:/app/lib
       - ../worker:/app/worker
       - ../configs:/app/configs

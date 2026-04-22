@@ -71,6 +71,8 @@ RUN python3 -m pip install --no-cache-dir -r requirements-docker.txt
 
 # Copy application code and config
 COPY Overview.py .
+COPY Readme.md .
+COPY Readme.en.md .
 COPY pages/ pages/
 COPY lib/ lib/
 COPY worker/ worker/
