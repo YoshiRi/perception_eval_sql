@@ -16,13 +16,17 @@ inject_app_page_styles()
 render_page_hero(
     kicker="Documentation",
     title="Help & guide",
-    description="In-app copy of the project README — setup, pages, and workflows for the evaluation dashboard.",
+    description="In-app copy of the project README with a simple Japanese / English switch.",
     mode="Single Run",
 )
 
 # Streamlit markdown does not run Mermaid; split fenced ```mermaid blocks and render via Mermaid.js.
 MERMAID_FENCE = re.compile(r"```mermaid\s*\n([\s\S]*?)```", re.IGNORECASE)
 IMAGE_PATTERN = re.compile(r"!\[(.*?)\]\((.*?)\)")
+README_FILES = {
+    "Japanese": Path("Readme.md"),
+    "English": Path("Readme.en.md"),
+}
 
 
 def _render_markdown_with_images(chunk: str) -> None:
@@ -43,8 +47,19 @@ def _render_markdown_with_images(chunk: str) -> None:
             break
 
 
-readme_path = Path("Readme.md")
-content = readme_path.read_text(encoding="utf-8")
+language = st.radio(
+    "README language",
+    options=list(README_FILES.keys()),
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+selected_readme_path = README_FILES[language]
+if not selected_readme_path.exists():
+    st.error(f"README file not found: {selected_readme_path}")
+    st.stop()
+
+content = selected_readme_path.read_text(encoding="utf-8")
 
 for idx, piece in enumerate(MERMAID_FENCE.split(content)):
     if idx % 2 == 0:
