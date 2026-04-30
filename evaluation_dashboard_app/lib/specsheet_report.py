@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import inspect
 import re
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -151,6 +152,28 @@ def _prefer_cjk_font_stack(html_lines: Sequence[str]) -> list[str]:
     return [line.replace(generic, preferred) for line in rendered]
 
 
+def _update_template_compat(
+    update_template_func: Callable[..., Sequence[str]],
+    project_id: str,
+    version: str,
+    *,
+    template_dir: Path,
+) -> Sequence[str]:
+    """Call update_template across analyzer versions with different signatures."""
+    try:
+        parameters = inspect.signature(update_template_func).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    supports_template_dir = (
+        "template_dir" in parameters
+        or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+    )
+    if supports_template_dir:
+        return update_template_func(project_id, version, template_dir=str(template_dir))
+    return update_template_func(project_id, version)
+
+
 def ensure_specsheet_csvs(
     run_dir: str | Path,
     *,
@@ -260,7 +283,12 @@ def generate_specsheet_pdf(
     _notify(progress_callback, "Rendering PDF")
     template_dir = Path(template_module.__file__).resolve().parent.parent / "template"
     html = _prefer_cjk_font_stack(
-        update_template(project_id, version, template_dir=str(template_dir))
+        _update_template_compat(
+            update_template,
+            project_id,
+            version,
+            template_dir=template_dir,
+        )
     )
     specsheet(
         html=html,
