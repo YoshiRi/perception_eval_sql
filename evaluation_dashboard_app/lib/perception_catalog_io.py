@@ -256,105 +256,6 @@ def _normalize_loaded_pkl(
     return data
 
 
-def _enum_like(value: Any) -> Any:
-    """Return an enum-like object with a `.value` attribute when the input is missing."""
-    return value if value is not None else SimpleNamespace(value=None)
-
-
-def _label_like(value: Any = "UNKNOWN") -> Any:
-    """Return a label-like object that matches analyzer expectations."""
-    return SimpleNamespace(value=value)
-
-
-def _sanitize_dynamic_object(dynamic_object: Any) -> int:
-    """Repair common missing fields on dynamic objects used by scene2df()."""
-    repairs = 0
-    if dynamic_object is None:
-        return repairs
-
-    try:
-        from perception_eval.common.schema import FrameID
-    except ImportError:
-        FrameID = None
-
-    if getattr(dynamic_object, "frame_id", None) is None and FrameID is not None:
-        dynamic_object.frame_id = FrameID.BASE_LINK
-        repairs += 1
-
-    state = getattr(dynamic_object, "state", None)
-    if state is not None and getattr(state, "shape_type", None) is None:
-        state.shape_type = _label_like("UNKNOWN")
-        repairs += 1
-
-    semantic_label = getattr(dynamic_object, "semantic_label", None)
-    if semantic_label is None:
-        dynamic_object.semantic_label = SimpleNamespace(label=_label_like("UNKNOWN"))
-        repairs += 1
-    elif getattr(semantic_label, "label", None) is None:
-        semantic_label.label = _label_like("UNKNOWN")
-        repairs += 1
-
-    return repairs
-
-
-def _sanitize_object_result(result: Any) -> int:
-    """Repair object-result fields that the analyzer expects to expose `.value`."""
-    repairs = 0
-    if result is None:
-        return repairs
-
-    if getattr(result, "center_distance", None) is None:
-        result.center_distance = _enum_like(None)
-        repairs += 1
-    if getattr(result, "plane_distance", None) is None:
-        result.plane_distance = _enum_like(None)
-        repairs += 1
-
-    repairs += _sanitize_dynamic_object(getattr(result, "estimated_object", None))
-    repairs += _sanitize_dynamic_object(getattr(result, "ground_truth_object", None))
-    return repairs
-
-
-def _sanitize_pass_fail_result(pass_fail_result: Any) -> int:
-    """Repair pass/fail result containers before handing them to scene2df()."""
-    repairs = 0
-    if pass_fail_result is None:
-        return repairs
-
-    for attr in ("tp_object_results", "fp_object_results"):
-        for result in getattr(pass_fail_result, attr, []) or []:
-            repairs += _sanitize_object_result(result)
-
-    for obj in getattr(pass_fail_result, "fn_objects", []) or []:
-        repairs += _sanitize_dynamic_object(obj)
-
-    return repairs
-
-
-def _sanitize_loaded_pkl(data: Any) -> int:
-    """Walk normalized PKL data and repair common missing fields for analyzer compatibility."""
-    repairs = 0
-
-    scenarios = data
-    if not isinstance(scenarios, Iterable) or hasattr(scenarios, "frame_results"):
-        scenarios = [scenarios]
-
-    for scenario in scenarios:
-        frame_results_dict = getattr(scenario, "frame_results", None)
-        if isinstance(frame_results_dict, dict):
-            frame_lists = frame_results_dict.values()
-        elif isinstance(scenario, list):
-            frame_lists = [scenario]
-        else:
-            frame_lists = [[scenario]]
-
-        for frame_list in frame_lists:
-            for frame in frame_list or []:
-                repairs += _sanitize_pass_fail_result(getattr(frame, "pass_fail_result", None))
-
-    return repairs
-
-
 def _require_analyzer() -> None:
     if not _ANALYZER_AVAILABLE:
         raise ImportError(
@@ -436,15 +337,27 @@ def build_scene_dataframe_from_pkl_dir(
 
     total = len(pkl_files)
     df = SceneDataFrame(current=pd.DataFrame())
+
+    def _report_progress(done: int) -> None:
+        if on_progress:
+            on_progress(done, total)
+
     for i, pkl_file in enumerate(pkl_files):
-        if str(pkl_file).lower().endswith(".pkl.z"):
-            try:
-                data = joblib.load(pkl_file)
-            except NameError:
-                raise ImportError("joblib is required for .pkl.z: pip install joblib")
-        else:
-            with open(pkl_file, "rb") as f:
-                data = pickle.load(f)
+        try:
+            if str(pkl_file).lower().endswith(".pkl.z"):
+                try:
+                    data = joblib.load(pkl_file)
+                except NameError:
+                    raise ImportError("joblib is required for .pkl.z: pip install joblib")
+            else:
+                with open(pkl_file, "rb") as f:
+                    data = pickle.load(f)
+        except Exception as e:
+            if on_skip:
+                on_skip(pkl_file, f"failed to load: {e}")
+                _report_progress(i + 1)
+                continue
+            raise
         data = _normalize_loaded_pkl(
             data,
             pkl_file=pkl_file,
@@ -456,6 +369,7 @@ def build_scene_dataframe_from_pkl_dir(
         except Exception as e:
             if on_skip:
                 on_skip(pkl_file, f"failed to convert: {e}")
+                _report_progress(i + 1)
                 continue
             raise
         del data
@@ -463,17 +377,22 @@ def build_scene_dataframe_from_pkl_dir(
             if skip_empty:
                 if on_skip:
                     on_skip(pkl_file, "empty")
+                del df_
+                gc.collect()
+                _report_progress(i + 1)
                 continue
         if skip_bad_dtype and hasattr(df_, "current") and "x_error" in getattr(df_.current, "columns", []):
             if df_.current["x_error"].dtype != "float64":
                 if on_skip:
                     on_skip(pkl_file, f"bad dtype x_error={df_.current['x_error'].dtype}")
+                del df_
+                gc.collect()
+                _report_progress(i + 1)
                 continue
         df = df.concatenate(df_)
         del df_
         gc.collect()
-        if on_progress:
-            on_progress(i + 1, total)
+        _report_progress(i + 1)
     return df
 
 

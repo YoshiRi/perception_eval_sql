@@ -172,11 +172,24 @@ def ensure_specsheet_csvs(
             _copy_parquet_to_csv(fallback, current_csv)
         else:
             _notify(progress_callback, "No CSV found. Building CSV from pkl / pkl.z files")
+            skip_counts: dict[str, int] = {}
 
             def _on_progress(done: int, total: int) -> None:
                 _notify(progress_callback, f"Processing pkl files {done}/{total}")
 
-            df = build_scene_dataframe_from_pkl_dir(run_dir, on_progress=_on_progress)
+            def _on_skip(path: str | Path, reason: str) -> None:
+                skip_counts[reason] = skip_counts.get(reason, 0) + 1
+
+            df = build_scene_dataframe_from_pkl_dir(
+                run_dir,
+                on_progress=_on_progress,
+                on_skip=_on_skip,
+            )
+            if skip_counts:
+                details = ", ".join(
+                    f"{count} {reason}" for reason, count in sorted(skip_counts.items())
+                )
+                _notify(progress_callback, f"Skipped pkl files: {details}")
             df.to_csv(run_dir)
             if not current_csv.exists():
                 raise FileNotFoundError(f"Failed to generate {current_csv}")
