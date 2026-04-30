@@ -29,6 +29,7 @@ TASK_TYPES = (
     "run_eval_dirs",
     "generate_summary_csv",
     "build_parquet",
+    "download_and_eval",
 )
 TASK_STATUSES = ("pending", "running", "completed", "failed")
 

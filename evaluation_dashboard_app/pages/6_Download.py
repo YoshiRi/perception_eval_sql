@@ -783,6 +783,7 @@ def _task_type_label(task_type: str) -> str:
         "run_eval_dirs": "Run eval dirs",
         "generate_summary_csv": "Generate summary CSV",
         "build_parquet": "Build parquet",
+        "download_and_eval": "Download + Eval",
     }
     return labels.get(task_type, task_type or "Task")
 
@@ -801,6 +802,14 @@ def _task_summary(t: Dict[str, Any]) -> str:
         return params.get("eval_root", "")
     if task_type == "build_parquet":
         return params.get("pkl_dir", "")
+    if task_type == "download_and_eval":
+        out = params.get("output_path") or params.get("job_id") or ""
+        parts = ["download"]
+        if params.get("run_eval"):
+            parts.append("eval")
+        if params.get("generate_parquet"):
+            parts.append("parquet")
+        return f"job_id={params.get('job_id', '')} [{'+'.join(parts)}] → {out}"
     return ""
 
 
@@ -899,6 +908,40 @@ def _render_result_summary(summary: Dict[str, Any]) -> None:
         path = summary.get("output_path", "")
         st.subheader("Summary")
         st.write(f"- Output: `{path}`")
+    elif job == "download_and_eval":
+        dl_summary = summary.get("download_summary", {})
+        eval_summary_data = summary.get("eval_summary", {})
+        parquet_path = summary.get("parquet_path", "")
+        errors = summary.get("errors", [])
+        
+        st.subheader("Download + Eval + Parquet Summary")
+        
+        # Download summary
+        dl_success = summary.get("download_success", False)
+        if dl_success:
+            st.write("✅ **Download: SUCCESS**")
+            st.write(f"   - Total: **{dl_summary.get('total', 0)}**, Success: **{dl_summary.get('success', 0)}**, Failed: **{dl_summary.get('failed', 0)}**")
+        else:
+            st.write("❌ **Download: FAILED**")
+            if errors:
+                for err in errors:
+                    st.write(f"   - {err}")
+        
+        # Eval summary
+        if eval_summary_data:
+            st.write("✅ **Eval: SUCCESS**")
+            st.write(f"   - Directories processed: **{eval_summary_data.get('directories_processed', 0)}**")
+            st.write(f"   - Summary.csv: **{eval_summary_data.get('summary_rows', 0)}** rows, Score.csv: **{eval_summary_data.get('score_rows', 0)}** rows")
+        
+        # Parquet summary
+        if parquet_path:
+            st.write(f"✅ **Parquet: SUCCESS** → `{parquet_path}`")
+        
+        # Show errors
+        if errors:
+            st.error("Errors during execution:")
+            for err in errors:
+                st.write(f"- {err}")
     else:
         st.json(summary)
 
@@ -1514,6 +1557,187 @@ with tab1:
             if download_successful:
                 st.info("🎉 Download complete! To generate the final summary CSV files, go to the **'Eval Results'** tab and run the evaluation.")
                         
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+            st.exception(e)
+
+    # === Combined Download + Eval + Parquet Button ===
+    st.divider()
+    st.subheader("🚀 Combined Workflow: Download + Eval + Parquet")
+    st.caption("Download results, run evaluation, and generate parquet in one click. Eval only runs if download succeeds.")
+    
+    # Options for combined workflow
+    col_combo1, col_combo2 = st.columns(2)
+    with col_combo1:
+        combined_run_eval = st.checkbox(
+            "Run evaluation (eval_result + Summary/Score CSV)",
+            value=True,
+            key="combined_run_eval",
+            help="Run eval_result on downloaded directories and generate Summary.csv/Score.csv"
+        )
+    with col_combo2:
+        combined_generate_parquet = st.checkbox(
+            "Generate parquet",
+            value=CATALOG_IO_AVAILABLE,
+            key="combined_generate_parquet",
+            help="Build scene_result.parquet from .pkl files" if CATALOG_IO_AVAILABLE else "Install perception_catalog_analyzer to enable",
+            disabled=not CATALOG_IO_AVAILABLE,
+        )
+    
+    combined_eval_recursive = st.checkbox(
+        "Search subdirectories for eval",
+        value=True,
+        key="combined_eval_recursive",
+        help="Recursively search for result directories"
+    )
+    
+    if st.button("📥 Download + Eval + Parquet", type="primary", key="download_and_eval_btn"):
+        st.session_state.stop_downloads = False
+        if not all([project_id, st.session_state.job_id]):
+            st.error("Please fill in all required fields: Project ID and Job ID")
+            st.stop()
+        resolved_output, path_err = resolve_under_data_root(output_path, allow_create=True)
+        if path_err:
+            st.error(f"Output path is invalid: {path_err}. Use a path under the server data root.")
+            st.stop()
+        resolved_path_str = str(resolved_output)
+        set_config_value("output_path", to_data_relative(resolved_output))
+        set_config_value("environment", environment)
+        set_config_value("project_id", project_id)
+        set_config_value("job_id", st.session_state.job_id)
+        set_config_value("suite_id", suite_id)
+        set_config_value("suite_ids", selected_suite_ids)
+        set_config_value("download_type", download_type)
+        if download_type == "Archives (ZIP)":
+            set_config_value("phase", phase)
+            set_config_value("skip_large_file", skip_large_file)
+            set_config_value("large_file_mb", large_file_mb)
+            set_config_value("keep_zip_files", keep_zip_files)
+
+        if is_task_queue_enabled():
+            # Enqueue combined task
+            params = {
+                "output_path": resolved_path_str,
+                "project_id": project_id,
+                "job_id": st.session_state.job_id,
+                "suite_id": suite_id or "",
+                "suite_ids": selected_suite_ids or None,
+                "download_type": "archives" if download_type == "Archives (ZIP)" else "result_json",
+                "phase": phase if download_type == "Archives (ZIP)" else "",
+                "skip_large_file": skip_large_file,
+                "large_file_mb": large_file_mb,
+                "keep_zip_files": keep_zip_files,
+                "run_eval": combined_run_eval,
+                "generate_parquet": combined_generate_parquet,
+                "eval_recursive": combined_eval_recursive,
+                "eval_overwrite": False,
+            }
+            task_id = _enqueue_task("download_and_eval", params)
+            if task_id:
+                st.success("Combined task queued. It will appear in the **Task status** section below; the list updates automatically.")
+                st.info("The task will: 1) Download results → 2) Run eval (if download succeeds) → 3) Generate parquet (if download succeeds)")
+            else:
+                st.error("Failed to enqueue task. Check REDIS_URL and DATABASE_URL.")
+            st.stop()
+
+        # Inline execution (non-task-queue mode)
+        os.makedirs(resolved_path_str, exist_ok=True)
+        try:
+            job_result = JobResult(
+                environment=environment,
+                project_id=project_id,
+                job_id=st.session_state.job_id,
+                suite_id=suite_id,
+                suite_ids=selected_suite_ids,
+                output_path=resolved_path_str,
+            )
+            
+            # Progress containers
+            progress_placeholder = st.empty()
+            status_placeholder = st.empty()
+            
+            def inline_progress(msg: str):
+                status_placeholder.info(msg)
+            
+            # Step 1: Download
+            progress_placeholder.info("📥 Step 1/3: Downloading results...")
+            download_successful = False
+            if download_type == "Archives (ZIP)":
+                with st.expander("Downloading Archives", expanded=True):
+                    remain_list = job_result.download_archive_and_unzip(
+                        phase,
+                        skip_large_file=skip_large_file,
+                        large_file_mb=large_file_mb,
+                        keep_zip_files=keep_zip_files,
+                    )
+                    download_successful = len(remain_list) > 0
+                    st.success(f"✅ Downloaded and extracted {len(remain_list)} archives")
+            else:
+                with st.expander("Downloading Result JSON", expanded=True):
+                    log_dicts = job_result.download_result_json()
+                    download_successful = len(log_dicts) > 0
+                    st.success(f"✅ Downloaded {len(log_dicts)} JSON files")
+            
+            if not download_successful:
+                st.error("❌ Download failed. Cannot continue with evaluation.")
+                st.stop()
+            
+            # Step 2: Run eval
+            if combined_run_eval:
+                progress_placeholder.info("🧮 Step 2/3: Running evaluation...")
+                target_dirs = find_eval_result_dirs(resolved_path_str, recursive=combined_eval_recursive)
+                if target_dirs:
+                    eval_results = []
+                    eval_progress = st.progress(0)
+                    for i, result_dir in enumerate(target_dirs):
+                        eval_progress.progress((i + 1) / len(target_dirs), f"Evaluating {i+1}/{len(target_dirs)}")
+                        eval_results.append(run_eval_result_for_dir(result_dir, overwrite=False))
+                    eval_progress.empty()
+                    
+                    success_eval = sum(1 for r in eval_results if r["status"] == "success")
+                    failed_eval = sum(1 for r in eval_results if r["status"] == "failed")
+                    st.success(f"✅ Eval complete: {success_eval} success, {failed_eval} failed")
+                    
+                    # Generate summary CSVs
+                    with st.spinner("Generating Summary.csv and Score.csv..."):
+                        csv_info = generate_summary_and_score_csv(resolved_path_str)
+                    st.success(f"Generated Summary.csv ({csv_info['summary_rows']} rows) and Score.csv ({csv_info['score_rows']} rows)")
+                else:
+                    st.warning("⚠️ No eval result directories found")
+            
+            # Step 3: Generate parquet
+            if combined_generate_parquet and CATALOG_IO_AVAILABLE:
+                progress_placeholder.info("📦 Step 3/3: Generating parquet...")
+                pkl_dir = Path(resolved_path_str)
+                all_pkl_files = list(pkl_dir.rglob("*.pkl")) + list(pkl_dir.rglob("*.pkl.z"))
+                pkl_count = len(all_pkl_files)
+                if pkl_count > 0:
+                    with st.spinner(f"Processing {pkl_count} pkl files..."):
+                        parquet_path = pkl_archive_to_parquet(
+                            pkl_dir,
+                            on_progress=None,
+                            on_skip=None,
+                            project_id=project_id,
+                            job_id=st.session_state.job_id,
+                        )
+                    st.success(f"✅ Parquet generated: {parquet_path}")
+                else:
+                    st.warning("⚠️ No .pkl files found for parquet generation")
+            
+            progress_placeholder.empty()
+            status_placeholder.empty()
+            st.success("🎉 Combined workflow complete!")
+            
+            # Show file tree
+            with st.expander("📁 File Structure"):
+                for root, dirs, files in os.walk(resolved_path_str):
+                    level = root.replace(resolved_path_str, '').count(os.sep)
+                    indent = ' ' * 4 * level
+                    st.text(f"{indent}{os.path.basename(root)}/")
+                    subindent = ' ' * 4 * (level + 1)
+                    for file in files:
+                        st.text(f"{subindent}{file}")
+            
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
             st.exception(e)

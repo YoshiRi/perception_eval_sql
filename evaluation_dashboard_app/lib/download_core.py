@@ -530,3 +530,138 @@ def run_download_scenarios(
         organize_files_into_directories(out_dir)
     total_attempted = len(log_dicts)
     return (failure_count, total_attempted, rows)
+
+
+def run_download_and_eval(
+    project_id: str,
+    job_id: str,
+    suite_id: Optional[str],
+    output_path: str,
+    download_type: str = "archives",
+    phase: str = "perception.object_recognition.tracking.objects",
+    *,
+    skip_large_file: bool = False,
+    large_file_mb: float = 50.0,
+    keep_zip_files: bool = False,
+    suite_ids: Optional[List[str]] = None,
+    run_eval: bool = True,
+    generate_parquet: bool = True,
+    eval_recursive: bool = True,
+    eval_overwrite: bool = False,
+    on_progress: Optional[Callable[[str], None]] = None,
+    on_warning: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """
+    Combined workflow: Download results, then optionally run eval and generate parquet.
+    
+    Returns dict with:
+        - download_success: bool
+        - download_summary: dict with success/fail counts
+        - eval_summary: dict with directories_processed, etc. (if run_eval=True)
+        - parquet_path: str (if generate_parquet=True)
+    """
+    from lib import eval_summary
+    
+    # Try to import parquet generation
+    pkl_archive_to_parquet = None
+    try:
+        from lib.perception_catalog_io import pkl_archive_to_parquet as _p2p
+        pkl_archive_to_parquet = _p2p
+    except ImportError:
+        pass
+    
+    result: Dict[str, Any] = {
+        "download_success": False,
+        "download_summary": {},
+        "eval_summary": {},
+        "parquet_path": "",
+        "errors": [],
+    }
+    
+    # Step 1: Download
+    if on_progress:
+        on_progress("Starting download phase...")
+    
+    try:
+        failure_count, total_attempted, rows = run_download_results(
+            project_id=project_id,
+            job_id=job_id,
+            suite_id=suite_id,
+            output_path=output_path,
+            download_type=download_type,
+            phase=phase,
+            skip_large_file=skip_large_file,
+            large_file_mb=large_file_mb,
+            keep_zip_files=keep_zip_files,
+            suite_ids=suite_ids,
+            on_progress=on_progress,
+            on_warning=on_warning,
+        )
+        success_count = total_attempted - failure_count
+        result["download_summary"] = {
+            "total": total_attempted,
+            "success": success_count,
+            "failed": failure_count,
+            "rows": rows,
+        }
+        
+        # Check if download was successful (at least some files downloaded)
+        result["download_success"] = success_count > 0
+        if failure_count > 0 and success_count == 0:
+            result["errors"].append(f"Download failed: {failure_count} of {total_attempted} scenarios failed")
+            return result
+        if success_count == 0:
+            result["errors"].append("Download: No scenarios were successfully downloaded")
+            return result
+            
+    except Exception as e:
+        result["errors"].append(f"Download exception: {e}")
+        return result
+    
+    # Step 2: Run eval (if requested and download succeeded)
+    if run_eval and result["download_success"]:
+        if on_progress:
+            on_progress("Download complete. Starting eval phase...")
+        
+        try:
+            eval_root = output_path
+            target_dirs = eval_summary.find_eval_result_dirs(eval_root, recursive=eval_recursive)
+            if target_dirs:
+                total = len(target_dirs)
+                for i, result_dir in enumerate(target_dirs):
+                    if on_progress:
+                        on_progress(f"Eval: Processing {i+1}/{total}: {result_dir}")
+                    eval_summary.run_eval_result_for_dir(result_dir, overwrite=eval_overwrite)
+                
+                # Generate summary CSVs
+                csv_info = eval_summary.generate_summary_and_score_csv(eval_root)
+                result["eval_summary"] = {
+                    "directories_processed": total,
+                    "summary_path": csv_info.get("summary_path", eval_root),
+                    "summary_rows": csv_info.get("summary_rows", 0),
+                    "score_rows": csv_info.get("score_rows", 0),
+                }
+            else:
+                if on_warning:
+                    on_warning("No eval result directories found")
+        except Exception as e:
+            result["errors"].append(f"Eval exception: {e}")
+    
+    # Step 3: Generate parquet (if requested and download succeeded)
+    if generate_parquet and result["download_success"] and pkl_archive_to_parquet:
+        if on_progress:
+            on_progress("Generating parquet...")
+        
+        try:
+            parquet_path = pkl_archive_to_parquet(
+                output_path,
+                on_progress=None,
+                on_skip=None,
+                project_id=project_id,
+                job_id=job_id,
+            )
+            result["parquet_path"] = parquet_path
+        except Exception as e:
+            result["errors"].append(f"Parquet exception: {e}")
+    
+    return result

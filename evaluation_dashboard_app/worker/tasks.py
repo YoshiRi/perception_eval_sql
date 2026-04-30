@@ -270,6 +270,83 @@ def job_download_scenarios(task_id: str, parameters: Dict[str, Any]) -> None:
         raise
 
 
+def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
+    """Download results, then run eval and parquet generation. Stops on download failure."""
+    update_task_status(task_id, "running")
+    append_task_log(task_id, "Starting download_and_eval combined workflow")
+    try:
+        from lib import download_core
+        output_path = parameters.get("output_path")
+        project_id = parameters.get("project_id")
+        job_id = parameters.get("job_id")
+        suite_id = parameters.get("suite_id")
+        suite_ids = parameters.get("suite_ids")
+        download_type = parameters.get("download_type", "archives")
+        phase = parameters.get("phase", "perception.object_recognition.tracking.objects")
+        skip_large_file = parameters.get("skip_large_file", False)
+        large_file_mb = float(parameters.get("large_file_mb", 50.0))
+        keep_zip_files = parameters.get("keep_zip_files", False)
+        run_eval = parameters.get("run_eval", True)
+        generate_parquet = parameters.get("generate_parquet", True)
+        eval_recursive = parameters.get("eval_recursive", True)
+        eval_overwrite = parameters.get("eval_overwrite", False)
+        
+        if not all([output_path, project_id, job_id]):
+            update_task_status(task_id, "failed", error_message="Missing output_path, project_id, or job_id")
+            return
+        
+        on_progress = lambda msg: _progress_callback(task_id, msg)
+        on_warning = lambda msg: append_task_log(task_id, msg)
+        
+        result = download_core.run_download_and_eval(
+            project_id=project_id,
+            job_id=job_id,
+            suite_id=suite_id,
+            output_path=output_path,
+            download_type=download_type,
+            phase=phase,
+            skip_large_file=skip_large_file,
+            large_file_mb=large_file_mb,
+            keep_zip_files=keep_zip_files,
+            suite_ids=suite_ids,
+            run_eval=run_eval,
+            generate_parquet=generate_parquet,
+            eval_recursive=eval_recursive,
+            eval_overwrite=eval_overwrite,
+            on_progress=on_progress,
+            on_warning=on_warning,
+        )
+        
+        # Build result summary
+        summary = {
+            "job": "download_and_eval",
+            "download_success": result.get("download_success", False),
+            "download_summary": result.get("download_summary", {}),
+            "eval_summary": result.get("eval_summary", {}),
+            "parquet_path": result.get("parquet_path", ""),
+            "errors": result.get("errors", []),
+        }
+        update_task_result_summary(task_id, summary)
+        
+        if not result.get("download_success"):
+            err_msg = result.get("errors", ["Download failed"])[0]
+            append_task_log(task_id, f"Stopped: {err_msg}")
+            update_task_status(task_id, "failed", result_path=output_path, error_message=err_msg)
+        elif result.get("errors"):
+            # Partial success with some errors
+            errs = "; ".join(result["errors"][:5])
+            append_task_log(task_id, f"Completed with errors: {errs}")
+            update_task_status(task_id, "completed", result_path=output_path)
+        else:
+            append_task_log(task_id, "Download and eval completed successfully")
+            update_task_status(task_id, "completed", result_path=output_path)
+            
+    except Exception as e:
+        append_task_log(task_id, f"Failed: {e}")
+        update_task_status(task_id, "failed", error_message=str(e))
+        raise
+
+
 # Map task_type (from Postgres) to job function
 TASK_JOB_MAP = {
     "generate_summary_csv": job_generate_summary_csv,
@@ -277,6 +354,7 @@ TASK_JOB_MAP = {
     "build_parquet": job_build_parquet,
     "download_results": job_download_results,
     "download_scenarios": job_download_scenarios,
+    "download_and_eval": job_download_and_eval,
 }
 
 
