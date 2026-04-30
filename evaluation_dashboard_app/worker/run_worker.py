@@ -6,11 +6,13 @@ Requires: REDIS_URL, DATABASE_URL, and USE_TASK_QUEUE=true for full operation.
 
 import os
 import sys
+import faulthandler
 
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_ROOT not in sys.path:
     sys.path.insert(0, _APP_ROOT)
 os.chdir(_APP_ROOT)
+faulthandler.enable(all_threads=True)
 
 def main():
     from rq import Worker

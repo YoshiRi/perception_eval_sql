@@ -5,6 +5,9 @@ Eval and summary logic usable from both Streamlit UI and worker (no Streamlit de
 import glob
 import json
 import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -28,8 +31,8 @@ def find_eval_result_dirs(root_dir: str, recursive: bool = True) -> List[str]:
     return sorted(result_dirs)
 
 
-def run_eval_result_for_dir(result_dir: str, overwrite: bool = False) -> Dict[str, Any]:
-    """Run eval_result and generate score.json for one directory. Returns status dict."""
+def _run_eval_result_for_dir_inline(result_dir: str, overwrite: bool = False) -> Dict[str, Any]:
+    """Run eval_result in the current process and generate score.json for one directory."""
     result_file = os.path.join(result_dir, "result.txt")
     score_file = os.path.join(result_dir, "score.json")
     if os.path.exists(result_file) and not overwrite:
@@ -57,6 +60,89 @@ def run_eval_result_for_dir(result_dir: str, overwrite: bool = False) -> Dict[st
         with open(result_file, "w", encoding="utf-8") as f:
             f.write(error_output)
         return {"path": result_dir, "status": "failed", "detail": str(e)}
+
+
+def _signal_detail(returncode: int) -> str:
+    """Return a human-readable detail string for a subprocess return code."""
+    if returncode < 0:
+        sig_num = -returncode
+    elif returncode > 128:
+        sig_num = returncode - 128
+    else:
+        return f"exit code {returncode}"
+    try:
+        sig_name = signal.Signals(sig_num).name
+    except ValueError:
+        sig_name = f"signal {sig_num}"
+    return f"{sig_name} ({sig_num})"
+
+
+def _write_eval_subprocess_failure(
+    result_dir: str,
+    message: str,
+    stdout: str = "",
+    stderr: str = "",
+) -> None:
+    """Persist native-crash details where the UI and user can inspect them."""
+    result_path = Path(result_dir) / "result.txt"
+    log_path = Path(result_dir) / "eval_subprocess.log"
+    detail = f"Error: {message}\n"
+    with open(result_path, "w", encoding="utf-8") as f:
+        f.write(detail)
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write(detail)
+        if stdout:
+            f.write("\n--- stdout ---\n")
+            f.write(stdout)
+        if stderr:
+            f.write("\n--- stderr ---\n")
+            f.write(stderr)
+
+
+def _run_eval_result_for_dir_subprocess(result_dir: str, overwrite: bool = False) -> Dict[str, Any]:
+    """Run one scenario eval in a child Python process so native crashes are contained."""
+    env = os.environ.copy()
+    env.setdefault("PYTHONFAULTHANDLER", "1")
+    cmd = [
+        sys.executable,
+        "-m",
+        "lib.eval_summary",
+        "__run_eval_dir",
+        result_dir,
+        "1" if overwrite else "0",
+    ]
+    completed = subprocess.run(
+        cmd,
+        cwd=os.fspath(Path(__file__).resolve().parents[1]),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode == 0:
+        for line in reversed(completed.stdout.splitlines()):
+            if line.startswith("__EVAL_RESULT_JSON__"):
+                try:
+                    return json.loads(line.removeprefix("__EVAL_RESULT_JSON__"))
+                except json.JSONDecodeError:
+                    break
+        return {"path": result_dir, "status": "success", "detail": "completed"}
+
+    detail = f"eval subprocess failed with {_signal_detail(completed.returncode)}"
+    _write_eval_subprocess_failure(
+        result_dir,
+        detail,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
+    return {"path": result_dir, "status": "failed", "detail": detail}
+
+
+def run_eval_result_for_dir(result_dir: str, overwrite: bool = False) -> Dict[str, Any]:
+    """Run eval_result and generate score.json for one directory. Returns status dict."""
+    isolated = os.environ.get("EVAL_RUN_ISOLATED_SUBPROCESS", "1").lower()
+    if isolated in ("0", "false", "no"):
+        return _run_eval_result_for_dir_inline(result_dir, overwrite=overwrite)
+    return _run_eval_result_for_dir_subprocess(result_dir, overwrite=overwrite)
 
 
 def generate_summary_and_score_csv(input_path: str) -> Dict[str, Any]:
@@ -202,3 +288,18 @@ def generate_summary_and_score_csv(input_path: str) -> Dict[str, Any]:
         "summary_rows": len(summary_lines),
         "score_rows": len(score_lines),
     }
+
+
+def _main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "__run_eval_dir":
+        result_dir = sys.argv[2]
+        overwrite = len(sys.argv) >= 4 and sys.argv[3] == "1"
+        result = _run_eval_result_for_dir_inline(result_dir, overwrite=overwrite)
+        print("__EVAL_RESULT_JSON__" + json.dumps(result, ensure_ascii=False))
+        return 0
+    print("Usage: python -m lib.eval_summary __run_eval_dir <result_dir> <overwrite:0|1>", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

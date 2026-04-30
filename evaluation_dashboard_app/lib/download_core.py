@@ -628,19 +628,35 @@ def run_download_and_eval(
             target_dirs = eval_summary.find_eval_result_dirs(eval_root, recursive=eval_recursive)
             if target_dirs:
                 total = len(target_dirs)
+                eval_statuses: List[Dict[str, Any]] = []
                 for i, result_dir in enumerate(target_dirs):
                     if on_progress:
                         on_progress(f"Eval: Processing {i+1}/{total}: {result_dir}")
-                    eval_summary.run_eval_result_for_dir(result_dir, overwrite=eval_overwrite)
+                    status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=eval_overwrite)
+                    eval_statuses.append(status)
+                    if status.get("status") == "failed" and on_warning:
+                        on_warning(f"Eval failed for {result_dir}: {status.get('detail', '')}")
                 
                 # Generate summary CSVs
                 csv_info = eval_summary.generate_summary_and_score_csv(eval_root)
+                failed = [s for s in eval_statuses if s.get("status") == "failed"]
+                skipped = [s for s in eval_statuses if s.get("status") == "skipped"]
+                succeeded = [s for s in eval_statuses if s.get("status") == "success"]
                 result["eval_summary"] = {
                     "directories_processed": total,
+                    "success": len(succeeded),
+                    "failed": len(failed),
+                    "skipped": len(skipped),
                     "summary_path": csv_info.get("summary_path", eval_root),
                     "summary_rows": csv_info.get("summary_rows", 0),
                     "score_rows": csv_info.get("score_rows", 0),
                 }
+                if failed:
+                    first = failed[0]
+                    result["errors"].append(
+                        f"Eval failed for {len(failed)} of {total} directories; "
+                        f"first: {first.get('path', '')} ({first.get('detail', '')})"
+                    )
             else:
                 if on_warning:
                     on_warning("No eval result directories found")

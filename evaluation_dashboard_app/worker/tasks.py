@@ -76,17 +76,27 @@ def job_run_eval_dirs(task_id: str, parameters: Dict[str, Any]) -> None:
             return
         total = len(target_dirs)
         append_task_log(task_id, f"Processing {total} directories")
+        statuses = []
         for i, result_dir in enumerate(target_dirs):
             pct = 100.0 * (i + 1) / total if total else 0
             update_task_progress(task_id, message=f"Processing {i+1}/{total}: {result_dir}", pct=pct)
             append_task_log(task_id, f"Processing {i+1}/{total}: {result_dir}")
-            eval_summary.run_eval_result_for_dir(result_dir, overwrite=overwrite)
+            status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=overwrite)
+            statuses.append(status)
+            if status.get("status") == "failed":
+                append_task_log(task_id, f"Eval failed for {result_dir}: {status.get('detail', '')}")
         append_task_log(task_id, "Generating summary CSV")
         info = eval_summary.generate_summary_and_score_csv(eval_root)
         result_path = info.get("summary_path", eval_root)
+        failed = [s for s in statuses if s.get("status") == "failed"]
+        skipped = [s for s in statuses if s.get("status") == "skipped"]
+        succeeded = [s for s in statuses if s.get("status") == "success"]
         summary = {
             "job": "run_eval_dirs",
             "directories_processed": total,
+            "success": len(succeeded),
+            "failed": len(failed),
+            "skipped": len(skipped),
             "summary_path": result_path,
             "summary_rows": info.get("summary_rows", 0),
             "score_rows": info.get("score_rows", 0),
