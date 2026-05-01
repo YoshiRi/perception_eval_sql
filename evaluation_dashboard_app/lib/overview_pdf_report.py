@@ -1355,7 +1355,7 @@ def _build_detection_perception_diff_figures(
             continue
         h_imp = _baobab_hierarchy_from_objects(df_obj, "improved", f"Improved ({lbl} vs A)", 15, 10)
         h_deg = _baobab_hierarchy_from_objects(df_obj, "degraded", f"Degraded ({lbl} vs A)", 15, 10)
-        if not h_imp.empty:
+        if not h_imp.empty and "n" in h_imp.columns:
             fig_imp = px.sunburst(
                 h_imp,
                 path=["root", "scen_g", "fr_display", "label"],
@@ -1366,7 +1366,7 @@ def _build_detection_perception_diff_figures(
             )
             _apply_detection_theme(fig_imp, f"Sunburst: improved ({lbl} vs A)")
             figures.append((fig_imp, f"Perception diff sunburst for improved objects: {lbl} vs baseline A."))
-        if not h_deg.empty:
+        if not h_deg.empty and "n" in h_deg.columns:
             fig_deg = px.sunburst(
                 h_deg,
                 path=["root", "scen_g", "fr_display", "label"],
@@ -1387,7 +1387,9 @@ def _build_detection_perception_diff_figures(
                 df_by_label["degraded_cnt"],
                 root_lens,
             )
-            figures.append((_comparison_lens_treemap_figure(tdf_l, "By class"), f"Perception diff comparison lens by class: {lbl} vs baseline A."))
+            fig_l = _comparison_lens_treemap_figure(tdf_l, "By class")
+            if fig_l is not None:
+                figures.append((fig_l, f"Perception diff comparison lens by class: {lbl} vs baseline A."))
         if not scen_agg.empty:
             tdf_s = _comparison_lens_treemap_df(
                 scen_agg["scenario_name"].astype(str),
@@ -1395,7 +1397,9 @@ def _build_detection_perception_diff_figures(
                 scen_agg["degraded_cnt"],
                 root_lens,
             )
-            figures.append((_comparison_lens_treemap_figure(tdf_s, "By scenario"), f"Perception diff comparison lens by scenario: {lbl} vs baseline A."))
+            fig_s = _comparison_lens_treemap_figure(tdf_s, "By scenario")
+            if fig_s is not None:
+                figures.append((fig_s, f"Perception diff comparison lens by scenario: {lbl} vs baseline A."))
         if not df_frame_sorted.empty:
             fr_cap = 36
             fr_top = df_frame_sorted.head(fr_cap).copy()
@@ -1411,7 +1415,9 @@ def _build_detection_perception_diff_figures(
                     ims.append(io)
                     dgs.append(do)
             tdf_f = _comparison_lens_treemap_df(pd.Series(nms), pd.Series(ims), pd.Series(dgs), root_lens)
-            figures.append((_comparison_lens_treemap_figure(tdf_f, "By frame"), f"Perception diff comparison lens by frame: {lbl} vs baseline A."))
+            fig_f = _comparison_lens_treemap_figure(tdf_f, "By frame")
+            if fig_f is not None:
+                figures.append((fig_f, f"Perception diff comparison lens by frame: {lbl} vs baseline A."))
     return figures
 
 
@@ -1651,10 +1657,14 @@ def _comparison_lens_treemap_df(names: pd.Series, improved: pd.Series, degraded:
             rows.append({"root": root_label, "side": "Improved", "item": name, "n": float(imp)})
         if deg > 0:
             rows.append({"root": root_label, "side": "Degraded", "item": name, "n": float(deg)})
+    if not rows:
+        return pd.DataFrame(columns=["root", "side", "item", "n"])
     return pd.DataFrame(rows)
 
 
-def _comparison_lens_treemap_figure(tdf: pd.DataFrame, title: str) -> go.Figure:
+def _comparison_lens_treemap_figure(tdf: pd.DataFrame, title: str) -> Optional[go.Figure]:
+    if tdf.empty or "n" not in tdf.columns:
+        return None
     fig = px.treemap(
         tdf,
         path=["root", "side", "item"],
