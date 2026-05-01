@@ -784,6 +784,7 @@ def _task_type_label(task_type: str) -> str:
         "generate_summary_csv": "Generate summary CSV",
         "build_parquet": "Build parquet",
         "download_and_eval": "Download + Eval",
+        "run_evaluator_and_process": "Run Evaluator + Process",
     }
     return labels.get(task_type, task_type or "Task")
 
@@ -810,6 +811,11 @@ def _task_summary(t: Dict[str, Any]) -> str:
         if params.get("generate_parquet"):
             parts.append("parquet")
         return f"job_id={params.get('job_id', '')} [{'+'.join(parts)}] → {out}"
+    if task_type == "run_evaluator_and_process":
+        target = params.get("target_name", "")
+        is_tag = params.get("is_tag", False)
+        target_type = "tag" if is_tag else "branch"
+        return f"{target_type}={target} → {params.get('output_path', '')}"
     return ""
 
 
@@ -942,6 +948,45 @@ def _render_result_summary(summary: Dict[str, Any]) -> None:
             st.error("Errors during execution:")
             for err in errors:
                 st.write(f"- {err}")
+    elif job == "run_evaluator_and_process":
+        evaluator_job_id = summary.get("evaluator_job_id", "")
+        evaluator_report_url = summary.get("evaluator_report_url", "")
+        evaluator_status = summary.get("evaluator_status", "unknown")
+        dl_summary = summary.get("download_summary", {})
+        eval_summary_data = summary.get("eval_summary", {})
+        parquet_path = summary.get("parquet_path", "")
+        
+        st.subheader("Run Evaluator + Download + Eval + Parquet Summary")
+        
+        # Evaluator summary
+        st.write("🎯 **Evaluator**")
+        st.write(f"   - Job ID: `{evaluator_job_id}`")
+        st.write(f"   - Status: **{evaluator_status}**")
+        if evaluator_report_url:
+            st.markdown(f"   - Report: [Open]({evaluator_report_url})")
+        
+        # Download summary
+        dl_total = dl_summary.get("total", 0)
+        dl_success = dl_summary.get("success", 0)
+        dl_failed = dl_summary.get("failed", 0)
+        st.write("📥 **Download**")
+        st.write(f"   - Total: **{dl_total}**, Success: **{dl_success}**, Failed: **{dl_failed}**")
+        
+        # Eval summary
+        if eval_summary_data:
+            st.write("🧮 **Evaluation**")
+            st.write(f"   - Directories processed: **{eval_summary_data.get('directories_processed', 0)}**")
+            st.write(f"   - Success: **{eval_summary_data.get('success', 0)}**, Failed: **{eval_summary_data.get('failed', 0)}**")
+            st.write(f"   - Summary.csv: **{eval_summary_data.get('summary_rows', 0)}** rows, Score.csv: **{eval_summary_data.get('score_rows', 0)}** rows")
+        
+        # Parquet summary
+        if parquet_path:
+            st.write("📦 **Parquet**")
+            st.write(f"   - Output: `{parquet_path}`")
+        
+        # Show report URL prominently
+        if evaluator_report_url:
+            st.markdown(f"### [📊 View Evaluator Report]({evaluator_report_url})")
     else:
         st.json(summary)
 
@@ -1375,8 +1420,8 @@ with st.sidebar:
 
 
 st.markdown('<p class="dl-tabs-rail">Pick a workflow</p>', unsafe_allow_html=True)
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📥 Download Results", "🗺️ Download Scenarios", "📊 View Downloads", "🧮 Eval Results"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📥 Download Results", "🗺️ Download Scenarios", "📊 View Downloads", "🧮 Eval Results", "🚀 Run Evaluator + Process"]
 )
 
 
@@ -2331,3 +2376,330 @@ with tab4:
                         _emit_eval_finished_notification(
                             f"Eval run finished with CSV error. Success: {success_count}, Skipped: {skipped_count}, Failed: {failed_count}. {e}"
                         )
+
+
+# === TAB 5: Run Evaluator + Download + Eval + Parquet ===
+with tab5:
+    st.header("🚀 Run Evaluator + Download + Eval + Parquet")
+    st.caption(
+        "Complete workflow: Schedule an evaluator job, wait for completion, download results, "
+        "run evaluation, and generate parquet - all in one click."
+    )
+    
+    # Load catalog presets from sibling EvaluatorRunnerUITest directory
+    CATALOGS_PATH = Path("/home/leigu/EvaluatorRunnerUITest/catalogs.json")
+    try:
+        with open(CATALOGS_PATH, "r", encoding="utf-8") as f:
+            CATALOG_PRESETS = json.load(f)
+        catalog_names = [c["display_name"] for c in CATALOG_PRESETS]
+    except Exception:
+        CATALOG_PRESETS = []
+        catalog_names = []
+    
+    # Evaluator configuration
+    st.subheader("Evaluator Configuration")
+    
+    # Project ID
+    eval_project_id = st.text_input(
+        "Project ID",
+        value=get_config_value("eval_project_id", "x2_dev"),
+        help="Evaluator project ID (e.g., x2_dev)"
+    )
+    set_config_value("eval_project_id", eval_project_id)
+    
+    # Catalog selection
+    if catalog_names:
+        selected_catalog_name = st.selectbox(
+            "Catalog (from presets)",
+            options=catalog_names,
+            index=0,
+            help="Select a catalog from presets"
+        )
+        selected_catalog = next((c for c in CATALOG_PRESETS if c["display_name"] == selected_catalog_name), None)
+        if selected_catalog:
+            catalog_id = selected_catalog["catalog_id"]
+            integration_id = selected_catalog["integration_id"]
+            with st.expander("Selected Catalog Details"):
+                st.json(selected_catalog)
+    else:
+        st.warning("No catalog presets found. Enter manually below.")
+        catalog_id = None
+        integration_id = None
+    
+    # Manual override
+    with st.expander("Manual Override"):
+        manual_catalog_id = st.text_input(
+            "Catalog ID (override)",
+            value=get_config_value("manual_catalog_id", ""),
+            help="Override catalog ID"
+        )
+        set_config_value("manual_catalog_id", manual_catalog_id)
+        manual_integration_id = st.text_input(
+            "Integration ID (override)",
+            value=get_config_value("manual_integration_id", ""),
+            help="Override integration ID"
+        )
+        set_config_value("manual_integration_id", manual_integration_id)
+        if manual_catalog_id:
+            catalog_id = manual_catalog_id
+        if manual_integration_id:
+            integration_id = manual_integration_id
+    
+    # Branch/Tag configuration
+    st.subheader("Branch Configuration")
+    target_name = st.text_input(
+        "Branch or Tag Name",
+        value=get_config_value("target_name", "beta/v4.3.2"),
+        help="Git branch name or tag to evaluate"
+    )
+    set_config_value("target_name", target_name)
+    
+    is_tag = st.checkbox(
+        "Use as git tag (instead of branch)",
+        value=get_config_value("is_tag", False),
+        key="is_tag_checkbox"
+    )
+    set_config_value("is_tag", is_tag)
+    
+    description = st.text_input(
+        "Description",
+        value=get_config_value("eval_description", ""),
+        help="Description for this evaluation run"
+    )
+    if not description:
+        description = f"Auto-eval from dashboard at {datetime.now().isoformat()}"
+    set_config_value("eval_description", description)
+    
+    # Scheduling options
+    with st.expander("Advanced Scheduling Options"):
+        max_retries = st.number_input(
+            "Max Retries",
+            value=0,
+            min_value=0,
+            max_value=10,
+            help="Number of retries on failure"
+        )
+        clean_build = st.checkbox(
+            "Clean Build",
+            value=get_config_value("clean_build", False),
+            help="Clean build before evaluation"
+        )
+        set_config_value("clean_build", clean_build)
+        debug = st.checkbox(
+            "Debug Mode",
+            value=get_config_value("debug_mode", False),
+            help="Run in debug mode"
+        )
+        set_config_value("debug_mode", debug)
+    
+    # Output path
+    st.subheader("Output Configuration")
+    eval_output_path = st.text_input(
+        "Output Path",
+        value=get_config_value("eval_output_path", "evaluator_run"),
+        help="Folder under data directory to save results"
+    )
+    set_config_value("eval_output_path", eval_output_path)
+    
+    # Download options
+    with st.expander("Download Options"):
+        eval_download_type = st.radio(
+            "Download Type",
+            ["Archives (ZIP)", "Result JSON only"],
+            index=0,
+            horizontal=True,
+            help="What to download from evaluator results"
+        )
+        if eval_download_type == "Archives (ZIP)":
+            eval_phase = st.text_input(
+                "Phase to extract",
+                value=get_config_value("eval_phase", "perception.object_recognition.tracking.objects"),
+                help="Phase name to extract from archives"
+            )
+            eval_skip_large = st.checkbox(
+                "Skip large files",
+                value=get_config_value("eval_skip_large", False),
+                help="Skip large ZIP files"
+            )
+            eval_large_mb = st.number_input(
+                "Large file threshold (MB)",
+                value=50.0,
+                min_value=1.0,
+                max_value=5000.0,
+                help="ZIP files larger than this will be skipped"
+            )
+            set_config_value("eval_skip_large", eval_skip_large)
+            set_config_value("eval_large_mb", eval_large_mb)
+        else:
+            eval_phase = ""
+            eval_skip_large = False
+            eval_large_mb = 50.0
+        set_config_value("eval_download_type", eval_download_type)
+        set_config_value("eval_phase", eval_phase)
+    
+    # Evaluator polling options
+    with st.expander("Evaluator Polling Options"):
+        st.caption("How long to wait for evaluator to complete")
+        poll_interval = st.number_input(
+            "Poll interval (seconds)",
+            value=60.0,
+            min_value=10.0,
+            max_value=600.0,
+            step=10.0,
+            help="How often to check evaluator status"
+        )
+        max_wait_hours = st.number_input(
+            "Max wait time (hours)",
+            value=168.0,
+            min_value=1.0,
+            max_value=720.0,
+            step=1.0,
+            help="Maximum hours to wait for evaluator (default 168h = 1 week)"
+        )
+        max_wait_seconds = max_wait_hours * 3600
+    set_config_value("poll_interval", poll_interval)
+    
+    # Post-evaluator options
+    st.subheader("Post-Evaluator Processing")
+    eval_run_eval = st.checkbox(
+        "Run evaluation (eval_result + Summary/Score CSV)",
+        value=True,
+        key="eval_run_eval_checkbox",
+        help="Run eval_result on downloaded directories"
+    )
+    eval_generate_parquet = st.checkbox(
+        "Generate parquet",
+        value=CATALOG_IO_AVAILABLE,
+        key="eval_generate_parquet_checkbox",
+        help="Build scene_result.parquet from .pkl files" if CATALOG_IO_AVAILABLE else "Install perception_catalog_analyzer to enable",
+        disabled=not CATALOG_IO_AVAILABLE
+    )
+    eval_recursive = st.checkbox(
+        "Search subdirectories for eval",
+        value=True,
+        key="eval_recursive_checkbox",
+        help="Recursively search for result directories"
+    )
+    
+    # Run button
+    st.divider()
+    
+    if st.button("🚀 Run Evaluator + Download + Eval + Parquet", type="primary", key="run_evaluator_full_btn"):
+        # Validate inputs
+        if not eval_project_id:
+            st.error("Project ID is required")
+            st.stop()
+        if not catalog_id:
+            st.error("Catalog ID is required (select preset or enter manually)")
+            st.stop()
+        if not integration_id:
+            st.error("Integration ID is required (select preset or enter manually)")
+            st.stop()
+        if not target_name:
+            st.error("Branch or Tag name is required")
+            st.stop()
+        
+        # Resolve output path
+        resolved_output, path_err = resolve_under_data_root(eval_output_path, allow_create=True)
+        if path_err:
+            st.error(f"Output path is invalid: {path_err}")
+            st.stop()
+        resolved_path_str = str(resolved_output)
+        
+        # Prepare parameters
+        params = {
+            "project_id": eval_project_id,
+            "catalog_id": catalog_id,
+            "integration_id": integration_id,
+            "suite_ids": None,  # Can be configured later if needed
+            "target_name": target_name,
+            "description": description,
+            "output_path": resolved_path_str,
+            "environment": environment,
+            # Scheduling options
+            "max_retries": max_retries,
+            "clean_build": clean_build,
+            "debug": debug,
+            "is_tag": is_tag,
+            # Download options
+            "download_type": "archives" if eval_download_type == "Archives (ZIP)" else "result_json",
+            "phase": eval_phase,
+            "skip_large_file": eval_skip_large,
+            "large_file_mb": eval_large_mb,
+            "keep_zip_files": False,
+            # Polling options
+            "poll_interval": poll_interval,
+            "max_wait_seconds": max_wait_seconds,
+            # Post-evaluator options
+            "run_eval": eval_run_eval,
+            "generate_parquet": eval_generate_parquet,
+            "eval_recursive": eval_recursive,
+            "eval_overwrite": False,
+        }
+        
+        if is_task_queue_enabled():
+            task_id = _enqueue_task("run_evaluator_and_process", params)
+            if task_id:
+                st.success(f"Task queued: {task_id}")
+                st.info(
+                    "The workflow will:\n"
+                    "1. Schedule evaluator job\n"
+                    "2. Poll until evaluator completes (may take hours)\n"
+                    "3. Download results\n"
+                    "4. Run eval (if enabled)\n"
+                    "5. Generate parquet (if enabled)\n\n"
+                    "Check the **Task status** section below for progress."
+                )
+                # Show preview of params
+                with st.expander("Task Parameters Preview"):
+                    st.json({
+                        "project_id": params["project_id"],
+                        "catalog_id": params["catalog_id"],
+                        "integration_id": params["integration_id"],
+                        "target_name": params["target_name"],
+                        "is_tag": params["is_tag"],
+                        "output_path": params["output_path"],
+                        "poll_interval": params["poll_interval"],
+                        "max_wait_hours": params["max_wait_seconds"] / 3600,
+                        "run_eval": params["run_eval"],
+                        "generate_parquet": params["generate_parquet"],
+                    })
+            else:
+                st.error("Failed to enqueue task. Check REDIS_URL and DATABASE_URL.")
+        else:
+            st.error(
+                "Task queue is not enabled. Please set USE_TASK_QUEUE=true in your environment. "
+                "This workflow requires background task execution because the evaluator can take a long time."
+            )
+    
+    # Information
+    with st.expander("ℹ️ How this workflow works"):
+        st.markdown("""
+        **Workflow Steps:**
+        
+        1. **Schedule Evaluator Job**
+           - Submits job to Evaluator API with selected catalog and branch
+           - Returns immediately with a job_id
+        
+        2. **Wait for Completion**
+           - Polls evaluator status every {poll_interval}s
+           - Maximum wait time: {max_wait_hours}h (configurable)
+           - Progress updates are logged to the task
+        
+        3. **Download Results**
+           - Downloads archives or result JSON from completed job
+           - Extracts and organizes files by scenario
+        
+        4. **Run Evaluation** (if enabled)
+           - Processes result.json files
+           - Generates Summary.csv and Score.csv
+        
+        5. **Generate Parquet** (if enabled)
+           - Converts .pkl files to scene_result.parquet
+        
+        **Important Notes:**
+        - This workflow runs in the background via the worker
+        - You can close the browser and check progress later
+        - The evaluator job itself may take hours depending on queue and run time
+        - If evaluator fails or times out, download/eval will not proceed
+        """)
