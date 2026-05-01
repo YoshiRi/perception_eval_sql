@@ -6,6 +6,7 @@ Updates Postgres task status (running -> completed/failed).
 import os
 import re
 import sys
+import time
 from typing import Any, Dict
 
 # App root on path for lib imports
@@ -404,6 +405,10 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         # Evaluator polling options
         poll_interval = float(parameters.get("poll_interval", 60.0))
         max_wait_seconds = float(parameters.get("max_wait_seconds", 3600.0 * 24 * 7))  # 1 week default
+        download_ready_timeout = float(parameters.get("download_ready_timeout", 1800.0))
+        download_ready_poll_interval = float(
+            parameters.get("download_ready_poll_interval", min(max(poll_interval, 10.0), 60.0))
+        )
         
         # Scheduling options
         max_retries = parameters.get("max_retries", 1)
@@ -497,33 +502,50 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         on_progress("Step 3/5: Downloading results...")
         update_task_progress(task_id, message="Downloading results...", pct=45)
         
-        try:
-            dl_result = download_core.run_download_results(
-                project_id=project_id,
-                job_id=job_id,
-                suite_id=None,
-                output_path=output_path,
-                download_type=download_type,
-                phase=phase,
-                skip_large_file=skip_large_file,
-                large_file_mb=large_file_mb,
-                keep_zip_files=keep_zip_files,
-                suite_ids=suite_ids,
-                on_progress=on_progress,
-                on_warning=on_warning,
-            )
-            failure_count, total_attempted, rows = dl_result
-            success_count = total_attempted - failure_count
-            download_success = success_count > 0
-            
-            if not download_success:
-                update_task_status(task_id, "failed", 
-                    error_message=f"Download failed: {failure_count} of {total_attempted} scenarios failed")
-                return
+        download_deadline = time.time() + download_ready_timeout
+        while True:
+            try:
+                dl_result = download_core.run_download_results(
+                    project_id=project_id,
+                    job_id=job_id,
+                    suite_id=None,
+                    output_path=output_path,
+                    download_type=download_type,
+                    phase=phase,
+                    skip_large_file=skip_large_file,
+                    large_file_mb=large_file_mb,
+                    keep_zip_files=keep_zip_files,
+                    suite_ids=suite_ids,
+                    on_progress=on_progress,
+                    on_warning=on_warning,
+                )
+                failure_count, total_attempted, rows = dl_result
+                success_count = total_attempted - failure_count
+                download_success = success_count > 0
                 
-        except Exception as e:
-            update_task_status(task_id, "failed", error_message=f"Download failed: {e}")
-            return
+                if not download_success:
+                    update_task_status(task_id, "failed", 
+                        error_message=f"Download failed: {failure_count} of {total_attempted} scenarios failed")
+                    return
+                break
+
+            except RuntimeError as e:
+                if "No case reports found" not in str(e) or time.time() >= download_deadline:
+                    update_task_status(task_id, "failed", error_message=f"Download failed: {e}")
+                    return
+
+                wait_seconds = min(
+                    download_ready_poll_interval,
+                    max(1.0, download_deadline - time.time()),
+                )
+                msg = f"Case reports are not ready yet; retrying download in {wait_seconds:.0f}s"
+                append_task_log(task_id, f"{msg}. Detail: {e}")
+                update_task_progress(task_id, message=msg, pct=45)
+                time.sleep(wait_seconds)
+                
+            except Exception as e:
+                update_task_status(task_id, "failed", error_message=f"Download failed: {e}")
+                return
         
         update_task_progress(task_id, message=f"Download complete: {success_count}/{total_attempted} succeeded", pct=60)
         

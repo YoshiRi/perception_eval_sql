@@ -21,9 +21,26 @@ EVALUATION_REPORT_BASE_URL = "https://evaluation.tier4.jp/evaluation/reports"
 DEFAULT_WEBAUTO_AUTH_PATH = Path.home() / ".webauto" / "auth.toml"
 SUCCESS_JOB_STATUSES = frozenset({"succeeded", "success"})
 FAILED_JOB_STATUSES = frozenset(
-    {"failed", "failure", "error", "canceled", "cancelled", "aborted"}
+    {
+        "failed",
+        "failure",
+        "error",
+        "canceled",
+        "cancelled",
+        "aborted",
+        "timed_out",
+        "timeout",
+    }
 )
 TERMINAL_JOB_STATUSES = SUCCESS_JOB_STATUSES | FAILED_JOB_STATUSES
+_TEST_STATUS_PATHS = (("test", "status"),)
+_OVERALL_STATUS_PATHS = (
+    ("job", "status"),
+    ("evaluation", "status"),
+    ("status",),
+    ("state",),
+)
+_BUILD_STATUS_PATHS = (("build", "status"),)
 
 
 @dataclass(frozen=True)
@@ -46,20 +63,8 @@ def normalize_job_status(status: Any) -> str:
     return str(status).strip().lower()
 
 
-def extract_job_status(report: dict[str, Any]) -> str:
-    """Return the best evaluator status from known report response shapes."""
-    if not isinstance(report, dict):
-        return "unknown"
-
-    status_paths = (
-        ("test", "status"),
-        ("build", "status"),
-        ("job", "status"),
-        ("evaluation", "status"),
-        ("status",),
-        ("state",),
-    )
-    for path in status_paths:
+def _get_first_status(report: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> str:
+    for path in paths:
         current: Any = report
         for key in path:
             if not isinstance(current, dict):
@@ -71,6 +76,26 @@ def extract_job_status(report: dict[str, Any]) -> str:
         if status:
             return status
 
+    return ""
+
+
+def extract_job_status(report: dict[str, Any]) -> str:
+    """Return the best evaluator status from known report response shapes."""
+    if not isinstance(report, dict):
+        return "unknown"
+
+    test_status = _get_first_status(report, _TEST_STATUS_PATHS)
+    if test_status:
+        return test_status
+
+    overall_status = _get_first_status(report, _OVERALL_STATUS_PATHS)
+    if overall_status:
+        return overall_status
+
+    build_status = _get_first_status(report, _BUILD_STATUS_PATHS)
+    if build_status:
+        return f"build:{build_status}"
+
     return "unknown"
 
 
@@ -80,6 +105,33 @@ def is_terminal_job_status(status: Any) -> bool:
 
 def is_success_job_status(status: Any) -> bool:
     return normalize_job_status(status) in SUCCESS_JOB_STATUSES
+
+
+def get_job_completion(report: dict[str, Any]) -> tuple[bool, str]:
+    """
+    Return (is_completed, status) for an evaluator job report.
+
+    Build success only means the build phase is done; evaluator jobs can still be
+    running suites/tests after that. Build failure is terminal because tests cannot
+    proceed, but build success must not unlock downloads by itself.
+    """
+    if not isinstance(report, dict):
+        return False, "unknown"
+
+    status = extract_job_status(report)
+    test_status = _get_first_status(report, _TEST_STATUS_PATHS)
+    if test_status:
+        return is_terminal_job_status(test_status), status
+
+    overall_status = _get_first_status(report, _OVERALL_STATUS_PATHS)
+    if overall_status and is_terminal_job_status(overall_status):
+        return True, status
+
+    build_status = _get_first_status(report, _BUILD_STATUS_PATHS)
+    if build_status in FAILED_JOB_STATUSES:
+        return True, status
+
+    return False, status
 
 
 def load_test_cases(path: Path | str) -> dict[str, dict[str, Any]]:
@@ -354,8 +406,7 @@ class EvaluationRunAPI:
         """
         report = self.get_job_status(project_id, job_id)
         
-        status = extract_job_status(report)
-        is_completed = is_terminal_job_status(status)
+        is_completed, status = get_job_completion(report)
         
         return is_completed, status, report
 
