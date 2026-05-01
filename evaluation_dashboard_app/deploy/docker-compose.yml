@@ -53,6 +53,7 @@ x-streamlit-app: &streamlit-app
     - ./configs:/app/docker_config
     # Mount app source so code changes apply without rebuild (Streamlit auto-reloads)
     - ../Overview.py:/app/Overview.py
+    - ../catalogs.json:/app/catalogs.json
     - ../pages:/app/pages
     - ../Readme.md:/app/Readme.md
     - ../Readme.en.md:/app/Readme.en.md
@@ -122,6 +123,7 @@ services:
       - ./configs:/app/docker_config
       # Mount app source so code changes apply without rebuild (restart worker to pick up: docker compose restart worker)
       - ../Overview.py:/app/Overview.py
+      - ../catalogs.json:/app/catalogs.json
       - ../pages:/app/pages
       - ../Readme.md:/app/Readme.md
       - ../Readme.en.md:/app/Readme.en.md

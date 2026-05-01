@@ -103,6 +103,60 @@ if _bp_raw is not None and str(_bp_raw).strip():
 else:
     _BUILD_PARQUET_JOB_TIMEOUT_SEC = _RQ_DEFAULT_JOB_TIMEOUT_SEC
 
+_APP_ROOT = Path(__file__).resolve().parents[1]
+_CATALOGS_FILENAME = "catalogs.json"
+_LEGACY_CATALOGS_PATH = Path("/home/leigu/EvaluatorRunnerUITest/catalogs.json")
+
+
+def _catalog_preset_candidate_paths() -> List[Path]:
+    """Return catalog preset paths in priority order."""
+    paths: List[Path] = []
+    env_path = os.environ.get("EVAL_CATALOGS_PATH")
+    if env_path:
+        paths.append(Path(env_path).expanduser())
+
+    paths.extend(
+        [
+            _APP_ROOT / _CATALOGS_FILENAME,
+            Path.cwd() / _CATALOGS_FILENAME,
+            _LEGACY_CATALOGS_PATH,
+        ]
+    )
+
+    unique_paths: List[Path] = []
+    seen = set()
+    for path in paths:
+        key = os.fspath(path)
+        if key not in seen:
+            unique_paths.append(path)
+            seen.add(key)
+    return unique_paths
+
+
+def _load_catalog_presets() -> tuple[List[Dict[str, Any]], Optional[Path], Optional[str]]:
+    """Load evaluator catalog presets from the first available catalogs.json."""
+    required_keys = {"display_name", "catalog_id", "integration_id"}
+    for path in _catalog_preset_candidate_paths():
+        if not path.is_file():
+            continue
+
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                presets = json.load(f)
+            if not isinstance(presets, list):
+                raise ValueError("catalog preset file must contain a JSON list")
+
+            valid_presets = [
+                preset
+                for preset in presets
+                if isinstance(preset, dict) and required_keys.issubset(preset)
+            ]
+            return valid_presets, path, None
+        except Exception as exc:
+            return [], path, str(exc)
+
+    return [], None, None
+
 
 def _enqueue_task(
     task_type: str,
@@ -2386,15 +2440,9 @@ with tab5:
         "run evaluation, and generate parquet - all in one click."
     )
     
-    # Load catalog presets from sibling EvaluatorRunnerUITest directory
-    CATALOGS_PATH = Path("/home/leigu/EvaluatorRunnerUITest/catalogs.json")
-    try:
-        with open(CATALOGS_PATH, "r", encoding="utf-8") as f:
-            CATALOG_PRESETS = json.load(f)
-        catalog_names = [c["display_name"] for c in CATALOG_PRESETS]
-    except Exception:
-        CATALOG_PRESETS = []
-        catalog_names = []
+    # Load catalog presets from the app root, with env/cwd/legacy fallbacks.
+    CATALOG_PRESETS, CATALOGS_PATH, catalog_load_error = _load_catalog_presets()
+    catalog_names = [c["display_name"] for c in CATALOG_PRESETS]
     
     # Evaluator configuration
     st.subheader("Evaluator Configuration")
@@ -2422,7 +2470,16 @@ with tab5:
             with st.expander("Selected Catalog Details"):
                 st.json(selected_catalog)
     else:
-        st.warning("No catalog presets found. Enter manually below.")
+        if catalog_load_error and CATALOGS_PATH is not None:
+            st.warning(
+                f"Catalog presets could not be loaded from `{CATALOGS_PATH}`: "
+                f"{catalog_load_error}. Enter manually below."
+            )
+        else:
+            st.warning(
+                f"No catalog presets found. Expected `{_APP_ROOT / _CATALOGS_FILENAME}`. "
+                "Enter manually below."
+            )
         catalog_id = None
         integration_id = None
     

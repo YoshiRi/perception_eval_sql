@@ -30,6 +30,7 @@ TASK_TYPES = (
     "generate_summary_csv",
     "build_parquet",
     "download_and_eval",
+    "run_evaluator_and_process",
 )
 TASK_STATUSES = ("pending", "running", "completed", "failed")
 

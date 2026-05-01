@@ -1,0 +1,38 @@
+[
+  {
+    "display_name": "Build Test Catalog",
+    "catalog_id": "bd0569ec-9826-44ac-8780-45b4cea624e6",
+    "description": "Try this catalog for testing build integration",
+    "integration_id": "900d2096-a112-48f0-a65e-27e122aad86a"
+  },
+  {
+    "display_name": "Performance Test",
+    "catalog_id": "e36d75b9-6c3a-4970-9b9b-5cd13f7a9da3",
+    "description": "To calculate perception metrics and create metrics report",
+    "integration_id": "96ad8fba-0228-4c2b-9166-07d4de1a0760"
+  },
+  { 
+    "display_name": "Old performance test",
+    "catalog_id": "e2efe01d-e0c6-4d49-8223-817ff5d73204",
+    "description": "Run perception metrics test we have done previously",
+    "integration_id": "6126e86f-615f-4b84-9643-91b88db606bd"
+  },
+  {
+    "display_name": "Devops Test",
+    "catalog_id": "ab0f8498-cc1b-4726-836f-e18e8bcb3200",
+    "description": "Edge case for devops integration",
+    "integration_id": "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
+  },
+  {
+    "display_name": "Usecase Performance Catalog",
+    "catalog_id": "09039022-ec91-41bf-9e93-fdefccdfc9bc",
+    "description": "[WIP] Run evaluation based on planning scene catalog.",
+    "integration_id": "51f89d37-5c65-4449-9add-8971d0a79a7a"
+  },
+  {
+    "display_name": "L4 regression test",
+    "catalog_id": "14b1d54b-5c9f-4cbf-a7e1-0eebceb1d30f",
+    "description": "[WARN] This is a regression test for L4, please do not use it for other purposes",
+    "integration_id": "c5f58b3c-8974-4f33-a8fa-e1f443320cfd"
+  }
+]
