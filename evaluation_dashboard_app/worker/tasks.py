@@ -484,10 +484,9 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             update_task_status(task_id, "failed", error_message=f"Evaluator failed or timed out: {e}")
             return
         
-        # Check if evaluator succeeded
-        test = final_report.get("test") or {}
-        test_status = test.get("status", "unknown")
-        if test_status not in ("succeeded", "success"):
+        # Check if evaluator succeeded using the same status extraction as the poller.
+        test_status = evaluator_api.extract_job_status(final_report)
+        if not evaluator_api.is_success_job_status(test_status):
             update_task_status(task_id, "failed", error_message=f"Evaluator job failed with status: {test_status}")
             return
         

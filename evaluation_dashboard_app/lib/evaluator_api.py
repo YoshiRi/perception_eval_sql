@@ -19,6 +19,11 @@ from urllib3.util import Retry
 EVALUATION_API_BASE_URL = "https://evaluation.ci.web.auto/v3"
 EVALUATION_REPORT_BASE_URL = "https://evaluation.tier4.jp/evaluation/reports"
 DEFAULT_WEBAUTO_AUTH_PATH = Path.home() / ".webauto" / "auth.toml"
+SUCCESS_JOB_STATUSES = frozenset({"succeeded", "success"})
+FAILED_JOB_STATUSES = frozenset(
+    {"failed", "failure", "error", "canceled", "cancelled", "aborted"}
+)
+TERMINAL_JOB_STATUSES = SUCCESS_JOB_STATUSES | FAILED_JOB_STATUSES
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,48 @@ class TestCaseDefinition:
 
 class EvaluationAPIError(RuntimeError):
     """Raised when the evaluation API returns an unexpected response."""
+
+
+def normalize_job_status(status: Any) -> str:
+    if status is None:
+        return ""
+    return str(status).strip().lower()
+
+
+def extract_job_status(report: dict[str, Any]) -> str:
+    """Return the best evaluator status from known report response shapes."""
+    if not isinstance(report, dict):
+        return "unknown"
+
+    status_paths = (
+        ("test", "status"),
+        ("build", "status"),
+        ("job", "status"),
+        ("evaluation", "status"),
+        ("status",),
+        ("state",),
+    )
+    for path in status_paths:
+        current: Any = report
+        for key in path:
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(key)
+
+        status = normalize_job_status(current)
+        if status:
+            return status
+
+    return "unknown"
+
+
+def is_terminal_job_status(status: Any) -> bool:
+    return normalize_job_status(status) in TERMINAL_JOB_STATUSES
+
+
+def is_success_job_status(status: Any) -> bool:
+    return normalize_job_status(status) in SUCCESS_JOB_STATUSES
 
 
 def load_test_cases(path: Path | str) -> dict[str, dict[str, Any]]:
@@ -307,24 +354,8 @@ class EvaluationRunAPI:
         """
         report = self.get_job_status(project_id, job_id)
         
-        # Check test status first (this is the actual evaluation result)
-        test = report.get("test") or {}
-        test_status = test.get("status", "")
-        
-        # Check build status as fallback
-        build = report.get("build") or {}
-        build_status = build.get("status", "")
-        
-        # Determine overall status
-        if test_status:
-            status = test_status
-        elif build_status:
-            status = build_status
-        else:
-            status = report.get("status", "unknown")
-        
-        # Check if completed (not pending/running)
-        is_completed = status.lower() in ("succeeded", "failed", "canceled", "cancelled")
+        status = extract_job_status(report)
+        is_completed = is_terminal_job_status(status)
         
         return is_completed, status, report
 
