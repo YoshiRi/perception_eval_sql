@@ -2518,14 +2518,13 @@ with tab5:
     )
     set_config_value("is_tag", is_tag)
     
+    # Description - always use fresh timestamp for new tasks
+    default_description = f"Auto-eval from dashboard at {datetime.now().isoformat()}"
     description = st.text_input(
         "Description",
-        value=get_config_value("eval_description", ""),
-        help="Description for this evaluation run"
+        value=default_description,
+        help="Description for this evaluation run (auto-generated with current timestamp)"
     )
-    if not description:
-        description = f"Auto-eval from dashboard at {datetime.now().isoformat()}"
-    set_config_value("eval_description", description)
     
     # Scheduling options
     with st.expander("Advanced Scheduling Options"):
