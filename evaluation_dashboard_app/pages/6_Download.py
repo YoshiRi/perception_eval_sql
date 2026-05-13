@@ -62,6 +62,7 @@ from lib.db import (
     update_task_rq_job_id,
 )
 from lib import download_core
+from lib import evaluator_api
 from lib.auth import get_current_user_id, is_auth_enabled
 
 try:
@@ -878,6 +879,701 @@ def _run_eval_result_worker(result_dir: str, overwrite: bool) -> Dict[str, Any]:
     return run_eval_result_for_dir(result_dir, overwrite=overwrite)
 
 
+def _parse_api_dt(value: Any) -> Optional[datetime]:
+    """Parse evaluator API timestamps into timezone-aware datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if getattr(value, "tzinfo", None) is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.fromisoformat(text)
+        if getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _format_jst_time(value: Any, *, include_seconds: bool = False) -> str:
+    """Format timestamps for display in JST."""
+    dt = _to_jst(_parse_api_dt(value))
+    if not dt:
+        return "—"
+    return dt.strftime("%Y-%m-%d %H:%M:%S JST" if include_seconds else "%Y-%m-%d %H:%M JST")
+
+
+def _format_relative_time(value: Any) -> str:
+    """Human-friendly age/duration from a timestamp until now."""
+    dt = _parse_api_dt(value)
+    if not dt:
+        return "—"
+    now = datetime.now(timezone.utc)
+    secs = max(0, int((now - dt.astimezone(timezone.utc)).total_seconds()))
+    if secs < 60:
+        return f"{secs}s ago"
+    if secs < 3600:
+        return f"{secs // 60}m ago"
+    if secs < 86400:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
+
+
+def _format_duration(start_value: Any, end_value: Any) -> str:
+    """Format elapsed duration between two evaluator timestamps."""
+    start = _parse_api_dt(start_value)
+    end = _parse_api_dt(end_value)
+    if not start or not end:
+        return "—"
+    secs = max(0, int((end - start).total_seconds()))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60}s"
+    return f"{secs // 3600}h {(secs % 3600) // 60}m"
+
+
+def _extract_git_target(report: Dict[str, Any]) -> str:
+    """Return a compact branch/tag label from evaluator job report metadata."""
+    source = ((report.get("event") or {}).get("source") or {})
+    git_ref = str(source.get("git_ref") or "").strip()
+    if git_ref.startswith("refs/heads/"):
+        return git_ref[len("refs/heads/"):]
+    if git_ref.startswith("refs/tags/"):
+        return git_ref[len("refs/tags/"):]
+    return git_ref or str(source.get("git_sha") or "").strip()[:12] or "—"
+
+
+def _extract_case_totals(report: Dict[str, Any]) -> Dict[str, int]:
+    """Return total/success/failed/canceled counts from job report."""
+    test = report.get("test") or {}
+    result = test.get("available_case_results") or test.get("case_results") or {}
+    return {
+        "total": int(result.get("total_count", 0) or 0),
+        "success": int(result.get("success_count", 0) or 0),
+        "failed": int(result.get("failure_count", 0) or 0),
+        "canceled": int(result.get("cancellation_count", 0) or 0),
+    }
+
+
+def _extract_failed_case_rows(case_reports: List[Dict[str, Any]], *, limit: int = 50) -> List[Dict[str, Any]]:
+    """Normalize failed case rows for display tables."""
+    rows: List[Dict[str, Any]] = []
+    for report in case_reports:
+        status = str(report.get("status") or "").strip().lower()
+        result_status = str(((report.get("result") or {}).get("status") or "")).strip().lower()
+        if status not in evaluator_api.FAILED_JOB_STATUSES and result_status not in evaluator_api.FAILED_JOB_STATUSES:
+            continue
+        logs = report.get("logs") or {}
+        rows.append(
+            {
+                "Suite": ((report.get("suite") or {}).get("display_name") or ""),
+                "Scenario": ((report.get("scenario") or {}).get("display_name") or ""),
+                "Status": report.get("status", ""),
+                "Fail message": report.get("fail_message", ""),
+                "Cause": ", ".join(report.get("failure_cause_labels", []) or []),
+                "Archive log": "yes" if ((logs.get("simulation_archive") or {}).get("id")) else "no",
+                "Result JSON": "yes" if ((logs.get("simulation_result_json") or {}).get("id")) else "no",
+            }
+        )
+    rows.sort(key=lambda row: (row["Suite"], row["Scenario"], row["Fail message"]))
+    return rows[:limit]
+
+
+def _extract_suite_rows(suite_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize suite summary rows for display tables."""
+    rows = [
+        {
+            "Suite": row.get("name", ""),
+            "Total": int(row.get("all", 0) or 0),
+            "Success": int(row.get("success", 0) or 0),
+            "Failed": int(row.get("fail", 0) or 0),
+            "Canceled": int(row.get("cancel", 0) or 0),
+            "Simulation": row.get("simulation", ""),
+            "Report": row.get("url", ""),
+        }
+        for row in suite_rows or []
+    ]
+    rows.sort(key=lambda row: (-row["Failed"], row["Suite"]))
+    return rows
+
+
+def _status_color_variant(status: str) -> str:
+    """Map evaluator status to a style token used by the recent-job cards."""
+    normalized = evaluator_api.normalize_job_status(status)
+    if normalized in evaluator_api.SUCCESS_JOB_STATUSES:
+        return "success"
+    if normalized in evaluator_api.FAILED_JOB_STATUSES:
+        return "failed"
+    if normalized in ("started", "running", "pending", "queued", "created"):
+        return "running"
+    return "unknown"
+
+
+def _summarize_recent_job(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Compact summary for one evaluator job card."""
+    status = evaluator_api.extract_job_status(report)
+    totals = _extract_case_totals(report)
+    source = ((report.get("event") or {}).get("source") or {})
+    integration = ((report.get("event") or {}).get("integration") or {})
+    git_url = str(source.get("git_web_url") or source.get("git_url") or "").strip()
+    source_label = git_url.rstrip("/").split("/")[-1] if git_url else str(integration.get("type") or "—")
+    return {
+        "job_id": report.get("job_id") or report.get("id") or "",
+        "status": status,
+        "status_variant": _status_color_variant(status),
+        "build_status": ((report.get("build") or {}).get("status") or ""),
+        "test_status": ((report.get("test") or {}).get("status") or ""),
+        "target": _extract_git_target(report),
+        "catalog": ((report.get("catalog") or {}).get("display_name") or ""),
+        "description": report.get("description", ""),
+        "source_label": source_label,
+        "source_type": str(integration.get("type") or ""),
+        "scheduled_at": report.get("scheduled_at"),
+        "started_at": report.get("started_at"),
+        "finished_at": report.get("finished_at"),
+        "duration": _format_duration(report.get("started_at"), report.get("finished_at")),
+        "created_label": _format_relative_time(report.get("scheduled_at") or report.get("started_at")),
+        "report_url": evaluator_api.get_job_report_url(report.get("project_id", ""), report.get("job_id") or report.get("id") or ""),
+        "fail_message": report.get("fail_message", ""),
+        "total": totals["total"],
+        "success": totals["success"],
+        "failed": totals["failed"],
+        "canceled": totals["canceled"],
+        "git_sha": str(source.get("git_sha") or "")[:12],
+        "git_ref_url": source.get("git_ref_url", ""),
+        "git_commit_url": source.get("git_commit_url", ""),
+        "source_url": git_url,
+    }
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_recent_evaluator_jobs(project_id: str, environment: str, limit: int) -> List[Dict[str, Any]]:
+    """Fetch recent evaluator jobs and normalize them for list rendering."""
+    if not project_id:
+        return []
+    os.environ["AUTH_PROFILE"] = environment or ENVIRONMENT
+    api = evaluator_api.EvaluationRunAPI()
+    reports = api.get_report_list(project_id, status="all", max_results=max(1, int(limit)))
+    reports = sorted(
+        reports,
+        key=lambda report: _parse_api_dt(report.get("scheduled_at") or report.get("started_at") or report.get("finished_at")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    normalized = []
+    for report in reports[:limit]:
+        normalized.append(_summarize_recent_job(report))
+    return normalized
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_evaluator_job_detail(project_id: str, environment: str, job_id: str) -> Dict[str, Any]:
+    """Fetch deep evaluator detail for one job on demand."""
+    if not project_id or not job_id:
+        return {}
+    os.environ["AUTH_PROFILE"] = environment or ENVIRONMENT
+    api = evaluator_api.EvaluationRunAPI()
+    report = api.get_job_report(project_id, job_id)
+    suite_rows = api.get_suite_summary(project_id, job_id, use_available_case_results=True)
+    case_reports = api.get_case_reports(project_id, job_id)
+    summary = _summarize_recent_job(report)
+    return {
+        **summary,
+        "suite_rows": _extract_suite_rows(suite_rows),
+        "failed_case_rows": _extract_failed_case_rows(case_reports),
+        "raw_report": report,
+    }
+
+
+def _inject_recent_evaluator_jobs_styles() -> None:
+    """Task-adjacent styles for the recent evaluator jobs section."""
+    st.markdown(
+        """
+        <style>
+        .evj-card {
+            border-radius: 16px;
+            padding: 0.7rem 0.85rem;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(255, 255, 255, 0.92);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+        }
+        .evj-card--running {
+            border-color: rgba(245, 158, 11, 0.28);
+            background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255,255,255,0.98));
+        }
+        .evj-card--success {
+            border-color: rgba(16, 185, 129, 0.24);
+            background: linear-gradient(180deg, rgba(236, 253, 245, 0.98), rgba(255,255,255,0.98));
+        }
+        .evj-card--failed {
+            border-color: rgba(239, 68, 68, 0.24);
+            background: linear-gradient(180deg, rgba(254, 242, 242, 0.98), rgba(255,255,255,0.98));
+        }
+        .evj-top, .evj-meta, .evj-stats {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .evj-top { justify-content: space-between; }
+        .evj-row {
+            display: grid;
+            grid-template-columns: minmax(220px, 1.6fr) minmax(110px, 0.8fr) minmax(150px, 1fr) minmax(120px, 0.9fr) minmax(170px, 1.2fr) auto;
+            gap: 10px;
+            align-items: center;
+        }
+        .evj-title {
+            font-size: 0.94rem;
+            font-weight: 800;
+            color: #0f172a;
+            margin: 0;
+            word-break: break-word;
+        }
+        .evj-title a {
+            color: inherit;
+            text-decoration: none;
+        }
+        .evj-title a:hover {
+            text-decoration: underline;
+        }
+        .evj-name {
+            min-width: 0;
+        }
+        .evj-name-sub {
+            margin-top: 0.15rem;
+            font-size: 0.78rem;
+            color: #64748b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .evj-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0.28rem 0.7rem;
+            border-radius: 999px;
+            font-size: 0.76rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            border: 1px solid transparent;
+        }
+        .evj-status--running { color: #9a6700; background: #fff7db; border-color: rgba(245, 158, 11, 0.28); }
+        .evj-status--success { color: #047857; background: #dcfce7; border-color: rgba(16, 185, 129, 0.28); }
+        .evj-status--failed { color: #b91c1c; background: #fee2e2; border-color: rgba(239, 68, 68, 0.28); }
+        .evj-status--unknown { color: #475569; background: #f1f5f9; border-color: rgba(148, 163, 184, 0.28); }
+        .evj-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            display: inline-block;
+            background: currentColor;
+            opacity: 0.88;
+        }
+        .evj-dot--pulse {
+            animation: evj-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes evj-pulse {
+            0% { transform: scale(0.9); opacity: 0.55; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.55; }
+        }
+        .evj-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.22rem 0.52rem;
+            border-radius: 999px;
+            background: #f8fafc;
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            color: #334155;
+            font-size: 0.74rem;
+            font-weight: 700;
+        }
+        .evj-meta {
+            color: #475569;
+            font-size: 0.82rem;
+        }
+        .evj-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 0.7rem;
+        }
+        .evj-cell {
+            min-width: 0;
+            font-size: 0.82rem;
+            color: #334155;
+        }
+        .evj-cell a {
+            color: #0f766e;
+            text-decoration: none;
+            font-weight: 700;
+        }
+        .evj-cell a:hover {
+            text-decoration: underline;
+        }
+        .evj-cell strong {
+            color: #0f172a;
+        }
+        .evj-cell--nowrap {
+            white-space: nowrap;
+        }
+        .evj-detail {
+            margin-top: 1rem;
+            padding: 1rem 1rem 0.8rem;
+            border-radius: 18px;
+            border: 1px solid rgba(15, 118, 110, 0.14);
+            background:
+                radial-gradient(circle at top right, rgba(45, 212, 191, 0.10), transparent 24%),
+                linear-gradient(180deg, rgba(255,255,255,0.99), rgba(247,250,252,0.99));
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+        }
+        .evj-stat {
+            flex: 1 1 80px;
+            min-width: 72px;
+            padding: 0.55rem 0.7rem;
+            border-radius: 14px;
+            background: rgba(248, 250, 252, 0.92);
+            border: 1px solid rgba(148, 163, 184, 0.16);
+        }
+        .evj-inline-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            font-size: 0.82rem;
+            color: #334155;
+        }
+        .evj-stat-label {
+            display: block;
+            font-size: 0.68rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #64748b;
+            font-weight: 800;
+            margin-bottom: 0.14rem;
+        }
+        .evj-stat-value {
+            display: block;
+            font-size: 1rem;
+            font-weight: 800;
+            color: #0f172a;
+        }
+        .evj-desc {
+            margin-top: 0.55rem;
+            font-size: 0.86rem;
+            color: #334155;
+        }
+        .evj-empty {
+            padding: 1rem 1.1rem;
+            border-radius: 18px;
+            background: #f8fafc;
+            border: 1px dashed rgba(148, 163, 184, 0.4);
+            color: #475569;
+        }
+        @media (max-width: 1080px) {
+            .evj-row {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
+    """Render one recent evaluator job as a single-row list item."""
+    variant = html.escape(job.get("status_variant", "unknown"))
+    status = html.escape(job.get("status", "unknown") or "unknown")
+    title_text = html.escape(job.get("target", "—"))
+    description = html.escape(job.get("description", "") or "")
+    catalog = html.escape(job.get("catalog", "") or "—")
+    scheduled = html.escape(_format_jst_time(job.get("scheduled_at")))
+    duration = html.escape(job.get("duration", "—"))
+    job_id = html.escape(str(job.get("job_id", "")))
+    build_status = html.escape(job.get("build_status", "") or "—")
+    test_status = html.escape(job.get("test_status", "") or "—")
+    created_label = html.escape(job.get("created_label", "—"))
+    git_sha = html.escape(job.get("git_sha", "") or "—")
+    source_label = html.escape(job.get("source_label", "") or "—")
+    source_type = html.escape(job.get("source_type", "") or "")
+    report_url = html.escape(job.get("report_url", "") or "")
+    source_url = html.escape(job.get("git_ref_url", "") or job.get("source_url", "") or "")
+    running_dot = '<span class="evj-dot evj-dot--pulse" aria-hidden="true"></span>' if job.get("status_variant") == "running" else '<span class="evj-dot" aria-hidden="true"></span>'
+    counts = (
+        f'S <strong>{int(job.get("success", 0))}</strong> · '
+        f'F <strong>{int(job.get("failed", 0))}</strong> · '
+        f'C <strong>{int(job.get("canceled", 0))}</strong> / '
+        f'<strong>{int(job.get("total", 0))}</strong>'
+    )
+    title_html = f'<a href="{report_url}" target="_blank" rel="noopener noreferrer">{title_text}</a>' if report_url else title_text
+    source_html = (
+        f'<a href="{source_url}" target="_blank" rel="noopener noreferrer">{source_label}</a>'
+        if source_url else source_label
+    )
+    st.markdown(
+        f"""
+        <div class="evj-card evj-card--{variant}">
+          <div class="evj-row">
+            <div class="evj-name">
+              <div class="evj-title">{title_html}</div>
+              <div class="evj-name-sub">{description if description else f"job {job_id[:8]}"}</div>
+            </div>
+            <div class="evj-cell evj-cell--nowrap">
+              <span class="evj-status evj-status--{variant}">{running_dot}{status}</span>
+            </div>
+            <div class="evj-cell">
+              <strong>{scheduled}</strong><br><span class="evj-name-sub">{created_label} · {duration}</span>
+            </div>
+            <div class="evj-cell">
+              <strong>{catalog}</strong><br><span class="evj-name-sub">{source_html}{f" ({source_type})" if source_type else ""}</span>
+            </div>
+            <div class="evj-cell">
+              <span class="evj-name-sub">build {build_status} · test {test_status} · {git_sha}</span><br>
+              <span class="evj-inline-stats">{counts}</span>
+            </div>
+            <div class="evj-cell evj-cell--nowrap">
+              <span class="evj-chip">job {job_id[:8]}</span>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_recent_evaluator_job_detail(project_id: str, environment: str, job: Dict[str, Any]) -> None:
+    """Render detailed evaluator-job information inside an expander."""
+    job_id = str(job.get("job_id", "") or "")
+    if not job_id:
+        st.warning("Missing job id.")
+        return
+    try:
+        detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
+    except Exception as e:
+        st.error(f"Could not fetch evaluator details: {e}")
+        return
+
+    st.markdown("**Overview**")
+    top_cols = st.columns(4)
+    top_cols[0].metric("Total", int(detail.get("total", 0)))
+    top_cols[1].metric("Success", int(detail.get("success", 0)))
+    top_cols[2].metric("Failed", int(detail.get("failed", 0)))
+    top_cols[3].metric("Canceled", int(detail.get("canceled", 0)))
+
+    overview_left, overview_right = st.columns([1.3, 1.1])
+    with overview_left:
+        st.write(f"Status: `{detail.get('status', 'unknown')}`")
+        st.write(f"Build/Test: `{detail.get('build_status', '—')}` / `{detail.get('test_status', '—')}`")
+        st.write(f"Target: `{detail.get('target', '—')}`")
+        st.write(f"Catalog: `{detail.get('catalog', '—')}`")
+        st.write(f"Source: `{detail.get('source_label', '—')}`")
+    with overview_right:
+        st.write(f"Scheduled: `{_format_jst_time(detail.get('scheduled_at'), include_seconds=True)}`")
+        st.write(f"Started: `{_format_jst_time(detail.get('started_at'), include_seconds=True)}`")
+        st.write(f"Finished: `{_format_jst_time(detail.get('finished_at'), include_seconds=True)}`")
+        st.write(f"Duration: `{detail.get('duration', '—')}`")
+        st.write(f"SHA: `{detail.get('git_sha', '—')}`")
+
+    action_cols = st.columns([1.2, 1.2, 4])
+    report_url = detail.get("report_url", "")
+    source_url = detail.get("source_url", "") or detail.get("git_ref_url", "")
+    with action_cols[0]:
+        if report_url:
+            st.link_button("Open report", report_url, use_container_width=True)
+    with action_cols[1]:
+        if source_url:
+            st.link_button("Open source", source_url, use_container_width=True)
+
+    if detail.get("fail_message"):
+        st.warning(detail.get("fail_message"))
+
+    suite_rows = detail.get("suite_rows") or []
+    with st.expander(f"Suites ({len(suite_rows)})", expanded=bool(suite_rows)):
+        if suite_rows:
+            st.dataframe(pd.DataFrame(suite_rows), width="stretch", hide_index=True)
+        else:
+            st.caption("No suite summary available.")
+
+    failed_case_rows = detail.get("failed_case_rows") or []
+    with st.expander(f"Failed Cases ({len(failed_case_rows)})", expanded=bool(failed_case_rows)):
+        if failed_case_rows:
+            st.dataframe(pd.DataFrame(failed_case_rows), width="stretch", hide_index=True)
+        else:
+            st.caption("No failed cases in the current report.")
+
+    with st.expander("Raw JSON", expanded=False):
+        st.json(detail.get("raw_report", {}))
+
+
+def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> None:
+    """Render a direct evaluator-jobs browser above the download tabs."""
+    _inject_recent_evaluator_jobs_styles()
+    show_section = st.toggle(
+        "Show recent evaluator jobs",
+        value=st.session_state.get("recent_eval_jobs_show", False),
+        key="recent_eval_jobs_show",
+        help="Load recent evaluator jobs only when you want to browse them.",
+    )
+    if not show_section:
+        return
+
+    st.subheader("Recent evaluator jobs")
+    st.caption("Compact browser for recent evaluator jobs. Select one job to inspect detailed suite and failed-case information.")
+
+    control_cols = st.columns([1.2, 1.8, 1.6, 1.1])
+    with control_cols[0]:
+        limit = int(
+            st.selectbox(
+                "Jobs",
+                options=[6, 12, 20, 30],
+                index=1,
+                key="recent_eval_jobs_limit",
+                help="How many recent evaluator jobs to fetch for this project.",
+            )
+        )
+    with control_cols[1]:
+        status_filter = st.multiselect(
+            "Status filter",
+            options=["running", "success", "failed", "canceled", "unknown"],
+            default=[],
+            key="recent_eval_jobs_status_filter",
+            help="Leave empty to show all recent jobs.",
+        )
+    with control_cols[2]:
+        branch_filter = st.text_input(
+            "Branch/tag contains",
+            value=st.session_state.get("recent_eval_jobs_branch_filter", ""),
+            key="recent_eval_jobs_branch_filter",
+            help="Optional substring filter for branch or tag name.",
+        ).strip()
+    with control_cols[3]:
+        if st.button("Refresh jobs", key="refresh_recent_eval_jobs", use_container_width=True):
+            _fetch_recent_evaluator_jobs.clear()
+            _fetch_evaluator_job_detail.clear()
+            st.rerun()
+
+    page_key = "recent_eval_jobs_page"
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 1
+
+    def _render_job_list() -> None:
+        if not project_id:
+            st.info("Enter a project id in the sidebar to browse recent evaluator jobs.")
+            return
+        current_page = max(1, int(st.session_state.get(page_key, 1)))
+        fetch_limit = max(limit * (current_page + 1), limit + 1)
+        try:
+            jobs = _fetch_recent_evaluator_jobs(project_id, environment, fetch_limit)
+        except Exception as e:
+            st.error(f"Could not fetch recent evaluator jobs: {e}")
+            return
+
+        if branch_filter:
+            branch_filter_lower = branch_filter.lower()
+            jobs = [job for job in jobs if branch_filter_lower in str(job.get("target", "")).lower()]
+        if status_filter:
+            selected = set(status_filter)
+            jobs = [job for job in jobs if job.get("status_variant") in selected or evaluator_api.normalize_job_status(job.get("status", "")) in selected]
+
+        if not jobs:
+            st.session_state[page_key] = 1
+            st.markdown('<div class="evj-empty">No recent evaluator jobs matched the current filters.</div>', unsafe_allow_html=True)
+            return
+
+        total_loaded = len(jobs)
+        has_next_page = total_loaded > current_page * limit
+        max_known_page = max(1, (total_loaded + limit - 1) // limit)
+        if current_page > max_known_page:
+            current_page = max_known_page
+            st.session_state[page_key] = current_page
+        start_idx = (current_page - 1) * limit
+        end_idx = start_idx + limit
+        visible_jobs = jobs[start_idx:end_idx]
+        if not visible_jobs and current_page > 1:
+            current_page = max(1, current_page - 1)
+            st.session_state[page_key] = current_page
+            start_idx = (current_page - 1) * limit
+            end_idx = start_idx + limit
+            visible_jobs = jobs[start_idx:end_idx]
+            has_next_page = total_loaded > current_page * limit
+
+        pager_cols = st.columns([1.1, 1.4, 4.5, 1.1, 1.1])
+        with pager_cols[0]:
+            if st.button("Prev", key="recent_eval_jobs_prev", use_container_width=True, disabled=current_page <= 1):
+                st.session_state[page_key] = max(1, current_page - 1)
+                st.rerun()
+        with pager_cols[1]:
+            st.markdown(
+                f"<div class='evj-meta' style='margin-top:0.35rem;'><strong>Page {current_page}</strong></div>",
+                unsafe_allow_html=True,
+            )
+        with pager_cols[3]:
+            if st.button("Next", key="recent_eval_jobs_next", use_container_width=True, disabled=not has_next_page):
+                st.session_state[page_key] = current_page + 1
+                st.rerun()
+        with pager_cols[4]:
+            st.markdown(
+                f"<div class='evj-meta' style='margin-top:0.35rem; text-align:right;'>{total_loaded}+ loaded</div>",
+                unsafe_allow_html=True,
+            )
+
+        selected_job_id = st.session_state.get("recent_eval_jobs_selected")
+        if selected_job_id and not any(str(job.get("job_id", "")) == str(selected_job_id) for job in jobs):
+            st.session_state.pop("recent_eval_jobs_selected", None)
+            selected_job_id = None
+
+        st.markdown('<div class="evj-list">', unsafe_allow_html=True)
+        for job in visible_jobs:
+            row_cols = st.columns([9.2, 1.0])
+            with row_cols[0]:
+                _render_recent_evaluator_job_card(job)
+            with row_cols[1]:
+                if st.button("View", key=f"recent_eval_view_{job['job_id']}", use_container_width=True):
+                    st.session_state["recent_eval_jobs_selected"] = str(job["job_id"])
+                    _fetch_evaluator_job_detail.clear()
+                    st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        selected_job_id = st.session_state.get("recent_eval_jobs_selected")
+        if selected_job_id:
+            selected_job = next((job for job in jobs if str(job.get("job_id", "")) == str(selected_job_id)), None)
+            if selected_job:
+                if callable(getattr(st, "dialog", None)):
+                    try:
+                        @st.dialog(f"Job details · {selected_job.get('target', '—')}", width="large")
+                        def _recent_eval_job_dialog() -> None:
+                            _render_recent_evaluator_job_detail(project_id, environment, selected_job)
+                            if st.button("Close", key="recent_eval_jobs_close_detail", use_container_width=True):
+                                st.session_state.pop("recent_eval_jobs_selected", None)
+                                st.rerun()
+
+                        _recent_eval_job_dialog()
+                    finally:
+                        st.session_state.pop("recent_eval_jobs_selected", None)
+                else:
+                    st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
+                    hdr_cols = st.columns([4.4, 1.1])
+                    with hdr_cols[0]:
+                        st.subheader(f"Job details · {selected_job.get('target', '—')}")
+                    with hdr_cols[1]:
+                        if st.button("Close", key="recent_eval_jobs_close_detail_fallback", use_container_width=True):
+                            st.session_state.pop("recent_eval_jobs_selected", None)
+                            st.rerun()
+                    _render_recent_evaluator_job_detail(project_id, environment, selected_job)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+    _render_job_list()
+
+
 # Sidebar for configuration
 with st.sidebar:
     st.header("Configuration")
@@ -1072,6 +1768,7 @@ with st.sidebar:
         skip_large_file = False
         large_file_mb = 50.0  # Doesn't apply
 
+_render_recent_evaluator_jobs_section(project_id, environment)
 
 st.markdown('<p class="dl-tabs-rail">Pick a workflow</p>', unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(
