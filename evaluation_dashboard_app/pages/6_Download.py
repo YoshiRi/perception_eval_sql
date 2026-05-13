@@ -909,6 +909,22 @@ def _format_jst_time(value: Any, *, include_seconds: bool = False) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S JST" if include_seconds else "%Y-%m-%d %H:%M JST")
 
 
+def _format_jst_time_compact(value: Any) -> str:
+    """Compact timestamp for dense recent-job rows."""
+    dt = _to_jst(_parse_api_dt(value))
+    if not dt:
+        return "—"
+    return dt.strftime("%m-%d %H:%M")
+
+
+def _format_jst_time_title(value: Any) -> str:
+    """Readable timestamp for fallback job titles."""
+    dt = _to_jst(_parse_api_dt(value))
+    if not dt:
+        return "unknown time"
+    return f"{dt.year}/{dt.month}/{dt.day} {dt.hour}:{dt.minute:02d}:{dt.second:02d}"
+
+
 def _format_relative_time(value: Any) -> str:
     """Human-friendly age/duration from a timestamp until now."""
     dt = _parse_api_dt(value)
@@ -948,6 +964,38 @@ def _extract_git_target(report: Dict[str, Any]) -> str:
     if git_ref.startswith("refs/tags/"):
         return git_ref[len("refs/tags/"):]
     return git_ref or str(source.get("git_sha") or "").strip()[:12] or "—"
+
+
+def _extract_catalog_url(report: Dict[str, Any]) -> str:
+    """Return a best-effort catalog URL for linking from recent evaluator jobs."""
+    catalog = report.get("catalog") or {}
+    direct_url = str(
+        catalog.get("web_url")
+        or catalog.get("url")
+        or catalog.get("catalog_url")
+        or ""
+    ).strip()
+    if direct_url:
+        return direct_url
+
+    project_id = str(report.get("project_id") or "").strip()
+    catalog_id = str(
+        catalog.get("catalog_id")
+        or catalog.get("id")
+        or ""
+    ).strip()
+    if project_id and catalog_id:
+        return f"https://evaluation.tier4.jp/evaluation/vehicle_catalogs/{catalog_id}?project_id={project_id}"
+    return ""
+
+
+def _extract_job_title(report: Dict[str, Any]) -> str:
+    """Prefer evaluator description for display title, with a readable fallback."""
+    description = str(report.get("description") or "").strip()
+    if description:
+        return description
+    started_like = report.get("started_at") or report.get("scheduled_at") or report.get("finished_at")
+    return f"no description (Started at {_format_jst_time_title(started_like)})"
 
 
 def _extract_case_totals(report: Dict[str, Any]) -> Dict[str, int]:
@@ -1004,6 +1052,24 @@ def _extract_suite_rows(suite_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return rows
 
 
+def _extract_suite_selection_options(suite_rows: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Build suite picker options from evaluator suite summary rows."""
+    options: List[Dict[str, str]] = []
+    seen_ids = set()
+    for row in suite_rows or []:
+        report_url = str(row.get("url") or "").strip()
+        suite_id = ""
+        if "/tests/" in report_url:
+            tail = report_url.split("/tests/", 1)[1]
+            suite_id = tail.split("?", 1)[0].split("/", 1)[0].strip()
+        if not suite_id or suite_id in seen_ids:
+            continue
+        seen_ids.add(suite_id)
+        suite_name = str(row.get("name") or suite_id).strip()
+        options.append({"id": suite_id, "label": f"{suite_name} ({suite_id})"})
+    return options
+
+
 def _status_color_variant(status: str) -> str:
     """Map evaluator status to a style token used by the recent-job cards."""
     normalized = evaluator_api.normalize_job_status(status)
@@ -1016,25 +1082,43 @@ def _status_color_variant(status: str) -> str:
     return "unknown"
 
 
+def _status_display_label(status: str) -> str:
+    """Short status label for compact list rows."""
+    normalized = evaluator_api.normalize_job_status(status)
+    if normalized in ("succeeded", "success"):
+        return "success"
+    if normalized in ("failed", "failure", "error"):
+        return "failed"
+    if normalized in ("canceled", "cancelled", "aborted"):
+        return "canceled"
+    if normalized in ("started", "running"):
+        return "running"
+    if normalized in ("pending", "queued", "created"):
+        return "queued"
+    return normalized or "unknown"
+
+
 def _summarize_recent_job(report: Dict[str, Any]) -> Dict[str, Any]:
     """Compact summary for one evaluator job card."""
     status = evaluator_api.extract_job_status(report)
     totals = _extract_case_totals(report)
     source = ((report.get("event") or {}).get("source") or {})
-    integration = ((report.get("event") or {}).get("integration") or {})
     git_url = str(source.get("git_web_url") or source.get("git_url") or "").strip()
-    source_label = git_url.rstrip("/").split("/")[-1] if git_url else str(integration.get("type") or "—")
+    source_repo_label = git_url.rstrip("/").split("/")[-1] if git_url else "—"
+    git_ref_label = _extract_git_target(report)
     return {
         "job_id": report.get("job_id") or report.get("id") or "",
+        "title": _extract_job_title(report),
         "status": status,
         "status_variant": _status_color_variant(status),
         "build_status": ((report.get("build") or {}).get("status") or ""),
         "test_status": ((report.get("test") or {}).get("status") or ""),
-        "target": _extract_git_target(report),
+        "target": git_ref_label,
         "catalog": ((report.get("catalog") or {}).get("display_name") or ""),
+        "catalog_url": _extract_catalog_url(report),
         "description": report.get("description", ""),
-        "source_label": source_label,
-        "source_type": str(integration.get("type") or ""),
+        "source_label": git_ref_label,
+        "source_repo_label": source_repo_label,
         "scheduled_at": report.get("scheduled_at"),
         "started_at": report.get("started_at"),
         "finished_at": report.get("finished_at"),
@@ -1124,12 +1208,12 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-top { justify-content: space-between; }
         .evj-row {
             display: grid;
-            grid-template-columns: minmax(220px, 1.6fr) minmax(110px, 0.8fr) minmax(150px, 1fr) minmax(120px, 0.9fr) minmax(170px, 1.2fr) auto;
-            gap: 10px;
+            grid-template-columns: minmax(180px, 1.35fr) minmax(86px, 0.5fr) minmax(108px, 0.7fr) minmax(180px, 1.25fr) minmax(190px, 1.15fr);
+            gap: 8px;
             align-items: center;
         }
         .evj-title {
-            font-size: 0.94rem;
+            font-size: 0.9rem;
             font-weight: 800;
             color: #0f172a;
             margin: 0;
@@ -1145,24 +1229,29 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-name {
             min-width: 0;
         }
-        .evj-name-sub {
-            margin-top: 0.15rem;
-            font-size: 0.78rem;
-            color: #64748b;
+        .evj-name .evj-title,
+        .evj-name .evj-name-sub,
+        .evj-ref-cell,
+        .evj-ref-cell .evj-name-sub {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .evj-name-sub {
+            margin-top: 0.15rem;
+            font-size: 0.74rem;
+            color: #64748b;
+        }
         .evj-status {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            padding: 0.28rem 0.7rem;
+            gap: 5px;
+            padding: 0.24rem 0.5rem;
             border-radius: 999px;
-            font-size: 0.76rem;
+            font-size: 0.7rem;
             font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
+            text-transform: lowercase;
+            letter-spacing: 0.01em;
             border: 1px solid transparent;
         }
         .evj-status--running { color: #9a6700; background: #fff7db; border-color: rgba(245, 158, 11, 0.28); }
@@ -1185,17 +1274,6 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             50% { transform: scale(1.2); opacity: 1; }
             100% { transform: scale(0.9); opacity: 0.55; }
         }
-        .evj-chip {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.22rem 0.52rem;
-            border-radius: 999px;
-            background: #f8fafc;
-            border: 1px solid rgba(148, 163, 184, 0.24);
-            color: #334155;
-            font-size: 0.74rem;
-            font-weight: 700;
-        }
         .evj-meta {
             color: #475569;
             font-size: 0.82rem;
@@ -1206,9 +1284,23 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             gap: 8px;
             margin-top: 0.7rem;
         }
+        .evj-toolbar-note {
+            margin: 0.15rem 0 0.35rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+        .evj-pager-note {
+            margin-top: 0.28rem;
+            font-size: 0.76rem;
+            color: #475569;
+            white-space: nowrap;
+        }
         .evj-cell {
             min-width: 0;
-            font-size: 0.82rem;
+            font-size: 0.78rem;
             color: #334155;
         }
         .evj-cell a {
@@ -1246,9 +1338,47 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-inline-stats {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
-            font-size: 0.82rem;
+            gap: 6px;
+            font-size: 0.76rem;
             color: #334155;
+        }
+        [class*="st-key-recent_eval_view_"] button,
+        [class*="st-key-recent_eval_run_"] button,
+        [class*="st-key-recent_eval_jobs_prev"] button,
+        [class*="st-key-recent_eval_jobs_next"] button,
+        [class*="st-key-refresh_recent_eval_jobs"] button {
+            min-height: 2rem;
+            padding: 0.18rem 0.58rem;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            box-shadow: none;
+        }
+        [class*="st-key-recent_eval_view_"] button,
+        [class*="st-key-recent_eval_jobs_prev"] button,
+        [class*="st-key-recent_eval_jobs_next"] button,
+        [class*="st-key-refresh_recent_eval_jobs"] button {
+            border-color: rgba(148, 163, 184, 0.34);
+            color: #334155;
+            background: #ffffff;
+        }
+        [class*="st-key-recent_eval_view_"] button:hover,
+        [class*="st-key-recent_eval_jobs_prev"] button:hover,
+        [class*="st-key-recent_eval_jobs_next"] button:hover,
+        [class*="st-key-refresh_recent_eval_jobs"] button:hover {
+            border-color: rgba(15, 118, 110, 0.28);
+            color: #0f766e;
+            background: #f8fffd;
+        }
+        [class*="st-key-recent_eval_run_"] button {
+            border-color: rgba(13, 148, 136, 0.22);
+            background: linear-gradient(180deg, #f0fdfa, #ecfeff);
+            color: #0f766e;
+        }
+        [class*="st-key-recent_eval_run_"] button:hover {
+            border-color: rgba(13, 148, 136, 0.34);
+            background: linear-gradient(180deg, #ccfbf1, #ecfeff);
+            color: #115e59;
         }
         .evj-stat-label {
             display: block;
@@ -1292,11 +1422,12 @@ def _inject_recent_evaluator_jobs_styles() -> None:
 def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
     """Render one recent evaluator job as a single-row list item."""
     variant = html.escape(job.get("status_variant", "unknown"))
-    status = html.escape(job.get("status", "unknown") or "unknown")
-    title_text = html.escape(job.get("target", "—"))
+    status = html.escape(_status_display_label(job.get("status", "unknown") or "unknown"))
+    title_text = html.escape(job.get("title", "—"))
     description = html.escape(job.get("description", "") or "")
     catalog = html.escape(job.get("catalog", "") or "—")
-    scheduled = html.escape(_format_jst_time(job.get("scheduled_at")))
+    catalog_url = html.escape(job.get("catalog_url", "") or "")
+    scheduled = html.escape(_format_jst_time_compact(job.get("scheduled_at")))
     duration = html.escape(job.get("duration", "—"))
     job_id = html.escape(str(job.get("job_id", "")))
     build_status = html.escape(job.get("build_status", "") or "—")
@@ -1304,10 +1435,10 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
     created_label = html.escape(job.get("created_label", "—"))
     git_sha = html.escape(job.get("git_sha", "") or "—")
     source_label = html.escape(job.get("source_label", "") or "—")
-    source_type = html.escape(job.get("source_type", "") or "")
     report_url = html.escape(job.get("report_url", "") or "")
     source_url = html.escape(job.get("git_ref_url", "") or job.get("source_url", "") or "")
     running_dot = '<span class="evj-dot evj-dot--pulse" aria-hidden="true"></span>' if job.get("status_variant") == "running" else '<span class="evj-dot" aria-hidden="true"></span>'
+    meta_line = f"id {job_id[:8]}"
     counts = (
         f'S <strong>{int(job.get("success", 0))}</strong> · '
         f'F <strong>{int(job.get("failed", 0))}</strong> · '
@@ -1319,29 +1450,30 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
         f'<a href="{source_url}" target="_blank" rel="noopener noreferrer">{source_label}</a>'
         if source_url else source_label
     )
+    catalog_html = (
+        f'<a href="{catalog_url}" target="_blank" rel="noopener noreferrer">{catalog}</a>'
+        if catalog_url else catalog
+    )
     st.markdown(
         f"""
         <div class="evj-card evj-card--{variant}">
           <div class="evj-row">
             <div class="evj-name">
               <div class="evj-title">{title_html}</div>
-              <div class="evj-name-sub">{description if description else f"job {job_id[:8]}"}</div>
+              <div class="evj-name-sub">{meta_line}</div>
             </div>
             <div class="evj-cell evj-cell--nowrap">
               <span class="evj-status evj-status--{variant}">{running_dot}{status}</span>
             </div>
             <div class="evj-cell">
-              <strong>{scheduled}</strong><br><span class="evj-name-sub">{created_label} · {duration}</span>
+              <strong>{scheduled}</strong><br><span class="evj-name-sub">{duration} · {created_label}</span>
             </div>
-            <div class="evj-cell">
-              <strong>{catalog}</strong><br><span class="evj-name-sub">{source_html}{f" ({source_type})" if source_type else ""}</span>
+            <div class="evj-cell evj-ref-cell">
+              <strong>{catalog_html}</strong><br><span class="evj-name-sub">{source_html}</span>
             </div>
             <div class="evj-cell">
               <span class="evj-name-sub">build {build_status} · test {test_status} · {git_sha}</span><br>
               <span class="evj-inline-stats">{counts}</span>
-            </div>
-            <div class="evj-cell evj-cell--nowrap">
-              <span class="evj-chip">job {job_id[:8]}</span>
             </div>
           </div>
         </div>
@@ -1372,10 +1504,11 @@ def _render_recent_evaluator_job_detail(project_id: str, environment: str, job: 
     overview_left, overview_right = st.columns([1.3, 1.1])
     with overview_left:
         st.write(f"Status: `{detail.get('status', 'unknown')}`")
+        st.write(f"Title: `{detail.get('title', '—')}`")
         st.write(f"Build/Test: `{detail.get('build_status', '—')}` / `{detail.get('test_status', '—')}`")
-        st.write(f"Target: `{detail.get('target', '—')}`")
+        st.write(f"Ref: `{detail.get('target', '—')}`")
         st.write(f"Catalog: `{detail.get('catalog', '—')}`")
-        st.write(f"Source: `{detail.get('source_label', '—')}`")
+        st.write(f"Repo: `{detail.get('source_repo_label', '—')}`")
     with overview_right:
         st.write(f"Scheduled: `{_format_jst_time(detail.get('scheduled_at'), include_seconds=True)}`")
         st.write(f"Started: `{_format_jst_time(detail.get('started_at'), include_seconds=True)}`")
@@ -1385,11 +1518,15 @@ def _render_recent_evaluator_job_detail(project_id: str, environment: str, job: 
 
     action_cols = st.columns([1.2, 1.2, 4])
     report_url = detail.get("report_url", "")
+    catalog_url = detail.get("catalog_url", "")
     source_url = detail.get("source_url", "") or detail.get("git_ref_url", "")
     with action_cols[0]:
         if report_url:
             st.link_button("Open report", report_url, use_container_width=True)
     with action_cols[1]:
+        if catalog_url:
+            st.link_button("Open catalog", catalog_url, use_container_width=True)
+    with action_cols[2]:
         if source_url:
             st.link_button("Open source", source_url, use_container_width=True)
 
@@ -1414,7 +1551,181 @@ def _render_recent_evaluator_job_detail(project_id: str, environment: str, job: 
         st.json(detail.get("raw_report", {}))
 
 
-def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> None:
+def _render_recent_evaluator_job_run_dialog(
+    project_id: str,
+    environment: str,
+    job: Dict[str, Any],
+    *,
+    output_path_default: str,
+    download_type_default: str,
+    phase_default: str,
+    skip_large_file_default: bool,
+    large_file_mb_default: float,
+    keep_zip_files_default: bool,
+) -> None:
+    """Render the dialog used to enqueue Download + Eval + Parquet from a recent job row."""
+    job_id = str(job.get("job_id", "") or "")
+    if not job_id:
+        st.error("Missing evaluator job id.")
+        return
+
+    detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
+    suite_options = _extract_suite_selection_options(detail.get("suite_rows") or [])
+    suite_label_to_id = {opt["label"]: opt["id"] for opt in suite_options}
+    suite_labels = [opt["label"] for opt in suite_options]
+
+    st.caption("Confirm the workflow options for this evaluator job, then start a background task.")
+    summary_cols = st.columns([1.45, 1.15, 1.35, 1.05])
+    summary_cols[0].markdown(f"**Title**  \n`{detail.get('title', '—')}`")
+    summary_cols[1].markdown(f"**Status**  \n`{detail.get('status', 'unknown')}`")
+    summary_cols[2].markdown(f"**Catalog**  \n`{detail.get('catalog', '—')}`")
+    summary_cols[3].markdown(f"**Cases**  \n`{int(detail.get('total', 0))}`")
+
+    with st.form(key=f"recent_eval_run_form_{job_id}", border=False):
+        run_output_path = st.text_input(
+            "Output path",
+            value=output_path_default,
+            help="Folder under the data directory. This uses the same safe path rules as the main download workflow.",
+        )
+
+        selected_suite_labels = st.multiselect(
+            "Suites to download (optional)",
+            options=suite_labels,
+            default=[],
+            help="Leave empty to download all suites from this evaluator job.",
+        )
+
+        run_download_type = st.radio(
+            "Download type",
+            ["Archives (ZIP)", "Result JSON only"],
+            index=0 if download_type_default == "Archives (ZIP)" else 1,
+            horizontal=True,
+        )
+
+        run_phase = ""
+        run_skip_large_file = False
+        run_large_file_mb = 50.0
+        run_keep_zip_files = False
+        if run_download_type == "Archives (ZIP)":
+            run_phase = st.text_input(
+                "Phase to extract",
+                value=phase_default,
+                help="Enter the phase name to extract from archives.",
+            )
+            opt_cols = st.columns([1.2, 1.3, 1.2])
+            with opt_cols[0]:
+                run_skip_large_file = st.checkbox(
+                    "Skip large files",
+                    value=skip_large_file_default,
+                    help="Skip unusually large archives during download.",
+                )
+            with opt_cols[1]:
+                run_large_file_mb = st.number_input(
+                    "Skip threshold (MB)",
+                    min_value=1.0,
+                    max_value=5000.0,
+                    step=1.0,
+                    value=float(large_file_mb_default),
+                )
+            with opt_cols[2]:
+                run_keep_zip_files = st.checkbox(
+                    "Keep ZIP files",
+                    value=keep_zip_files_default,
+                    help="Keep downloaded ZIPs after extraction.",
+                )
+
+        run_cols = st.columns([1.25, 1.25, 1.1])
+        with run_cols[0]:
+            run_eval = st.checkbox(
+                "Run evaluation",
+                value=True,
+                help="Run eval_result and generate Summary.csv / Score.csv after download.",
+            )
+        with run_cols[1]:
+            generate_parquet = st.checkbox(
+                "Generate parquet",
+                value=CATALOG_IO_AVAILABLE,
+                disabled=not CATALOG_IO_AVAILABLE,
+                help="Build scene_result.parquet from .pkl files." if CATALOG_IO_AVAILABLE else "Install perception_catalog_analyzer to enable this.",
+            )
+        with run_cols[2]:
+            eval_recursive = st.checkbox(
+                "Recursive eval",
+                value=True,
+                help="Search subdirectories for evaluation result folders.",
+            )
+
+        action_cols = st.columns([1.15, 1.15, 3.7])
+        cancel_clicked = action_cols[0].form_submit_button("Cancel", use_container_width=True)
+        start_clicked = action_cols[1].form_submit_button("Start", type="primary", use_container_width=True)
+
+    if cancel_clicked:
+        st.session_state.pop("recent_eval_jobs_run_selected", None)
+        st.rerun()
+
+    if not start_clicked:
+        return
+
+    resolved_output, path_err = resolve_under_data_root(run_output_path, allow_create=True)
+    if path_err:
+        st.error(f"Output path is invalid: {path_err}")
+        return
+
+    selected_suite_ids = [suite_label_to_id[label] for label in selected_suite_labels]
+    resolved_path_str = str(resolved_output)
+    set_config_value("output_path", to_data_relative(resolved_output))
+    set_config_value("environment", environment)
+    set_config_value("project_id", project_id)
+    set_config_value("job_id", job_id)
+    set_config_value("suite_id", "")
+    set_config_value("suite_ids", selected_suite_ids)
+    set_config_value("download_type", run_download_type)
+    if run_download_type == "Archives (ZIP)":
+        set_config_value("phase", run_phase)
+        set_config_value("skip_large_file", run_skip_large_file)
+        set_config_value("large_file_mb", run_large_file_mb)
+        set_config_value("keep_zip_files", run_keep_zip_files)
+
+    params = {
+        "output_path": resolved_path_str,
+        "project_id": project_id,
+        "job_id": job_id,
+        "suite_id": "",
+        "suite_ids": selected_suite_ids or None,
+        "download_type": "archives" if run_download_type == "Archives (ZIP)" else "result_json",
+        "phase": run_phase if run_download_type == "Archives (ZIP)" else "",
+        "skip_large_file": run_skip_large_file if run_download_type == "Archives (ZIP)" else False,
+        "large_file_mb": run_large_file_mb if run_download_type == "Archives (ZIP)" else 50.0,
+        "keep_zip_files": run_keep_zip_files if run_download_type == "Archives (ZIP)" else False,
+        "run_eval": run_eval,
+        "generate_parquet": generate_parquet,
+        "eval_recursive": eval_recursive,
+        "eval_overwrite": False,
+    }
+    task_id = _enqueue_task("download_and_eval", params)
+    if not task_id:
+        st.error("Failed to enqueue task. Check REDIS_URL and DATABASE_URL.")
+        return
+
+    st.session_state["recent_eval_jobs_flash"] = (
+        f"Queued Download + Eval + Parquet for `{detail.get('title', job_id)}`. "
+        f"Task id: `{task_id}`."
+    )
+    st.session_state.pop("recent_eval_jobs_run_selected", None)
+    st.rerun()
+
+
+def _render_recent_evaluator_jobs_section(
+    project_id: str,
+    environment: str,
+    *,
+    output_path_default: str,
+    download_type_default: str,
+    phase_default: str,
+    skip_large_file_default: bool,
+    large_file_mb_default: float,
+    keep_zip_files_default: bool,
+) -> None:
     """Render a direct evaluator-jobs browser above the download tabs."""
     _inject_recent_evaluator_jobs_styles()
     show_section = st.toggle(
@@ -1428,35 +1739,47 @@ def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> 
 
     st.subheader("Recent evaluator jobs")
     st.caption("Compact browser for recent evaluator jobs. Select one job to inspect detailed suite and failed-case information.")
+    flash_message = st.session_state.pop("recent_eval_jobs_flash", None)
+    if flash_message:
+        st.success(flash_message)
 
-    control_cols = st.columns([1.2, 1.8, 1.6, 1.1])
+    control_cols = st.columns([0.95, 1.45, 1.65, 0.9])
     with control_cols[0]:
+        st.markdown('<div class="evj-toolbar-note">Rows</div>', unsafe_allow_html=True)
         limit = int(
             st.selectbox(
-                "Jobs",
+                "Rows",
                 options=[6, 12, 20, 30],
                 index=1,
                 key="recent_eval_jobs_limit",
                 help="How many recent evaluator jobs to fetch for this project.",
+                label_visibility="collapsed",
             )
         )
     with control_cols[1]:
+        st.markdown('<div class="evj-toolbar-note">Status</div>', unsafe_allow_html=True)
         status_filter = st.multiselect(
-            "Status filter",
+            "Status",
             options=["running", "success", "failed", "canceled", "unknown"],
             default=[],
             key="recent_eval_jobs_status_filter",
             help="Leave empty to show all recent jobs.",
+            label_visibility="collapsed",
+            placeholder="All statuses",
         )
     with control_cols[2]:
+        st.markdown('<div class="evj-toolbar-note">Branch Or Tag</div>', unsafe_allow_html=True)
         branch_filter = st.text_input(
             "Branch/tag contains",
             value=st.session_state.get("recent_eval_jobs_branch_filter", ""),
             key="recent_eval_jobs_branch_filter",
             help="Optional substring filter for branch or tag name.",
+            label_visibility="collapsed",
+            placeholder="Filter by branch or tag",
         ).strip()
     with control_cols[3]:
-        if st.button("Refresh jobs", key="refresh_recent_eval_jobs", use_container_width=True):
+        st.markdown('<div class="evj-toolbar-note">Actions</div>', unsafe_allow_html=True)
+        if st.button("Refresh", key="refresh_recent_eval_jobs", use_container_width=True):
             _fetch_recent_evaluator_jobs.clear()
             _fetch_evaluator_job_detail.clear()
             st.rerun()
@@ -1506,23 +1829,23 @@ def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> 
             visible_jobs = jobs[start_idx:end_idx]
             has_next_page = total_loaded > current_page * limit
 
-        pager_cols = st.columns([1.1, 1.4, 4.5, 1.1, 1.1])
+        pager_cols = st.columns([0.9, 1.1, 5.2, 0.9, 1.2])
         with pager_cols[0]:
-            if st.button("Prev", key="recent_eval_jobs_prev", use_container_width=True, disabled=current_page <= 1):
+            if st.button("Back", key="recent_eval_jobs_prev", use_container_width=True, disabled=current_page <= 1):
                 st.session_state[page_key] = max(1, current_page - 1)
                 st.rerun()
         with pager_cols[1]:
             st.markdown(
-                f"<div class='evj-meta' style='margin-top:0.35rem;'><strong>Page {current_page}</strong></div>",
+                f"<div class='evj-pager-note'><strong>{current_page}</strong></div>",
                 unsafe_allow_html=True,
             )
         with pager_cols[3]:
-            if st.button("Next", key="recent_eval_jobs_next", use_container_width=True, disabled=not has_next_page):
+            if st.button("More", key="recent_eval_jobs_next", use_container_width=True, disabled=not has_next_page):
                 st.session_state[page_key] = current_page + 1
                 st.rerun()
         with pager_cols[4]:
             st.markdown(
-                f"<div class='evj-meta' style='margin-top:0.35rem; text-align:right;'>{total_loaded}+ loaded</div>",
+                f"<div class='evj-pager-note' style='text-align:right;'>{len(visible_jobs)} shown · {total_loaded}+ loaded</div>",
                 unsafe_allow_html=True,
             )
 
@@ -1531,16 +1854,28 @@ def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> 
             st.session_state.pop("recent_eval_jobs_selected", None)
             selected_job_id = None
 
+        selected_run_job_id = st.session_state.get("recent_eval_jobs_run_selected")
+        if selected_run_job_id and not any(str(job.get("job_id", "")) == str(selected_run_job_id) for job in jobs):
+            st.session_state.pop("recent_eval_jobs_run_selected", None)
+            selected_run_job_id = None
+
         st.markdown('<div class="evj-list">', unsafe_allow_html=True)
         for job in visible_jobs:
-            row_cols = st.columns([9.2, 1.0])
+            row_cols = st.columns([9.4, 2.0])
             with row_cols[0]:
                 _render_recent_evaluator_job_card(job)
             with row_cols[1]:
-                if st.button("View", key=f"recent_eval_view_{job['job_id']}", use_container_width=True):
-                    st.session_state["recent_eval_jobs_selected"] = str(job["job_id"])
-                    _fetch_evaluator_job_detail.clear()
-                    st.rerun()
+                action_cols = st.columns([1.0, 1.0], gap="small")
+                with action_cols[0]:
+                    if st.button("Details", key=f"recent_eval_view_{job['job_id']}", use_container_width=True):
+                        st.session_state["recent_eval_jobs_selected"] = str(job["job_id"])
+                        _fetch_evaluator_job_detail.clear()
+                        st.rerun()
+                with action_cols[1]:
+                    if st.button("Run", key=f"recent_eval_run_{job['job_id']}", use_container_width=True):
+                        st.session_state["recent_eval_jobs_run_selected"] = str(job["job_id"])
+                        _fetch_evaluator_job_detail.clear()
+                        st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
         selected_job_id = st.session_state.get("recent_eval_jobs_selected")
@@ -1549,7 +1884,7 @@ def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> 
             if selected_job:
                 if callable(getattr(st, "dialog", None)):
                     try:
-                        @st.dialog(f"Job details · {selected_job.get('target', '—')}", width="large")
+                        @st.dialog(f"Job details · {selected_job.get('title', '—')}", width="large")
                         def _recent_eval_job_dialog() -> None:
                             _render_recent_evaluator_job_detail(project_id, environment, selected_job)
                             if st.button("Close", key="recent_eval_jobs_close_detail", use_container_width=True):
@@ -1563,12 +1898,58 @@ def _render_recent_evaluator_jobs_section(project_id: str, environment: str) -> 
                     st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
                     hdr_cols = st.columns([4.4, 1.1])
                     with hdr_cols[0]:
-                        st.subheader(f"Job details · {selected_job.get('target', '—')}")
+                        st.subheader(f"Job details · {selected_job.get('title', '—')}")
                     with hdr_cols[1]:
                         if st.button("Close", key="recent_eval_jobs_close_detail_fallback", use_container_width=True):
                             st.session_state.pop("recent_eval_jobs_selected", None)
                             st.rerun()
                     _render_recent_evaluator_job_detail(project_id, environment, selected_job)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+        selected_run_job_id = st.session_state.get("recent_eval_jobs_run_selected")
+        if selected_run_job_id:
+            selected_run_job = next((job for job in jobs if str(job.get("job_id", "")) == str(selected_run_job_id)), None)
+            if selected_run_job:
+                if callable(getattr(st, "dialog", None)):
+                    try:
+                        @st.dialog(f"Download + Eval + Parquet · {selected_run_job.get('title', '—')}", width="large")
+                        def _recent_eval_run_dialog() -> None:
+                            _render_recent_evaluator_job_run_dialog(
+                                project_id,
+                                environment,
+                                selected_run_job,
+                                output_path_default=output_path_default,
+                                download_type_default=download_type_default,
+                                phase_default=phase_default,
+                                skip_large_file_default=skip_large_file_default,
+                                large_file_mb_default=large_file_mb_default,
+                                keep_zip_files_default=keep_zip_files_default,
+                            )
+
+                        _recent_eval_run_dialog()
+                    finally:
+                        if st.session_state.get("recent_eval_jobs_run_selected") == str(selected_run_job_id):
+                            st.session_state.pop("recent_eval_jobs_run_selected", None)
+                else:
+                    st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
+                    hdr_cols = st.columns([4.4, 1.1])
+                    with hdr_cols[0]:
+                        st.subheader(f"Download + Eval + Parquet · {selected_run_job.get('title', '—')}")
+                    with hdr_cols[1]:
+                        if st.button("Close", key="recent_eval_jobs_close_run_fallback", use_container_width=True):
+                            st.session_state.pop("recent_eval_jobs_run_selected", None)
+                            st.rerun()
+                    _render_recent_evaluator_job_run_dialog(
+                        project_id,
+                        environment,
+                        selected_run_job,
+                        output_path_default=output_path_default,
+                        download_type_default=download_type_default,
+                        phase_default=phase_default,
+                        skip_large_file_default=skip_large_file_default,
+                        large_file_mb_default=large_file_mb_default,
+                        keep_zip_files_default=keep_zip_files_default,
+                    )
                     st.markdown("</div>", unsafe_allow_html=True)
 
     _render_job_list()
@@ -1768,7 +2149,18 @@ with st.sidebar:
         skip_large_file = False
         large_file_mb = 50.0  # Doesn't apply
 
-_render_recent_evaluator_jobs_section(project_id, environment)
+_render_recent_evaluator_jobs_section(
+    project_id,
+    environment,
+    output_path_default=output_path,
+    download_type_default=download_type,
+    phase_default=phase if download_type == "Archives (ZIP)" else get_config_value(
+        "phase", "perception.object_recognition.tracking.objects"
+    ),
+    skip_large_file_default=skip_large_file,
+    large_file_mb_default=large_file_mb,
+    keep_zip_files_default=bool(get_config_value("keep_zip_files", False)) if download_type == "Archives (ZIP)" else False,
+)
 
 st.markdown('<p class="dl-tabs-rail">Pick a workflow</p>', unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(
