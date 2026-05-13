@@ -35,6 +35,8 @@ from lib.ui.download_ui import (
 )
 from lib.ui.styles_download import inject_download_page_styles
 from lib.ui.styles_global import inject_app_page_styles
+from lib.ui.task_history import get_task_list_current_user, render_task_detail_content, render_task_list
+from lib.ui.task_result_summary import render_summary_table, render_task_result_summary
 
 __all__ = [
     "ImpressiveProgressHUD",
@@ -62,6 +64,11 @@ __all__ = [
     "render_job_json_summary_panel",
     "render_recent_scenario_downloads_intro",
     "render_scenario_download_summary_panel",
+    "get_task_list_current_user",
+    "render_summary_table",
+    "render_task_detail_content",
+    "render_task_list",
+    "render_task_result_summary",
     "render_kpi_card",
     "section_header_html",
 ]

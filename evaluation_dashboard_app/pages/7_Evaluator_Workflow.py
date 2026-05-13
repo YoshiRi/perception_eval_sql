@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Optional
 
 from lib.WebAPI import scenarioAPI
+from lib.ui.download_ui import render_download_task_section_header
+from lib.ui.task_history import get_task_list_current_user, render_task_list
+from lib.ui.styles_download import inject_download_page_styles
 from lib.user_config import UserConfig
 
 # Initialize or load user config
@@ -38,6 +41,7 @@ except ImportError:
 # JST timezone for display
 _JST = timezone(timedelta(hours=9))
 _TASK_LIST_MAX_ROWS = 200
+_TASK_LIST_SINCE_DAYS = 7
 
 
 def _to_jst(dt):
@@ -83,86 +87,41 @@ def _load_catalog_presets():
     return presets, loaded_path, load_error
 
 
-def _enqueue_task(queue_name: str, params: dict) -> Optional[str]:
+def _enqueue_task(task_type: str, params: dict) -> Optional[str]:
     try:
+        session_id = get_task_list_current_user()
+        task_id = create_task(task_type, params, session_id=session_id)
+        if not task_id:
+            return None
         from redis import Redis
         from rq import Queue
         import os
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         redis_conn = Redis.from_url(redis_url)
-        q = Queue(name=queue_name, connection=redis_conn, default_timeout="7d")
-        from worker.tasks import job_run_evaluator_and_process
-        job = q.enqueue(job_run_evaluator_and_process, kwargs=params, job_timeout="7d", result_ttl="7d")
-        user_id = None
-        try:
-            from lib.auth import get_current_user_id
-            user_id = get_current_user_id()
-        except Exception:
-            pass
-        create_task(
-            task_id=job.id,
-            task_type="run_evaluator_and_process",
-            description=f"Evaluator workflow: {params.get('description', 'no description')}",
-            parameters=params,
-            created_by=user_id,
+        q = Queue(name=os.environ.get("RQ_QUEUE", "default"), connection=redis_conn, default_timeout="7d")
+        from worker.tasks import run_job
+        job = q.enqueue(
+            run_job,
+            task_id,
+            task_type,
+            params,
+            job_timeout="7d",
+            result_ttl="7d",
         )
-        return job.id
+        rq_id = getattr(job, "id", None)
+        if rq_id:
+            from lib.db import update_task_rq_job_id
+            update_task_rq_job_id(task_id, str(rq_id))
+        return task_id
     except Exception as e:
         st.error(f"Failed to enqueue task: {e}")
         return None
 
 
-def render_task_row(task):
-    """Render a single task row."""
-    status = task.get("status", "unknown")
-    task_id = task.get("task_id", "")
-    description = task.get("description", "")[:70]
-    created = task.get("created_at")
-    created_str = _to_jst(created).strftime("%m/%d %H:%M") if created else "N/A"
-
-    status_config = {
-        "running": {"color": "#f59e0b", "bg": "#fffbeb"},
-        "finished": {"color": "#10b981", "bg": "#ecfdf5"},
-        "failed": {"color": "#ef4444", "bg": "#fef2f2"},
-        "queued": {"color": "#6b7280", "bg": "#f9fafb"},
-    }
-    cfg = status_config.get(status, status_config["queued"])
-
-    st.markdown(
-        f"""
-        <div style="
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 16px 20px;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        ">
-            <div style="flex: 1;">
-                <code style="font-size: 11px; background: #f1f5f9; padding: 3px 8px; border-radius: 6px; color: #475569;">{task_id[:24]}...</code>
-                <div style="margin-top: 6px; font-size: 14px; color: #374151;">{description}</div>
-                <div style="margin-top: 4px; font-size: 12px; color: #94a3b8;">🕐 {created_str}</div>
-            </div>
-            <div style="
-                background: {cfg['bg']};
-                color: {cfg['color']};
-                padding: 6px 14px;
-                border-radius: 20px;
-                font-size: 12px;
-                font-weight: 700;
-                text-transform: uppercase;
-            ">{status}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 # Page config
 st.set_page_config(page_title="Evaluator Workflow", layout="wide", initial_sidebar_state="expanded")
 inject_app_page_styles()
+inject_download_page_styles()
 
 # Load catalog presets
 CATALOG_PRESETS, CATALOGS_PATH, catalog_load_error = _load_catalog_presets()
@@ -393,50 +352,39 @@ if clicked:
 # ============================================
 # TASK STATUS
 # ============================================
-st.markdown('<div class="section-title">📋 Recent Tasks</div>', unsafe_allow_html=True)
-
 if not is_task_queue_enabled():
     st.info("Task queue not enabled. Set `USE_TASK_QUEUE=true` to track background tasks.")
 else:
-    tasks = list_recent_tasks(limit=_TASK_LIST_MAX_ROWS)
-    running = len([t for t in tasks if t.get("status") == "running"])
-    finished = len([t for t in tasks if t.get("status") == "finished"])
-    failed = len([t for t in tasks if t.get("status") == "failed"])
-
-    # Metrics row
-    m1, m2, m3, m4 = st.columns([1, 1, 1, 2])
-    m1.metric("⏳ Running", running)
-    m2.metric("✅ Finished", finished)
-    m3.metric("❌ Failed", failed)
-    filter_status = m4.selectbox("Filter", ["All", "Running", "Finished", "Failed", "Queued"], index=0, label_visibility="collapsed")
-
-    filtered = tasks if filter_status == "All" else [t for t in tasks if t.get("status") == filter_status.lower()]
-
-    # Task list
-    for task in filtered[:10]:
-        status = task.get("status", "unknown")
-        task_id_str = task.get("task_id", "")[:24]
-        desc = task.get("description", "No description")[:60]
-        created = task.get("created_at")
-        created_str = _to_jst(created).strftime("%m/%d %H:%M") if created else "N/A"
-
-        st.markdown(f"""
-        <div class="task-card">
-            <div class="info">
-                <span class="task-id">{task_id_str}...</span>
-                <div class="desc">{desc}</div>
-                <div class="time">🕐 {created_str}</div>
-            </div>
-            <div class="status status-{status}">{status}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if task.get("error"):
-            with st.expander("❌ Error details"):
-                st.code(task["error"])
-
-    if len(filtered) > 10:
-        st.caption(f"Showing 10 of {len(filtered)} tasks")
+    current_user = get_task_list_current_user()
+    render_download_task_section_header(
+        since_days=_TASK_LIST_SINCE_DAYS,
+        max_rows=_TASK_LIST_MAX_ROWS,
+    )
+    use_fragment = getattr(st, "fragment", None) is not None
+    if use_fragment:
+        try:
+            @st.fragment(run_every=timedelta(seconds=3))
+            def _task_list_poll():
+                current_tasks = list_recent_tasks(
+                    limit=_TASK_LIST_MAX_ROWS,
+                    session_id=current_user,
+                    since_days=_TASK_LIST_SINCE_DAYS,
+                )
+                render_task_list(current_tasks, current_user)
+            _task_list_poll()
+        except (TypeError, AttributeError):
+            use_fragment = False
+    if not use_fragment:
+        tasks = list_recent_tasks(
+            limit=_TASK_LIST_MAX_ROWS,
+            session_id=current_user,
+            since_days=_TASK_LIST_SINCE_DAYS,
+        )
+        has_active = render_task_list(tasks, current_user)
+        if st.button("Refresh task list", key="refresh_tasks_workflow"):
+            st.rerun()
+        if has_active:
+            st.info("You have running tasks. Refresh the page to see latest status and logs.")
 
 st.sidebar.divider()
 st.sidebar.caption("💡 Runs async — close browser safely")

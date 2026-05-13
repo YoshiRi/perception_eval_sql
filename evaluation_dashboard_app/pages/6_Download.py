@@ -42,7 +42,6 @@ from lib.eval_summary import find_eval_result_dirs, run_eval_result_for_dir, gen
 from lib.page_chrome import inject_app_page_styles
 from lib.ui.download_ui import (
     ImpressiveProgressHUD,
-    TaskCardMode,
     render_detailed_scenario_download_panel,
     render_download_hero,
     render_download_status_table_intro,
@@ -51,9 +50,8 @@ from lib.ui.download_ui import (
     render_job_json_summary_panel,
     render_recent_scenario_downloads_intro,
     render_scenario_download_summary_panel,
-    render_task_list_empty_state,
-    task_list_card_markup,
 )
+from lib.ui.task_history import get_task_list_current_user, render_task_list
 from lib.ui.styles_download import inject_download_page_styles
 from lib.db import (
     create_task,
@@ -829,408 +827,10 @@ render_download_hero(queue_enabled=is_task_queue_enabled())
 
 
 
-def _task_type_label(task_type: str) -> str:
-    """Human-readable label for task type."""
-    labels = {
-        "download_results": "Download results",
-        "download_scenarios": "Download scenarios",
-        "run_eval_dirs": "Run eval dirs",
-        "generate_summary_csv": "Generate summary CSV",
-        "build_parquet": "Build parquet",
-        "download_and_eval": "Download + Eval",
-        "run_evaluator_and_process": "Run Evaluator + Process",
-    }
-    return labels.get(task_type, task_type or "Task")
-
-
-def _task_summary(t: Dict[str, Any]) -> str:
-    """One-line summary from task parameters (job_id, output_path, etc.)."""
-    params = t.get("parameters") or {}
-    task_type = t.get("type", "")
-    if task_type == "download_results":
-        out = params.get("output_path") or params.get("job_id") or ""
-        return f"job_id={params.get('job_id', '')} → {out}"
-    if task_type == "download_scenarios":
-        out = params.get("output_dir") or params.get("output_path") or ""
-        return f"job_id={params.get('job_id', '')} → {out}"
-    if task_type in ("run_eval_dirs", "generate_summary_csv"):
-        return params.get("eval_root", "")
-    if task_type == "build_parquet":
-        return params.get("pkl_dir", "")
-    if task_type == "download_and_eval":
-        out = params.get("output_path") or params.get("job_id") or ""
-        parts = ["download"]
-        if params.get("run_eval"):
-            parts.append("eval")
-        if params.get("generate_parquet"):
-            parts.append("parquet")
-        return f"job_id={params.get('job_id', '')} [{'+'.join(parts)}] → {out}"
-    if task_type == "run_evaluator_and_process":
-        target = params.get("target_name", "")
-        is_tag = params.get("is_tag", False)
-        target_type = "tag" if is_tag else "branch"
-        return f"{target_type}={target} → {params.get('output_path', '')}"
-    return ""
-
-
-def _task_time_str(t: Dict[str, Any]) -> str:
-    """Format task created_at for display in JST (e.g. 'Feb 24, 16:45')."""
-    created = t.get("created_at")
-    dt = _to_jst(created) if created else None
-    if not dt:
-        return "—"
-    try:
-        return dt.strftime("%b %d, %H:%M")
-    except Exception:
-        return str(created)[:16] if created else "—"
-
-
-def _task_duration(t: Dict[str, Any]) -> Optional[str]:
-    """Format duration from created_at to updated_at if both exist."""
-    created = t.get("created_at")
-    updated = t.get("updated_at")
-    if not created or not updated:
-        return None
-    try:
-        start = created.timestamp() if hasattr(created, "timestamp") else None
-        end = updated.timestamp() if hasattr(updated, "timestamp") else None
-        if start is None or end is None:
-            return None
-        secs = int(end - start)
-        if secs < 60:
-            return f"{secs}s"
-        if secs < 3600:
-            return f"{secs // 60}m {secs % 60}s"
-        return f"{secs // 3600}h {(secs % 3600) // 60}m"
-    except Exception:
-        return None
-
-
-def _render_summary_table(rows: Optional[List[Dict[str, Any]]]) -> None:
-    """Render a summary table from rows (e.g. Scenario Name, Scenario ID, Status) when present."""
-    if not rows:
-        return
-    try:
-        df = pd.DataFrame(rows)
-        st.subheader("Download Status")
-        st.dataframe(df, width="stretch")
-    except Exception:
-        pass
-
-
-def _render_result_summary(summary: Dict[str, Any]) -> None:
-    """Render a result summary block (like local mode) from task result_summary JSON."""
-    job = summary.get("job", "")
-    if job == "download_results":
-        total = summary.get("total", 0)
-        success = summary.get("success", 0)
-        failed = summary.get("failed", 0)
-        out = summary.get("output_path", "")
-        st.subheader("Summary")
-        st.write(f"- Total scenarios processed: **{total}**")
-        st.write(f"- Successfully downloaded: **{success}**")
-        if failed:
-            st.write(f"- Failed: **{failed}**")
-        st.write(f"- Output directory: `{out}`")
-        if success > 0:
-            st.info("To generate the final summary CSV files, go to the **Eval Results** tab and run the evaluation.")
-        _render_summary_table(summary.get("rows"))
-    elif job == "download_scenarios":
-        total = summary.get("total", 0)
-        success = summary.get("success", 0)
-        failed = summary.get("failed", 0)
-        out = summary.get("output_path", "")
-        st.subheader("Summary")
-        st.write(f"- Total scenarios: **{total}**")
-        st.write(f"- Successfully downloaded: **{success}**")
-        if failed:
-            st.write(f"- Failed: **{failed}**")
-        st.write(f"- Result JSON files: **{total}** downloaded.")
-        st.write(f"- Output directory: `{out}`")
-        if success > 0:
-            st.info("To generate summary CSV files, go to the **Eval Results** tab and run the evaluation.")
-        _render_summary_table(summary.get("rows"))
-    elif job == "run_eval_dirs":
-        dirs = summary.get("directories_processed", 0)
-        path = summary.get("summary_path", "")
-        srows = summary.get("summary_rows", 0)
-        scrows = summary.get("score_rows", 0)
-        st.subheader("Eval Summary")
-        st.write(f"- Directories processed: **{dirs}**")
-        st.write(f"- Generated Summary.csv (**{srows}** rows) and Score.csv (**{scrows}** rows) in `{path}`")
-    elif job == "generate_summary_csv":
-        path = summary.get("summary_path", "")
-        srows = summary.get("summary_rows", 0)
-        scrows = summary.get("score_rows", 0)
-        st.subheader("Summary")
-        st.write(f"- Generated Summary.csv (**{srows}** rows) and Score.csv (**{scrows}** rows) in `{path}`")
-    elif job == "build_parquet":
-        path = summary.get("output_path", "")
-        st.subheader("Summary")
-        st.write(f"- Output: `{path}`")
-    elif job == "download_and_eval":
-        dl_summary = summary.get("download_summary", {})
-        eval_summary_data = summary.get("eval_summary", {})
-        parquet_path = summary.get("parquet_path", "")
-        errors = summary.get("errors", [])
-        
-        st.subheader("Download + Eval + Parquet Summary")
-        
-        # Download summary
-        dl_success = summary.get("download_success", False)
-        if dl_success:
-            st.write("✅ **Download: SUCCESS**")
-            st.write(f"   - Total: **{dl_summary.get('total', 0)}**, Success: **{dl_summary.get('success', 0)}**, Failed: **{dl_summary.get('failed', 0)}**")
-        else:
-            st.write("❌ **Download: FAILED**")
-            if errors:
-                for err in errors:
-                    st.write(f"   - {err}")
-        
-        # Eval summary
-        if eval_summary_data:
-            st.write("✅ **Eval: SUCCESS**")
-            st.write(f"   - Directories processed: **{eval_summary_data.get('directories_processed', 0)}**")
-            st.write(f"   - Summary.csv: **{eval_summary_data.get('summary_rows', 0)}** rows, Score.csv: **{eval_summary_data.get('score_rows', 0)}** rows")
-        
-        # Parquet summary
-        if parquet_path:
-            st.write(f"✅ **Parquet: SUCCESS** → `{parquet_path}`")
-        
-        # Show errors
-        if errors:
-            st.error("Errors during execution:")
-            for err in errors:
-                st.write(f"- {err}")
-    elif job == "run_evaluator_and_process":
-        evaluator_job_id = summary.get("evaluator_job_id", "")
-        evaluator_report_url = summary.get("evaluator_report_url", "")
-        evaluator_status = summary.get("evaluator_status", "unknown")
-        dl_summary = summary.get("download_summary", {})
-        eval_summary_data = summary.get("eval_summary", {})
-        parquet_path = summary.get("parquet_path", "")
-        
-        st.subheader("Run Evaluator + Download + Eval + Parquet Summary")
-        
-        # Evaluator summary
-        st.write("🎯 **Evaluator**")
-        st.write(f"   - Job ID: `{evaluator_job_id}`")
-        st.write(f"   - Status: **{evaluator_status}**")
-        if evaluator_report_url:
-            st.markdown(f"   - Report: [Open]({evaluator_report_url})")
-        
-        # Download summary
-        dl_total = dl_summary.get("total", 0)
-        dl_success = dl_summary.get("success", 0)
-        dl_failed = dl_summary.get("failed", 0)
-        st.write("📥 **Download**")
-        st.write(f"   - Total: **{dl_total}**, Success: **{dl_success}**, Failed: **{dl_failed}**")
-        
-        # Eval summary
-        if eval_summary_data:
-            st.write("🧮 **Evaluation**")
-            st.write(f"   - Directories processed: **{eval_summary_data.get('directories_processed', 0)}**")
-            st.write(f"   - Success: **{eval_summary_data.get('success', 0)}**, Failed: **{eval_summary_data.get('failed', 0)}**")
-            st.write(f"   - Summary.csv: **{eval_summary_data.get('summary_rows', 0)}** rows, Score.csv: **{eval_summary_data.get('score_rows', 0)}** rows")
-        
-        # Parquet summary
-        if parquet_path:
-            st.write("📦 **Parquet**")
-            st.write(f"   - Output: `{parquet_path}`")
-        
-        # Show report URL prominently
-        if evaluator_report_url:
-            st.markdown(f"### [📊 View Evaluator Report]({evaluator_report_url})")
-    else:
-        st.json(summary)
-
-
-def _render_task_detail_content(t: Dict[str, Any]) -> None:
-    """Render full task detail (summary, path, error, log, params) into current container."""
-    try:
-        _render_task_detail_content_impl(t)
-    except Exception as e:
-        st.error(f"Could not load task details: {e}")
-        import traceback
-        st.code(traceback.format_exc(), language=None)
-
-
-def _render_task_detail_content_impl(t: Dict[str, Any]) -> None:
-    """Implementation of task detail rendering (called inside try/except)."""
-    status = t.get("status", "")
-    created_jst = _to_jst(t.get("created_at"))
-    updated_jst = _to_jst(t.get("updated_at"))
-    time_parts = []
-    if created_jst:
-        try:
-            time_parts.append(f"Created: {created_jst.strftime('%Y-%m-%d %H:%M:%S')} JST")
-        except Exception:
-            time_parts.append(f"Created: {t.get('created_at')}")
-    if updated_jst and updated_jst != created_jst:
-        try:
-            time_parts.append(f"Updated: {updated_jst.strftime('%Y-%m-%d %H:%M:%S')} JST")
-        except Exception:
-            time_parts.append(f"Updated: {t.get('updated_at')}")
-    if time_parts:
-        st.caption(" · ".join(time_parts))
-    result_summary_raw = t.get("result_summary")
-    if result_summary_raw:
-        try:
-            result_summary = json.loads(result_summary_raw) if isinstance(result_summary_raw, str) else result_summary_raw
-            _render_result_summary(result_summary)
-            st.markdown("---")
-        except (TypeError, ValueError):
-            pass
-    if t.get("result_path"):
-        st.text_input("Result path", value=t["result_path"], key=f"rp_modal_{str(t.get('id'))}", disabled=True, label_visibility="collapsed")
-    if status == "failed" and t.get("error_message"):
-        st.error(t.get("error_message"))
-    log_output = (t.get("log_output") or "").strip()
-    if log_output:
-        st.caption("Log output")
-        st.code(log_output, language=None)
-    params = t.get("parameters") or {}
-    if params:
-        st.caption("Parameters")
-        st.json(params)
-
-
-def _open_task_detail(task_id: str) -> None:
-    st.session_state["_task_detail_id"] = str(task_id)
-
-
-def _render_one_task_row(
-    t: Dict[str, Any],
-    current_user: Optional[str],
-    use_dialog: bool,
-    *,
-    mode: TaskCardMode,
-) -> None:
-    """One task: compact card + View/Delete (and inline More when no dialog)."""
-    task_id = t.get("id", "")
-    task_type = t.get("type", "")
-    status = t.get("status", "")
-    status_labels = {"pending": "Pending", "running": "Running", "completed": "Completed", "failed": "Failed"}
-    status_label = status_labels.get(status, status)
-    type_label = _task_type_label(task_type)
-    summary = _task_summary(t)
-    duration = _task_duration(t) or "—"
-    time_str = _task_time_str(t)
-    sid = str(task_id)
-    if mode == "history":
-        summary_short = (summary[:72] + "…") if summary and len(summary) > 72 else (summary or "—")
-    else:
-        summary_short = "—"
-    progress_msg = (t.get("progress_message") or "").strip()
-    _card = task_list_card_markup(
-        task_id=sid,
-        type_label=type_label,
-        status=status,
-        status_label=status_label,
-        time_str=time_str,
-        duration=duration,
-        summary_short=summary_short,
-        progress_pct=t.get("progress_pct"),
-        progress_message=progress_msg,
-        mode=mode,
-    )
-    st.markdown(f'<div class="dl-task-stack">{_card}</div>', unsafe_allow_html=True)
-
-    if use_dialog:
-        bv, bd, _sp = st.columns([1.15, 1.15, 4])
-        with bv:
-            st.button("View", key=f"view_{sid}", on_click=_open_task_detail, args=(sid,))
-        with bd:
-            _stop_lbl = "Stop" if status in ("pending", "running") else "Remove"
-            _stop_help = (
-                "Cancels the Redis/RQ job when possible, then removes this row from the list."
-                if status in ("pending", "running")
-                else "Remove this row from the task list."
-            )
-            if st.button(
-                _stop_lbl,
-                key=f"del_{sid}",
-                type="secondary",
-                help=_stop_help,
-            ):
-                delete_task(sid, session_id=current_user)
-                st.rerun()
-    else:
-        bd, _sp = st.columns([1.15, 4])
-        with bd:
-            _stop_lbl = "Stop" if status in ("pending", "running") else "Remove"
-            _stop_help = (
-                "Cancels the Redis/RQ job when possible, then removes this row from the list."
-                if status in ("pending", "running")
-                else "Remove this row from the task list."
-            )
-            if st.button(
-                _stop_lbl,
-                key=f"del_{sid}",
-                type="secondary",
-                help=_stop_help,
-            ):
-                delete_task(sid, session_id=current_user)
-                st.rerun()
-
-    if not use_dialog:
-        with st.expander("More", expanded=False):
-            _render_task_detail_content(t)
-
-
-def _render_task_list(tasks: List[Dict[str, Any]], current_user: Optional[str]) -> bool:
-    """Active tasks visible; completed/failed in a collapsed expander. True if any active."""
-    if current_user:
-        st.caption(f"Logged in as **{current_user}** · your recent tasks only")
-    if not tasks:
-        render_task_list_empty_state()
-        return False
-
-    active = [t for t in tasks if t.get("status") in ("pending", "running")]
-    history = [t for t in tasks if t.get("status") not in ("pending", "running")]
-    use_dialog = callable(getattr(st, "dialog", None))
-
-    for t in active:
-        _render_one_task_row(t, current_user, use_dialog, mode="active_compact")
-
-    if not active:
-        st.caption("No queued or running jobs.")
-
-    if history:
-        with st.expander(f"Task history ({len(history)})", expanded=False):
-            for t in history:
-                _render_one_task_row(t, current_user, use_dialog, mode="history")
-
-    # Modal for task detail when dialog is available
-    if use_dialog and st.session_state.get("_task_detail_id"):
-        _task_id = st.session_state["_task_detail_id"]
-        try:
-            detail_task = next((x for x in tasks if str(x.get("id")) == _task_id), None)
-            if detail_task is None:
-                detail_task = get_task(_task_id)
-            if detail_task:
-
-                @st.dialog("Task details", width="large")
-                def _task_detail_modal():
-                    _render_task_detail_content(detail_task)
-                    if st.button("Close"):
-                        st.session_state.pop("_task_detail_id", None)
-                        st.rerun()
-
-                _task_detail_modal()
-        except Exception as e:
-            st.error(f"Could not open task details: {e}")
-        finally:
-            # Clear so X/outside click or error doesn't leave page stuck; next run shows main content
-            st.session_state.pop("_task_detail_id", None)
-
-    return len(active) > 0
-
-
 # Task queue status (production deployment); per-user when auth is enabled
 _current_user = None
 if is_task_queue_enabled():
-    _current_user = get_current_user_id() if is_auth_enabled() else None
+    _current_user = get_task_list_current_user()
     render_download_task_section_header(
         since_days=_TASK_LIST_SINCE_DAYS,
         max_rows=_TASK_LIST_MAX_ROWS,
@@ -1245,7 +845,7 @@ if is_task_queue_enabled():
                     session_id=_current_user,
                     since_days=_TASK_LIST_SINCE_DAYS,
                 )
-                _render_task_list(_t, _current_user)
+                render_task_list(_t, _current_user)
             _task_list_poll()
         except (TypeError, AttributeError):
             _use_fragment = False
@@ -1255,7 +855,7 @@ if is_task_queue_enabled():
             session_id=_current_user,
             since_days=_TASK_LIST_SINCE_DAYS,
         )
-        has_active = _render_task_list(tasks, _current_user)
+        has_active = render_task_list(tasks, _current_user)
         if st.button("Refresh task list", key="refresh_tasks"):
             st.rerun()
         if has_active:
@@ -2430,6 +2030,3 @@ with tab4:
                         _emit_eval_finished_notification(
                             f"Eval run finished with CSV error. Success: {success_count}, Skipped: {skipped_count}, Failed: {failed_count}. {e}"
                         )
-
-
-
