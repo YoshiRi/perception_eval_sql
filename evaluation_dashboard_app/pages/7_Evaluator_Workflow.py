@@ -22,7 +22,7 @@ def set_config_value(key, value):
     _user_config.set(key, value)
 
 from lib.path_utils import get_data_root, resolve_under_data_root
-from lib.page_chrome import inject_app_page_styles
+from lib.page_chrome import inject_app_page_styles, render_page_hero
 from lib.db import (
     create_task,
     is_task_queue_enabled,
@@ -164,181 +164,6 @@ def render_task_row(task):
 st.set_page_config(page_title="Evaluator Workflow", layout="wide", initial_sidebar_state="expanded")
 inject_app_page_styles()
 
-# Beautiful CSS
-st.markdown("""
-<style>
-    /* Hero Section */
-    .hero {
-        background: linear-gradient(135deg, #0d9488 0%, #0891b2 50%, #0284c7 100%);
-        border-radius: 20px;
-        padding: 40px;
-        margin-bottom: 32px;
-        color: white;
-        text-align: center;
-        position: relative;
-        overflow: hidden;
-    }
-    .hero::before {
-        content: "";
-        position: absolute;
-        top: -50%;
-        right: -30%;
-        width: 500px;
-        height: 500px;
-        background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 60%);
-        pointer-events: none;
-    }
-    .hero h1 {
-        font-size: 2.5rem;
-        font-weight: 800;
-        margin: 0 0 12px 0;
-        letter-spacing: -0.02em;
-    }
-    .hero p {
-        font-size: 1.1rem;
-        opacity: 0.9;
-        margin: 0;
-    }
-    
-    /* Config Card */
-    .config-card {
-        background: white;
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 24px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-    }
-    .config-card h3 {
-        margin: 0 0 16px 0;
-        color: #0f172a;
-        font-size: 1rem;
-        font-weight: 700;
-    }
-    
-    /* Pipeline Steps */
-    .pipeline {
-        display: flex;
-        justify-content: center;
-        gap: 8px;
-        margin: 24px 0;
-        flex-wrap: wrap;
-    }
-    .pipeline-step {
-        background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
-        border: 1px solid #99f6e4;
-        border-radius: 10px;
-        padding: 12px 18px;
-        text-align: center;
-        flex: 1;
-        max-width: 150px;
-        min-width: 100px;
-    }
-    .pipeline-step .num {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        background: #0d9488;
-        color: white;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 14px;
-        margin-bottom: 6px;
-    }
-    .pipeline-step .title {
-        font-size: 12px;
-        font-weight: 600;
-        color: #0f766e;
-    }
-    .pipeline-arrow {
-        display: flex;
-        align-items: center;
-        color: #99f6e4;
-        font-size: 20px;
-    }
-    
-    /* Task Card */
-    .task-card {
-        background: white;
-        border-radius: 14px;
-        padding: 20px;
-        margin-bottom: 12px;
-        border: 1px solid #e2e8f0;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        transition: all 0.2s ease;
-    }
-    .task-card:hover {
-        border-color: #0d9488;
-        box-shadow: 0 4px 12px rgba(13,148,136,0.1);
-    }
-    .task-card .info {
-        flex: 1;
-    }
-    .task-card .task-id {
-        font-family: monospace;
-        font-size: 11px;
-        background: #f1f5f9;
-        padding: 4px 10px;
-        border-radius: 6px;
-        color: #64748b;
-    }
-    .task-card .desc {
-        margin-top: 8px;
-        font-size: 14px;
-        color: #334155;
-    }
-    .task-card .time {
-        margin-top: 4px;
-        font-size: 12px;
-        color: #94a3b8;
-    }
-    .task-card .status {
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-    }
-    .status-running { background: #fef3c7; color: #d97706; }
-    .status-finished { background: #d1fae5; color: #059669; }
-    .status-failed { background: #fee2e2; color: #dc2626; }
-    .status-queued { background: #f1f5f9; color: #64748b; }
-    
-    /* Section Title */
-    .section-title {
-        font-size: 1.2rem;
-        font-weight: 700;
-        color: #0f172a;
-        margin: 32px 0 16px 0;
-        padding-left: 12px;
-        border-left: 4px solid #0d9488;
-    }
-    
-    /* Start Button */
-    .start-btn {
-        background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
-        color: white;
-        border: none;
-        padding: 20px 48px;
-        border-radius: 14px;
-        font-size: 1.2rem;
-        font-weight: 700;
-        width: 100%;
-        cursor: pointer;
-        box-shadow: 0 8px 24px rgba(13,148,136,0.35);
-        transition: all 0.3s ease;
-    }
-    .start-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 12px 32px rgba(13,148,136,0.45);
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # Load catalog presets
 CATALOG_PRESETS, CATALOGS_PATH, catalog_load_error = _load_catalog_presets()
 catalog_names = [c["display_name"] for c in CATALOG_PRESETS]
@@ -346,12 +171,11 @@ catalog_names = [c["display_name"] for c in CATALOG_PRESETS]
 # ============================================
 # HERO
 # ============================================
-st.markdown("""
-<div class="hero">
-    <h1>🚀 Evaluator Workflow</h1>
-    <p>Schedule jobs, download results, and generate reports — all in one click</p>
-</div>
-""", unsafe_allow_html=True)
+render_page_hero(
+    kicker="Workflow automation",
+    title="Evaluator Workflow",
+    description="Schedule jobs, download results, and generate reports — all in one click",
+)
 
 # ============================================
 # SIDEBAR
@@ -451,6 +275,49 @@ max_wait_seconds = max_wait_hours * 3600
 
 # Pipeline visualization
 st.markdown("""
+<style>
+.pipeline {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 1rem 0;
+    flex-wrap: wrap;
+}
+.pipeline-step {
+    background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 100%);
+    border: 1px solid #99f6e4;
+    border-radius: 10px;
+    padding: 12px 18px;
+    text-align: center;
+    flex: 1;
+    max-width: 150px;
+    min-width: 100px;
+}
+.pipeline-step .num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #0d9488;
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+.pipeline-step .title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #0f766e;
+}
+.pipeline-arrow {
+    display: flex;
+    align-items: center;
+    color: #99f6e4;
+    font-size: 20px;
+}
+</style>
 <div class="pipeline">
     <div class="pipeline-step"><div class="num">1</div><div class="title">📤 Schedule</div></div>
     <div class="pipeline-arrow">→</div>
