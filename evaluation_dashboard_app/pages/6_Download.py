@@ -1075,6 +1075,8 @@ def _status_color_variant(status: str) -> str:
     normalized = evaluator_api.normalize_job_status(status)
     if normalized in evaluator_api.SUCCESS_JOB_STATUSES:
         return "success"
+    if normalized in ("canceled", "cancelled", "aborted"):
+        return "canceled"
     if normalized in evaluator_api.FAILED_JOB_STATUSES:
         return "failed"
     if normalized in ("started", "running", "pending", "queued", "created"):
@@ -1257,7 +1259,42 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-status--running { color: #9a6700; background: #fff7db; border-color: rgba(245, 158, 11, 0.28); }
         .evj-status--success { color: #047857; background: #dcfce7; border-color: rgba(16, 185, 129, 0.28); }
         .evj-status--failed { color: #b91c1c; background: #fee2e2; border-color: rgba(239, 68, 68, 0.28); }
+        .evj-status--canceled { color: #7c3aed; background: #f3e8ff; border-color: rgba(124, 58, 237, 0.24); }
         .evj-status--unknown { color: #475569; background: #f1f5f9; border-color: rgba(148, 163, 184, 0.28); }
+        .evj-status-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 999px;
+            font-size: 0.62rem;
+            font-weight: 900;
+            line-height: 1;
+            border: 1px solid currentColor;
+            flex: 0 0 auto;
+        }
+        .evj-status-mark--success {
+            background: rgba(4, 120, 87, 0.08);
+        }
+        .evj-status-mark--failed {
+            background: rgba(185, 28, 28, 0.08);
+        }
+        .evj-status-mark--canceled {
+            background: rgba(124, 58, 237, 0.08);
+        }
+        .evj-status-mark--unknown {
+            background: rgba(71, 85, 105, 0.08);
+        }
+        .evj-status-mark--running {
+            position: relative;
+            border-radius: 999px;
+            border: 1.5px solid rgba(154, 103, 0, 0.18);
+            border-top-color: currentColor;
+            border-right-color: currentColor;
+            background: transparent;
+            animation: evj-spin 0.9s linear infinite;
+        }
         .evj-dot {
             width: 8px;
             height: 8px;
@@ -1273,6 +1310,10 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             0% { transform: scale(0.9); opacity: 0.55; }
             50% { transform: scale(1.2); opacity: 1; }
             100% { transform: scale(0.9); opacity: 0.55; }
+        }
+        @keyframes evj-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         .evj-meta {
             color: #475569;
@@ -1437,7 +1478,13 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
     source_label = html.escape(job.get("source_label", "") or "—")
     report_url = html.escape(job.get("report_url", "") or "")
     source_url = html.escape(job.get("git_ref_url", "") or job.get("source_url", "") or "")
-    running_dot = '<span class="evj-dot evj-dot--pulse" aria-hidden="true"></span>' if job.get("status_variant") == "running" else '<span class="evj-dot" aria-hidden="true"></span>'
+    status_variant = job.get("status_variant", "unknown")
+    status_mark = {
+        "running": '<span class="evj-status-mark evj-status-mark--running" aria-hidden="true"></span>',
+        "success": '<span class="evj-status-mark evj-status-mark--success" aria-hidden="true">✓</span>',
+        "failed": '<span class="evj-status-mark evj-status-mark--failed" aria-hidden="true">!</span>',
+        "canceled": '<span class="evj-status-mark evj-status-mark--canceled" aria-hidden="true">×</span>',
+    }.get(status_variant, '<span class="evj-status-mark evj-status-mark--unknown" aria-hidden="true">?</span>')
     meta_line = f"id {job_id[:8]}"
     counts = (
         f'S <strong>{int(job.get("success", 0))}</strong> · '
@@ -1463,7 +1510,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
               <div class="evj-name-sub">{meta_line}</div>
             </div>
             <div class="evj-cell evj-cell--nowrap">
-              <span class="evj-status evj-status--{variant}">{running_dot}{status}</span>
+              <span class="evj-status evj-status--{variant}">{status_mark}{status}</span>
             </div>
             <div class="evj-cell">
               <strong>{scheduled}</strong><br><span class="evj-name-sub">{duration} · {created_label}</span>
