@@ -1057,7 +1057,7 @@ def _extract_suite_selection_options(suite_rows: List[Dict[str, Any]]) -> List[D
     options: List[Dict[str, str]] = []
     seen_ids = set()
     for row in suite_rows or []:
-        report_url = str(row.get("url") or "").strip()
+        report_url = str(row.get("url") or row.get("Report") or "").strip()
         suite_id = ""
         if "/tests/" in report_url:
             tail = report_url.split("/tests/", 1)[1]
@@ -1065,7 +1065,7 @@ def _extract_suite_selection_options(suite_rows: List[Dict[str, Any]]) -> List[D
         if not suite_id or suite_id in seen_ids:
             continue
         seen_ids.add(suite_id)
-        suite_name = str(row.get("name") or suite_id).strip()
+        suite_name = str(row.get("name") or row.get("Suite") or suite_id).strip()
         options.append({"id": suite_id, "label": f"{suite_name} ({suite_id})"})
     return options
 
@@ -1132,6 +1132,7 @@ def _escape_search_match_value(value: str) -> str:
 def _build_recent_job_search_filter(
     search_text: str,
     search_scope: str,
+    user_directory: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> tuple[Optional[Dict[str, Any]], str]:
     """Map quick-search UI to one server-side filter and a client-side needle."""
     needle = search_text.strip()
@@ -1184,6 +1185,123 @@ def _build_recent_job_search_filter(
             needle.lower(),
         )
     return None, needle.lower()
+
+
+def _recent_job_search_history_key(scope: str) -> str:
+    return f"recent_eval_jobs_search_history::{scope}"
+
+
+def _get_recent_job_search_history(scope: str) -> List[str]:
+    stored = get_config_value(_recent_job_search_history_key(scope), []) or []
+    if not isinstance(stored, list):
+        return []
+    return [str(v).strip() for v in stored if str(v).strip()]
+
+
+def _save_recent_job_search_history(scope: str, value: str, *, max_items: int = 8) -> None:
+    text = str(value).strip()
+    if not text:
+        return
+    history = _get_recent_job_search_history(scope)
+    updated = [text] + [item for item in history if item != text]
+    set_config_value(_recent_job_search_history_key(scope), updated[:max_items])
+
+
+def _get_recent_eval_user_directory() -> Dict[str, Dict[str, str]]:
+    stored = get_config_value("recent_eval_jobs_user_directory", {}) or {}
+    if not isinstance(stored, dict):
+        return {}
+    normalized: Dict[str, Dict[str, str]] = {}
+    for subject_id, info in stored.items():
+        if not isinstance(info, dict):
+            continue
+        normalized[str(subject_id)] = {
+            "name": str(info.get("name") or "").strip(),
+            "email": str(info.get("email") or "").strip(),
+            "subject_id": str(info.get("subject_id") or subject_id).strip(),
+        }
+    return normalized
+
+
+def _save_recent_eval_user_directory(directory: Dict[str, Dict[str, str]]) -> None:
+    set_config_value("recent_eval_jobs_user_directory", directory)
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def _fetch_auth_member_profile(subject_id: str, environment: str) -> Dict[str, str]:
+    subject = str(subject_id or "").strip()
+    if not subject:
+        return {}
+    org_id = os.environ.get(
+        "WEBAUTO_ORGANIZATION_ID",
+        "5a21621d-6968-4f7d-94f8-99cfb77b6e71",
+    ).strip()
+    if not org_id:
+        return {"subject_id": subject, "name": subject, "email": ""}
+    os.environ["AUTH_PROFILE"] = environment or ENVIRONMENT
+    from webautoauth.token import HttpService, TokenSource, load_config
+
+    config = load_config()
+    token_source = TokenSource(HttpService(config))
+    access_token = token_source.get_token().access_token
+    quoted_subject = urllib.parse.quote(subject, safe="")
+    url = f"https://auth.web.auto/v2/organizations/{org_id}/members/{quoted_subject}"
+    response = requests.get(
+        url,
+        headers={"Authorization": f"Bearer {access_token}", "accept": "application/json"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "subject_id": str(data.get("subject_id") or subject),
+        "name": str(data.get("name") or subject).strip(),
+        "email": str(data.get("email") or "").strip(),
+    }
+
+
+def _hydrate_recent_eval_user_directory(
+    jobs: List[Dict[str, Any]],
+    environment: str,
+) -> Dict[str, Dict[str, str]]:
+    directory = _get_recent_eval_user_directory()
+    unresolved = sorted(
+        {
+            str(job.get("scheduled_by") or "").strip()
+            for job in jobs
+            if str(job.get("scheduled_by") or "").strip()
+            and str(job.get("scheduled_by") or "").strip() not in directory
+        }
+    )
+    if not unresolved:
+        return directory
+
+    updates: Dict[str, Dict[str, str]] = {}
+    with ThreadPoolExecutor(max_workers=min(6, len(unresolved))) as executor:
+        future_map = {
+            executor.submit(_fetch_auth_member_profile, subject_id, environment): subject_id
+            for subject_id in unresolved
+        }
+        for future in as_completed(future_map):
+            subject_id = future_map[future]
+            try:
+                profile = future.result()
+            except Exception:
+                profile = {
+                    "subject_id": subject_id,
+                    "name": subject_id,
+                    "email": "",
+                }
+            updates[subject_id] = {
+                "subject_id": str(profile.get("subject_id") or subject_id).strip(),
+                "name": str(profile.get("name") or subject_id).strip(),
+                "email": str(profile.get("email") or "").strip(),
+            }
+
+    if updates:
+        directory = {**directory, **updates}
+        _save_recent_eval_user_directory(directory)
+    return directory
 
 
 def _build_recent_job_date_filters(
@@ -1239,6 +1357,7 @@ def _summarize_recent_job(report: Dict[str, Any]) -> Dict[str, Any]:
         "finished_at": report.get("finished_at"),
         "duration": _format_duration(report.get("started_at"), report.get("finished_at")),
         "created_label": _format_relative_time(report.get("scheduled_at") or report.get("started_at")),
+        "scheduled_by": str(report.get("scheduled_by") or ""),
         "report_url": evaluator_api.get_job_report_url(report.get("project_id", ""), report.get("job_id") or report.get("id") or ""),
         "fail_message": report.get("fail_message", ""),
         "total": totals["total"],
@@ -1357,7 +1476,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-top { justify-content: space-between; }
         .evj-row {
             display: grid;
-            grid-template-columns: minmax(180px, 1.35fr) minmax(86px, 0.5fr) minmax(108px, 0.7fr) minmax(180px, 1.25fr) minmax(190px, 1.15fr);
+            grid-template-columns: minmax(180px, 1.3fr) minmax(86px, 0.5fr) minmax(108px, 0.7fr) minmax(180px, 1.15fr) minmax(130px, 0.9fr) minmax(180px, 1.1fr);
             gap: 8px;
             align-items: center;
         }
@@ -1615,7 +1734,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
     )
 
 
-def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
+def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = "Unknown") -> None:
     """Render one recent evaluator job as a single-row list item."""
     variant = html.escape(job.get("status_variant", "unknown"))
     status = html.escape(_status_display_label(job.get("status", "unknown") or "unknown"))
@@ -1631,6 +1750,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
     created_label = html.escape(job.get("created_label", "—"))
     git_sha = html.escape(job.get("git_sha", "") or "—")
     source_label = html.escape(job.get("source_label", "") or "—")
+    user_text = html.escape(user_label or "Unknown")
     report_url = html.escape(job.get("report_url", "") or "")
     source_url = html.escape(job.get("git_ref_url", "") or job.get("source_url", "") or "")
     status_variant = job.get("status_variant", "unknown")
@@ -1672,6 +1792,9 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
             </div>
             <div class="evj-cell evj-ref-cell">
               <strong>{catalog_html}</strong><br><span class="evj-name-sub">{source_html}</span>
+            </div>
+            <div class="evj-cell evj-ref-cell">
+              <strong>{user_text}</strong>
             </div>
             <div class="evj-cell">
               <span class="evj-name-sub">build {build_status} · test {test_status} · {git_sha}</span><br>
@@ -1790,11 +1913,21 @@ def _render_recent_evaluator_job_run_dialog(
             help="Folder under the data directory. This uses the same safe path rules as the main download workflow.",
         )
 
+        if not suite_labels:
+            hint_cols = st.columns([1.2, 2.8])
+            with hint_cols[0]:
+                if st.form_submit_button("Refresh suites", use_container_width=True):
+                    _fetch_evaluator_job_detail.clear()
+                    st.rerun()
+            with hint_cols[1]:
+                st.caption("No suite candidates were available yet for this job. Refresh to re-read suite data from the evaluator API.")
+
         selected_suite_labels = st.multiselect(
             "Suites to download (optional)",
             options=suite_labels,
             default=[],
             help="Leave empty to download all suites from this evaluator job.",
+            disabled=not suite_labels,
         )
 
         run_download_type = st.radio(
@@ -1944,8 +2077,9 @@ def _render_recent_evaluator_jobs_section(
     flash_message = st.session_state.pop("recent_eval_jobs_flash", None)
     if flash_message:
         st.success(flash_message)
+    user_directory = _get_recent_eval_user_directory()
 
-    control_cols = st.columns([0.8, 1.1, 1.25, 1.55, 1.2, 1.2, 0.75])
+    control_cols = st.columns([0.75, 1.0, 1.15, 1.45, 1.25, 1.0, 1.0, 0.75])
     with control_cols[0]:
         st.markdown('<div class="evj-toolbar-note">Rows</div>', unsafe_allow_html=True)
         limit = int(
@@ -1989,7 +2123,38 @@ def _render_recent_evaluator_jobs_section(
             label_visibility="collapsed",
             placeholder="Type to search evaluator jobs",
         ).strip()
+    recent_candidates = _get_recent_job_search_history(search_scope)
+    selected_user_name = ""
+    if recent_candidates:
+        recent_choice = st.selectbox(
+            "Recent searches",
+            options=[""] + recent_candidates,
+            index=0,
+            key=f"recent_eval_jobs_search_recent::{search_scope}",
+            help="Reuse a previously entered search for this field.",
+        )
+        if recent_choice and recent_choice != search_text:
+            st.session_state["recent_eval_jobs_search_text"] = recent_choice
+            st.rerun()
+    user_candidates = sorted(
+        {
+            info.get("name", "").strip()
+            for info in user_directory.values()
+            if info.get("name", "").strip()
+        },
+        key=str.lower,
+    )
     with control_cols[4]:
+        st.markdown('<div class="evj-toolbar-note">User</div>', unsafe_allow_html=True)
+        selected_user_name = st.selectbox(
+            "User",
+            options=[""] + user_candidates,
+            index=0,
+            key="recent_eval_jobs_user_filter",
+            help="Filter jobs by resolved scheduled user name.",
+            label_visibility="collapsed",
+        )
+    with control_cols[5]:
         st.markdown('<div class="evj-toolbar-note">From</div>', unsafe_allow_html=True)
         date_from = st.date_input(
             "From",
@@ -1998,7 +2163,7 @@ def _render_recent_evaluator_jobs_section(
             label_visibility="collapsed",
             help="Scheduled-at lower bound in JST.",
         )
-    with control_cols[5]:
+    with control_cols[6]:
         st.markdown('<div class="evj-toolbar-note">To</div>', unsafe_allow_html=True)
         date_to = st.date_input(
             "To",
@@ -2007,7 +2172,7 @@ def _render_recent_evaluator_jobs_section(
             label_visibility="collapsed",
             help="Scheduled-at upper bound in JST.",
         )
-    with control_cols[6]:
+    with control_cols[7]:
         st.markdown('<div class="evj-toolbar-note">Actions</div>', unsafe_allow_html=True)
         if st.button("Refresh", key="refresh_recent_eval_jobs", use_container_width=True):
             _fetch_recent_evaluator_job_pages.clear()
@@ -2022,19 +2187,36 @@ def _render_recent_evaluator_jobs_section(
         return
 
     def _render_job_list() -> None:
+        nonlocal user_directory
         if not project_id:
             st.info("Enter a project id in the sidebar to browse recent evaluator jobs.")
             return
         current_page = max(1, int(st.session_state.get(page_key, 1)))
         pages_to_fetch = max(3, current_page + 2)
-        if search_text or status_filter or date_from or date_to:
+        if search_text or status_filter or date_from or date_to or selected_user_name:
             pages_to_fetch = max(pages_to_fetch, 6)
         server_status_values = tuple(_status_filter_values(status_filter))
-        server_search_filter, search_needle = _build_recent_job_search_filter(search_text, search_scope)
+        server_search_filter, search_needle = _build_recent_job_search_filter(search_text, search_scope, user_directory)
+        selected_user_ids = sorted(
+            {
+                subject_id
+                for subject_id, info in user_directory.items()
+                if selected_user_name
+                and selected_user_name.lower() == str(info.get("name") or "").strip().lower()
+            }
+        )
         server_date_filters = _build_recent_job_date_filters(date_from, date_to)
         extra_filters: List[Dict[str, Any]] = []
         if server_search_filter:
             extra_filters.append(server_search_filter)
+        if selected_user_ids:
+            extra_filters.append(
+                {
+                    "field": "scheduled_by",
+                    "operator": "In",
+                    "values": selected_user_ids,
+                }
+            )
         extra_filters.extend(server_date_filters)
         extra_filter_tuples = tuple(
             (
@@ -2056,8 +2238,11 @@ def _render_recent_evaluator_jobs_section(
         except Exception as e:
             st.error(f"Could not fetch recent evaluator jobs: {e}")
             return
+        if search_text:
+            _save_recent_job_search_history(search_scope, search_text)
 
         jobs = [job for page in fetched_pages for job in page.get("jobs", [])]
+        user_directory = _hydrate_recent_eval_user_directory(jobs, environment)
         has_more_from_api = bool(fetched_pages and fetched_pages[-1].get("next_token"))
 
         if search_needle:
@@ -2071,6 +2256,12 @@ def _render_recent_evaluator_jobs_section(
                 jobs = [job for job in jobs if search_needle in str(job.get("git_sha", "")).lower()]
             elif search_scope == "Fail message":
                 jobs = [job for job in jobs if search_needle in str(job.get("fail_message", "")).lower()]
+        if selected_user_name:
+            selected_lower = selected_user_name.lower()
+            jobs = [
+                job for job in jobs
+                if selected_lower == str((user_directory.get(str(job.get("scheduled_by") or "").strip(), {}) or {}).get("name", "")).strip().lower()
+            ]
         if status_filter:
             selected = {evaluator_api.normalize_job_status(v) for v in status_filter}
             jobs = [job for job in jobs if job.get("status_variant") in selected or evaluator_api.normalize_job_status(job.get("status", "")) in selected]
@@ -2143,9 +2334,12 @@ def _render_recent_evaluator_jobs_section(
 
         st.markdown('<div class="evj-list">', unsafe_allow_html=True)
         for job in visible_jobs:
-            row_cols = st.columns([9.4, 2.0])
+            subject_id = str(job.get("scheduled_by") or "").strip()
+            user_info = user_directory.get(subject_id, {})
+            user_label = str(user_info.get("name") or subject_id or "Unknown").strip()
+            row_cols = st.columns([9.8, 2.0])
             with row_cols[0]:
-                _render_recent_evaluator_job_card(job)
+                _render_recent_evaluator_job_card(job, user_label=user_label)
             with row_cols[1]:
                 action_cols = st.columns([1.0, 1.0], gap="small")
                 with action_cols[0]:
