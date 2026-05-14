@@ -322,13 +322,21 @@ def _build_tp_summary_section(
     tables.append(metrics_table)
 
     if len(summaries) >= 2:
-        focus_idx = min(len(summaries) - 1, 1)
-        candidate_label = labels[focus_idx]
-        delta_df = build_summary_delta(summaries[0], summaries[focus_idx])
-        if not delta_df.empty:
-            figures.extend(_build_tp_default_compare_figures(delta_df, candidate_label))
-        else:
-            figures.append((_make_text_placeholder_figure("No overlapping Summary rows for delta view."), "Delta view is empty because the baseline and candidate do not share Summary keys."))
+        baseline_lbl = labels[0]
+        for cand_idx in range(1, len(summaries)):
+            cand_lbl = labels[cand_idx]
+            delta_df = build_summary_delta(summaries[0], summaries[cand_idx])
+            if delta_df.empty:
+                figures.append(
+                    (
+                        _make_text_placeholder_figure(
+                            f"No overlapping Summary rows for delta ({cand_lbl} vs {baseline_lbl})."
+                        ),
+                        f"Delta view is empty because baseline {baseline_lbl} and candidate {cand_lbl} do not share Summary keys.",
+                    )
+                )
+            else:
+                figures.extend(_build_tp_default_compare_figures(delta_df, cand_lbl))
     else:
         figures.extend(_build_tp_default_single_figures(summaries[0]))
 
@@ -709,7 +717,9 @@ def _build_tp_default_compare_figures(df_delta: pd.DataFrame, candidate_label: s
     )
     fig_rms_x.update_traces(marker=dict(size=8, opacity=0.6))
     _apply_tp_clean_theme(fig_rms_x)
-    figures.append((fig_rms_x, "Default compare TP Summary view: X RMS candidate vs baseline."))
+    figures.append(
+        (fig_rms_x, f"TP Summary compare ({candidate_label} vs baseline): X RMS scatter, colored by TP delta.")
+    )
 
     fig_rms_y = px.scatter(
         df_delta,
@@ -729,10 +739,22 @@ def _build_tp_default_compare_figures(df_delta: pd.DataFrame, candidate_label: s
     )
     fig_rms_y.update_traces(marker=dict(size=8, opacity=0.6))
     _apply_tp_clean_theme(fig_rms_y)
-    figures.append((fig_rms_y, "Default compare TP Summary view: Y RMS candidate vs baseline."))
+    figures.append(
+        (fig_rms_y, f"TP Summary compare ({candidate_label} vs baseline): Y RMS scatter, colored by TP delta.")
+    )
 
-    figures.append((_build_tp_distribution_figure(df_delta, "TP_delta"), "Default compare TP distribution view (metric = TP_delta)."))
-    figures.append((_build_tp_violin_figure(df_delta, "TP_delta"), "Default compare TP density violin for metric = TP_delta."))
+    figures.append(
+        (
+            _build_tp_distribution_figure(df_delta, "TP_delta"),
+            f"TP Summary compare ({candidate_label} vs baseline): TP delta distribution.",
+        )
+    )
+    figures.append(
+        (
+            _build_tp_violin_figure(df_delta, "TP_delta"),
+            f"TP Summary compare ({candidate_label} vs baseline): TP delta violin.",
+        )
+    )
     return figures
 
 
@@ -835,7 +857,9 @@ def _build_criteria_default_compare_figures(views: Sequence[Tuple[str, pd.DataFr
     figures: List[Tuple[go.Figure, str]] = []
     metric = "pass_rate"
     group_by = "GT_OBJ"
+    run_order = [lbl for lbl, _ in views]
     combined = pd.concat([df.assign(Run=lbl) for lbl, df in views], ignore_index=True)
+    combined["Run"] = pd.Categorical(combined["Run"], categories=run_order, ordered=True)
     px_map = {lbl: _COMPARE_RUN_COLORS[i % len(_COMPARE_RUN_COLORS)] for i, (lbl, _) in enumerate(views)}
 
     fig_hist = px.histogram(
@@ -843,6 +867,7 @@ def _build_criteria_default_compare_figures(views: Sequence[Tuple[str, pd.DataFr
         x=metric,
         color="Run",
         color_discrete_map=px_map,
+        category_orders={"Run": run_order},
         nbins=30,
         barmode="overlay",
         opacity=0.55,
@@ -851,13 +876,18 @@ def _build_criteria_default_compare_figures(views: Sequence[Tuple[str, pd.DataFr
     _apply_criteria_theme(fig_hist, f"{metric} · row-level distribution")
     figures.append((fig_hist, "Default compare overlay view for pass-rate distribution."))
 
-    df_avg = combined.groupby([group_by, "Run"], as_index=False)[metric].mean().sort_values(metric, ascending=False)
+    df_avg = combined.groupby([group_by, "Run"], as_index=False)[metric].mean()
+    obj_means = df_avg.groupby(group_by, as_index=False)[metric].mean().sort_values(metric, ascending=False)
+    obj_order = [x for x in obj_means[group_by].tolist() if x in set(df_avg[group_by])]
+    df_avg[group_by] = pd.Categorical(df_avg[group_by], categories=obj_order, ordered=True)
+    df_avg = df_avg.sort_values([group_by, "Run"])
     fig_bar = px.bar(
         df_avg,
         x=group_by,
         y=metric,
         color="Run",
         color_discrete_map=px_map,
+        category_orders={group_by: obj_order, "Run": run_order},
         barmode="group",
         text_auto=".2f",
     )
@@ -870,6 +900,7 @@ def _build_criteria_default_compare_figures(views: Sequence[Tuple[str, pd.DataFr
         y="pass_rate",
         color="Run",
         color_discrete_map=px_map,
+        category_orders={group_by: obj_order, "Run": run_order},
         points="all",
     )
     _apply_criteria_theme(fig_box, "Pass rate overview")
@@ -877,7 +908,16 @@ def _build_criteria_default_compare_figures(views: Sequence[Tuple[str, pd.DataFr
 
     scenario_delta = _build_criteria_compare_delta_figure(views)
     if scenario_delta is not None:
-        figures.append((scenario_delta, "Default compare per-scenario delta view for candidate B vs baseline A."))
+        base_l = run_order[0]
+        if len(run_order) == 2:
+            cap = f"Default compare per-scenario delta view for candidate {run_order[1]} vs baseline {base_l}."
+        else:
+            rest = ", ".join(run_order[1:])
+            cap = (
+                f"Default compare per-scenario delta vs baseline {base_l} "
+                f"for candidates {rest} (grouped bars)."
+            )
+        figures.append((scenario_delta, cap))
     return figures
 
 
@@ -899,26 +939,34 @@ def _build_criteria_compare_table(views: Sequence[Tuple[str, pd.DataFrame]]) -> 
     for g in merges[1:]:
         per_scenario = per_scenario.merge(g, on="Scenario", how="inner")
     base = labels[0]
-    focus = labels[1]
-    delta_col = f"delta_{focus}"
-    per_scenario[delta_col] = per_scenario[f"pr_{focus}"] - per_scenario[f"pr_{base}"]
-    per_scenario = per_scenario.reindex(per_scenario[delta_col].abs().sort_values(ascending=False).index).head(20)
-    rows = [["Scenario", f"Pass rate ({base})", f"Pass rate ({focus})", f"Delta ({focus} - {base})"]]
+    delta_cols: List[str] = []
+    for cand in labels[1:]:
+        dcol = f"delta_{cand}"
+        per_scenario[dcol] = per_scenario[f"pr_{cand}"] - per_scenario[f"pr_{base}"]
+        delta_cols.append(dcol)
+    rank_key = per_scenario[delta_cols].abs().max(axis=1)
+    per_scenario = per_scenario.reindex(rank_key.sort_values(ascending=False).index).head(20)
+    header: List[str] = ["Scenario", f"Pass rate ({base})"]
+    for cand in labels[1:]:
+        header.extend([f"Pass rate ({cand})", f"Δ({cand} - {base})"])
+    rows = [header]
     for _, row in per_scenario.iterrows():
-        rows.append([
-            _shorten_scenario_name(str(row["Scenario"])),
-            _fmt_number(row[f"pr_{base}"]),
-            _fmt_number(row[f"pr_{focus}"]),
-            _fmt_number(row[delta_col]),
-        ])
-    return {"rows": rows, "col_width_weights": [0.52, 0.16, 0.16, 0.16]}
+        cells: List[str] = [_shorten_scenario_name(str(row["Scenario"])), _fmt_number(row[f"pr_{base}"])]
+        for cand in labels[1:]:
+            cells.extend([_fmt_number(row[f"pr_{cand}"]), _fmt_number(row[f"delta_{cand}"])])
+        rows.append(cells)
+    ncols = len(header)
+    scen_w = 0.34 if ncols > 4 else 0.52
+    rest_w = (1.0 - scen_w) / max(ncols - 1, 1)
+    weights = [scen_w] + [rest_w] * (ncols - 1)
+    return {"rows": rows, "col_width_weights": weights}
 
 
 def _build_criteria_compare_delta_figure(views: Sequence[Tuple[str, pd.DataFrame]]) -> Optional[go.Figure]:
     if len(views) < 2:
         return None
     labels = [lbl for lbl, _ in views]
-    focus = labels[1]
+    base = labels[0]
     merges = []
     for lbl, df in views:
         g = df.groupby("Scenario", as_index=False)["pass_rate"].mean()
@@ -928,17 +976,44 @@ def _build_criteria_compare_delta_figure(views: Sequence[Tuple[str, pd.DataFrame
         per_scenario = per_scenario.merge(g, on="Scenario", how="inner")
     if per_scenario.empty:
         return None
-    delta_col = f"delta_{focus}"
-    per_scenario[delta_col] = per_scenario[f"pr_{focus}"] - per_scenario[f"pr_{labels[0]}"]
-    vis = per_scenario.reindex(per_scenario[delta_col].abs().sort_values(ascending=False).index).head(20)
+    long_rows: List[dict] = []
+    delta_cols: List[str] = []
+    for cand in labels[1:]:
+        dcol = f"delta_{cand}"
+        per_scenario[dcol] = per_scenario[f"pr_{cand}"] - per_scenario[f"pr_{base}"]
+        delta_cols.append(dcol)
+    rank_key = per_scenario[delta_cols].abs().max(axis=1)
+    vis = per_scenario.reindex(rank_key.sort_values(ascending=False).index).head(20)
+    scen_order = [_shorten_scenario_name(str(s)) for s in vis["Scenario"].tolist()]
+    for _, row in vis.iterrows():
+        scen_disp = _shorten_scenario_name(str(row["Scenario"]))
+        for cand in labels[1:]:
+            long_rows.append(
+                {
+                    "Scenario": scen_disp,
+                    "vs_baseline": f"Δ({cand} - {base})",
+                    "delta": float(row[f"delta_{cand}"]),
+                }
+            )
+    melted = pd.DataFrame(long_rows)
+    if melted.empty:
+        return None
+    legend_order = [f"Δ({cand} - {base})" for cand in labels[1:]]
+    color_map = {
+        leg: _COMPARE_RUN_COLORS[(i + 1) % len(_COMPARE_RUN_COLORS)]
+        for i, leg in enumerate(legend_order)
+    }
     fig = px.bar(
-        vis,
+        melted,
         x="Scenario",
-        y=delta_col,
-        color=delta_col,
-        color_continuous_scale="RdYlGn",
+        y="delta",
+        color="vs_baseline",
+        color_discrete_map=color_map,
+        category_orders={"Scenario": scen_order, "vs_baseline": legend_order},
+        barmode="group",
         text_auto=".2f",
     )
+    fig.update_layout(coloraxis_showscale=False, legend_title_text="")
     _apply_criteria_theme(fig, "Pass rate delta by scenario")
     return fig
 

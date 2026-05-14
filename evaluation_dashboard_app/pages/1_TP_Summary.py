@@ -76,6 +76,18 @@ render_page_hero(
     mode=mode,
 )
 
+
+def _apply_compact_chart_layout(fig, *, height: int = 300) -> None:
+    """Keep TP Summary charts visually lighter and more compact."""
+    fig.update_layout(
+        template="plotly_white",
+        height=height,
+        margin=dict(t=48, b=40, l=48, r=18),
+        paper_bgcolor="rgba(248,250,252,0.9)",
+        plot_bgcolor="rgba(255,255,255,0.95)",
+        font=dict(family="system-ui, sans-serif", size=12, color="#334155"),
+    )
+
 # ========== View Selector ==========
 st.sidebar.markdown("##### Scope")
 if mode == "Compare Mode" and all_runs and run_labels and delta_by_label:
@@ -211,7 +223,8 @@ with col1:
     section_header("Position RMS (X vs Y)", "Lateral vs longitudinal RMS error; color encodes TP or ΔTP.")
     # Always compare the two sources side by side (before and after/delta)
     if use_delta:
-        # Show both reference and target RMS comparisons for X and Y, as well as their deltas
+        # Show both reference and target RMS comparisons in a tighter 2-up row.
+        rms_left, rms_right = st.columns(2)
         fig_rms_x_compare = px.scatter(
             df_f,
             x="xrms_B",
@@ -225,11 +238,14 @@ with col1:
                 "xrms_delta": "Δ X RMS",
                 "yrms_delta": "Δ Y RMS",
             },
-            title=f"Scatter: X RMS ({cand}) vs X RMS (A)",
+            title=f"X RMS · {cand} vs A",
             color_continuous_scale="Viridis",
         )
-        fig_rms_x_compare.update_traces(marker=dict(size=8, opacity=0.6))
-        st.plotly_chart(fig_rms_x_compare, width="stretch")
+        fig_rms_x_compare.update_traces(marker=dict(size=7, opacity=0.58))
+        _apply_compact_chart_layout(fig_rms_x_compare, height=290)
+        with rms_left:
+            st.plotly_chart(fig_rms_x_compare, width="stretch")
+
         fig_rms_y_compare = px.scatter(
             df_f,
             x="yrms_B",
@@ -243,11 +259,13 @@ with col1:
                 "xrms_delta": "Δ X RMS",
                 "yrms_delta": "Δ Y RMS",
             },
-            title=f"Scatter: Y RMS ({cand}) vs Y RMS (A)",
+            title=f"Y RMS · {cand} vs A",
             color_continuous_scale="Viridis",
         )
-        fig_rms_y_compare.update_traces(marker=dict(size=8, opacity=0.6))
-        st.plotly_chart(fig_rms_y_compare, width="stretch")
+        fig_rms_y_compare.update_traces(marker=dict(size=7, opacity=0.58))
+        _apply_compact_chart_layout(fig_rms_y_compare, height=290)
+        with rms_right:
+            st.plotly_chart(fig_rms_y_compare, width="stretch")
     else:
         # Just show the submission's RMS (x/y) for standard analysis
         fig_rms = px.scatter(
@@ -263,13 +281,14 @@ with col1:
             },
             color_continuous_scale="Viridis",
         )
-        fig_rms.update_traces(marker=dict(size=8, opacity=0.7))
+        fig_rms.update_traces(marker=dict(size=8, opacity=0.68))
+        _apply_compact_chart_layout(fig_rms, height=320)
         st.plotly_chart(fig_rms, width="stretch")
 
 with col2:
     section_header("Velocity (vx vs vy)", "Planar velocity colored by TP or ΔTP.")
 
-    def plot_velocity(df, vx, vy, vx_label, vy_label):
+    def plot_velocity(df, vx, vy, vx_label, vy_label, *, title: str):
         fig = px.scatter(
             df,
             x=vx,
@@ -282,18 +301,32 @@ with col2:
                 tp_col: "TP",
             },
             color_continuous_scale="Plasma",
-            title=f"{vx_label} vs {vy_label}",
+            title=title,
         )
-        st.plotly_chart(fig, width="stretch")
+        fig.update_traces(marker=dict(size=7, opacity=0.58))
+        _apply_compact_chart_layout(fig, height=290 if use_delta else 320)
+        return fig
 
     if use_delta:
-        plot_velocity(df_f, "vx", "vy", "Vx (A)", "Vy (A)")
-        plot_velocity(df_f, "vx_B", "vy_B", f"Vx ({cand})", f"Vy ({cand})")
+        vel_left, vel_right = st.columns(2)
+        with vel_left:
+            st.plotly_chart(
+                plot_velocity(df_f, "vx", "vy", "Vx (A)", "Vy (A)", title="Velocity · A"),
+                width="stretch",
+            )
+        with vel_right:
+            st.plotly_chart(
+                plot_velocity(df_f, "vx_B", "vy_B", f"Vx ({cand})", f"Vy ({cand})", title=f"Velocity · {cand}"),
+                width="stretch",
+            )
     else:
-        plot_velocity(df_f, "vx", "vy", "Vx", "Vy")
+        st.plotly_chart(
+            plot_velocity(df_f, "vx", "vy", "Vx", "Vy", title="Velocity"),
+            width="stretch",
+        )
 
 # ========== Metric Distribution ==========
-section_header("Metric distribution", "Histogram + marginal box for any Summary column or delta column.")
+section_header("Metric distribution", "Compact secondary views for a selected Summary metric.")
 metrics = ["xstd", "ystd", "xrms", "yrms", "vx", "vy", "TP"]
 metrics_delta = [f"{m}_delta" for m in metrics]
 metric_options = metrics_delta if use_delta else metrics
@@ -304,46 +337,42 @@ else:
     default_index = 0
 metric = st.selectbox("Select metric", metric_options, index=default_index)
 
-# Show a simple, single-color (monochrome) distribution for clarity
+dist_left, dist_right = st.columns(2)
+
 fig_hist = px.histogram(
     df_f,
     x=metric,
-    nbins=40,
+    nbins=36,
     color_discrete_sequence=["#0d9488"],
     marginal="box",
     opacity=0.88,
+    title=f"{metric} distribution",
 )
 fig_hist.update_layout(
-    template="plotly_white",
     showlegend=False,
     bargap=0.04,
     xaxis_title=metric,
     yaxis_title="Count",
-    paper_bgcolor="rgba(248,250,252,0.9)",
-    plot_bgcolor="rgba(255,255,255,0.95)",
-    font=dict(family="system-ui, sans-serif", size=12, color="#334155"),
-    margin=dict(t=36, b=48, l=56, r=28),
 )
-st.plotly_chart(fig_hist, width="stretch")
+_apply_compact_chart_layout(fig_hist, height=280)
+with dist_left:
+    st.plotly_chart(fig_hist, width="stretch")
 
-section_header("Density (violin)", "Shape of the selected metric including outliers.")
 fig_density = px.violin(
     df_f,
     y=metric,
     box=True,
-    points="all",
+    points="outliers",
     color_discrete_sequence=["#312e81"],
+    title=f"{metric} density",
 )
 fig_density.update_layout(
-    template="plotly_white",
     yaxis_title=metric,
     showlegend=False,
-    paper_bgcolor="rgba(248,250,252,0.9)",
-    plot_bgcolor="rgba(255,255,255,0.95)",
-    font=dict(family="system-ui, sans-serif", size=12, color="#334155"),
-    margin=dict(t=36, b=48, l=56, r=28),
 )
-st.plotly_chart(fig_density, width="stretch")
+_apply_compact_chart_layout(fig_density, height=280)
+with dist_right:
+    st.plotly_chart(fig_density, width="stretch")
 
 # ========== Scenario-level Delta Analysis (Compare Mode) ==========
 df_cmp = df_active if use_delta else None
