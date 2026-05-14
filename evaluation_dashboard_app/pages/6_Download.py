@@ -1387,6 +1387,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         [class*="st-key-recent_eval_run_"] button,
         [class*="st-key-recent_eval_jobs_prev"] button,
         [class*="st-key-recent_eval_jobs_next"] button,
+        [class*="st-key-recent_eval_jobs_pagebtn_"] button,
         [class*="st-key-refresh_recent_eval_jobs"] button {
             min-height: 2rem;
             padding: 0.18rem 0.58rem;
@@ -1398,6 +1399,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         [class*="st-key-recent_eval_view_"] button,
         [class*="st-key-recent_eval_jobs_prev"] button,
         [class*="st-key-recent_eval_jobs_next"] button,
+        [class*="st-key-recent_eval_jobs_pagebtn_"] button,
         [class*="st-key-refresh_recent_eval_jobs"] button {
             border-color: rgba(148, 163, 184, 0.34);
             color: #334155;
@@ -1406,10 +1408,16 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         [class*="st-key-recent_eval_view_"] button:hover,
         [class*="st-key-recent_eval_jobs_prev"] button:hover,
         [class*="st-key-recent_eval_jobs_next"] button:hover,
+        [class*="st-key-recent_eval_jobs_pagebtn_"] button:hover,
         [class*="st-key-refresh_recent_eval_jobs"] button:hover {
             border-color: rgba(15, 118, 110, 0.28);
             color: #0f766e;
             background: #f8fffd;
+        }
+        [class*="st-key-recent_eval_jobs_pagebtn_active_"] button {
+            border-color: rgba(13, 148, 136, 0.26);
+            background: linear-gradient(180deg, #f0fdfa, #ecfeff);
+            color: #0f766e;
         }
         [class*="st-key-recent_eval_run_"] button {
             border-color: rgba(13, 148, 136, 0.22);
@@ -1840,7 +1848,7 @@ def _render_recent_evaluator_jobs_section(
             st.info("Enter a project id in the sidebar to browse recent evaluator jobs.")
             return
         current_page = max(1, int(st.session_state.get(page_key, 1)))
-        fetch_limit = max(limit * (current_page + 1), limit + 1)
+        fetch_limit = max(limit * 3, limit * (current_page + 2), limit + 1)
         try:
             jobs = _fetch_recent_evaluator_jobs(project_id, environment, fetch_limit)
         except Exception as e:
@@ -1876,25 +1884,39 @@ def _render_recent_evaluator_jobs_section(
             visible_jobs = jobs[start_idx:end_idx]
             has_next_page = total_loaded > current_page * limit
 
-        pager_cols = st.columns([0.9, 1.1, 5.2, 0.9, 1.2])
+        if current_page == 1:
+            page_numbers = list(range(1, min(3, max_known_page) + 1))
+        else:
+            page_numbers = list(
+                range(
+                    max(1, current_page - 1),
+                    min(max_known_page, current_page + 1) + 1,
+                )
+            )
+        pager_cols = st.columns([0.8, 0.9, 0.9, 0.9, 0.8, 5.7])
         with pager_cols[0]:
-            if st.button("Back", key="recent_eval_jobs_prev", use_container_width=True, disabled=current_page <= 1):
+            if st.button("‹", key="recent_eval_jobs_prev", use_container_width=True, disabled=current_page <= 1):
                 st.session_state[page_key] = max(1, current_page - 1)
                 st.rerun()
-        with pager_cols[1]:
-            st.markdown(
-                f"<div class='evj-pager-note'><strong>{current_page}</strong></div>",
-                unsafe_allow_html=True,
-            )
-        with pager_cols[3]:
-            if st.button("More", key="recent_eval_jobs_next", use_container_width=True, disabled=not has_next_page):
+        for idx, page_num in enumerate(page_numbers[:3], start=1):
+            with pager_cols[idx]:
+                btn_key = (
+                    f"recent_eval_jobs_pagebtn_active_{page_num}"
+                    if page_num == current_page
+                    else f"recent_eval_jobs_pagebtn_{page_num}"
+                )
+                if st.button(
+                    str(page_num),
+                    key=btn_key,
+                    use_container_width=True,
+                    disabled=page_num == current_page,
+                ):
+                    st.session_state[page_key] = page_num
+                    st.rerun()
+        with pager_cols[4]:
+            if st.button("›", key="recent_eval_jobs_next", use_container_width=True, disabled=not has_next_page):
                 st.session_state[page_key] = current_page + 1
                 st.rerun()
-        with pager_cols[4]:
-            st.markdown(
-                f"<div class='evj-pager-note' style='text-align:right;'>{len(visible_jobs)} shown · {total_loaded}+ loaded</div>",
-                unsafe_allow_html=True,
-            )
 
         selected_job_id = st.session_state.get("recent_eval_jobs_selected")
         if selected_job_id and not any(str(job.get("job_id", "")) == str(selected_job_id) for job in jobs):
