@@ -1238,20 +1238,28 @@ def _render_recent_evaluator_jobs_section(
     skip_large_file_default: bool,
     large_file_mb_default: float,
     keep_zip_files_default: bool,
+    show_toggle: bool = True,
+    default_visible: bool = False,
+    show_title: bool = True,
 ) -> None:
     """Render a direct evaluator-jobs browser above the download tabs."""
     _inject_recent_evaluator_jobs_styles()
-    show_section = st.toggle(
-        "Show recent evaluator jobs",
-        value=st.session_state.get("recent_eval_jobs_show", False),
-        key="recent_eval_jobs_show",
-        help="Load recent evaluator jobs only when you want to browse them.",
-    )
+    if show_toggle:
+        show_section = st.toggle(
+            "Show recent evaluator jobs",
+            value=st.session_state.get("recent_eval_jobs_show", default_visible),
+            key="recent_eval_jobs_show",
+            help="Load recent evaluator jobs only when you want to browse them.",
+        )
+    else:
+        show_section = True
+        st.session_state["recent_eval_jobs_show"] = True
     if not show_section:
         return
 
-    st.subheader("Recent evaluator jobs")
-    st.caption("Compact browser for recent evaluator jobs. Select one job to inspect detailed suite and failed-case information.")
+    if show_title:
+        st.subheader("Recent evaluator jobs")
+        st.caption("Compact browser for recent evaluator jobs. Select one job to inspect detailed suite and failed-case information.")
     flash_message = st.session_state.pop("recent_eval_jobs_flash", None)
     if flash_message:
         st.success(flash_message)
@@ -1367,7 +1375,7 @@ def _render_recent_evaluator_jobs_section(
     def _render_job_list() -> None:
         nonlocal user_directory
         if not project_id:
-            st.info("Enter a project id in the sidebar to browse recent evaluator jobs.")
+            st.info("Enter a project id to browse recent evaluator jobs.")
             return
         current_page = max(1, int(st.session_state.get(page_key, 1)))
         pages_to_fetch = max(3, current_page + 2)
