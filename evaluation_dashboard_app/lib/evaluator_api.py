@@ -512,6 +512,35 @@ class EvaluationRunAPI:
             if max_results is not None and len(reports) >= max_results:
                 return reports[:max_results]
 
+    def search_report_list(
+        self,
+        project_id: str,
+        *,
+        filters: Optional[list[dict[str, Any]]] = None,
+        sort: Optional[list[dict[str, Any]]] = None,
+        next_token: str = "",
+        size: int = 100,
+    ) -> dict[str, Any]:
+        url = f"{self.api_base_url}/projects/{project_id}/jobs/reports/search"
+        payload: dict[str, Any] = {
+            "size": max(1, min(int(size), 100)),
+        }
+        if next_token:
+            payload["next_token"] = next_token
+        if filters:
+            payload["filters"] = filters
+        if sort:
+            payload["sort"] = sort
+
+        response = self.request(url, payload, method="POST")
+        if response is None:
+            raise EvaluationAPIError("No response returned from evaluation API")
+        if response.status_code != 200:
+            raise EvaluationAPIError(
+                f"Failed to search report list: status={response.status_code}, body={response.text}"
+            )
+        return json.loads(response.content)
+
     def get_suite_reports(self, project_id: str, job_id: str) -> list[dict[str, Any]]:
         return self._get_paginated_reports(
             f"{self.api_base_url}/projects/{project_id}/jobs/{job_id}/test/suite/reports"

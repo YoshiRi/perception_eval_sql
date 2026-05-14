@@ -1100,6 +1100,119 @@ def _status_display_label(status: str) -> str:
     return normalized or "unknown"
 
 
+def _status_filter_values(selected_statuses: List[str]) -> List[str]:
+    """Normalize UI status filters into API status values."""
+    values: List[str] = []
+    for raw in selected_statuses:
+        normalized = evaluator_api.normalize_job_status(raw)
+        if normalized == "unknown" or not normalized:
+            continue
+        if normalized == "running":
+            values.extend(["running", "started"])
+        elif normalized == "success":
+            values.extend(["success", "succeeded"])
+        elif normalized == "failed":
+            values.extend(["failed", "failure", "error"])
+        elif normalized == "canceled":
+            values.extend(["canceled", "cancelled", "aborted"])
+        else:
+            values.append(normalized)
+    return sorted(set(values))
+
+
+def _escape_search_match_value(value: str) -> str:
+    """Escape wildcard characters for API Match filters."""
+    return (
+        value.replace("\\", "\\\\")
+        .replace("*", "\\*")
+        .replace("?", "\\?")
+    )
+
+
+def _build_recent_job_search_filter(
+    search_text: str,
+    search_scope: str,
+) -> tuple[Optional[Dict[str, Any]], str]:
+    """Map quick-search UI to one server-side filter and a client-side needle."""
+    needle = search_text.strip()
+    if not needle:
+        return None, ""
+
+    if search_scope == "Branch/tag":
+        return (
+            {
+                "field": "event.source.git_ref",
+                "operator": "Match",
+                "values": [f"*{_escape_search_match_value(needle)}*"],
+            },
+            needle.lower(),
+        )
+    if search_scope == "Description":
+        return (
+            {
+                "field": "description",
+                "operator": "Match",
+                "values": [f"*{_escape_search_match_value(needle)}*"],
+            },
+            needle.lower(),
+        )
+    if search_scope == "Job ID":
+        return (
+            {
+                "field": "job_id",
+                "operator": "In",
+                "values": [needle],
+            },
+            needle.lower(),
+        )
+    if search_scope == "Git SHA":
+        return (
+            {
+                "field": "event.source.git_sha",
+                "operator": "Match",
+                "values": [f"*{_escape_search_match_value(needle)}*"],
+            },
+            needle.lower(),
+        )
+    if search_scope == "Fail message":
+        return (
+            {
+                "field": "fail_message",
+                "operator": "Match",
+                "values": [f"*{_escape_search_match_value(needle)}*"],
+            },
+            needle.lower(),
+        )
+    return None, needle.lower()
+
+
+def _build_recent_job_date_filters(
+    date_from: Optional[datetime.date],
+    date_to: Optional[datetime.date],
+) -> List[Dict[str, Any]]:
+    """Build scheduled_at date-range filters for the search API."""
+    filters: List[Dict[str, Any]] = []
+    if date_from:
+        start_dt = datetime(date_from.year, date_from.month, date_from.day, 0, 0, 0, tzinfo=_JST)
+        filters.append(
+            {
+                "field": "scheduled_at",
+                "operator": "Gte",
+                "values": [start_dt.astimezone(timezone.utc).isoformat()],
+            }
+        )
+    if date_to:
+        end_dt = datetime(date_to.year, date_to.month, date_to.day, 23, 59, 59, tzinfo=_JST)
+        filters.append(
+            {
+                "field": "scheduled_at",
+                "operator": "Lte",
+                "values": [end_dt.astimezone(timezone.utc).isoformat()],
+            }
+        )
+    return filters
+
+
 def _summarize_recent_job(report: Dict[str, Any]) -> Dict[str, Any]:
     """Compact summary for one evaluator job card."""
     status = evaluator_api.extract_job_status(report)
@@ -1140,22 +1253,56 @@ def _summarize_recent_job(report: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def _fetch_recent_evaluator_jobs(project_id: str, environment: str, limit: int) -> List[Dict[str, Any]]:
-    """Fetch recent evaluator jobs and normalize them for list rendering."""
+def _fetch_recent_evaluator_job_pages(
+    project_id: str,
+    environment: str,
+    page_size: int,
+    pages_to_fetch: int,
+    status_values: tuple[str, ...] = (),
+    extra_filters: tuple[tuple[str, str, tuple[Any, ...]], ...] = (),
+) -> List[Dict[str, Any]]:
+    """Fetch recent evaluator jobs from the search endpoint page-by-page."""
     if not project_id:
         return []
     os.environ["AUTH_PROFILE"] = environment or ENVIRONMENT
     api = evaluator_api.EvaluationRunAPI()
-    reports = api.get_report_list(project_id, status="all", max_results=max(1, int(limit)))
-    reports = sorted(
-        reports,
-        key=lambda report: _parse_api_dt(report.get("scheduled_at") or report.get("started_at") or report.get("finished_at")) or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    )
-    normalized = []
-    for report in reports[:limit]:
-        normalized.append(_summarize_recent_job(report))
-    return normalized
+    filters: List[Dict[str, Any]] = []
+    if status_values:
+        filters.append(
+            {
+                "field": "status",
+                "operator": "In",
+                "values": list(status_values),
+            }
+        )
+    for field, operator, values in extra_filters:
+        filters.append(
+            {
+                "field": field,
+                "operator": operator,
+                "values": list(values),
+            }
+        )
+    next_token = ""
+    pages: List[Dict[str, Any]] = []
+    for _ in range(max(1, int(pages_to_fetch))):
+        data = api.search_report_list(
+            project_id,
+            filters=filters or None,
+            next_token=next_token,
+            size=max(1, min(int(page_size), 100)),
+        )
+        reports = data.get("reports", []) or []
+        pages.append(
+            {
+                "jobs": [_summarize_recent_job(report) for report in reports],
+                "next_token": data.get("next_token", "") or "",
+            }
+        )
+        next_token = data.get("next_token", "") or ""
+        if not next_token:
+            break
+    return pages
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -1493,7 +1640,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any]) -> None:
         "failed": '<span class="evj-status-mark evj-status-mark--failed" aria-hidden="true">!</span>',
         "canceled": '<span class="evj-status-mark evj-status-mark--canceled" aria-hidden="true">×</span>',
     }.get(status_variant, '<span class="evj-status-mark evj-status-mark--unknown" aria-hidden="true">?</span>')
-    meta_line = f"id {job_id[:8]}"
+    meta_line = job_id
     counts = (
         f'S <strong>{int(job.get("success", 0))}</strong> · '
         f'F <strong>{int(job.get("failed", 0))}</strong> · '
@@ -1798,7 +1945,7 @@ def _render_recent_evaluator_jobs_section(
     if flash_message:
         st.success(flash_message)
 
-    control_cols = st.columns([0.95, 1.45, 1.65, 0.9])
+    control_cols = st.columns([0.8, 1.1, 1.25, 1.55, 1.2, 1.2, 0.75])
     with control_cols[0]:
         st.markdown('<div class="evj-toolbar-note">Rows</div>', unsafe_allow_html=True)
         limit = int(
@@ -1823,43 +1970,109 @@ def _render_recent_evaluator_jobs_section(
             placeholder="All statuses",
         )
     with control_cols[2]:
-        st.markdown('<div class="evj-toolbar-note">Branch Or Tag</div>', unsafe_allow_html=True)
-        branch_filter = st.text_input(
-            "Branch/tag contains",
-            value=st.session_state.get("recent_eval_jobs_branch_filter", ""),
-            key="recent_eval_jobs_branch_filter",
-            help="Optional substring filter for branch or tag name.",
+        st.markdown('<div class="evj-toolbar-note">Search In</div>', unsafe_allow_html=True)
+        search_scope = st.selectbox(
+            "Search in",
+            options=["Branch/tag", "Description", "Job ID", "Git SHA", "Fail message"],
+            index=0,
+            key="recent_eval_jobs_search_scope",
+            help="Choose which evaluator field the quick search should target.",
             label_visibility="collapsed",
-            placeholder="Filter by branch or tag",
-        ).strip()
+        )
     with control_cols[3]:
+        st.markdown('<div class="evj-toolbar-note">Search</div>', unsafe_allow_html=True)
+        search_text = st.text_input(
+            "Search",
+            value=st.session_state.get("recent_eval_jobs_search_text", ""),
+            key="recent_eval_jobs_search_text",
+            help="Server-side search across the selected field.",
+            label_visibility="collapsed",
+            placeholder="Type to search evaluator jobs",
+        ).strip()
+    with control_cols[4]:
+        st.markdown('<div class="evj-toolbar-note">From</div>', unsafe_allow_html=True)
+        date_from = st.date_input(
+            "From",
+            value=st.session_state.get("recent_eval_jobs_date_from", None),
+            key="recent_eval_jobs_date_from",
+            label_visibility="collapsed",
+            help="Scheduled-at lower bound in JST.",
+        )
+    with control_cols[5]:
+        st.markdown('<div class="evj-toolbar-note">To</div>', unsafe_allow_html=True)
+        date_to = st.date_input(
+            "To",
+            value=st.session_state.get("recent_eval_jobs_date_to", None),
+            key="recent_eval_jobs_date_to",
+            label_visibility="collapsed",
+            help="Scheduled-at upper bound in JST.",
+        )
+    with control_cols[6]:
         st.markdown('<div class="evj-toolbar-note">Actions</div>', unsafe_allow_html=True)
         if st.button("Refresh", key="refresh_recent_eval_jobs", use_container_width=True):
-            _fetch_recent_evaluator_jobs.clear()
+            _fetch_recent_evaluator_job_pages.clear()
             _fetch_evaluator_job_detail.clear()
             st.rerun()
 
     page_key = "recent_eval_jobs_page"
     if page_key not in st.session_state:
         st.session_state[page_key] = 1
+    if date_from and date_to and date_from > date_to:
+        st.warning("`From` date must be earlier than or equal to `To` date.")
+        return
 
     def _render_job_list() -> None:
         if not project_id:
             st.info("Enter a project id in the sidebar to browse recent evaluator jobs.")
             return
         current_page = max(1, int(st.session_state.get(page_key, 1)))
-        fetch_limit = max(limit * 3, limit * (current_page + 2), limit + 1)
+        pages_to_fetch = max(3, current_page + 2)
+        if search_text or status_filter or date_from or date_to:
+            pages_to_fetch = max(pages_to_fetch, 6)
+        server_status_values = tuple(_status_filter_values(status_filter))
+        server_search_filter, search_needle = _build_recent_job_search_filter(search_text, search_scope)
+        server_date_filters = _build_recent_job_date_filters(date_from, date_to)
+        extra_filters: List[Dict[str, Any]] = []
+        if server_search_filter:
+            extra_filters.append(server_search_filter)
+        extra_filters.extend(server_date_filters)
+        extra_filter_tuples = tuple(
+            (
+                str(f["field"]),
+                str(f["operator"]),
+                tuple(f.get("values", []) or []),
+            )
+            for f in extra_filters
+        )
         try:
-            jobs = _fetch_recent_evaluator_jobs(project_id, environment, fetch_limit)
+            fetched_pages = _fetch_recent_evaluator_job_pages(
+                project_id,
+                environment,
+                limit,
+                pages_to_fetch,
+                status_values=server_status_values,
+                extra_filters=extra_filter_tuples,
+            )
         except Exception as e:
             st.error(f"Could not fetch recent evaluator jobs: {e}")
             return
 
-        if branch_filter:
-            branch_filter_lower = branch_filter.lower()
-            jobs = [job for job in jobs if branch_filter_lower in str(job.get("target", "")).lower()]
+        jobs = [job for page in fetched_pages for job in page.get("jobs", [])]
+        has_more_from_api = bool(fetched_pages and fetched_pages[-1].get("next_token"))
+
+        if search_needle:
+            if search_scope == "Branch/tag":
+                jobs = [job for job in jobs if search_needle in str(job.get("target", "")).lower()]
+            elif search_scope == "Description":
+                jobs = [job for job in jobs if search_needle in str(job.get("description", "")).lower() or search_needle in str(job.get("title", "")).lower()]
+            elif search_scope == "Job ID":
+                jobs = [job for job in jobs if search_needle in str(job.get("job_id", "")).lower()]
+            elif search_scope == "Git SHA":
+                jobs = [job for job in jobs if search_needle in str(job.get("git_sha", "")).lower()]
+            elif search_scope == "Fail message":
+                jobs = [job for job in jobs if search_needle in str(job.get("fail_message", "")).lower()]
         if status_filter:
-            selected = set(status_filter)
+            selected = {evaluator_api.normalize_job_status(v) for v in status_filter}
             jobs = [job for job in jobs if job.get("status_variant") in selected or evaluator_api.normalize_job_status(job.get("status", "")) in selected]
 
         if not jobs:
@@ -1868,7 +2081,7 @@ def _render_recent_evaluator_jobs_section(
             return
 
         total_loaded = len(jobs)
-        has_next_page = total_loaded > current_page * limit
+        has_next_page = total_loaded > current_page * limit or has_more_from_api
         max_known_page = max(1, (total_loaded + limit - 1) // limit)
         if current_page > max_known_page:
             current_page = max_known_page
