@@ -654,7 +654,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-top { justify-content: space-between; }
         .evj-row {
             display: grid;
-            grid-template-columns: minmax(180px, 1.3fr) minmax(86px, 0.5fr) minmax(108px, 0.7fr) minmax(180px, 1.15fr) minmax(130px, 0.9fr) minmax(180px, 1.1fr);
+            grid-template-columns: minmax(180px, 1.25fr) minmax(86px, 0.48fr) minmax(172px, 0.95fr) minmax(170px, 1.05fr) minmax(120px, 0.8fr) minmax(160px, 1fr);
             gap: 8px;
             align-items: center;
         }
@@ -966,7 +966,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
               <span class="evj-status evj-status--{variant}">{status_mark}{status}</span>
             </div>
             <div class="evj-cell">
-              <strong>{scheduled}</strong><br><span class="evj-name-sub">{duration} · {created_label}</span>
+              <strong>{scheduled} ({created_label})</strong><br><span class="evj-name-sub">{duration}</span>
             </div>
             <div class="evj-cell evj-ref-cell">
               <strong>{catalog_html}</strong><br><span class="evj-name-sub">{source_html}</span>
@@ -1271,7 +1271,7 @@ def _render_recent_evaluator_jobs_section(
         limit = int(
             st.selectbox(
                 "Rows",
-                options=[6, 12, 20, 30],
+                options=[10, 20, 50, 100],
                 index=1,
                 key="recent_eval_jobs_limit",
                 help="How many recent evaluator jobs to fetch for this project.",
@@ -1309,19 +1309,7 @@ def _render_recent_evaluator_jobs_section(
             label_visibility="collapsed",
             placeholder="Type to search evaluator jobs",
         ).strip()
-    recent_candidates = _get_recent_job_search_history(search_scope)
     selected_user_name = ""
-    if recent_candidates:
-        recent_choice = st.selectbox(
-            "Recent searches",
-            options=[""] + recent_candidates,
-            index=0,
-            key=f"recent_eval_jobs_search_recent::{search_scope}",
-            help="Reuse a previously entered search for this field.",
-        )
-        if recent_choice and recent_choice != search_text:
-            st.session_state["recent_eval_jobs_search_text"] = recent_choice
-            st.rerun()
     user_candidates = sorted(
         {
             info.get("name", "").strip()
@@ -1534,7 +1522,7 @@ def _render_recent_evaluator_jobs_section(
                         _fetch_evaluator_job_detail.clear()
                         st.rerun()
                 with action_cols[1]:
-                    if st.button("Run", key=f"recent_eval_run_{job['job_id']}", use_container_width=True):
+                    if st.button("Start", key=f"recent_eval_run_{job['job_id']}", use_container_width=True):
                         st.session_state["recent_eval_jobs_run_selected"] = str(job["job_id"])
                         _fetch_evaluator_job_detail.clear()
                         st.rerun()

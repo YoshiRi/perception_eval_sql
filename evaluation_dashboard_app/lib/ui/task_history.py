@@ -243,9 +243,6 @@ def render_task_list(tasks: List[Dict[str, Any]], current_user: Optional[str]) -
     for t in active:
         _render_one_task_row(t, current_user, use_dialog, mode="active_compact")
 
-    if not active:
-        st.caption("No queued or running jobs.")
-
     if history:
         with st.expander(f"Task history ({len(history)})", expanded=False):
             for t in history:

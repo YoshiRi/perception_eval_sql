@@ -16,6 +16,15 @@ AUTH_USER_HEADER = os.environ.get("AUTH_USER_HEADER", "").strip()
 AUTH_DEFAULT_USER = os.environ.get("AUTH_DEFAULT_USER", "").strip() or None
 
 
+def _first_nonempty_string(*values: Any) -> str:
+    """Return the first non-empty string-like value, else empty string."""
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _read_streamlit_headers() -> Dict[str, str]:
     """Best-effort request headers from Streamlit context."""
     try:
@@ -56,7 +65,7 @@ def _decode_jwt_payload(token: str) -> Dict[str, Any]:
 
 
 def _extract_identity_from_bearer_token(headers: Dict[str, str]) -> Dict[str, Any]:
-    """Extract subject / email / display name from an Oathkeeper-style bearer token."""
+    """Extract subject / email / username / display name from common bearer token claims."""
     authz = str(headers.get("Authorization") or headers.get("authorization") or "").strip()
     if not authz.lower().startswith("bearer "):
         return {}
@@ -69,17 +78,41 @@ def _extract_identity_from_bearer_token(headers: Dict[str, str]) -> Dict[str, An
     identity = session.get("identity") or {}
     traits = identity.get("traits") or {}
     name = traits.get("name") or {}
+    oauth_username = _first_nonempty_string(
+        payload.get("preferred_username"),
+        payload.get("username"),
+        payload.get("upn"),
+        payload.get("unique_name"),
+        payload.get("cognito:username"),
+        traits.get("username"),
+        identity.get("username"),
+    )
     full_name = " ".join(
         part for part in [str(name.get("first") or "").strip(), str(name.get("last") or "").strip()] if part
     ).strip()
-    display_name = (
-        full_name
-        or str(traits.get("display_name") or "").strip()
-        or str(traits.get("email") or "").strip()
+    display_name = _first_nonempty_string(
+        payload.get("name"),
+        full_name,
+        traits.get("display_name"),
+        identity.get("display_name"),
+        oauth_username,
+        traits.get("email"),
+    )
+    email = _first_nonempty_string(
+        payload.get("email"),
+        payload.get("upn"),
+        traits.get("email"),
+        identity.get("email"),
+    )
+    subject_id = _first_nonempty_string(
+        payload.get("sub"),
+        session.get("account", {}).get("subject_id"),
+        identity.get("id"),
     )
     return {
-        "subject_id": str(payload.get("sub") or session.get("account", {}).get("subject_id") or "").strip(),
-        "email": str(traits.get("email") or "").strip(),
+        "subject_id": subject_id,
+        "email": email,
+        "username": oauth_username,
         "name": display_name,
         "claims": payload,
     }
@@ -105,47 +138,3 @@ def get_current_user_id() -> Optional[str]:
 def is_auth_enabled() -> bool:
     """True if AUTH_USER_HEADER or AUTH_DEFAULT_USER is set (per-user task filtering)."""
     return bool(AUTH_USER_HEADER or AUTH_DEFAULT_USER)
-
-
-def get_current_user_session_info() -> Dict[str, Any]:
-    """
-    Return best-effort request/session auth info for UI debugging.
-
-    This reflects what the Streamlit app can observe from the incoming request,
-    not the evaluator token used by background workers.
-    """
-    headers = _read_streamlit_headers()
-    configured_value = ""
-    configured_source = "unavailable"
-    if AUTH_USER_HEADER:
-        raw_value = headers.get(AUTH_USER_HEADER) or headers.get(AUTH_USER_HEADER.lower()) or ""
-        configured_value = str(raw_value).strip()
-        if configured_value:
-            configured_source = f"header:{AUTH_USER_HEADER}"
-        else:
-            configured_source = f"header:{AUTH_USER_HEADER} (missing)"
-    if not configured_value and AUTH_DEFAULT_USER:
-        configured_value = AUTH_DEFAULT_USER
-        configured_source = "AUTH_DEFAULT_USER"
-
-    authz = headers.get("Authorization") or headers.get("authorization") or ""
-    cookie = headers.get("Cookie") or headers.get("cookie") or ""
-    bearer_identity = _extract_identity_from_bearer_token(headers)
-    if not configured_value and bearer_identity.get("subject_id"):
-        configured_value = str(bearer_identity.get("subject_id") or "").strip()
-        configured_source = "authorization:bearer"
-    safe_header_keys = sorted(
-        key for key in headers.keys() if key.lower() not in {"authorization", "cookie"}
-    )
-    return {
-        "user_id": configured_value or None,
-        "source": configured_source,
-        "auth_user_header": AUTH_USER_HEADER or "",
-        "default_user": AUTH_DEFAULT_USER,
-        "has_authorization_header": bool(str(authz).strip()),
-        "has_cookie_header": bool(str(cookie).strip()),
-        "header_keys": safe_header_keys,
-        "bearer_subject_id": str(bearer_identity.get("subject_id") or "").strip(),
-        "bearer_email": str(bearer_identity.get("email") or "").strip(),
-        "bearer_name": str(bearer_identity.get("name") or "").strip(),
-    }

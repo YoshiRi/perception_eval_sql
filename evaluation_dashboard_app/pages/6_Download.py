@@ -39,7 +39,9 @@ from lib.WebAPI import scenarioAPI
 from lib.user_config import UserConfig
 from lib.path_utils import get_data_root, resolve_under_data_root, to_data_relative
 from lib.eval_summary import find_eval_result_dirs, run_eval_result_for_dir, generate_summary_and_score_csv
-from lib.page_chrome import inject_app_page_styles
+from lib.page_chrome import (
+    inject_app_page_styles,
+)
 from lib.ui.download_ui import (
     ImpressiveProgressHUD,
     render_detailed_scenario_download_panel,

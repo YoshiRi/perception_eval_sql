@@ -20,7 +20,11 @@ import streamlit as st
 import requests
 
 from lib.db import create_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
-from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
+from lib.page_chrome import (
+    inject_app_page_styles,
+    render_page_hero,
+    section_header,
+)
 from lib.path_utils import (
     format_size,
     get_data_root_display,
@@ -159,6 +163,40 @@ def _make_default_output_path(branch_name: str) -> str:
     return f"eval_{clean_branch}_{ts}"
 
 
+def _catalog_preset_emoji(preset_name: str, *, has_custom_catalog: bool = False) -> str:
+    mapping = {
+        "Build Test Catalog": "🛠️",
+        "Performance Test": "📈",
+        "Old performance test": "🕰️",
+        "Devops Test": "⚙️",
+        "Usecase Performance Catalog": "🧭",
+        "L4 regression test": "⚠️",
+    }
+    normalized = str(preset_name or "").strip()
+    if normalized in mapping:
+        return mapping[normalized]
+    if has_custom_catalog:
+        return "🧩"
+    return "📦"
+
+
+def _make_auto_workflow_description(
+    target_name: str,
+    preset_name: str = "",
+    *,
+    has_custom_catalog: bool = False,
+) -> str:
+    import re
+
+    clean_target = str(target_name or "").strip() or "default"
+    clean_target = re.sub(r"\s+", " ", clean_target)
+    stamp = datetime.now().strftime("%m-%d %H:%M")
+    return (
+        f"🚀 evaluator workflow [{clean_target}] [{stamp}] "
+        f"{_catalog_preset_emoji(preset_name, has_custom_catalog=has_custom_catalog)}"
+    )
+
+
 def _format_run_mtime(mtime: float) -> str:
     if not mtime:
         return "—"
@@ -168,11 +206,35 @@ def _format_run_mtime(mtime: float) -> str:
         return "—"
 
 
-def _build_overview_url(run_a: str, run_b: Optional[str] = None) -> str:
-    query = {"mode": "compare" if run_b else "single", "run_a": run_a}
-    if run_b:
-        query["run_b"] = run_b
+def _build_overview_url(run_a: str, compare_runs: Optional[List[str]] = None) -> str:
+    query = {"mode": "single", "run_a": run_a}
+    valid_compare_runs = [str(name).strip() for name in (compare_runs or []) if str(name).strip()]
+    if valid_compare_runs:
+        query["mode"] = "compare"
+        for idx, run_name in enumerate(valid_compare_runs[:4]):
+            query[f"run_{chr(98 + idx)}"] = run_name
     return f"/?{urllib.parse.urlencode(query)}"
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _load_local_runs() -> List[Dict[str, object]]:
+    runs: List[Dict[str, object]] = []
+    for run_path in list_run_directories():
+        info = get_run_info(run_path)
+        runs.append(
+            {
+                "name": info["name"],
+                "path_display": f"{get_data_root_display()}/{info['name']}",
+                "size": format_size(info["size_bytes"]),
+                "mtime": float(info["mtime"] or 0),
+                "modified": _format_run_mtime(info["mtime"]),
+                "has_summary": bool(info["has_summary"]),
+                "has_score": bool(info["has_score"]),
+                "has_parquet": bool(info["has_parquet"]),
+            }
+        )
+    runs.sort(key=lambda row: (-float(row["mtime"]), str(row["name"]).lower()))
+    return runs
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
@@ -250,59 +312,46 @@ def _inject_workflow_page_styles() -> None:
             display: block;
             margin-top: 0.35rem;
         }
-        .wf-run-card {
-            border: 1px solid rgba(148, 163, 184, 0.2);
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            border-radius: 16px;
-            padding: 0.95rem 1rem;
-        }
-        .wf-run-row {
-            display: grid;
-            grid-template-columns: minmax(0, 2.3fr) minmax(110px, 0.95fr) minmax(92px, 0.85fr) minmax(0, 1.1fr);
-            gap: 0.95rem;
-            align-items: center;
-        }
         .wf-run-name {
             min-width: 0;
         }
         .wf-run-title {
-            font-size: 0.96rem;
-            line-height: 1.25;
+            font-size: 0.8rem;
+            line-height: 1.2;
             font-weight: 700;
             color: #0f172a;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        .wf-run-sub {
-            margin-top: 0.18rem;
-            color: #64748b;
-            font-size: 0.78rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+        .wf-run-title a {
+            color: inherit;
+            text-decoration: none;
+        }
+        .wf-run-title a:hover {
+            text-decoration: underline;
         }
         .wf-run-cell {
             min-width: 0;
             color: #0f172a;
-            font-size: 0.85rem;
-            line-height: 1.35;
+            font-size: 0.78rem;
+            line-height: 1.15;
         }
-        .wf-run-cell strong {
-            display: block;
-            font-size: 0.88rem;
+        .wf-run-text {
+            padding-top: 0.26rem;
         }
         .wf-run-flags {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.36rem;
+            gap: 0.24rem;
+            padding-top: 0.18rem;
         }
         .wf-flag {
             display: inline-flex;
             align-items: center;
-            padding: 0.22rem 0.5rem;
+            padding: 0.12rem 0.38rem;
             border-radius: 999px;
-            font-size: 0.72rem;
+            font-size: 0.68rem;
             font-weight: 700;
             letter-spacing: 0.02em;
             background: #e2e8f0;
@@ -315,46 +364,61 @@ def _inject_workflow_page_styles() -> None:
         .wf-compare-bar {
             border: 1px solid rgba(148, 163, 184, 0.24);
             background: linear-gradient(135deg, #f8fafc 0%, #ecfeff 100%);
-            border-radius: 16px;
-            padding: 0.95rem 1rem;
-            margin: 0.45rem 0 0.75rem 0;
+            border-radius: 12px;
+            padding: 0.7rem 0.85rem;
+            margin: 0.35rem 0 0.55rem 0;
         }
         .wf-compare-title {
             margin: 0;
-            font-size: 0.84rem;
+            font-size: 0.8rem;
             font-weight: 800;
             color: #0f172a;
             letter-spacing: 0.01em;
         }
-        .wf-start-note {
+        [class*="st-key-workflow_compare_pick__"] label[data-testid="stWidgetLabel"] {
+            display: none;
+        }
+        [class*="st-key-workflow_compare_pick__"] div[data-testid="stCheckbox"] {
+            display: flex;
+            justify-content: center;
+            padding-top: 0.1rem;
+        }
+        [class*="st-key-workflow_compare_pick__"] input[type="checkbox"] {
+            transform: scale(1.2);
+        }
+        [class*="st-key-workflow_runs_page_select"] div[data-baseweb="select"] {
+            min-height: 2rem;
+        }
+        .wf-launcher {
             border: 1px solid rgba(20, 184, 166, 0.22);
             background: linear-gradient(135deg, #f0fdfa 0%, #ffffff 100%);
-            border-radius: 16px;
-            padding: 1rem;
-            min-height: 100%;
+            border-radius: 14px;
+            padding: 0.85rem 1rem;
+            margin-bottom: 0.8rem;
         }
-        .wf-start-note strong {
+        .wf-launcher-title {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 800;
             color: #0f172a;
         }
-        .wf-start-note p {
+        .wf-launcher-copy {
+            margin: 0.25rem 0 0 0;
+            font-size: 0.84rem;
             color: #475569;
-            font-size: 0.9rem;
-            line-height: 1.55;
-            margin: 0.45rem 0 0 0;
+        }
+        .wf-launcher-meta {
+            margin-top: 0.55rem;
+            font-size: 0.78rem;
+            color: #475569;
         }
         .wf-empty {
             border: 1px dashed rgba(148, 163, 184, 0.45);
-            border-radius: 16px;
+            border-radius: 12px;
             background: rgba(248, 250, 252, 0.8);
-            padding: 1rem;
+            padding: 0.8rem 0.9rem;
             color: #475569;
-            font-size: 0.9rem;
-        }
-        @media (max-width: 1080px) {
-            .wf-run-row {
-                grid-template-columns: 1fr;
-                gap: 0.55rem;
-            }
+            font-size: 0.84rem;
         }
         </style>
         """,
@@ -362,9 +426,18 @@ def _inject_workflow_page_styles() -> None:
     )
 
 
-def _render_local_run_card(run: Dict[str, object]) -> None:
-    name = html.escape(str(run["name"]))
-    rel_path = html.escape(str(run["path_display"]))
+def _render_local_runs_header() -> None:
+    header_cols = st.columns([0.7, 2.45, 1.35, 0.95, 1.55], gap="small")
+    header_cols[0].markdown('<div class="wf-toolbar-note">Pick</div>', unsafe_allow_html=True)
+    header_cols[1].markdown('<div class="wf-toolbar-note">Name</div>', unsafe_allow_html=True)
+    header_cols[2].markdown('<div class="wf-toolbar-note">Updated</div>', unsafe_allow_html=True)
+    header_cols[3].markdown('<div class="wf-toolbar-note">Size</div>', unsafe_allow_html=True)
+    header_cols[4].markdown('<div class="wf-toolbar-note">Files</div>', unsafe_allow_html=True)
+
+
+def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
+    name_raw = str(run["name"])
+    name = html.escape(name_raw)
     modified = html.escape(str(run["modified"]))
     size = html.escape(str(run["size"]))
     flags = [
@@ -376,60 +449,34 @@ def _render_local_run_card(run: Dict[str, object]) -> None:
         f'<span class="wf-flag {"wf-flag--ok" if enabled else ""}">{label}</span>'
         for label, enabled in flags
     )
-    st.markdown(
-        f"""
-        <div class="wf-run-card">
-          <div class="wf-run-row">
-            <div class="wf-run-name">
-              <div class="wf-run-title">{name}</div>
-              <div class="wf-run-sub">{rel_path}</div>
-            </div>
-            <div class="wf-run-cell">
-              <strong>{modified}</strong>
-              <span class="wf-run-sub">last updated</span>
-            </div>
-            <div class="wf-run-cell">
-              <strong>{size}</strong>
-              <span class="wf-run-sub">disk usage</span>
-            </div>
-            <div class="wf-run-cell">
-              <div class="wf-run-flags">{flag_html}</div>
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    checkbox_key = f"workflow_compare_pick::{name_raw}"
+    if checkbox_key not in st.session_state:
+        st.session_state[checkbox_key] = bool(selected)
+    row_cols = st.columns([0.7, 2.45, 1.35, 0.95, 1.55], gap="small")
+    with row_cols[0]:
+        checked = st.checkbox("Select run", key=checkbox_key, label_visibility="collapsed")
+    with row_cols[1]:
+        st.markdown(
+            f'<div class="wf-run-title wf-run-text"><a href="{_build_overview_url(name_raw)}" target="_self">{name}</a></div>',
+            unsafe_allow_html=True,
+        )
+    with row_cols[2]:
+        st.markdown(f'<div class="wf-run-cell wf-run-text">{modified}</div>', unsafe_allow_html=True)
+    with row_cols[3]:
+        st.markdown(f'<div class="wf-run-cell wf-run-text">{size}</div>', unsafe_allow_html=True)
+    with row_cols[4]:
+        st.markdown(f'<div class="wf-run-cell"><div class="wf-run-flags">{flag_html}</div></div>', unsafe_allow_html=True)
+    return bool(checked)
 
 
 def _render_local_runs_section() -> None:
-    section_header(
-        "Local Runs",
-        f"Finished runs already stored under `{get_data_root_display()}/`. Search, browse, and pick two to compare.",
-    )
-    run_dirs = list_run_directories()
-    if not run_dirs:
+    section_header("Local Runs", "")
+    runs = _load_local_runs()
+    if not runs:
         st.markdown('<div class="wf-empty">No finished runs were found on this server yet.</div>', unsafe_allow_html=True)
         return
 
-    runs: List[Dict[str, object]] = []
-    for run_path in run_dirs:
-        info = get_run_info(run_path)
-        runs.append(
-            {
-                "name": info["name"],
-                "path_display": f"{get_data_root_display()}/{info['name']}",
-                "size": format_size(info["size_bytes"]),
-                "mtime": float(info["mtime"] or 0),
-                "modified": _format_run_mtime(info["mtime"]),
-                "has_summary": bool(info["has_summary"]),
-                "has_score": bool(info["has_score"]),
-                "has_parquet": bool(info["has_parquet"]),
-            }
-        )
-    runs.sort(key=lambda row: (-float(row["mtime"]), str(row["name"]).lower()))
-
-    control_cols = st.columns([1.7, 0.8, 0.8, 0.55])
+    control_cols = st.columns([2.2, 0.8, 0.8, 0.7])
     with control_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Search</div>', unsafe_allow_html=True)
         run_search = st.text_input(
@@ -441,94 +488,43 @@ def _render_local_runs_section() -> None:
         ).strip().lower()
     with control_cols[1]:
         st.markdown('<div class="wf-toolbar-note">Summary</div>', unsafe_allow_html=True)
-        require_summary = st.selectbox(
-            "Require summary",
-            options=["Any", "Yes", "No"],
-            index=0,
+        require_summary = st.toggle(
+            "Summary only",
             key="workflow_runs_summary_filter",
             label_visibility="collapsed",
         )
     with control_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Parquet</div>', unsafe_allow_html=True)
-        require_parquet = st.selectbox(
-            "Require parquet",
-            options=["Any", "Yes", "No"],
-            index=0,
+        require_parquet = st.toggle(
+            "Parquet only",
             key="workflow_runs_parquet_filter",
             label_visibility="collapsed",
         )
     with control_cols[3]:
         st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
-        page_size = int(
-            st.selectbox(
-                "Rows per page",
-                options=[6, 10, 14, 20],
-                index=1,
-                key="workflow_runs_page_size",
-                label_visibility="collapsed",
-            )
-        )
+        page_size = int(st.selectbox("Rows", options=[10, 20, 50, 100], index=0, key="workflow_runs_page_size", label_visibility="collapsed"))
 
     filtered = runs
     if run_search:
         filtered = [row for row in filtered if run_search in str(row["name"]).lower()]
-    if require_summary != "Any":
-        want = require_summary == "Yes"
-        filtered = [row for row in filtered if bool(row["has_summary"]) == want]
-    if require_parquet != "Any":
-        want = require_parquet == "Yes"
-        filtered = [row for row in filtered if bool(row["has_parquet"]) == want]
+    if require_summary:
+        filtered = [row for row in filtered if bool(row["has_summary"])]
+    if require_parquet:
+        filtered = [row for row in filtered if bool(row["has_parquet"])]
 
-    run_names = [str(row["name"]) for row in filtered]
     compare_ready = [
         str(row["name"])
         for row in filtered
         if bool(row["has_summary"]) or bool(row["has_score"]) or bool(row["has_parquet"])
     ]
-    if "workflow_compare_run_a" not in st.session_state:
-        st.session_state["workflow_compare_run_a"] = compare_ready[0] if compare_ready else ""
-    if "workflow_compare_run_b" not in st.session_state:
-        st.session_state["workflow_compare_run_b"] = compare_ready[1] if len(compare_ready) > 1 else ""
+    if "workflow_compare_runs" not in st.session_state:
+        st.session_state["workflow_compare_runs"] = compare_ready[:1]
 
-    st.markdown('<div class="wf-compare-bar">', unsafe_allow_html=True)
-    st.markdown('<p class="wf-compare-title">Quick compare tray</p>', unsafe_allow_html=True)
-    compare_cols = st.columns([1.35, 1.35, 0.95, 0.95])
-    with compare_cols[0]:
-        st.markdown('<div class="wf-toolbar-note">Baseline A</div>', unsafe_allow_html=True)
-        run_a = st.selectbox(
-            "Baseline A",
-            options=[""] + compare_ready,
-            index=([""] + compare_ready).index(st.session_state.get("workflow_compare_run_a", ""))
-            if st.session_state.get("workflow_compare_run_a", "") in compare_ready
-            else 0,
-            key="workflow_compare_run_a",
-            label_visibility="collapsed",
-        )
-    with compare_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Candidate B</div>', unsafe_allow_html=True)
-        run_b_options = [""] + [name for name in compare_ready if name != run_a]
-        current_b = st.session_state.get("workflow_compare_run_b", "")
-        st.selectbox(
-            "Candidate B",
-            options=run_b_options,
-            index=run_b_options.index(current_b) if current_b in run_b_options else 0,
-            key="workflow_compare_run_b",
-            label_visibility="collapsed",
-        )
-    run_b = st.session_state.get("workflow_compare_run_b", "")
-    with compare_cols[2]:
-        st.markdown('<div class="wf-toolbar-note">Single</div>', unsafe_allow_html=True)
-        if run_a:
-            st.link_button("Open run", _build_overview_url(run_a), use_container_width=True)
-        else:
-            st.button("Open run", disabled=True, use_container_width=True, key="workflow_open_run_disabled")
-    with compare_cols[3]:
-        st.markdown('<div class="wf-toolbar-note">Compare</div>', unsafe_allow_html=True)
-        if run_a and run_b:
-            st.link_button("Compare", _build_overview_url(run_a, run_b), use_container_width=True)
-        else:
-            st.button("Compare", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
-    st.markdown("</div>", unsafe_allow_html=True)
+    compare_selected = [
+        name for name in st.session_state.get("workflow_compare_runs", [])
+        if name in compare_ready
+    ]
+    st.session_state["workflow_compare_runs"] = compare_selected
 
     if not filtered:
         st.markdown('<div class="wf-empty">No local runs matched the current filters.</div>', unsafe_allow_html=True)
@@ -542,61 +538,68 @@ def _render_local_runs_section() -> None:
         st.session_state[page_key] = current_page
     start_idx = (current_page - 1) * page_size
     visible_runs = filtered[start_idx:start_idx + page_size]
-
-    pager_cols = st.columns([0.7, 0.8, 0.8, 0.8, 5.9])
-    with pager_cols[0]:
-        if st.button("‹", key="workflow_runs_prev", use_container_width=True, disabled=current_page <= 1):
-            st.session_state[page_key] = current_page - 1
-            st.rerun()
-    page_numbers = (
-        list(range(1, min(3, page_count) + 1))
-        if current_page == 1
-        else list(range(max(1, current_page - 1), min(page_count, current_page + 1) + 1))
-    )
-    for idx, page_num in enumerate(page_numbers[:3], start=1):
-        with pager_cols[idx]:
-            if st.button(
-                str(page_num),
-                key=f"workflow_runs_page_{page_num}",
-                use_container_width=True,
-                disabled=page_num == current_page,
-            ):
-                st.session_state[page_key] = page_num
-                st.rerun()
-    with pager_cols[4]:
-        if st.button("›", key="workflow_runs_next", use_container_width=True, disabled=current_page >= page_count):
-            st.session_state[page_key] = current_page + 1
-            st.rerun()
-
-    st.markdown('<div class="wf-run-list">', unsafe_allow_html=True)
+    visible_names = {str(run["name"]) for run in visible_runs}
+    next_selected = [name for name in compare_selected if name not in visible_names]
     for run in visible_runs:
-        row_cols = st.columns([8.9, 2.6])
-        with row_cols[0]:
-            _render_local_run_card(run)
-        with row_cols[1]:
-            action_cols = st.columns([1.0, 1.0, 1.0], gap="small")
-            with action_cols[0]:
-                st.link_button(
-                    "Open",
-                    _build_overview_url(str(run["name"])),
-                    use_container_width=True,
-                )
-            with action_cols[1]:
-                if st.button(f"A", key=f"workflow_pick_a_{run['name']}", use_container_width=True):
-                    st.session_state["workflow_compare_run_a"] = str(run["name"])
-                    st.rerun()
-            with action_cols[2]:
-                if st.button(f"B", key=f"workflow_pick_b_{run['name']}", use_container_width=True):
-                    st.session_state["workflow_compare_run_b"] = str(run["name"])
-                    st.rerun()
+        run_name = str(run["name"])
+        checkbox_key = f"workflow_compare_pick::{run_name}"
+        is_checked = bool(st.session_state.get(checkbox_key, run_name in compare_selected))
+        if is_checked and run_name in compare_ready:
+            next_selected.append(run_name)
+    st.session_state["workflow_compare_runs"] = [name for name in compare_ready if name in next_selected]
+
+    st.markdown('<div class="wf-compare-bar">', unsafe_allow_html=True)
+    st.markdown('<p class="wf-compare-title">Compare</p>', unsafe_allow_html=True)
+    compare_cols = st.columns([3.4, 1.0])
+    with compare_cols[0]:
+        st.markdown('<div class="wf-toolbar-note">Selected runs</div>', unsafe_allow_html=True)
+        selected_runs = list(st.session_state.get("workflow_compare_runs", []))
+        if selected_runs:
+            st.caption(" | ".join(selected_runs))
+    with compare_cols[1]:
+        st.markdown('<div class="wf-toolbar-note">Action</div>', unsafe_allow_html=True)
+        if len(selected_runs) >= 2:
+            st.link_button("Compare", _build_overview_url(selected_runs[0], selected_runs[1:]), use_container_width=True)
+        elif len(selected_runs) == 1:
+            st.link_button("Open", _build_overview_url(selected_runs[0]), use_container_width=True)
+        else:
+            st.button("Open", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
     st.markdown("</div>", unsafe_allow_html=True)
+
+    pager_cols = st.columns([0.9, 1.2, 4.1])
+    with pager_cols[0]:
+        st.markdown('<div class="wf-toolbar-note">Page</div>', unsafe_allow_html=True)
+        selected_page = st.selectbox(
+            "Page",
+            options=list(range(1, page_count + 1)),
+            index=max(0, current_page - 1),
+            key="workflow_runs_page_select",
+            label_visibility="collapsed",
+        )
+        if selected_page != current_page:
+            st.session_state[page_key] = int(selected_page)
+            current_page = int(selected_page)
+            start_idx = (current_page - 1) * page_size
+            visible_runs = filtered[start_idx:start_idx + page_size]
+            visible_names = {str(run["name"]) for run in visible_runs}
+    with pager_cols[1]:
+        st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
+        st.caption(str(len(visible_runs)))
+    with pager_cols[2]:
+        st.markdown('<div class="wf-toolbar-note">Total</div>', unsafe_allow_html=True)
+        st.caption(f"{len(filtered)} runs")
+
+    _render_local_runs_header()
+    next_selected = [name for name in st.session_state.get("workflow_compare_runs", []) if name not in visible_names]
+    for run in visible_runs:
+        run_name = str(run["name"])
+        if _render_local_run_row(run, selected=run_name in st.session_state.get("workflow_compare_runs", [])) and run_name in compare_ready:
+            next_selected.append(run_name)
+    st.session_state["workflow_compare_runs"] = [name for name in compare_ready if name in next_selected]
 
 
 def _render_current_tasks_section() -> None:
-    section_header(
-        "Current Tasks",
-        "Jobs queued or running on this server, with recent history folded underneath.",
-    )
+    section_header("Current Tasks", "")
     if not is_task_queue_enabled():
         st.info("Task queue not enabled. Set `USE_TASK_QUEUE=true` to track background tasks.")
         return
@@ -632,16 +635,30 @@ def _render_current_tasks_section() -> None:
         st.caption("Active jobs are shown live when possible. Use refresh if this browser does not support fragments.")
 
 
-def _render_start_workflow_section(
+def _get_start_workflow_defaults() -> Dict[str, object]:
+    default_target = get_config_value("target_name", "beta/v4.3.2")
+    saved_output = str(get_config_value("eval_output_path", "") or "").strip()
+    default_output = saved_output if saved_output and saved_output != "evaluator_run" else _make_default_output_path(default_target)
+    return {
+        "project_id": get_config_value("eval_project_id", "x2_dev"),
+        "environment": get_config_value("environment", ""),
+        "output_path_default": default_output,
+        "download_type_default": get_config_value("eval_download_type", "Archives (ZIP)"),
+        "phase_default": get_config_value(
+            "eval_phase",
+            "perception.object_recognition.tracking.objects",
+        ),
+        "skip_large_file_default": True,
+        "large_file_mb_default": 50.0,
+        "keep_zip_files_default": False,
+    }
+
+
+def _render_start_workflow_form(
     catalog_presets: List[Dict[str, str]],
     catalogs_path: Optional[str],
     catalog_load_error: Optional[str],
 ) -> Dict[str, object]:
-    section_header(
-        "Start Workflow",
-        "Schedule a fresh evaluator run here, or use the recent evaluator jobs browser below to run Download + Eval from an existing report.",
-    )
-
     if catalog_load_error:
         st.warning(f"Could not read catalog presets: {catalog_load_error}")
     elif catalogs_path:
@@ -658,7 +675,8 @@ def _render_start_workflow_section(
     default_poll_interval = int(get_config_value("poll_interval", 60))
     default_max_wait_hours = int(get_config_value("max_wait_hours", 24))
     default_environment = get_config_value("environment", "")
-    default_output = get_config_value("eval_output_path", _make_default_output_path(default_target))
+    saved_output = str(get_config_value("eval_output_path", "") or "").strip()
+    default_output = saved_output if saved_output and saved_output != "evaluator_run" else _make_default_output_path(default_target)
 
     top_cols = st.columns([1.0, 1.5, 1.2])
     with top_cols[0]:
@@ -670,18 +688,25 @@ def _render_start_workflow_section(
             label_visibility="collapsed",
         ).strip()
     with top_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
+        st.markdown('<div class="wf-toolbar-note">Catalog preset</div>', unsafe_allow_html=True)
         selected_catalog_name = st.selectbox(
-            "Catalog",
-            options=catalog_names if catalog_names else ["No catalog presets"],
+            "Catalog preset",
+            options=[""] + catalog_names if catalog_names else [""],
             index=0,
             key="workflow_catalog_name",
             label_visibility="collapsed",
+            format_func=lambda value: value or "Optional preset",
         )
     selected_catalog = next(
         (item for item in catalog_presets if item["display_name"] == selected_catalog_name),
         None,
     )
+    if "workflow_last_catalog_preset" not in st.session_state:
+        st.session_state["workflow_last_catalog_preset"] = ""
+    if st.session_state["workflow_last_catalog_preset"] != selected_catalog_name and selected_catalog:
+        st.session_state["workflow_catalog_id"] = str(selected_catalog.get("catalog_id") or "")
+        st.session_state["workflow_integration_id"] = str(selected_catalog.get("integration_id") or "")
+        st.session_state["workflow_last_catalog_preset"] = selected_catalog_name
     with top_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Branch or tag</div>', unsafe_allow_html=True)
         target_name = st.text_input(
@@ -692,8 +717,26 @@ def _render_start_workflow_section(
             placeholder="beta/v4.3.2",
         ).strip()
 
-    detail_cols = st.columns([1.25, 0.8, 0.95])
+    detail_cols = st.columns([1.05, 1.05, 1.2, 0.8, 0.95])
     with detail_cols[0]:
+        st.markdown('<div class="wf-toolbar-note">Catalog ID</div>', unsafe_allow_html=True)
+        catalog_id = st.text_input(
+            "Catalog ID",
+            value=str(get_config_value("workflow_catalog_id", "") or ""),
+            key="workflow_catalog_id",
+            label_visibility="collapsed",
+            placeholder="vehicle catalog id",
+        ).strip()
+    with detail_cols[1]:
+        st.markdown('<div class="wf-toolbar-note">Integration ID</div>', unsafe_allow_html=True)
+        integration_id = st.text_input(
+            "Integration ID",
+            value=str(get_config_value("workflow_integration_id", "") or ""),
+            key="workflow_integration_id",
+            label_visibility="collapsed",
+            placeholder="integration id",
+        ).strip()
+    with detail_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Output folder</div>', unsafe_allow_html=True)
         output_path = st.text_input(
             "Output folder",
@@ -702,7 +745,7 @@ def _render_start_workflow_section(
             label_visibility="collapsed",
             placeholder=_make_default_output_path(target_name),
         ).strip()
-    with detail_cols[1]:
+    with detail_cols[3]:
         st.markdown('<div class="wf-toolbar-note">Environment</div>', unsafe_allow_html=True)
         environment = st.selectbox(
             "Environment",
@@ -712,7 +755,7 @@ def _render_start_workflow_section(
             label_visibility="collapsed",
             format_func=lambda value: value or "default",
         )
-    with detail_cols[2]:
+    with detail_cols[4]:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
         description = st.text_input(
             "Description",
@@ -723,14 +766,8 @@ def _render_start_workflow_section(
         ).strip()
 
     if selected_catalog:
-        info_cols = st.columns([1.2, 1.15, 2.2])
-        with info_cols[0]:
-            st.markdown(f'<div class="wf-meta-inline"><strong>Catalog ID</strong><br>{html.escape(str(selected_catalog.get("catalog_id", "—")))}</div>', unsafe_allow_html=True)
-        with info_cols[1]:
-            st.markdown(f'<div class="wf-meta-inline"><strong>Integration</strong><br>{html.escape(str(selected_catalog.get("integration_id", "—")))}</div>', unsafe_allow_html=True)
-        with info_cols[2]:
-            desc = str(selected_catalog.get("description") or "").strip() or "Preset selected for quick scheduling."
-            st.markdown(f'<div class="wf-meta-inline"><strong>Preset</strong><br>{html.escape(desc)}</div>', unsafe_allow_html=True)
+        desc = str(selected_catalog.get("description") or "").strip() or "Preset selected for quick scheduling."
+        st.caption(f"Preset: {desc}")
 
     with st.expander("Advanced options", expanded=False):
         adv_cols = st.columns([1.0, 1.2, 0.8, 0.8])
@@ -782,32 +819,6 @@ def _render_start_workflow_section(
         with option_cols[3]:
             is_tag = st.checkbox("Target is tag", value=False, key="workflow_is_tag")
 
-    start_cols = st.columns([1.45, 0.95])
-    with start_cols[0]:
-        st.markdown('<div class="wf-panel">', unsafe_allow_html=True)
-        st.markdown('<p class="wf-panel-title">Schedule evaluator + download + eval</p>', unsafe_allow_html=True)
-        st.markdown(
-            '<p class="wf-panel-copy">This starts the same background pipeline as the previous workflow launcher, but keeps the controls on-page. Output path, evaluator polling, and eval/parquet behavior are all preserved.</p>',
-            unsafe_allow_html=True,
-        )
-        start_clicked = st.button(
-            "Start evaluator workflow",
-            key="workflow_start_btn",
-            type="primary",
-            use_container_width=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-    with start_cols[1]:
-        st.markdown(
-            """
-            <div class="wf-start-note">
-              <strong>Already have an evaluator report?</strong>
-              <p>Use the recent evaluator jobs section right below. Every row can open details or run Download + Eval + Parquet directly, using the same defaults configured on this page.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     set_config_value("eval_project_id", project_id)
     set_config_value("target_name", target_name)
     set_config_value("eval_output_path", output_path)
@@ -817,9 +828,8 @@ def _render_start_workflow_section(
     set_config_value("max_wait_hours", max_wait_hours)
     set_config_value("environment", environment)
     set_config_value("workflow_description", description)
-
-    catalog_id = str((selected_catalog or {}).get("catalog_id") or "").strip()
-    integration_id = str((selected_catalog or {}).get("integration_id") or "").strip()
+    set_config_value("workflow_catalog_id", catalog_id)
+    set_config_value("workflow_integration_id", integration_id)
     errors = []
     if not project_id:
         errors.append("Project ID")
@@ -839,56 +849,112 @@ def _render_start_workflow_section(
     else:
         errors.append("Output folder")
 
-    if start_clicked:
-        if errors:
-            for err in errors:
-                st.error(f"Missing or invalid: {err}")
-        elif not is_task_queue_enabled():
-            st.error("Task queue not enabled. Set `USE_TASK_QUEUE=true` and `REDIS_URL`.")
-        else:
-            task_id = _enqueue_task(
-                "run_evaluator_and_process",
-                {
-                    "project_id": project_id,
-                    "catalog_id": catalog_id,
-                    "integration_id": integration_id,
-                    "suite_ids": None,
-                    "target_name": target_name,
-                    "description": description or f"Eval {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    "output_path": str(resolved_output),
-                    "environment": environment,
-                    "max_retries": 0,
-                    "clean_build": False,
-                    "debug": False,
-                    "is_tag": is_tag,
-                    "download_type": "archives" if download_type == "Archives (ZIP)" else "result_json",
-                    "phase": phase,
-                    "skip_large_file": False,
-                    "large_file_mb": 50.0,
-                    "keep_zip_files": False,
-                    "poll_interval": int(poll_interval),
-                    "max_wait_seconds": int(max_wait_hours) * 3600,
-                    "run_eval": bool(run_eval),
-                    "generate_parquet": bool(generate_parquet),
-                    "eval_recursive": bool(eval_recursive),
-                    "eval_overwrite": False,
-                },
-            )
-            if task_id:
-                st.success(f"Workflow queued. Task id: `{task_id}`")
-            else:
-                st.error("Failed to enqueue task. Check worker logs.")
-
     return {
         "project_id": project_id,
         "environment": environment,
         "output_path_default": output_path or _make_default_output_path(target_name),
         "download_type_default": download_type,
         "phase_default": phase,
-        "skip_large_file_default": False,
+        "skip_large_file_default": True,
         "large_file_mb_default": 50.0,
         "keep_zip_files_default": False,
+        "dialog_payload": {
+            "errors": errors,
+            "project_id": project_id,
+            "catalog_id": catalog_id,
+            "integration_id": integration_id,
+            "catalog_preset_name": selected_catalog_name,
+            "has_custom_catalog": bool(catalog_id and not selected_catalog),
+            "target_name": target_name,
+            "description": description,
+            "resolved_output": str(resolved_output) if resolved_output else "",
+            "environment": environment,
+            "is_tag": is_tag,
+            "download_type": download_type,
+            "phase": phase,
+            "poll_interval": int(poll_interval),
+            "max_wait_hours": int(max_wait_hours),
+            "run_eval": bool(run_eval),
+            "generate_parquet": bool(generate_parquet),
+            "eval_recursive": bool(eval_recursive),
+        },
     }
+
+
+def _render_workflow_launcher_section(
+    catalog_presets: List[Dict[str, str]],
+    catalogs_path: Optional[str],
+    catalog_load_error: Optional[str],
+) -> Dict[str, object]:
+    section_header("Run Evaluator Workflow", "")
+    start_defaults = _get_start_workflow_defaults()
+    new_job_clicked = st.button(
+        "Start new workflow",
+        key="workflow_open_start_dialog",
+        type="primary",
+        use_container_width=False,
+    )
+
+    if new_job_clicked and callable(getattr(st, "dialog", None)):
+        @st.dialog("Start evaluator workflow", width="large")
+        def _workflow_start_dialog() -> None:
+            st.caption("This is the full launcher for creating a new evaluator job, downloading results, and optionally running eval/parquet.")
+            payload = _render_start_workflow_form(catalog_presets, catalogs_path, catalog_load_error)
+            submit_cols = st.columns([1.15, 1.15, 3.7])
+            close_clicked = submit_cols[0].button("Close", key="workflow_close_start_dialog", use_container_width=True)
+            start_clicked = submit_cols[1].button("Start workflow", key="workflow_start_btn_dialog", type="primary", use_container_width=True)
+            if close_clicked:
+                st.rerun()
+            if start_clicked:
+                dialog_payload = dict(payload.get("dialog_payload") or {})
+                errors = dialog_payload.get("errors", [])
+                if errors:
+                    for err in errors:
+                        st.error(f"Missing or invalid: {err}")
+                elif not is_task_queue_enabled():
+                    st.error("Task queue not enabled. Set `USE_TASK_QUEUE=true` and `REDIS_URL`.")
+                else:
+                    task_id = _enqueue_task(
+                        "run_evaluator_and_process",
+                        {
+                            "project_id": dialog_payload["project_id"],
+                            "catalog_id": dialog_payload["catalog_id"],
+                            "integration_id": dialog_payload["integration_id"],
+                            "suite_ids": None,
+                            "target_name": dialog_payload["target_name"],
+                            "description": dialog_payload["description"] or _make_auto_workflow_description(
+                                dialog_payload["target_name"],
+                                dialog_payload.get("catalog_preset_name", ""),
+                                has_custom_catalog=bool(dialog_payload.get("has_custom_catalog", False)),
+                            ),
+                            "output_path": dialog_payload["resolved_output"],
+                            "environment": dialog_payload["environment"],
+                            "max_retries": 0,
+                            "clean_build": False,
+                            "debug": False,
+                            "is_tag": dialog_payload["is_tag"],
+                            "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
+                            "phase": dialog_payload["phase"],
+                            "skip_large_file": False,
+                            "large_file_mb": 50.0,
+                            "keep_zip_files": False,
+                            "poll_interval": dialog_payload["poll_interval"],
+                            "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
+                            "run_eval": dialog_payload["run_eval"],
+                            "generate_parquet": dialog_payload["generate_parquet"],
+                            "eval_recursive": dialog_payload["eval_recursive"],
+                            "eval_overwrite": False,
+                        },
+                    )
+                    if task_id:
+                        st.success(f"Workflow queued. Task id: `{task_id}`")
+                        st.rerun()
+                    else:
+                        st.error("Failed to enqueue task. Check worker logs.")
+
+        _workflow_start_dialog()
+
+    return start_defaults
 
 
 _inject_workflow_page_styles()
@@ -900,32 +966,33 @@ render_page_hero(
 
 catalog_presets, catalogs_path, catalog_load_error = _load_catalog_presets()
 
-_render_local_runs_section()
-_render_current_tasks_section()
-start_defaults = _render_start_workflow_section(catalog_presets, catalogs_path, catalog_load_error)
+tab_tasks, tab_local = st.tabs(["Run Tasks", "Local Runs"])
 
-configure_recent_evaluator_jobs_ui(
-    get_config_value=get_config_value,
-    set_config_value=set_config_value,
-    enqueue_task=_enqueue_task,
-    catalog_io_available=CATALOG_IO_AVAILABLE,
-    environment=str(start_defaults["environment"] or ""),
-)
+with tab_tasks:
+    _render_current_tasks_section()
+    start_defaults = _render_workflow_launcher_section(catalog_presets, catalogs_path, catalog_load_error)
 
-section_header(
-    "Recent Evaluator Jobs",
-    "Direct evaluator browser for starting Download + Eval from existing reports. Shown by default here so the existing-job path is one click away.",
-)
-_render_recent_evaluator_jobs_section(
-    str(start_defaults["project_id"] or ""),
-    str(start_defaults["environment"] or ""),
-    output_path_default=str(start_defaults["output_path_default"]),
-    download_type_default=str(start_defaults["download_type_default"]),
-    phase_default=str(start_defaults["phase_default"]),
-    skip_large_file_default=bool(start_defaults["skip_large_file_default"]),
-    large_file_mb_default=float(start_defaults["large_file_mb_default"]),
-    keep_zip_files_default=bool(start_defaults["keep_zip_files_default"]),
-    show_toggle=False,
-    default_visible=True,
-    show_title=False,
-)
+    configure_recent_evaluator_jobs_ui(
+        get_config_value=get_config_value,
+        set_config_value=set_config_value,
+        enqueue_task=_enqueue_task,
+        catalog_io_available=CATALOG_IO_AVAILABLE,
+        environment=str(start_defaults["environment"] or ""),
+    )
+
+    _render_recent_evaluator_jobs_section(
+        str(start_defaults["project_id"] or ""),
+        str(start_defaults["environment"] or ""),
+        output_path_default=str(start_defaults["output_path_default"]),
+        download_type_default=str(start_defaults["download_type_default"]),
+        phase_default=str(start_defaults["phase_default"]),
+        skip_large_file_default=bool(start_defaults["skip_large_file_default"]),
+        large_file_mb_default=float(start_defaults["large_file_mb_default"]),
+        keep_zip_files_default=bool(start_defaults["keep_zip_files_default"]),
+        show_toggle=False,
+        default_visible=True,
+        show_title=False,
+    )
+
+with tab_local:
+    _render_local_runs_section()
