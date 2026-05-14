@@ -2625,19 +2625,6 @@ with st.sidebar:
         skip_large_file = False
         large_file_mb = 50.0  # Doesn't apply
 
-_render_recent_evaluator_jobs_section(
-    project_id,
-    environment,
-    output_path_default=output_path,
-    download_type_default=download_type,
-    phase_default=phase if download_type == "Archives (ZIP)" else get_config_value(
-        "phase", "perception.object_recognition.tracking.objects"
-    ),
-    skip_large_file_default=skip_large_file,
-    large_file_mb_default=large_file_mb,
-    keep_zip_files_default=bool(get_config_value("keep_zip_files", False)) if download_type == "Archives (ZIP)" else False,
-)
-
 st.markdown('<p class="dl-tabs-rail">Pick a workflow</p>', unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(
     ["📥 Download Results", "🗺️ Download Scenarios", "📊 View Downloads", "🧮 Eval Results"]

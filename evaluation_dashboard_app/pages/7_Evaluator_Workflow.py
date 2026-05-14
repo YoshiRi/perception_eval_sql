@@ -11,6 +11,10 @@ from typing import Optional
 
 from lib.WebAPI import scenarioAPI
 from lib.ui.download_ui import render_download_task_section_header
+from lib.ui.recent_evaluator_jobs import (
+    _render_recent_evaluator_jobs_section,
+    configure_recent_evaluator_jobs_ui,
+)
 from lib.ui.task_history import get_task_list_current_user, render_task_list
 from lib.ui.styles_download import inject_download_page_styles
 from lib.user_config import UserConfig
@@ -193,6 +197,13 @@ eval_phase = get_config_value("eval_phase", "perception.object_recognition.track
 poll_interval = int(get_config_value("poll_interval", 60))
 max_wait_hours = int(get_config_value("max_wait_hours", 24))
 environment = get_config_value("environment", "")
+configure_recent_evaluator_jobs_ui(
+    get_config_value=get_config_value,
+    set_config_value=set_config_value,
+    enqueue_task=_enqueue_task,
+    catalog_io_available=CATALOG_IO_AVAILABLE,
+    environment=environment,
+)
 
 with st.sidebar.expander("Advanced"):
     eval_download_type = st.radio("Download", ["Archives (ZIP)", "Result JSON"], index=0, horizontal=True)
@@ -348,6 +359,17 @@ if clicked:
         st.info("💡 Running in background — close browser, check Task Status below.")
     else:
         st.error("❌ Failed to enqueue task. Check worker logs.")
+
+_render_recent_evaluator_jobs_section(
+    eval_project_id,
+    environment,
+    output_path_default=eval_output_path,
+    download_type_default=eval_download_type,
+    phase_default=eval_phase,
+    skip_large_file_default=False,
+    large_file_mb_default=50.0,
+    keep_zip_files_default=False,
+)
 
 # ============================================
 # TASK STATUS
