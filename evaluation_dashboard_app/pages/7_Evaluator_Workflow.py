@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import streamlit as st
+import requests
 
 from lib.db import create_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
@@ -172,6 +173,39 @@ def _build_overview_url(run_a: str, run_b: Optional[str] = None) -> str:
     if run_b:
         query["run_b"] = run_b
     return f"/?{urllib.parse.urlencode(query)}"
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def _resolve_subject_name(subject_id: str, environment: str) -> Dict[str, str]:
+    subject = str(subject_id or "").strip()
+    if not subject or not subject.startswith("t4:"):
+        return {"subject_id": subject, "name": subject, "email": ""}
+    org_id = os.environ.get(
+        "WEBAUTO_ORGANIZATION_ID",
+        "5a21621d-6968-4f7d-94f8-99cfb77b6e71",
+    ).strip()
+    if not org_id:
+        return {"subject_id": subject, "name": subject, "email": ""}
+    os.environ["AUTH_PROFILE"] = environment or "default"
+    from webautoauth.token import HttpService, TokenSource, load_config
+
+    config = load_config()
+    token_source = TokenSource(HttpService(config))
+    access_token = token_source.get_token().access_token
+    quoted_subject = urllib.parse.quote(subject, safe="")
+    url = f"https://auth.web.auto/v2/organizations/{org_id}/members/{quoted_subject}"
+    response = requests.get(
+        url,
+        headers={"Authorization": f"Bearer {access_token}", "accept": "application/json"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "subject_id": str(data.get("subject_id") or subject).strip(),
+        "name": str(data.get("name") or subject).strip(),
+        "email": str(data.get("email") or "").strip(),
+    }
 
 
 def _inject_workflow_page_styles() -> None:
