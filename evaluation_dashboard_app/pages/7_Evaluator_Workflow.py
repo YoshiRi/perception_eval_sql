@@ -119,6 +119,74 @@ def _load_catalog_presets():
     return presets, loaded_path, load_error
 
 
+def _fetch_server_catalogs(project_id: str, environment: str) -> List[Dict[str, str]]:
+    """Fetch available catalogs for the project on demand."""
+    if not project_id:
+        return []
+    import os
+    from lib.WebAPI import catalogAPI
+
+    os.environ["AUTH_PROFILE"] = environment or "default"
+    response = catalogAPI(project_id=project_id).list_catalogs()
+    response.raise_for_status()
+    data = response.json()
+    raw_catalogs = data.get("catalogs", []) if isinstance(data, dict) else data
+    options: List[Dict[str, str]] = []
+    for item in raw_catalogs or []:
+        if not isinstance(item, dict):
+            continue
+        catalog_id = str(item.get("id") or item.get("catalog_id") or "").strip()
+        display_name = str(item.get("display_name") or item.get("name") or catalog_id).strip()
+        if not catalog_id or not display_name:
+            continue
+        options.append(
+            {
+                "catalog_id": catalog_id,
+                "display_name": display_name,
+                "description": str(item.get("description") or "").strip(),
+            }
+        )
+    options.sort(key=lambda item: item["display_name"].lower())
+    return options
+
+
+def _resolve_integration_id_for_catalog(project_id: str, environment: str, catalog_id: str) -> str:
+    """Resolve the most relevant active integration for a catalog."""
+    if not project_id or not catalog_id:
+        return ""
+    from lib import evaluator_api
+
+    os.environ["AUTH_PROFILE"] = environment or "default"
+    api = evaluator_api.EvaluationRunAPI()
+    url = f"{api.api_base_url}/projects/{project_id}/integrations"
+    response = api.request(url, {"catalog_id": catalog_id, "size": 100}, method="GET")
+    if response is None:
+        raise RuntimeError("No response returned while loading integrations.")
+    if response.status_code != 200:
+        raise RuntimeError(f"Failed to load integrations: status={response.status_code}")
+
+    payload = json.loads(response.content)
+    integrations = payload.get("integrations", []) or []
+    active = [
+        item for item in integrations
+        if isinstance(item, dict)
+        and str(item.get("catalog_id") or "").strip() == catalog_id
+        and not bool(item.get("deleted"))
+    ]
+    if not active:
+        raise RuntimeError("No active integration was found for the selected catalog.")
+
+    def _sort_key(item: Dict[str, object]) -> tuple:
+        return (
+            str(item.get("updated_at") or ""),
+            int(item.get("version_id") or 0),
+            str(item.get("id") or ""),
+        )
+
+    active.sort(key=_sort_key, reverse=True)
+    return str(active[0].get("id") or "").strip()
+
+
 def _enqueue_task(task_type: str, params: dict) -> Optional[str]:
     try:
         session_id = get_task_list_current_user()
@@ -476,33 +544,68 @@ def _render_local_runs_section() -> None:
         st.markdown('<div class="wf-empty">No finished runs were found on this server yet.</div>', unsafe_allow_html=True)
         return
 
-    control_cols = st.columns([2.2, 0.8, 0.8, 0.7])
-    with control_cols[0]:
-        st.markdown('<div class="wf-toolbar-note">Search</div>', unsafe_allow_html=True)
-        run_search = st.text_input(
-            "Search runs",
-            value=st.session_state.get("workflow_runs_search", ""),
-            key="workflow_runs_search",
-            label_visibility="collapsed",
-            placeholder="Filter by run name",
-        ).strip().lower()
-    with control_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Summary</div>', unsafe_allow_html=True)
-        require_summary = st.toggle(
-            "Summary only",
-            key="workflow_runs_summary_filter",
-            label_visibility="collapsed",
-        )
-    with control_cols[2]:
-        st.markdown('<div class="wf-toolbar-note">Parquet</div>', unsafe_allow_html=True)
-        require_parquet = st.toggle(
-            "Parquet only",
-            key="workflow_runs_parquet_filter",
-            label_visibility="collapsed",
-        )
-    with control_cols[3]:
-        st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
-        page_size = int(st.selectbox("Rows", options=[10, 20, 50, 100], index=0, key="workflow_runs_page_size", label_visibility="collapsed"))
+    if "workflow_runs_search_applied" not in st.session_state:
+        st.session_state["workflow_runs_search_applied"] = st.session_state.get("workflow_runs_search", "")
+    if "workflow_runs_summary_filter_applied" not in st.session_state:
+        st.session_state["workflow_runs_summary_filter_applied"] = bool(st.session_state.get("workflow_runs_summary_filter", False))
+    if "workflow_runs_parquet_filter_applied" not in st.session_state:
+        st.session_state["workflow_runs_parquet_filter_applied"] = bool(st.session_state.get("workflow_runs_parquet_filter", False))
+    if "workflow_runs_page_size_applied" not in st.session_state:
+        st.session_state["workflow_runs_page_size_applied"] = int(st.session_state.get("workflow_runs_page_size", 10) or 10)
+
+    with st.form("workflow_local_runs_filters", border=False):
+        control_cols = st.columns([2.2, 0.8, 0.8, 0.7, 0.8])
+        with control_cols[0]:
+            st.markdown('<div class="wf-toolbar-note">Search</div>', unsafe_allow_html=True)
+            run_search_input = st.text_input(
+                "Search runs",
+                value=st.session_state.get("workflow_runs_search_applied", ""),
+                key="workflow_runs_search",
+                label_visibility="collapsed",
+                placeholder="Filter by run name",
+            )
+        with control_cols[1]:
+            st.markdown('<div class="wf-toolbar-note">Summary</div>', unsafe_allow_html=True)
+            require_summary_input = st.toggle(
+                "Summary only",
+                value=bool(st.session_state.get("workflow_runs_summary_filter_applied", False)),
+                key="workflow_runs_summary_filter",
+                label_visibility="collapsed",
+            )
+        with control_cols[2]:
+            st.markdown('<div class="wf-toolbar-note">Parquet</div>', unsafe_allow_html=True)
+            require_parquet_input = st.toggle(
+                "Parquet only",
+                value=bool(st.session_state.get("workflow_runs_parquet_filter_applied", False)),
+                key="workflow_runs_parquet_filter",
+                label_visibility="collapsed",
+            )
+        with control_cols[3]:
+            st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
+            page_size_input = int(
+                st.selectbox(
+                    "Rows",
+                    options=[10, 20, 50, 100],
+                    index=[10, 20, 50, 100].index(int(st.session_state.get("workflow_runs_page_size_applied", 10) or 10)),
+                    key="workflow_runs_page_size",
+                    label_visibility="collapsed",
+                )
+            )
+        with control_cols[4]:
+            st.markdown('<div class="wf-toolbar-note">Apply</div>', unsafe_allow_html=True)
+            apply_filters = st.form_submit_button("Apply", use_container_width=True)
+
+    if apply_filters:
+        st.session_state["workflow_runs_search_applied"] = run_search_input
+        st.session_state["workflow_runs_summary_filter_applied"] = bool(require_summary_input)
+        st.session_state["workflow_runs_parquet_filter_applied"] = bool(require_parquet_input)
+        st.session_state["workflow_runs_page_size_applied"] = int(page_size_input)
+        st.session_state["workflow_runs_page"] = 1
+
+    run_search = str(st.session_state.get("workflow_runs_search_applied", "")).strip().lower()
+    require_summary = bool(st.session_state.get("workflow_runs_summary_filter_applied", False))
+    require_parquet = bool(st.session_state.get("workflow_runs_parquet_filter_applied", False))
+    page_size = int(st.session_state.get("workflow_runs_page_size_applied", 10) or 10)
 
     filtered = runs
     if run_search:
@@ -539,32 +642,6 @@ def _render_local_runs_section() -> None:
     start_idx = (current_page - 1) * page_size
     visible_runs = filtered[start_idx:start_idx + page_size]
     visible_names = {str(run["name"]) for run in visible_runs}
-    next_selected = [name for name in compare_selected if name not in visible_names]
-    for run in visible_runs:
-        run_name = str(run["name"])
-        checkbox_key = f"workflow_compare_pick::{run_name}"
-        is_checked = bool(st.session_state.get(checkbox_key, run_name in compare_selected))
-        if is_checked and run_name in compare_ready:
-            next_selected.append(run_name)
-    st.session_state["workflow_compare_runs"] = [name for name in compare_ready if name in next_selected]
-
-    st.markdown('<div class="wf-compare-bar">', unsafe_allow_html=True)
-    st.markdown('<p class="wf-compare-title">Compare</p>', unsafe_allow_html=True)
-    compare_cols = st.columns([3.4, 1.0])
-    with compare_cols[0]:
-        st.markdown('<div class="wf-toolbar-note">Selected runs</div>', unsafe_allow_html=True)
-        selected_runs = list(st.session_state.get("workflow_compare_runs", []))
-        if selected_runs:
-            st.caption(" | ".join(selected_runs))
-    with compare_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Action</div>', unsafe_allow_html=True)
-        if len(selected_runs) >= 2:
-            st.link_button("Compare", _build_overview_url(selected_runs[0], selected_runs[1:]), use_container_width=True)
-        elif len(selected_runs) == 1:
-            st.link_button("Open", _build_overview_url(selected_runs[0]), use_container_width=True)
-        else:
-            st.button("Open", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
-    st.markdown("</div>", unsafe_allow_html=True)
 
     pager_cols = st.columns([0.9, 1.2, 4.1])
     with pager_cols[0]:
@@ -596,6 +673,24 @@ def _render_local_runs_section() -> None:
         if _render_local_run_row(run, selected=run_name in st.session_state.get("workflow_compare_runs", [])) and run_name in compare_ready:
             next_selected.append(run_name)
     st.session_state["workflow_compare_runs"] = [name for name in compare_ready if name in next_selected]
+
+    st.markdown('<div class="wf-compare-bar">', unsafe_allow_html=True)
+    st.markdown('<p class="wf-compare-title">Compare</p>', unsafe_allow_html=True)
+    compare_cols = st.columns([3.4, 1.0])
+    with compare_cols[0]:
+        st.markdown('<div class="wf-toolbar-note">Selected runs</div>', unsafe_allow_html=True)
+        selected_runs = list(st.session_state.get("workflow_compare_runs", []))
+        if selected_runs:
+            st.caption(" | ".join(selected_runs))
+    with compare_cols[1]:
+        st.markdown('<div class="wf-toolbar-note">Action</div>', unsafe_allow_html=True)
+        if len(selected_runs) >= 2:
+            st.link_button("Compare", _build_overview_url(selected_runs[0], selected_runs[1:]), use_container_width=True)
+        elif len(selected_runs) == 1:
+            st.link_button("Open", _build_overview_url(selected_runs[0]), use_container_width=True)
+        else:
+            st.button("Open", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_current_tasks_section() -> None:
@@ -675,7 +770,34 @@ def _render_start_workflow_form(
     default_environment = get_config_value("environment", "")
     default_output = _make_default_output_path(default_target)
 
-    top_cols = st.columns([1.0, 1.5, 1.2])
+    if "workflow_server_catalogs" not in st.session_state:
+        st.session_state["workflow_server_catalogs"] = []
+    if "workflow_server_catalog_error" not in st.session_state:
+        st.session_state["workflow_server_catalog_error"] = ""
+    if "workflow_selected_server_catalog_id" not in st.session_state:
+        st.session_state["workflow_selected_server_catalog_id"] = ""
+    if "workflow_catalog_id" not in st.session_state:
+        st.session_state["workflow_catalog_id"] = ""
+    if "workflow_integration_id" not in st.session_state:
+        st.session_state["workflow_integration_id"] = ""
+    if "workflow_catalog_resolution_error" not in st.session_state:
+        st.session_state["workflow_catalog_resolution_error"] = ""
+    if "workflow_last_catalog_selection" not in st.session_state:
+        st.session_state["workflow_last_catalog_selection"] = ""
+
+    server_catalogs = st.session_state.get("workflow_server_catalogs", []) or []
+    server_catalog_labels = [
+        f"{item['display_name']} ({item['catalog_id']})" for item in server_catalogs
+    ]
+    catalog_options = [""] + catalog_names + [
+        label for label in server_catalog_labels if label not in catalog_names
+    ]
+    preset_by_label = {item["display_name"]: item for item in catalog_presets}
+    server_by_label = {
+        f"{item['display_name']} ({item['catalog_id']})": item for item in server_catalogs
+    }
+
+    top_cols = st.columns([1.0, 1.9, 1.2])
     with top_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Project</div>', unsafe_allow_html=True)
         project_id = st.text_input(
@@ -685,25 +807,60 @@ def _render_start_workflow_form(
             label_visibility="collapsed",
         ).strip()
     with top_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Catalog preset</div>', unsafe_allow_html=True)
-        selected_catalog_name = st.selectbox(
-            "Catalog preset",
-            options=[""] + catalog_names if catalog_names else [""],
-            index=0,
-            key="workflow_catalog_name",
-            label_visibility="collapsed",
-            format_func=lambda value: value or "Optional preset",
-        )
-    selected_catalog = next(
-        (item for item in catalog_presets if item["display_name"] == selected_catalog_name),
-        None,
-    )
+        st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
+        catalog_picker_cols = st.columns([4.2, 1.1], gap="small")
+        with catalog_picker_cols[0]:
+            selected_catalog_name = st.selectbox(
+                "Catalog",
+                options=catalog_options if catalog_options else [""],
+                index=catalog_options.index(st.session_state.get("workflow_catalog_name", "")) if st.session_state.get("workflow_catalog_name", "") in catalog_options else 0,
+                key="workflow_catalog_name",
+                label_visibility="collapsed",
+                format_func=lambda value: value or "Choose a catalog",
+            )
+        with catalog_picker_cols[1]:
+            fetch_catalogs_clicked = st.button(
+                "Fetch",
+                key="workflow_fetch_server_catalogs",
+                use_container_width=True,
+            )
+            if fetch_catalogs_clicked:
+                try:
+                    current_environment = str(st.session_state.get("workflow_environment", default_environment) or "")
+                    st.session_state["workflow_server_catalogs"] = _fetch_server_catalogs(project_id, current_environment)
+                    st.session_state["workflow_server_catalog_error"] = ""
+                except Exception as exc:
+                    st.session_state["workflow_server_catalogs"] = []
+                    st.session_state["workflow_server_catalog_error"] = str(exc)
+    selected_catalog = preset_by_label.get(selected_catalog_name)
+    selected_server_catalog = server_by_label.get(selected_catalog_name)
     if "workflow_last_catalog_preset" not in st.session_state:
         st.session_state["workflow_last_catalog_preset"] = ""
     if st.session_state["workflow_last_catalog_preset"] != selected_catalog_name and selected_catalog:
         st.session_state["workflow_catalog_id"] = str(selected_catalog.get("catalog_id") or "")
         st.session_state["workflow_integration_id"] = str(selected_catalog.get("integration_id") or "")
+        st.session_state["workflow_selected_server_catalog_id"] = ""
+        st.session_state["workflow_catalog_resolution_error"] = ""
         st.session_state["workflow_last_catalog_preset"] = selected_catalog_name
+    elif selected_server_catalog:
+        st.session_state["workflow_catalog_id"] = str(selected_server_catalog.get("catalog_id") or "")
+        st.session_state["workflow_selected_server_catalog_id"] = str(selected_server_catalog.get("catalog_id") or "")
+        current_environment = str(st.session_state.get("workflow_environment", default_environment) or "")
+        if st.session_state["workflow_last_catalog_selection"] != selected_catalog_name:
+            try:
+                st.session_state["workflow_integration_id"] = _resolve_integration_id_for_catalog(
+                    project_id,
+                    current_environment,
+                    st.session_state["workflow_catalog_id"],
+                )
+                st.session_state["workflow_catalog_resolution_error"] = ""
+            except Exception as exc:
+                st.session_state["workflow_integration_id"] = ""
+                st.session_state["workflow_catalog_resolution_error"] = str(exc)
+            st.session_state["workflow_last_catalog_selection"] = selected_catalog_name
+    elif st.session_state["workflow_last_catalog_selection"] != selected_catalog_name:
+        st.session_state["workflow_catalog_resolution_error"] = ""
+        st.session_state["workflow_last_catalog_selection"] = selected_catalog_name
     with top_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Branch or tag</div>', unsafe_allow_html=True)
         target_name = st.text_input(
@@ -714,26 +871,15 @@ def _render_start_workflow_form(
             placeholder="beta/v4.3.2",
         ).strip()
 
-    detail_cols = st.columns([1.05, 1.05, 1.2, 0.8, 0.95])
-    with detail_cols[0]:
-        st.markdown('<div class="wf-toolbar-note">Catalog ID</div>', unsafe_allow_html=True)
-        catalog_id = st.text_input(
-            "Catalog ID",
-            value="",
-            key="workflow_catalog_id",
-            label_visibility="collapsed",
-            placeholder="vehicle catalog id",
-        ).strip()
-    with detail_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Integration ID</div>', unsafe_allow_html=True)
-        integration_id = st.text_input(
-            "Integration ID",
-            value="",
-            key="workflow_integration_id",
-            label_visibility="collapsed",
-            placeholder="integration id",
-        ).strip()
-    with detail_cols[2]:
+    catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
+    integration_id = str(st.session_state.get("workflow_integration_id") or "").strip()
+
+    if st.session_state.get("workflow_server_catalog_error"):
+        st.warning(f"Could not fetch catalogs: {st.session_state['workflow_server_catalog_error']}")
+    catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
+
+    picker_cols = st.columns([1.2, 1.2, 1.75])
+    with picker_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Output folder</div>', unsafe_allow_html=True)
         output_path = st.text_input(
             "Output folder",
@@ -742,7 +888,7 @@ def _render_start_workflow_form(
             label_visibility="collapsed",
             placeholder=_make_default_output_path(target_name),
         ).strip()
-    with detail_cols[3]:
+    with picker_cols[1]:
         st.markdown('<div class="wf-toolbar-note">Environment</div>', unsafe_allow_html=True)
         environment = st.selectbox(
             "Environment",
@@ -752,7 +898,7 @@ def _render_start_workflow_form(
             label_visibility="collapsed",
             format_func=lambda value: value or "default",
         )
-    with detail_cols[4]:
+    with picker_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
         description = st.text_input(
             "Description",
@@ -762,9 +908,23 @@ def _render_start_workflow_form(
             placeholder="Optional label for the evaluator run",
         ).strip()
 
+    confirm_cols = st.columns([1.0, 1.0])
+    with confirm_cols[0]:
+        if catalog_id:
+            st.caption(f"Catalog ID: `{catalog_id}`")
+    with confirm_cols[1]:
+        if integration_id:
+            st.caption(f"Integration ID: `{integration_id}`")
+    if st.session_state.get("workflow_catalog_resolution_error"):
+        st.warning(f"Could not resolve integration automatically: {st.session_state['workflow_catalog_resolution_error']}")
+
     if selected_catalog:
         desc = str(selected_catalog.get("description") or "").strip() or "Preset selected for quick scheduling."
         st.caption(f"Preset: {desc}")
+    elif selected_server_catalog:
+        desc = str(selected_server_catalog.get("description") or "").strip()
+        if desc:
+            st.caption(f"Fetched catalog: {desc}")
 
     with st.expander("Advanced options", expanded=False):
         adv_cols = st.columns([1.0, 1.2, 0.8, 0.8])
@@ -837,7 +997,7 @@ def _render_start_workflow_form(
     resolved_output = None
     path_error = ""
     if output_path:
-        resolved_output, path_error = resolve_under_data_root(output_path, allow_create=True)
+        resolved_output, path_error = resolve_under_data_root(output_path, allow_create=False)
         if path_error:
             errors.append(path_error)
     else:
@@ -882,6 +1042,8 @@ def _render_workflow_launcher_section(
 ) -> Dict[str, object]:
     section_header("Run Evaluator Workflow", "")
     start_defaults = _get_start_workflow_defaults()
+    if "workflow_start_dialog_open" not in st.session_state:
+        st.session_state["workflow_start_dialog_open"] = False
     new_job_clicked = st.button(
         "Start new workflow",
         key="workflow_open_start_dialog",
@@ -890,11 +1052,18 @@ def _render_workflow_launcher_section(
     )
 
     if new_job_clicked and callable(getattr(st, "dialog", None)):
+        st.session_state["workflow_start_dialog_open"] = True
         fresh_target = str(get_config_value("target_name", "beta/v4.3.2") or "beta/v4.3.2")
         st.session_state["workflow_catalog_name"] = ""
         st.session_state["workflow_last_catalog_preset"] = ""
         st.session_state["workflow_catalog_id"] = ""
         st.session_state["workflow_integration_id"] = ""
+        st.session_state["workflow_server_catalogs"] = []
+        st.session_state["workflow_server_catalog_error"] = ""
+        st.session_state["workflow_selected_server_catalog_id"] = ""
+        st.session_state["workflow_selected_server_catalog_label"] = ""
+        st.session_state["workflow_catalog_resolution_error"] = ""
+        st.session_state["workflow_last_catalog_selection"] = ""
         st.session_state["workflow_output_path"] = _make_default_output_path(fresh_target)
 
         @st.dialog("Start evaluator workflow", width="large")
@@ -905,6 +1074,7 @@ def _render_workflow_launcher_section(
             close_clicked = submit_cols[0].button("Close", key="workflow_close_start_dialog", use_container_width=True)
             start_clicked = submit_cols[1].button("Start workflow", key="workflow_start_btn_dialog", type="primary", use_container_width=True)
             if close_clicked:
+                st.session_state["workflow_start_dialog_open"] = False
                 st.rerun()
             if start_clicked:
                 dialog_payload = dict(payload.get("dialog_payload") or {})
@@ -948,6 +1118,7 @@ def _render_workflow_launcher_section(
                         },
                     )
                     if task_id:
+                        st.session_state["workflow_start_dialog_open"] = False
                         st.success(f"Workflow queued. Task id: `{task_id}`")
                         st.rerun()
                     else:
@@ -996,4 +1167,16 @@ with tab_tasks:
     )
 
 with tab_local:
-    _render_local_runs_section()
+    use_fragment = getattr(st, "fragment", None) is not None
+    if use_fragment:
+        try:
+
+            @st.fragment
+            def _local_runs_fragment():
+                _render_local_runs_section()
+
+            _local_runs_fragment()
+        except (TypeError, AttributeError):
+            _render_local_runs_section()
+    else:
+        _render_local_runs_section()

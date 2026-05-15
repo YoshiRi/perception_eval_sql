@@ -7,6 +7,7 @@ import os
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
@@ -57,6 +58,68 @@ def _friendly_request_error_message(exc: Exception) -> str:
     if "timed out" in lowered or "timeout" in lowered:
         return "Loading evaluator jobs took too long. Please try again."
     return "Could not load evaluator jobs right now. Please check the network connection and try again."
+
+
+def _load_catalog_presets() -> List[Dict[str, str]]:
+    """Load catalog presets from the app-level catalogs.json file if available."""
+    app_root = Path(__file__).resolve().parents[2]
+    search_paths = [
+        app_root / "catalogs.json",
+        Path(os.environ.get("CATALOGS_PATH", "")),
+        Path.cwd() / "catalogs.json",
+    ]
+    for path in search_paths:
+        if not path or not str(path):
+            continue
+        try:
+            if not path.exists() or not path.is_file():
+                continue
+            import json
+
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            raw_catalogs = data.get("catalogs", []) if isinstance(data, dict) else data
+            presets: List[Dict[str, str]] = []
+            for item in raw_catalogs or []:
+                if not isinstance(item, dict):
+                    continue
+                display_name = (
+                    str(item.get("display_name") or item.get("name") or item.get("catalog_id") or "")
+                    .strip()
+                )
+                if not display_name:
+                    continue
+                presets.append({**item, "display_name": display_name})
+            return presets
+        except Exception:
+            continue
+    return []
+
+
+def _retest_catalog_emoji(preset_name: str, *, has_custom_catalog: bool = False) -> str:
+    mapping = {
+        "Build Test Catalog": "🛠️",
+        "Performance Test": "📈",
+        "Old performance test": "🕰️",
+        "Devops Test": "⚙️",
+        "Usecase Performance Catalog": "🧭",
+        "L4 regression test": "⚠️",
+    }
+    normalized = str(preset_name or "").strip()
+    if normalized in mapping:
+        return mapping[normalized]
+    if has_custom_catalog:
+        return "🧩"
+    return "📦"
+
+
+def _make_retest_description(target_name: str, preset_name: str = "", *, has_custom_catalog: bool = False) -> str:
+    clean_target = " ".join(str(target_name or "").strip().split()) or "artifact"
+    stamp = datetime.now().strftime("%m-%d %H:%M")
+    return (
+        f"♻️ evaluator artifact retest [{clean_target}] [{stamp}] "
+        f"{_retest_catalog_emoji(preset_name, has_custom_catalog=has_custom_catalog)}"
+    )
 
 
 def _to_jst(dt: Any) -> Optional[datetime]:
@@ -843,6 +906,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         }
         [class*="st-key-recent_eval_view_"] button,
         [class*="st-key-recent_eval_run_"] button,
+        [class*="st-key-recent_eval_retest_"] button,
         [class*="st-key-recent_eval_jobs_prev"] button,
         [class*="st-key-recent_eval_jobs_next"] button,
         [class*="st-key-recent_eval_jobs_pagebtn_"] button,
@@ -855,6 +919,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             box-shadow: none;
         }
         [class*="st-key-recent_eval_view_"] button,
+        [class*="st-key-recent_eval_retest_"] button,
         [class*="st-key-recent_eval_jobs_prev"] button,
         [class*="st-key-recent_eval_jobs_next"] button,
         [class*="st-key-recent_eval_jobs_pagebtn_"] button,
@@ -864,6 +929,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             background: #ffffff;
         }
         [class*="st-key-recent_eval_view_"] button:hover,
+        [class*="st-key-recent_eval_retest_"] button:hover,
         [class*="st-key-recent_eval_jobs_prev"] button:hover,
         [class*="st-key-recent_eval_jobs_next"] button:hover,
         [class*="st-key-recent_eval_jobs_pagebtn_"] button:hover,
@@ -886,6 +952,16 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             border-color: rgba(13, 148, 136, 0.34);
             background: linear-gradient(180deg, #ccfbf1, #ecfeff);
             color: #115e59;
+        }
+        [class*="st-key-recent_eval_retest_"] button {
+            border-color: rgba(251, 191, 36, 0.22);
+            background: linear-gradient(180deg, #fffbeb, #fff7ed);
+            color: #b45309;
+        }
+        [class*="st-key-recent_eval_retest_"] button:hover {
+            border-color: rgba(245, 158, 11, 0.34);
+            background: linear-gradient(180deg, #fef3c7, #fff7ed);
+            color: #92400e;
         }
         .evj-stat-label {
             display: block;
@@ -1242,6 +1318,209 @@ def _render_recent_evaluator_job_run_dialog(
     st.rerun()
 
 
+def _render_recent_evaluator_job_retest_dialog(
+    project_id: str,
+    environment: str,
+    job: Dict[str, Any],
+    *,
+    output_path_default: str,
+    phase_default: str,
+) -> None:
+    """Render a compact workflow launcher that reuses build artifacts from a prior evaluator job."""
+    job_id = str(job.get("job_id", "") or "")
+    if not job_id:
+        st.error("Missing evaluator job id.")
+        return
+
+    detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
+    raw_report = detail.get("raw_report") or {}
+    raw_catalog = raw_report.get("catalog") or {}
+    suite_options = _extract_suite_selection_options(detail.get("suite_rows") or [])
+    suite_label_to_id = {opt["label"]: opt["id"] for opt in suite_options}
+    suite_labels = [opt["label"] for opt in suite_options]
+    preset_entries = _load_catalog_presets()
+    preset_names = [str(entry.get("display_name") or "").strip() for entry in preset_entries if str(entry.get("display_name") or "").strip()]
+    preset_by_name = {str(entry.get("display_name") or "").strip(): entry for entry in preset_entries}
+
+    original_catalog_name = str(raw_catalog.get("display_name") or detail.get("catalog") or "").strip()
+    original_catalog_id = str(raw_catalog.get("id") or "").strip()
+    default_preset_name = original_catalog_name if original_catalog_name in preset_by_name else ""
+
+    import re
+
+    default_output_path = output_path_default
+    if not default_output_path:
+        clean_target = re.sub(r"[^\w]+", "_", str(detail.get("target") or job_id).strip()).strip("_") or "artifact"
+        default_output_path = f"retest_{clean_target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    st.caption("Schedule a new evaluator workflow that reuses build artifacts from this job, then download and process the new results.")
+    summary_cols = st.columns([1.35, 1.0, 1.25, 1.2])
+    summary_cols[0].markdown(f"**Source job**  \n`{job_id}`")
+    summary_cols[1].markdown(f"**Ref**  \n`{detail.get('target', '—')}`")
+    summary_cols[2].markdown(f"**Original catalog**  \n`{original_catalog_name or '—'}`")
+    summary_cols[3].markdown(f"**Suites found**  \n`{len(suite_labels)}`")
+
+    preset_key = f"recent_eval_retest_catalog_preset_{job_id}"
+    last_preset_key = f"recent_eval_retest_last_catalog_preset_{job_id}"
+    catalog_id_key = f"recent_eval_retest_catalog_id_{job_id}"
+    if preset_key not in st.session_state:
+        st.session_state[preset_key] = default_preset_name
+    if last_preset_key not in st.session_state:
+        st.session_state[last_preset_key] = ""
+    if catalog_id_key not in st.session_state:
+        st.session_state[catalog_id_key] = original_catalog_id
+
+    selected_preset_name = st.selectbox(
+        "Catalog preset",
+        options=[""] + preset_names,
+        index=([""] + preset_names).index(default_preset_name) if default_preset_name in preset_names else 0,
+        key=preset_key,
+        help="Choose a preset catalog, or leave this empty and enter a catalog id manually.",
+        format_func=lambda value: value or "Custom / manual",
+    )
+    selected_preset = preset_by_name.get(selected_preset_name or "", {})
+    if st.session_state[last_preset_key] != selected_preset_name and selected_preset_name:
+        st.session_state[catalog_id_key] = str(selected_preset.get("catalog_id") or "")
+        st.session_state[last_preset_key] = selected_preset_name
+    elif st.session_state[last_preset_key] != selected_preset_name and not selected_preset_name:
+        st.session_state[catalog_id_key] = original_catalog_id
+        st.session_state[last_preset_key] = selected_preset_name
+    catalog_id = st.text_input(
+        "Catalog ID",
+        value="",
+        key=catalog_id_key,
+        help="You can switch to a different catalog while still reusing the build artifacts from the source job.",
+    ).strip()
+
+    selected_suite_labels = st.multiselect(
+        "Suites to run",
+        options=suite_labels,
+        default=suite_labels,
+        help="Defaults to the suite set found on the source job. Clear the list to let the evaluator use its default suite selection.",
+        disabled=not suite_labels,
+    )
+    description = st.text_input(
+        "Description",
+        value="",
+        help="Leave empty to use an automatic evaluator artifact-retest name.",
+    ).strip()
+    retest_output_path = st.text_input(
+        "Output path",
+        value=default_output_path,
+        help="Folder under the data directory for the downloaded retest results.",
+    )
+    run_download_type = st.radio(
+        "Download type",
+        ["Archives (ZIP)", "Result JSON only"],
+        index=0,
+        horizontal=True,
+    )
+    run_phase = ""
+    if run_download_type == "Archives (ZIP)":
+        run_phase = st.text_input(
+            "Phase to extract",
+            value=phase_default,
+            help="Enter the phase name to extract from archives.",
+        )
+
+    run_cols = st.columns([1.2, 1.2, 1.0])
+    with run_cols[0]:
+        run_eval = st.checkbox(
+            "Run evaluation",
+            value=True,
+            help="Run eval_result and generate Summary.csv / Score.csv after download.",
+        )
+    with run_cols[1]:
+        generate_parquet = st.checkbox(
+            "Generate parquet",
+            value=CATALOG_IO_AVAILABLE,
+            disabled=not CATALOG_IO_AVAILABLE,
+            help="Build scene_result.parquet from .pkl files." if CATALOG_IO_AVAILABLE else "Install perception_catalog_analyzer to enable this.",
+        )
+    with run_cols[2]:
+        eval_recursive = st.checkbox(
+            "Recursive eval",
+            value=True,
+            help="Search subdirectories for evaluation result folders.",
+        )
+
+    action_cols = st.columns([1.15, 1.15, 3.7])
+    cancel_clicked = action_cols[0].button("Cancel", key=f"recent_eval_retest_cancel_{job_id}", use_container_width=True)
+    start_clicked = action_cols[1].button("Retest", key=f"recent_eval_retest_start_{job_id}", type="primary", use_container_width=True)
+
+    if cancel_clicked:
+        st.session_state.pop("recent_eval_jobs_retest_selected", None)
+        st.rerun()
+
+    if not start_clicked:
+        return
+
+    final_catalog_id = str(selected_preset.get("catalog_id") or catalog_id or "").strip()
+    if not final_catalog_id:
+        st.error("Catalog ID is required.")
+        return
+
+    resolved_output, path_err = resolve_under_data_root(retest_output_path, allow_create=True)
+    if path_err:
+        st.error(f"Output path is invalid: {path_err}")
+        return
+
+    selected_suite_ids = [suite_label_to_id[label] for label in selected_suite_labels]
+    resolved_path_str = str(resolved_output)
+    has_custom_catalog = bool(final_catalog_id and not selected_preset_name)
+    final_description = description or _make_retest_description(
+        str(detail.get("target") or job_id),
+        selected_preset_name,
+        has_custom_catalog=has_custom_catalog,
+    )
+
+    task_id = _enqueue_task(
+        "run_evaluator_and_process",
+        {
+            "project_id": project_id,
+            "catalog_id": final_catalog_id,
+            "integration_id": "",
+            "source_job_id": job_id,
+            "suite_ids": selected_suite_ids or None,
+            "target_name": "",
+            "description": final_description,
+            "output_path": resolved_path_str,
+            "environment": environment,
+            "max_retries": 0,
+            "clean_build": False,
+            "debug": False,
+            "is_tag": False,
+            "download_type": "archives" if run_download_type == "Archives (ZIP)" else "result_json",
+            "phase": run_phase,
+            "skip_large_file": False,
+            "large_file_mb": 50.0,
+            "keep_zip_files": False,
+            "poll_interval": 60,
+            "max_wait_seconds": 6 * 3600,
+            "run_eval": run_eval,
+            "generate_parquet": generate_parquet,
+            "eval_recursive": eval_recursive,
+            "eval_overwrite": False,
+        },
+    )
+    if not task_id:
+        st.error("Failed to enqueue task. Check REDIS_URL and DATABASE_URL.")
+        return
+
+    set_config_value("output_path", to_data_relative(resolved_output))
+    set_config_value("environment", environment)
+    set_config_value("project_id", project_id)
+    set_config_value("catalog_id", final_catalog_id)
+    set_config_value("suite_ids", selected_suite_ids)
+
+    st.session_state["recent_eval_jobs_flash"] = (
+        f"Queued artifact retest for `{detail.get('title', job_id)}`. "
+        f"Task id: `{task_id}`."
+    )
+    st.session_state.pop("recent_eval_jobs_retest_selected", None)
+    st.rerun()
+
+
 def _render_recent_evaluator_jobs_section(
     project_id: str,
     environment: str,
@@ -1537,16 +1816,21 @@ def _render_recent_evaluator_jobs_section(
             st.session_state.pop("recent_eval_jobs_run_selected", None)
             selected_run_job_id = None
 
+        selected_retest_job_id = st.session_state.get("recent_eval_jobs_retest_selected")
+        if selected_retest_job_id and not any(str(job.get("job_id", "")) == str(selected_retest_job_id) for job in jobs):
+            st.session_state.pop("recent_eval_jobs_retest_selected", None)
+            selected_retest_job_id = None
+
         st.markdown('<div class="evj-list">', unsafe_allow_html=True)
         for job in visible_jobs:
             subject_id = str(job.get("scheduled_by") or "").strip()
             user_info = user_directory.get(subject_id, {})
             user_label = str(user_info.get("name") or subject_id or "Unknown").strip()
-            row_cols = st.columns([9.8, 2.0])
+            row_cols = st.columns([9.2, 2.6])
             with row_cols[0]:
                 _render_recent_evaluator_job_card(job, user_label=user_label)
             with row_cols[1]:
-                action_cols = st.columns([1.0, 1.0], gap="small")
+                action_cols = st.columns([1.0, 1.0, 1.0], gap="small")
                 with action_cols[0]:
                     if st.button("Details", key=f"recent_eval_view_{job['job_id']}", use_container_width=True):
                         st.session_state["recent_eval_jobs_selected"] = str(job["job_id"])
@@ -1555,6 +1839,11 @@ def _render_recent_evaluator_jobs_section(
                 with action_cols[1]:
                     if st.button("Start", key=f"recent_eval_run_{job['job_id']}", use_container_width=True):
                         st.session_state["recent_eval_jobs_run_selected"] = str(job["job_id"])
+                        _fetch_evaluator_job_detail.clear()
+                        st.rerun()
+                with action_cols[2]:
+                    if st.button("Retest", key=f"recent_eval_retest_{job['job_id']}", use_container_width=True):
+                        st.session_state["recent_eval_jobs_retest_selected"] = str(job["job_id"])
                         _fetch_evaluator_job_detail.clear()
                         st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1630,6 +1919,44 @@ def _render_recent_evaluator_jobs_section(
                         skip_large_file_default=skip_large_file_default,
                         large_file_mb_default=large_file_mb_default,
                         keep_zip_files_default=keep_zip_files_default,
+                    )
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+        selected_retest_job_id = st.session_state.get("recent_eval_jobs_retest_selected")
+        if selected_retest_job_id:
+            selected_retest_job = next((job for job in jobs if str(job.get("job_id", "")) == str(selected_retest_job_id)), None)
+            if selected_retest_job:
+                if callable(getattr(st, "dialog", None)):
+                    try:
+                        @st.dialog(f"Artifact retest · {selected_retest_job.get('title', '—')}", width="large")
+                        def _recent_eval_retest_dialog() -> None:
+                            _render_recent_evaluator_job_retest_dialog(
+                                project_id,
+                                environment,
+                                selected_retest_job,
+                                output_path_default=output_path_default,
+                                phase_default=phase_default,
+                            )
+
+                        _recent_eval_retest_dialog()
+                    finally:
+                        if st.session_state.get("recent_eval_jobs_retest_selected") == str(selected_retest_job_id):
+                            st.session_state.pop("recent_eval_jobs_retest_selected", None)
+                else:
+                    st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
+                    hdr_cols = st.columns([4.4, 1.1])
+                    with hdr_cols[0]:
+                        st.subheader(f"Artifact retest · {selected_retest_job.get('title', '—')}")
+                    with hdr_cols[1]:
+                        if st.button("Close", key="recent_eval_jobs_close_retest_fallback", use_container_width=True):
+                            st.session_state.pop("recent_eval_jobs_retest_selected", None)
+                            st.rerun()
+                    _render_recent_evaluator_job_retest_dialog(
+                        project_id,
+                        environment,
+                        selected_retest_job,
+                        output_path_default=output_path_default,
+                        phase_default=phase_default,
                     )
                     st.markdown("</div>", unsafe_allow_html=True)
 

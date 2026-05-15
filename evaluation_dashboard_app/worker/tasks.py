@@ -476,6 +476,7 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         project_id = parameters.get("project_id")
         catalog_id = parameters.get("catalog_id")
         integration_id = parameters.get("integration_id")
+        source_job_id = parameters.get("source_job_id")
         suite_ids = parameters.get("suite_ids")
         target_name = parameters.get("target_name")  # branch name or tag
         description = parameters.get("description", "no description")
@@ -507,8 +508,10 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         clean_build = parameters.get("clean_build", False)
         debug = parameters.get("debug", False)
         is_tag = parameters.get("is_tag", False)
-        
-        if not all([project_id, catalog_id, integration_id, target_name, output_path]):
+
+        has_source_job = bool(source_job_id)
+        has_fresh_source = bool(integration_id and target_name)
+        if not project_id or not catalog_id or not output_path or (not has_source_job and not has_fresh_source):
             update_task_status(task_id, "failed", error_message="Missing required parameters")
             return
         
@@ -525,7 +528,13 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         
         # Step 1: Schedule evaluator job
         on_progress("Step 1/5: Scheduling evaluator job...")
-        append_task_log(task_id, f"Project: {project_id}, Catalog: {catalog_id}, Target: {target_name}")
+        if source_job_id:
+            append_task_log(
+                task_id,
+                f"Project: {project_id}, Catalog: {catalog_id}, Reuse build from job: {source_job_id}",
+            )
+        else:
+            append_task_log(task_id, f"Project: {project_id}, Catalog: {catalog_id}, Target: {target_name}")
         
         try:
             api = evaluator_api.EvaluationRunAPI()
@@ -535,6 +544,7 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                 catalog_id=catalog_id,
                 integration_id=integration_id,
                 target_name=target_name,
+                source_job_id=source_job_id,
                 suite_ids=suite_ids,
                 max_retries=max_retries,
                 description=description,
@@ -560,6 +570,7 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             "evaluator_job_id": job_id,
             "evaluator_report_url": report_url,
             "evaluator_status": "scheduled",
+            "source_job_id": source_job_id or "",
             "download_summary": {"total": 0, "success": 0, "failed": 0},
             "eval_summary": {},
             "parquet_path": "",

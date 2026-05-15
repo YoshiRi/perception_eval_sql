@@ -269,8 +269,9 @@ class EvaluationRunAPI:
         *,
         project_id: str,
         catalog_id: str,
-        integration_id: str,
-        target_name: str,
+        integration_id: Optional[str] = None,
+        target_name: Optional[str] = None,
+        source_job_id: Optional[str] = None,
         suite_ids: Optional[list[str]] = None,
         max_retries: int = 1,
         description: str = "no description",
@@ -281,6 +282,8 @@ class EvaluationRunAPI:
         log_expiration_time_in_days: float = 14.0,
         is_tag: bool = False,
     ) -> dict[str, Any]:
+        if not source_job_id and not target_name:
+            raise ValueError("Either target_name or source_job_id must be provided.")
         payload = {
             "build_options": {
                 "clean_build": clean_build,
@@ -288,9 +291,7 @@ class EvaluationRunAPI:
             },
             "catalog_id": catalog_id,
             "description": description,
-            "integration_id": integration_id,
             "release": release,
-            "source": {"git_tag" if is_tag else "git_branch": str(target_name)},
             "suite_ids": suite_ids or [],
             "test_options": {
                 "max_retries": max_retries,
@@ -298,6 +299,12 @@ class EvaluationRunAPI:
                 "log_expiration_time": int(log_expiration_time_in_days * 24 * 60 * 60),
             },
         }
+        if integration_id:
+            payload["integration_id"] = integration_id
+        if source_job_id:
+            payload["source_job_id"] = str(source_job_id)
+        if target_name:
+            payload["source"] = {"git_tag" if is_tag else "git_branch": str(target_name)}
         if record_caret:
             payload["build_options"]["developer_option_names"] = [
                 "webauto:ci:caret_enabled"
