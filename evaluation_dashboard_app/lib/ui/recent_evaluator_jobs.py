@@ -45,6 +45,20 @@ def _enqueue_task(task_type: str, params: Dict[str, Any]) -> Optional[str]:
     return _ENQUEUE_TASK(task_type, params)
 
 
+def _friendly_request_error_message(exc: Exception) -> str:
+    text = str(exc or "").strip()
+    lowered = text.lower()
+    if "temporary failure in name resolution" in lowered or "failed to resolve" in lowered or "name resolution" in lowered:
+        return "Could not load evaluator jobs because the network appears to be unavailable."
+    if "auth.web.auto" in lowered or "/token" in lowered:
+        return "Could not load evaluator jobs because the sign-in service is currently unavailable."
+    if "connection refused" in lowered or "max retries exceeded" in lowered or "newconnectionerror" in lowered:
+        return "Could not connect to the evaluator service right now. Please try again in a moment."
+    if "timed out" in lowered or "timeout" in lowered:
+        return "Loading evaluator jobs took too long. Please try again."
+    return "Could not load evaluator jobs right now. Please check the network connection and try again."
+
+
 def _to_jst(dt: Any) -> Optional[datetime]:
     if dt is None:
         return None
@@ -1400,17 +1414,27 @@ def _render_recent_evaluator_jobs_section(
             )
             for f in extra_filters
         )
+        fetch_help = "Loading evaluator jobs..."
+        if search_text or status_filter or date_from or date_to or selected_user_name:
+            fetch_help = "Loading evaluator jobs with filters..."
         try:
-            fetched_pages = _fetch_recent_evaluator_job_pages(
-                project_id,
-                environment,
-                limit,
-                pages_to_fetch,
-                status_values=server_status_values,
-                extra_filters=extra_filter_tuples,
-            )
+            with st.spinner(fetch_help):
+                fetched_pages = _fetch_recent_evaluator_job_pages(
+                    project_id,
+                    environment,
+                    limit,
+                    pages_to_fetch,
+                    status_values=server_status_values,
+                    extra_filters=extra_filter_tuples,
+                )
+        except requests.Timeout:
+            st.error("Timed out while loading evaluator jobs. The evaluator server may be slow right now. Try Refresh.")
+            return
+        except requests.RequestException as e:
+            st.error(_friendly_request_error_message(e))
+            return
         except Exception as e:
-            st.error(f"Could not fetch recent evaluator jobs: {e}")
+            st.error(_friendly_request_error_message(e))
             return
         if search_text:
             _save_recent_job_search_history(search_scope, search_text)
@@ -1418,6 +1442,10 @@ def _render_recent_evaluator_jobs_section(
         jobs = [job for page in fetched_pages for job in page.get("jobs", [])]
         user_directory = _hydrate_recent_eval_user_directory(jobs, environment)
         has_more_from_api = bool(fetched_pages and fetched_pages[-1].get("next_token"))
+
+        if not fetched_pages:
+            st.warning("No response was returned from the evaluator server. Try Refresh.")
+            return
 
         if search_needle:
             if search_scope == "Branch/tag":
@@ -1442,7 +1470,10 @@ def _render_recent_evaluator_jobs_section(
 
         if not jobs:
             st.session_state[page_key] = 1
-            st.markdown('<div class="evj-empty">No recent evaluator jobs matched the current filters.</div>', unsafe_allow_html=True)
+            empty_message = "No recent evaluator jobs were returned."
+            if search_text or status_filter or date_from or date_to or selected_user_name:
+                empty_message = "No recent evaluator jobs matched the current filters."
+            st.markdown(f'<div class="evj-empty">{html.escape(empty_message)}</div>', unsafe_allow_html=True)
             return
 
         total_loaded = len(jobs)

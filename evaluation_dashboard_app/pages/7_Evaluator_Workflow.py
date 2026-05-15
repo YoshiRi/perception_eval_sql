@@ -637,12 +637,10 @@ def _render_current_tasks_section() -> None:
 
 def _get_start_workflow_defaults() -> Dict[str, object]:
     default_target = get_config_value("target_name", "beta/v4.3.2")
-    saved_output = str(get_config_value("eval_output_path", "") or "").strip()
-    default_output = saved_output if saved_output and saved_output != "evaluator_run" else _make_default_output_path(default_target)
     return {
         "project_id": get_config_value("eval_project_id", "x2_dev"),
         "environment": get_config_value("environment", ""),
-        "output_path_default": default_output,
+        "output_path_default": _make_default_output_path(default_target),
         "download_type_default": get_config_value("eval_download_type", "Archives (ZIP)"),
         "phase_default": get_config_value(
             "eval_phase",
@@ -675,8 +673,7 @@ def _render_start_workflow_form(
     default_poll_interval = int(get_config_value("poll_interval", 60))
     default_max_wait_hours = int(get_config_value("max_wait_hours", 24))
     default_environment = get_config_value("environment", "")
-    saved_output = str(get_config_value("eval_output_path", "") or "").strip()
-    default_output = saved_output if saved_output and saved_output != "evaluator_run" else _make_default_output_path(default_target)
+    default_output = _make_default_output_path(default_target)
 
     top_cols = st.columns([1.0, 1.5, 1.2])
     with top_cols[0]:
@@ -722,7 +719,7 @@ def _render_start_workflow_form(
         st.markdown('<div class="wf-toolbar-note">Catalog ID</div>', unsafe_allow_html=True)
         catalog_id = st.text_input(
             "Catalog ID",
-            value=str(get_config_value("workflow_catalog_id", "") or ""),
+            value="",
             key="workflow_catalog_id",
             label_visibility="collapsed",
             placeholder="vehicle catalog id",
@@ -731,7 +728,7 @@ def _render_start_workflow_form(
         st.markdown('<div class="wf-toolbar-note">Integration ID</div>', unsafe_allow_html=True)
         integration_id = st.text_input(
             "Integration ID",
-            value=str(get_config_value("workflow_integration_id", "") or ""),
+            value="",
             key="workflow_integration_id",
             label_visibility="collapsed",
             placeholder="integration id",
@@ -821,15 +818,12 @@ def _render_start_workflow_form(
 
     set_config_value("eval_project_id", project_id)
     set_config_value("target_name", target_name)
-    set_config_value("eval_output_path", output_path)
     set_config_value("eval_download_type", download_type)
     set_config_value("eval_phase", phase)
     set_config_value("poll_interval", poll_interval)
     set_config_value("max_wait_hours", max_wait_hours)
     set_config_value("environment", environment)
     set_config_value("workflow_description", description)
-    set_config_value("workflow_catalog_id", catalog_id)
-    set_config_value("workflow_integration_id", integration_id)
     errors = []
     if not project_id:
         errors.append("Project ID")
@@ -896,6 +890,13 @@ def _render_workflow_launcher_section(
     )
 
     if new_job_clicked and callable(getattr(st, "dialog", None)):
+        fresh_target = str(get_config_value("target_name", "beta/v4.3.2") or "beta/v4.3.2")
+        st.session_state["workflow_catalog_name"] = ""
+        st.session_state["workflow_last_catalog_preset"] = ""
+        st.session_state["workflow_catalog_id"] = ""
+        st.session_state["workflow_integration_id"] = ""
+        st.session_state["workflow_output_path"] = _make_default_output_path(fresh_target)
+
         @st.dialog("Start evaluator workflow", width="large")
         def _workflow_start_dialog() -> None:
             st.caption("This is the full launcher for creating a new evaluator job, downloading results, and optionally running eval/parquet.")
