@@ -1587,7 +1587,7 @@ def _render_recent_evaluator_jobs_section(
         search_scope = st.selectbox(
             "Search in",
             options=["Branch/tag", "Description", "Job ID", "Git SHA", "Fail message"],
-            index=0,
+            index=1,
             key="recent_eval_jobs_search_scope",
             help="Choose which evaluator field the quick search should target.",
             label_visibility="collapsed",

@@ -769,6 +769,7 @@ def _render_start_workflow_form(
     default_max_wait_hours = int(get_config_value("max_wait_hours", 24))
     default_environment = get_config_value("environment", "")
     default_output = _make_default_output_path(default_target)
+    default_skip_large_file = True
 
     if "workflow_server_catalogs" not in st.session_state:
         st.session_state["workflow_server_catalogs"] = []
@@ -889,14 +890,12 @@ def _render_start_workflow_form(
             placeholder=_make_default_output_path(target_name),
         ).strip()
     with picker_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Environment</div>', unsafe_allow_html=True)
-        environment = st.selectbox(
-            "Environment",
-            options=["", "dev", "stg", "prd"],
-            index=["", "dev", "stg", "prd"].index(default_environment) if default_environment in ("", "dev", "stg", "prd") else 0,
-            key="workflow_environment",
+        st.markdown('<div class="wf-toolbar-note">Phase</div>', unsafe_allow_html=True)
+        phase = st.text_input(
+            "Phase",
+            value=default_phase,
+            key="workflow_phase",
             label_visibility="collapsed",
-            format_func=lambda value: value or "default",
         )
     with picker_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
@@ -927,7 +926,7 @@ def _render_start_workflow_form(
             st.caption(f"Fetched catalog: {desc}")
 
     with st.expander("Advanced options", expanded=False):
-        adv_cols = st.columns([1.0, 1.2, 0.8, 0.8])
+        adv_cols = st.columns([1.0, 1.0, 0.8, 0.8])
         with adv_cols[0]:
             download_type = st.radio(
                 "Download type",
@@ -937,11 +936,12 @@ def _render_start_workflow_form(
                 key="workflow_download_type",
             )
         with adv_cols[1]:
-            phase = st.text_input(
-                "Phase",
-                value=default_phase,
-                key="workflow_phase",
-                disabled=download_type != "Archives (ZIP)",
+            environment = st.selectbox(
+                "Environment",
+                options=["", "dev", "stg", "prd"],
+                index=["", "dev", "stg", "prd"].index(default_environment) if default_environment in ("", "dev", "stg", "prd") else 0,
+                key="workflow_environment",
+                format_func=lambda value: value or "default",
             )
         with adv_cols[2]:
             poll_interval = st.slider(
@@ -961,7 +961,7 @@ def _render_start_workflow_form(
                 key="workflow_max_wait_hours",
             )
 
-        option_cols = st.columns(4)
+        option_cols = st.columns(5)
         with option_cols[0]:
             run_eval = st.checkbox("Run evaluation", value=True, key="workflow_run_eval")
         with option_cols[1]:
@@ -972,8 +972,14 @@ def _render_start_workflow_form(
                 key="workflow_generate_parquet",
             )
         with option_cols[2]:
-            eval_recursive = st.checkbox("Recursive scan", value=True, key="workflow_eval_recursive")
+            skip_large_file = st.checkbox(
+                "Skip large files",
+                value=default_skip_large_file,
+                key="workflow_skip_large_file",
+            )
         with option_cols[3]:
+            eval_recursive = st.checkbox("Recursive scan", value=True, key="workflow_eval_recursive")
+        with option_cols[4]:
             is_tag = st.checkbox("Target is tag", value=False, key="workflow_is_tag")
 
     set_config_value("eval_project_id", project_id)
@@ -1030,6 +1036,7 @@ def _render_start_workflow_form(
             "max_wait_hours": int(max_wait_hours),
             "run_eval": bool(run_eval),
             "generate_parquet": bool(generate_parquet),
+            "skip_large_file": bool(skip_large_file),
             "eval_recursive": bool(eval_recursive),
         },
     }
@@ -1106,7 +1113,7 @@ def _render_workflow_launcher_section(
                             "is_tag": dialog_payload["is_tag"],
                             "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
                             "phase": dialog_payload["phase"],
-                            "skip_large_file": False,
+                            "skip_large_file": bool(dialog_payload.get("skip_large_file", True)),
                             "large_file_mb": 50.0,
                             "keep_zip_files": False,
                             "poll_interval": dialog_payload["poll_interval"],
