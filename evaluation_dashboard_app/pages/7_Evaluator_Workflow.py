@@ -9,9 +9,12 @@ Evaluator Workflow page:
 from __future__ import annotations
 
 import html
+import io
 import json
 import os
+import re
 import urllib.parse
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -26,10 +29,12 @@ from lib.page_chrome import (
     section_header,
 )
 from lib.path_utils import (
+    delete_run,
     format_size,
     get_data_root_display,
     get_run_info,
     list_run_directories,
+    resolve_run_subdirectory,
     resolve_under_data_root,
 )
 from lib.run_metadata import (
@@ -38,6 +43,8 @@ from lib.run_metadata import (
 )
 from lib.ui.recent_evaluator_jobs import (
     _fetch_evaluator_job_detail,
+    _format_source_ref_html,
+    _format_source_ref_text,
     _render_recent_evaluator_job_retest_dialog,
     _render_recent_evaluator_jobs_section,
     configure_recent_evaluator_jobs_ui,
@@ -373,6 +380,12 @@ def _load_local_runs() -> List[Dict[str, object]]:
             or ""
         ).strip()
         evaluator_report_url = str(evaluator_meta.get("report_url") or "").strip()
+        evaluator_title = str(
+            evaluator_meta.get("title")
+            or description
+            or evaluator_job_id
+            or ""
+        ).strip()
         evaluator_target = str(
             evaluator_meta.get("target")
             or request_meta.get("target_name")
@@ -429,7 +442,13 @@ def _load_local_runs() -> List[Dict[str, object]]:
                 "task_status": task_status,
                 "evaluator_job_id": evaluator_job_id,
                 "evaluator_report_url": evaluator_report_url,
+                "evaluator_title": evaluator_title,
                 "evaluator_target": evaluator_target,
+                "evaluator_git_sha": str(evaluator_meta.get("git_sha") or "").strip(),
+                "evaluator_git_ref_url": str(evaluator_meta.get("git_ref_url") or "").strip(),
+                "evaluator_git_commit_url": str(evaluator_meta.get("git_commit_url") or "").strip(),
+                "evaluator_source_url": str(evaluator_meta.get("source_url") or "").strip(),
+                "evaluator_source_repo_label": str(evaluator_meta.get("source_repo_label") or "").strip(),
                 "catalog_id": catalog_id,
                 "catalog_name": catalog_name,
                 "catalog_label": catalog_label,
@@ -442,24 +461,6 @@ def _load_local_runs() -> List[Dict[str, object]]:
         )
     runs.sort(key=lambda row: (-float(row["mtime"]), str(row["name"]).lower()))
     return runs
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _load_local_run_source_ref(project_id: str, environment: str, evaluator_job_id: str) -> Dict[str, str]:
-    project = str(project_id or "").strip()
-    env = str(environment or "default").strip() or "default"
-    job_id = str(evaluator_job_id or "").strip()
-    if not project or not job_id:
-        return {"title": "", "label": "", "url": ""}
-    try:
-        detail = _fetch_evaluator_job_detail(project, env, job_id)
-    except Exception:
-        return {"title": "", "label": "", "url": ""}
-    return {
-        "title": str(detail.get("title") or "").strip(),
-        "label": str(detail.get("source_label") or detail.get("target") or "").strip(),
-        "url": str(detail.get("git_ref_url") or detail.get("source_url") or "").strip(),
-    }
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
@@ -533,6 +534,13 @@ def _inject_workflow_page_styles() -> None:
             color: #64748b;
             font-size: 0.78rem;
         }
+        .wf-meta-inline a {
+            color: inherit;
+            text-decoration: none;
+        }
+        .wf-meta-inline a:hover {
+            text-decoration: underline;
+        }
         .wf-run-list {
             display: block;
             margin-top: 0.35rem;
@@ -556,6 +564,10 @@ def _inject_workflow_page_styles() -> None:
         .wf-run-title a:hover {
             text-decoration: underline;
         }
+        .wf-run-title--muted,
+        .wf-run-title--muted a {
+            color: #94a3b8 !important;
+        }
         .wf-run-cell {
             min-width: 0;
             color: #0f172a;
@@ -565,8 +577,14 @@ def _inject_workflow_page_styles() -> None:
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .wf-run-cell--muted {
+            color: #94a3b8;
+        }
         .wf-run-text {
             padding-top: 0.26rem;
+        }
+        .wf-meta-inline--muted {
+            color: #94a3b8;
         }
         .wf-run-code {
             padding-top: 0.22rem;
@@ -600,6 +618,15 @@ def _inject_workflow_page_styles() -> None:
         .wf-flag--ok {
             background: #dcfce7;
             color: #166534;
+        }
+        .wf-run-flags--muted {
+            opacity: 0.58;
+        }
+        .wf-unavailable-note {
+            margin-top: 0.18rem;
+            font-size: 0.68rem;
+            color: #94a3b8;
+            letter-spacing: 0.01em;
         }
         .wf-compare-bar {
             border: 1px solid rgba(148, 163, 184, 0.24);
@@ -666,8 +693,104 @@ def _inject_workflow_page_styles() -> None:
     )
 
 
+def _build_local_run_artifact_list(run_name: str) -> tuple[Optional[Path], list[tuple[Path, str]], str]:
+    run_path, err = resolve_run_subdirectory(run_name)
+    if err:
+        return None, [], err
+    assert run_path is not None
+    to_zip: list[tuple[Path, str]] = []
+    summary_file = run_path / "Summary.csv"
+    score_file = run_path / "Score.csv"
+    if summary_file.is_file():
+        to_zip.append((summary_file, "Summary.csv"))
+    if score_file.is_file():
+        to_zip.append((score_file, "Score.csv"))
+    for pq in sorted(run_path.glob("*.parquet"), key=lambda p: p.name.lower()):
+        to_zip.append((pq, pq.name))
+    return run_path, to_zip, ""
+
+
+def _render_local_run_download_dialog(run_name: str) -> None:
+    run_path, to_zip, err = _build_local_run_artifact_list(run_name)
+    if err:
+        st.error(err)
+        return
+    if run_path is None:
+        st.error("Run path could not be resolved.")
+        return
+
+    prepared_key = f"workflow_zip_prepared::{run_name}"
+    st.caption("Download the generated local artifacts for this run as one ZIP.")
+    if not to_zip:
+        st.info("This run has no Summary.csv, Score.csv, or top-level `.parquet` files.")
+        return
+
+    st.caption(f"**{len(to_zip)}** file(s): {', '.join(arc for _, arc in to_zip)}")
+    prepared = st.session_state.get(prepared_key)
+
+    if st.button("Prepare ZIP", key=f"workflow_prepare_zip::{run_name}", use_container_width=True):
+        buf = io.BytesIO()
+        zip_errors: list[str] = []
+        included: list[str] = []
+        with st.spinner("Building ZIP…"):
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fpath, arcname in to_zip:
+                    try:
+                        zf.write(fpath, arcname=arcname)
+                        included.append(arcname)
+                    except OSError as exc:
+                        zip_errors.append(f"{arcname}: {exc}")
+        for msg in zip_errors:
+            st.warning(msg)
+        if included:
+            safe_stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", run_name).strip() or "run"
+            st.session_state[prepared_key] = {
+                "data": buf.getvalue(),
+                "file_name": f"{safe_stem}_artifacts.zip",
+            }
+            prepared = st.session_state.get(prepared_key)
+        else:
+            st.session_state.pop(prepared_key, None)
+            prepared = None
+            st.error("Could not add any files to the ZIP.")
+
+    if prepared and prepared.get("data"):
+        st.download_button(
+            label=f"Download {prepared['file_name']}",
+            data=prepared["data"],
+            file_name=prepared["file_name"],
+            mime="application/zip",
+            key=f"workflow_dl_zip::{run_name}",
+            use_container_width=True,
+        )
+
+
+def _render_local_run_delete_dialog(run_name: str) -> None:
+    st.warning("This deletes the local run directory permanently.")
+    confirm = st.text_input(
+        "Type the run name to confirm",
+        value="",
+        placeholder=run_name,
+        key=f"workflow_delete_confirm::{run_name}",
+    ).strip()
+    if st.button("Delete run", key=f"workflow_delete_btn::{run_name}", type="primary", use_container_width=True):
+        if confirm != run_name:
+            st.error("Confirmation text does not match the run name.")
+            return
+        ok, msg = delete_run(run_name)
+        if ok:
+            st.session_state.pop("workflow_local_run_detail", None)
+            st.session_state.pop("workflow_local_run_download", None)
+            st.session_state.pop("workflow_local_run_delete", None)
+            st.session_state.pop(f"workflow_zip_prepared::{run_name}", None)
+            st.success(msg)
+            _load_local_runs.clear()
+            st.rerun()
+        st.error(msg)
+
+
 def _render_local_runs_header() -> None:
-    header_cols = st.columns([0.45, 2.35, 0.95, 1.55, 1.45, 1.0, 1.08, 1.3, 0.72, 0.72], gap="small")
+    header_cols = st.columns([0.45, 2.35, 0.72, 1.45, 1.55, 1.0, 1.0, 1.22, 0.68, 1.55], gap="small")
     header_cols[0].markdown('<div class="wf-toolbar-note">Pick</div>', unsafe_allow_html=True)
     header_cols[1].markdown('<div class="wf-toolbar-note">Name</div>', unsafe_allow_html=True)
     header_cols[2].markdown('<div class="wf-toolbar-note">User</div>', unsafe_allow_html=True)
@@ -677,7 +800,7 @@ def _render_local_runs_header() -> None:
     header_cols[6].markdown('<div class="wf-toolbar-note">Updated</div>', unsafe_allow_html=True)
     header_cols[7].markdown('<div class="wf-toolbar-note">Files</div>', unsafe_allow_html=True)
     header_cols[8].markdown('<div class="wf-toolbar-note">Size</div>', unsafe_allow_html=True)
-    header_cols[9].markdown('<div class="wf-toolbar-note">Details</div>', unsafe_allow_html=True)
+    header_cols[9].markdown('<div class="wf-toolbar-note">Actions</div>', unsafe_allow_html=True)
 
 
 def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
@@ -691,73 +814,91 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     evaluator_report_url = str(run.get("evaluator_report_url") or "").strip()
     evaluator_target = str(run.get("evaluator_target") or "").strip()
     description = str(run.get("description") or "").strip()
-    source_ref = _load_local_run_source_ref(
-        str(run.get("metadata", {}).get("request", {}).get("project_id") or ""),
-        str(run.get("environment") or "default"),
-        evaluator_job_id,
-    ) if evaluator_job_id else {"title": "", "label": "", "url": ""}
-    evaluator_title = html.escape(source_ref.get("title") or description or evaluator_job_id or "—")
-    source_label = html.escape(source_ref.get("label") or evaluator_target or "—")
-    source_url = html.escape(source_ref.get("url") or "")
+    evaluator_title = html.escape(str(run.get("evaluator_title") or description or evaluator_job_id or "—"))
+    source_label = str(run.get("evaluator_target") or evaluator_target or "—").strip()
+    source_url = str(run.get("evaluator_git_ref_url") or run.get("evaluator_source_url") or "").strip()
+    source_git_sha = str(run.get("evaluator_git_sha") or "").strip()
+    source_commit_url = str(run.get("evaluator_git_commit_url") or "").strip()
     result_label = html.escape(
         f"✅ {int(run.get('passed_count') or 0)}  ❌ {int(run.get('failed_count') or 0)}  ⏹ {int(run.get('canceled_count') or 0)}"
     )
     task_type = str(run.get("task_type") or "").strip()
     task_status = str(run.get("task_status") or "").strip()
-    meta_bits = [bit for bit in [description, task_type, task_status] if bit]
+    meta_bits = [bit for bit in [task_type, task_status] if bit]
     flags = [
         ("Summary", bool(run["has_summary"])),
         ("Score", bool(run["has_score"])),
         ("Parquet", bool(run["has_parquet"])),
     ]
+    compare_available = any(enabled for _, enabled in flags)
+    title_class = "wf-run-title wf-run-text" + ("" if compare_available else " wf-run-title--muted")
+    cell_class = "wf-run-cell wf-run-text" + ("" if compare_available else " wf-run-cell--muted")
+    meta_class = "wf-meta-inline" + ("" if compare_available else " wf-meta-inline--muted")
+    flag_wrap_class = "wf-run-flags" + ("" if compare_available else " wf-run-flags--muted")
     flag_html = "".join(
         f'<span class="wf-flag {"wf-flag--ok" if enabled else ""}">{label}</span>'
         for label, enabled in flags
     )
+    if not compare_available:
+        flag_html += '<div class="wf-unavailable-note">Unavailable for compare</div>'
     size_label = html.escape(str(run["size"]))
     checkbox_key = f"workflow_compare_pick::{name_raw}"
-    if checkbox_key not in st.session_state:
+    if not compare_available:
+        st.session_state[checkbox_key] = False
+    elif checkbox_key not in st.session_state:
         st.session_state[checkbox_key] = bool(selected)
-    row_cols = st.columns([0.45, 2.35, 0.95, 1.55, 1.45, 1.0, 1.08, 1.3, 0.72, 0.72], gap="small")
+    row_cols = st.columns([0.45, 2.35, 0.72, 1.45, 1.55, 1.0, 1.0, 1.22, 0.68, 1.55], gap="small")
     with row_cols[0]:
-        checked = st.checkbox("Select run", key=checkbox_key, label_visibility="collapsed")
+        checked = st.checkbox(
+            "Select run",
+            key=checkbox_key,
+            label_visibility="collapsed",
+            disabled=not compare_available,
+        )
     with row_cols[1]:
-        title_html = f'<div class="wf-run-title wf-run-text"><a href="{_build_overview_url(name_raw)}" target="_self">{name}</a></div>'
+        title_html = f'<div class="{title_class}"><a href="{_build_overview_url(name_raw)}" target="_self">{name}</a></div>'
         if meta_bits:
             meta_html = html.escape(" · ".join(meta_bits[:3]))
-            title_html += f'<div class="wf-meta-inline">{meta_html}</div>'
+            title_html += f'<div class="{meta_class}">{meta_html}</div>'
         st.markdown(title_html, unsafe_allow_html=True)
     with row_cols[2]:
-        st.markdown(f'<div class="wf-run-cell wf-run-text">{user_label}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="{cell_class}">{user_label}</div>', unsafe_allow_html=True)
     with row_cols[3]:
         if catalog_url and catalog_label != "—":
             st.markdown(
-                f'<div class="wf-run-title wf-run-text"><a href="{catalog_url}" target="_blank">{catalog_label}</a></div>',
+                f'<div class="{title_class}"><a href="{catalog_url}" target="_blank">{catalog_label}</a></div>',
                 unsafe_allow_html=True,
             )
         else:
-            st.markdown(f'<div class="wf-run-cell wf-run-text">{catalog_label}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="{cell_class}">{catalog_label}</div>', unsafe_allow_html=True)
     with row_cols[4]:
         if evaluator_report_url and evaluator_job_id:
-            evaluator_html = f'<div class="wf-run-title wf-run-text"><a href="{html.escape(evaluator_report_url)}" target="_blank">{evaluator_title}</a></div>'
+            evaluator_html = f'<div class="{title_class}"><a href="{html.escape(evaluator_report_url)}" target="_blank">{evaluator_title}</a></div>'
         else:
-            evaluator_html = f'<div class="wf-run-cell wf-run-text">{evaluator_title}</div>'
-        if source_url and source_label != "—":
-            evaluator_html += f'<div class="wf-meta-inline"><a href="{source_url}" target="_blank">{source_label}</a></div>'
-        elif source_label != "—":
-            evaluator_html += f'<div class="wf-meta-inline">{source_label}</div>'
+            evaluator_html = f'<div class="{cell_class}">{evaluator_title}</div>'
+        source_ref_html = _format_source_ref_html(source_label, source_url, source_git_sha, source_commit_url)
+        if source_ref_html and source_ref_html != "—":
+            evaluator_html += f'<div class="{meta_class}">{source_ref_html}</div>'
         st.markdown(evaluator_html, unsafe_allow_html=True)
     with row_cols[5]:
-        st.markdown(f'<div class="wf-run-cell wf-run-text">{result_label}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="{cell_class}">{result_label}</div>', unsafe_allow_html=True)
     with row_cols[6]:
-        st.markdown(f'<div class="wf-run-cell wf-run-text">{modified}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="{cell_class}">{modified}</div>', unsafe_allow_html=True)
     with row_cols[7]:
-        st.markdown(f'<div class="wf-run-cell"><div class="wf-run-flags">{flag_html}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="wf-run-cell"><div class="{flag_wrap_class}">{flag_html}</div></div>', unsafe_allow_html=True)
     with row_cols[8]:
-        st.markdown(f'<div class="wf-run-cell wf-run-text">{size_label}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="{cell_class}">{size_label}</div>', unsafe_allow_html=True)
     with row_cols[9]:
-        if st.button("Details", key=f"workflow_run_details::{name_raw}", use_container_width=True):
-            st.session_state["workflow_local_run_detail"] = name_raw
+        action_cols = st.columns([1.0, 1.0, 1.0], gap="small")
+        with action_cols[0]:
+            if st.button("Info", key=f"workflow_run_details::{name_raw}", use_container_width=True):
+                st.session_state["workflow_local_run_detail"] = name_raw
+        with action_cols[1]:
+            if st.button("ZIP", key=f"workflow_run_download::{name_raw}", use_container_width=True):
+                st.session_state["workflow_local_run_download"] = name_raw
+        with action_cols[2]:
+            if st.button("Delete", key=f"workflow_run_delete::{name_raw}", use_container_width=True):
+                st.session_state["workflow_local_run_delete"] = name_raw
     return bool(checked)
 
 
@@ -781,9 +922,17 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
             evaluator_detail = _fetch_evaluator_job_detail(project_id, request_environment, evaluator_job_id)
         except Exception:
             evaluator_detail = {}
-    source_url = str(evaluator_detail.get("source_url") or evaluator_detail.get("git_ref_url") or "").strip()
+    source_url = str(
+        evaluator_meta.get("git_ref_url")
+        or evaluator_meta.get("source_url")
+        or evaluator_detail.get("source_url")
+        or evaluator_detail.get("git_ref_url")
+        or ""
+    ).strip()
     catalog_url = str(evaluator_detail.get("catalog_url") or "").strip()
-    source_label = str(evaluator_detail.get("source_label") or evaluator_target or "").strip()
+    source_label = str(evaluator_meta.get("target") or evaluator_detail.get("source_label") or evaluator_target or "").strip()
+    source_git_sha = str(evaluator_meta.get("git_sha") or evaluator_detail.get("git_sha") or "").strip()
+    source_ref_text = _format_source_ref_text(source_label or evaluator_target, source_git_sha)
 
     with st.container(border=True):
         title_cols = st.columns([3.4, 1.0])
@@ -866,6 +1015,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                     st.link_button("Open catalog", catalog_url, use_container_width=True)
             with action_cols[3]:
                 if st.button("Artifact retest", key=f"workflow_local_run_retest::{run['name']}", type="primary", use_container_width=True):
+                    st.session_state.pop(f"recent_eval_retest_suite_selection_{evaluator_job_id}", None)
                     st.session_state["workflow_local_run_retest"] = str(run["name"])
                     st.rerun()
 
@@ -878,7 +1028,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
             )
             info_cols[1].text_input(
                 "Source ref",
-                value=_metadata_text(source_label or evaluator_target),
+                value=_metadata_text(source_ref_text),
                 disabled=True,
                 key=f"run_detail_source_ref::{run['name']}",
             )
@@ -1209,6 +1359,38 @@ def _render_local_runs_section() -> None:
         else:
             st.button("Open", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
     st.markdown("</div>", unsafe_allow_html=True)
+
+    download_run_name = str(st.session_state.get("workflow_local_run_download") or "").strip()
+    if download_run_name:
+        if callable(getattr(st, "dialog", None)):
+            @st.dialog(f"Download artifacts · {download_run_name}", width="large")
+            def _workflow_local_run_download_dialog() -> None:
+                _render_local_run_download_dialog(download_run_name)
+                if st.button("Close", key=f"workflow_local_run_download_close::{download_run_name}", use_container_width=True):
+                    st.session_state.pop("workflow_local_run_download", None)
+                    st.rerun()
+
+            _workflow_local_run_download_dialog()
+        else:
+            st.markdown("---")
+            st.subheader(f"Download artifacts · {download_run_name}")
+            _render_local_run_download_dialog(download_run_name)
+
+    delete_run_name = str(st.session_state.get("workflow_local_run_delete") or "").strip()
+    if delete_run_name:
+        if callable(getattr(st, "dialog", None)):
+            @st.dialog(f"Delete local run · {delete_run_name}", width="large")
+            def _workflow_local_run_delete_dialog() -> None:
+                _render_local_run_delete_dialog(delete_run_name)
+                if st.button("Cancel", key=f"workflow_local_run_delete_close::{delete_run_name}", use_container_width=True):
+                    st.session_state.pop("workflow_local_run_delete", None)
+                    st.rerun()
+
+            _workflow_local_run_delete_dialog()
+        else:
+            st.markdown("---")
+            st.subheader(f"Delete local run · {delete_run_name}")
+            _render_local_run_delete_dialog(delete_run_name)
 
     detail_run_name = str(st.session_state.get("workflow_local_run_detail") or "").strip()
     if detail_run_name:

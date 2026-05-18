@@ -450,6 +450,15 @@ def _extract_git_target_from_report(report: Dict[str, Any]) -> str:
     return git_ref or str(source.get("git_sha") or "").strip()[:12] or ""
 
 
+def _extract_job_title_from_report(report: Dict[str, Any]) -> str:
+    """Prefer evaluator description for display title, with a readable fallback."""
+    description = str(report.get("description") or "").strip()
+    if description:
+        return description
+    started_like = report.get("started_at") or report.get("scheduled_at") or report.get("finished_at")
+    return f"no description ({started_like or 'unknown start'})"
+
+
 def _extract_catalog_url_from_report(report: Dict[str, Any]) -> str:
     """Best-effort catalog URL matching the recent evaluator jobs list."""
     catalog = report.get("catalog") or {}
@@ -468,6 +477,21 @@ def _extract_catalog_url_from_report(report: Dict[str, Any]) -> str:
     return ""
 
 
+def _extract_source_metadata_from_report(report: Dict[str, Any]) -> Dict[str, str]:
+    """Best-effort source metadata for local run rendering without refetching."""
+    source = ((report.get("event") or {}).get("source") or {})
+    git_url = str(source.get("git_web_url") or source.get("git_url") or "").strip()
+    return {
+        "title": _extract_job_title_from_report(report),
+        "target": _extract_git_target_from_report(report),
+        "git_sha": str(source.get("git_sha") or "").strip(),
+        "git_ref_url": str(source.get("git_ref_url") or "").strip(),
+        "git_commit_url": str(source.get("git_commit_url") or "").strip(),
+        "source_url": git_url,
+        "source_repo_label": git_url.rstrip("/").split("/")[-1] if git_url else "",
+    }
+
+
 def _build_evaluator_result_summary(
     *,
     job_id: str,
@@ -482,6 +506,7 @@ def _build_evaluator_result_summary(
     test = final_report.get("test") or {}
     available = test.get("available_case_results") or test.get("case_results") or {}
     case_totals = _suite_case_totals(suite_rows)
+    source_meta = _extract_source_metadata_from_report(final_report)
     if not any(case_totals.values()):
         case_totals = {
             "total": int(available.get("total_count", 0) or 0),
@@ -498,7 +523,13 @@ def _build_evaluator_result_summary(
         "evaluator_catalog_name": ((final_report.get("catalog") or {}).get("display_name") or ""),
         "evaluator_catalog_version_id": ((final_report.get("catalog") or {}).get("version_id") or ""),
         "evaluator_catalog_url": _extract_catalog_url_from_report(final_report),
-        "evaluator_target": _extract_git_target_from_report(final_report),
+        "evaluator_title": source_meta.get("title", ""),
+        "evaluator_target": source_meta.get("target", ""),
+        "evaluator_git_sha": source_meta.get("git_sha", ""),
+        "evaluator_git_ref_url": source_meta.get("git_ref_url", ""),
+        "evaluator_git_commit_url": source_meta.get("git_commit_url", ""),
+        "evaluator_source_url": source_meta.get("source_url", ""),
+        "evaluator_source_repo_label": source_meta.get("source_repo_label", ""),
         "evaluator_build_status": build.get("status", ""),
         "evaluator_test_status": test.get("status", ""),
         "evaluator_fail_message": final_report.get("fail_message", ""),
@@ -527,6 +558,7 @@ def _fetch_evaluator_context(
         build = report.get("build") or {}
         test = report.get("test") or {}
         available = test.get("available_case_results") or test.get("case_results") or {}
+        source_meta = _extract_source_metadata_from_report(report)
         return {
             "job_id": job_id,
             "report_url": evaluator_api.get_job_report_url(project_id, job_id),
@@ -536,7 +568,13 @@ def _fetch_evaluator_context(
             "catalog_name": str(((report.get("catalog") or {}).get("display_name") or "")).strip(),
             "catalog_version_id": (report.get("catalog") or {}).get("version_id"),
             "catalog_url": _extract_catalog_url_from_report(report),
-            "target": _extract_git_target_from_report(report),
+            "title": source_meta.get("title", ""),
+            "target": source_meta.get("target", ""),
+            "git_sha": source_meta.get("git_sha", ""),
+            "git_ref_url": source_meta.get("git_ref_url", ""),
+            "git_commit_url": source_meta.get("git_commit_url", ""),
+            "source_url": source_meta.get("source_url", ""),
+            "source_repo_label": source_meta.get("source_repo_label", ""),
             "build_status": str(build.get("status") or "").strip(),
             "test_status": str(test.get("status") or "").strip(),
             "fail_message": str(report.get("fail_message") or "").strip(),
@@ -1143,6 +1181,7 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                     "target_name": target_name or "",
                     "description": description or "",
                     "is_tag": bool(is_tag),
+                    "title": description or "",
                 }
             },
         )
@@ -1290,12 +1329,18 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                     "job_id": job_id,
                     "report_url": report_url,
                     "status": test_status,
+                    "title": summary.get("evaluator_title", ""),
                     "scheduled_by": summary.get("evaluator_scheduled_by", ""),
                     "catalog_id": summary.get("evaluator_catalog_id", ""),
                     "catalog_name": summary.get("evaluator_catalog_name", ""),
                     "catalog_version_id": summary.get("evaluator_catalog_version_id", ""),
                     "catalog_url": summary.get("evaluator_catalog_url", ""),
                     "target": summary.get("evaluator_target", ""),
+                    "git_sha": summary.get("evaluator_git_sha", ""),
+                    "git_ref_url": summary.get("evaluator_git_ref_url", ""),
+                    "git_commit_url": summary.get("evaluator_git_commit_url", ""),
+                    "source_url": summary.get("evaluator_source_url", ""),
+                    "source_repo_label": summary.get("evaluator_source_repo_label", ""),
                     "build_status": summary.get("evaluator_build_status", ""),
                     "test_status": summary.get("evaluator_test_status", ""),
                     "fail_message": summary.get("evaluator_fail_message", ""),

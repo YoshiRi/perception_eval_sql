@@ -122,6 +122,10 @@ def _make_retest_description(target_name: str, preset_name: str = "", *, has_cus
     )
 
 
+def _retest_suite_selection_key(job_id: str) -> str:
+    return f"recent_eval_retest_suite_selection_{job_id}"
+
+
 def _to_jst(dt: Any) -> Optional[datetime]:
     if dt is None:
         return None
@@ -323,6 +327,90 @@ def _extract_suite_selection_options(suite_rows: List[Dict[str, Any]]) -> List[D
         suite_name = str(row.get("name") or row.get("Suite") or suite_id).strip()
         options.append({"id": suite_id, "label": f"{suite_name} ({suite_id})"})
     return options
+
+
+def _short_git_sha(sha: str, *, length: int = 8) -> str:
+    return str(sha or "").strip()[: max(1, int(length))]
+
+
+def _format_source_ref_text(source_label: str, git_sha: str) -> str:
+    label = str(source_label or "").strip()
+    short_sha = _short_git_sha(git_sha)
+    if label and short_sha:
+        return f"{label} ({short_sha})"
+    return label or short_sha or "—"
+
+
+def _format_source_ref_html(
+    source_label: str,
+    source_url: str,
+    git_sha: str,
+    git_commit_url: str,
+) -> str:
+    label = html.escape(str(source_label or "").strip() or "—")
+    ref_url = html.escape(str(source_url or "").strip())
+    short_sha = html.escape(_short_git_sha(git_sha))
+    commit_url = html.escape(str(git_commit_url or "").strip())
+
+    if ref_url and label != "—":
+        label_html = f'<a href="{ref_url}" target="_blank" rel="noopener noreferrer">{label}</a>'
+    else:
+        label_html = label
+
+    if short_sha:
+        sha_html = (
+            f'<a href="{commit_url}" target="_blank" rel="noopener noreferrer">{short_sha}</a>'
+            if commit_url
+            else short_sha
+        )
+        if label_html and label_html != "—":
+            return f"{label_html} ({sha_html})"
+        return sha_html
+
+    return label_html
+
+
+def _extract_retest_parent_job_id(report: Dict[str, Any]) -> str:
+    """Return the upstream source_job_id when this evaluator job was itself a retest."""
+    event = report.get("event") or {}
+    candidates = (
+        event.get("source_job_id"),
+        ((event.get("source_job") or {}).get("id") if isinstance(event.get("source_job"), dict) else ""),
+        report.get("source_job_id"),
+    )
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _resolve_retest_source_job_id(
+    project_id: str,
+    environment: str,
+    job_id: str,
+    *,
+    detail: Optional[Dict[str, Any]] = None,
+    max_depth: int = 5,
+) -> str:
+    """Unwrap retest chains so scheduling reuses the earliest known source job."""
+    current_job_id = str(job_id or "").strip()
+    current_detail = detail or {}
+    seen_job_ids: set[str] = set()
+
+    while current_job_id and current_job_id not in seen_job_ids and len(seen_job_ids) < max_depth:
+        seen_job_ids.add(current_job_id)
+        raw_report = current_detail.get("raw_report") if isinstance(current_detail, dict) else {}
+        parent_job_id = _extract_retest_parent_job_id(raw_report or {})
+        if not parent_job_id or parent_job_id in seen_job_ids:
+            return current_job_id
+        current_job_id = parent_job_id
+        try:
+            current_detail = _fetch_evaluator_job_detail(project_id, environment, current_job_id)
+        except Exception:
+            return current_job_id
+
+    return current_job_id or str(job_id or "").strip()
 
 
 def _status_color_variant(status: str) -> str:
@@ -765,6 +853,13 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             font-size: 0.74rem;
             color: #64748b;
         }
+        .evj-name-sub a {
+            color: inherit;
+            text-decoration: none;
+        }
+        .evj-name-sub a:hover {
+            text-decoration: underline;
+        }
         .evj-status {
             display: inline-flex;
             align-items: center;
@@ -1016,11 +1111,12 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
     build_status = html.escape(job.get("build_status", "") or "—")
     test_status = html.escape(job.get("test_status", "") or "—")
     created_label = html.escape(job.get("created_label", "—"))
-    git_sha = html.escape(job.get("git_sha", "") or "—")
-    source_label = html.escape(job.get("source_label", "") or "—")
+    git_sha = str(job.get("git_sha", "") or "").strip()
+    source_label = str(job.get("source_label", "") or "—").strip()
     user_text = html.escape(user_label or "Unknown")
     report_url = html.escape(job.get("report_url", "") or "")
-    source_url = html.escape(job.get("git_ref_url", "") or job.get("source_url", "") or "")
+    source_url = str(job.get("git_ref_url", "") or job.get("source_url", "") or "").strip()
+    git_commit_url = str(job.get("git_commit_url", "") or "").strip()
     status_variant = job.get("status_variant", "unknown")
     status_mark = {
         "running": '<span class="evj-status-mark evj-status-mark--running" aria-hidden="true"></span>',
@@ -1036,10 +1132,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
         f'<strong>{int(job.get("total", 0))}</strong>'
     )
     title_html = f'<a href="{report_url}" target="_blank" rel="noopener noreferrer">{title_text}</a>' if report_url else title_text
-    source_html = (
-        f'<a href="{source_url}" target="_blank" rel="noopener noreferrer">{source_label}</a>'
-        if source_url else source_label
-    )
+    source_html = _format_source_ref_html(source_label, source_url, git_sha, git_commit_url)
     catalog_html = (
         f'<a href="{catalog_url}" target="_blank" rel="noopener noreferrer">{catalog}</a>'
         if catalog_url else catalog
@@ -1065,7 +1158,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
               <strong>{user_text}</strong>
             </div>
             <div class="evj-cell">
-              <span class="evj-name-sub">build {build_status} · test {test_status} · {git_sha}</span><br>
+              <span class="evj-name-sub">build {build_status} · test {test_status}</span><br>
               <span class="evj-inline-stats">{counts}</span>
             </div>
           </div>
@@ -1099,7 +1192,7 @@ def _render_recent_evaluator_job_detail(project_id: str, environment: str, job: 
         st.write(f"Status: `{detail.get('status', 'unknown')}`")
         st.write(f"Title: `{detail.get('title', '—')}`")
         st.write(f"Build/Test: `{detail.get('build_status', '—')}` / `{detail.get('test_status', '—')}`")
-        st.write(f"Ref: `{detail.get('target', '—')}`")
+        st.write(f"Ref: `{_format_source_ref_text(detail.get('target', ''), detail.get('git_sha', ''))}`")
         st.write(f"Catalog: `{detail.get('catalog', '—')}`")
         st.write(f"Repo: `{detail.get('source_repo_label', '—')}`")
     with overview_right:
@@ -1107,7 +1200,6 @@ def _render_recent_evaluator_job_detail(project_id: str, environment: str, job: 
         st.write(f"Started: `{_format_jst_time(detail.get('started_at'), include_seconds=True)}`")
         st.write(f"Finished: `{_format_jst_time(detail.get('finished_at'), include_seconds=True)}`")
         st.write(f"Duration: `{detail.get('duration', '—')}`")
-        st.write(f"SHA: `{detail.get('git_sha', '—')}`")
 
     action_cols = st.columns([1.2, 1.2, 4])
     report_url = detail.get("report_url", "")
@@ -1335,6 +1427,12 @@ def _render_recent_evaluator_job_retest_dialog(
     detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
     raw_report = detail.get("raw_report") or {}
     raw_catalog = raw_report.get("catalog") or {}
+    resolved_source_job_id = _resolve_retest_source_job_id(
+        project_id,
+        environment,
+        job_id,
+        detail=detail,
+    )
     suite_options = _extract_suite_selection_options(detail.get("suite_rows") or [])
     suite_label_to_id = {opt["label"]: opt["id"] for opt in suite_options}
     suite_labels = [opt["label"] for opt in suite_options]
@@ -1359,16 +1457,21 @@ def _render_recent_evaluator_job_retest_dialog(
     summary_cols[1].markdown(f"**Ref**  \n`{detail.get('target', '—')}`")
     summary_cols[2].markdown(f"**Original catalog**  \n`{original_catalog_name or '—'}`")
     summary_cols[3].markdown(f"**Suites found**  \n`{len(suite_labels)}`")
+    if resolved_source_job_id and resolved_source_job_id != job_id:
+        st.caption(f"Using upstream source job `{resolved_source_job_id}` for scheduling because this job is already a retest.")
 
     preset_key = f"recent_eval_retest_catalog_preset_{job_id}"
     last_preset_key = f"recent_eval_retest_last_catalog_preset_{job_id}"
     catalog_id_key = f"recent_eval_retest_catalog_id_{job_id}"
+    suite_selection_key = _retest_suite_selection_key(job_id)
     if preset_key not in st.session_state:
         st.session_state[preset_key] = default_preset_name
     if last_preset_key not in st.session_state:
         st.session_state[last_preset_key] = ""
     if catalog_id_key not in st.session_state:
         st.session_state[catalog_id_key] = original_catalog_id
+    if suite_selection_key not in st.session_state:
+        st.session_state[suite_selection_key] = []
 
     selected_preset_name = st.selectbox(
         "Catalog preset",
@@ -1395,8 +1498,8 @@ def _render_recent_evaluator_job_retest_dialog(
     selected_suite_labels = st.multiselect(
         "Suites to run",
         options=suite_labels,
-        default=suite_labels,
-        help="Defaults to the suite set found on the source job. Clear the list to let the evaluator use its default suite selection.",
+        key=suite_selection_key,
+        help="Defaults to empty. Leave it empty to let the evaluator use its default suite selection, or choose specific suites to rerun.",
         disabled=not suite_labels,
     )
     description = st.text_input(
@@ -1449,6 +1552,7 @@ def _render_recent_evaluator_job_retest_dialog(
     start_clicked = action_cols[1].button("Retest", key=f"recent_eval_retest_start_{job_id}", type="primary", use_container_width=True)
 
     if cancel_clicked:
+        st.session_state.pop(suite_selection_key, None)
         st.session_state.pop("recent_eval_jobs_retest_selected", None)
         st.rerun()
 
@@ -1480,7 +1584,7 @@ def _render_recent_evaluator_job_retest_dialog(
             "project_id": project_id,
             "catalog_id": final_catalog_id,
             "integration_id": "",
-            "source_job_id": job_id,
+            "source_job_id": resolved_source_job_id or job_id,
             "suite_ids": selected_suite_ids or None,
             "target_name": "",
             "description": final_description,
@@ -1517,6 +1621,7 @@ def _render_recent_evaluator_job_retest_dialog(
         f"Queued artifact retest for `{detail.get('title', job_id)}`. "
         f"Task id: `{task_id}`."
     )
+    st.session_state.pop(suite_selection_key, None)
     st.session_state.pop("recent_eval_jobs_retest_selected", None)
     st.rerun()
 
@@ -1843,6 +1948,7 @@ def _render_recent_evaluator_jobs_section(
                         st.rerun()
                 with action_cols[2]:
                     if st.button("Retest", key=f"recent_eval_retest_{job['job_id']}", use_container_width=True):
+                        st.session_state.pop(_retest_suite_selection_key(str(job["job_id"])), None)
                         st.session_state["recent_eval_jobs_retest_selected"] = str(job["job_id"])
                         _fetch_evaluator_job_detail.clear()
                         st.rerun()
