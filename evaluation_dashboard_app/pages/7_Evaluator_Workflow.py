@@ -37,6 +37,8 @@ from lib.run_metadata import (
     read_run_metadata,
 )
 from lib.ui.recent_evaluator_jobs import (
+    _fetch_evaluator_job_detail,
+    _render_recent_evaluator_job_retest_dialog,
     _render_recent_evaluator_jobs_section,
     configure_recent_evaluator_jobs_ui,
 )
@@ -442,6 +444,24 @@ def _load_local_runs() -> List[Dict[str, object]]:
     return runs
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_local_run_source_ref(project_id: str, environment: str, evaluator_job_id: str) -> Dict[str, str]:
+    project = str(project_id or "").strip()
+    env = str(environment or "default").strip() or "default"
+    job_id = str(evaluator_job_id or "").strip()
+    if not project or not job_id:
+        return {"title": "", "label": "", "url": ""}
+    try:
+        detail = _fetch_evaluator_job_detail(project, env, job_id)
+    except Exception:
+        return {"title": "", "label": "", "url": ""}
+    return {
+        "title": str(detail.get("title") or "").strip(),
+        "label": str(detail.get("source_label") or detail.get("target") or "").strip(),
+        "url": str(detail.get("git_ref_url") or detail.get("source_url") or "").strip(),
+    }
+
+
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
 def _resolve_subject_name(subject_id: str, environment: str) -> Dict[str, str]:
     subject = str(subject_id or "").strip()
@@ -548,6 +568,16 @@ def _inject_workflow_page_styles() -> None:
         .wf-run-text {
             padding-top: 0.26rem;
         }
+        .wf-run-code {
+            padding-top: 0.22rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 0.74rem;
+            line-height: 1.22;
+            color: #0f172a;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-all;
+        }
         .wf-run-flags {
             display: flex;
             flex-wrap: nowrap;
@@ -637,7 +667,7 @@ def _inject_workflow_page_styles() -> None:
 
 
 def _render_local_runs_header() -> None:
-    header_cols = st.columns([0.45, 2.25, 1.05, 1.65, 1.25, 1.05, 1.18, 1.35, 0.75, 0.72], gap="small")
+    header_cols = st.columns([0.45, 2.35, 0.95, 1.55, 1.45, 1.0, 1.08, 1.3, 0.72, 0.72], gap="small")
     header_cols[0].markdown('<div class="wf-toolbar-note">Pick</div>', unsafe_allow_html=True)
     header_cols[1].markdown('<div class="wf-toolbar-note">Name</div>', unsafe_allow_html=True)
     header_cols[2].markdown('<div class="wf-toolbar-note">User</div>', unsafe_allow_html=True)
@@ -659,15 +689,22 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     catalog_url = html.escape(str(run.get("catalog_url") or ""))
     evaluator_job_id = str(run.get("evaluator_job_id") or "").strip()
     evaluator_report_url = str(run.get("evaluator_report_url") or "").strip()
-    evaluator_target = html.escape(str(run.get("evaluator_target") or "—"))
-    evaluator_label = html.escape(evaluator_job_id[:8] + "..." if len(evaluator_job_id) > 11 else (evaluator_job_id or "—"))
+    evaluator_target = str(run.get("evaluator_target") or "").strip()
+    description = str(run.get("description") or "").strip()
+    source_ref = _load_local_run_source_ref(
+        str(run.get("metadata", {}).get("request", {}).get("project_id") or ""),
+        str(run.get("environment") or "default"),
+        evaluator_job_id,
+    ) if evaluator_job_id else {"title": "", "label": "", "url": ""}
+    evaluator_title = html.escape(source_ref.get("title") or description or evaluator_job_id or "—")
+    source_label = html.escape(source_ref.get("label") or evaluator_target or "—")
+    source_url = html.escape(source_ref.get("url") or "")
     result_label = html.escape(
         f"✅ {int(run.get('passed_count') or 0)}  ❌ {int(run.get('failed_count') or 0)}  ⏹ {int(run.get('canceled_count') or 0)}"
     )
-    description = str(run.get("description") or "").strip()
     task_type = str(run.get("task_type") or "").strip()
     task_status = str(run.get("task_status") or "").strip()
-    meta_bits = [bit for bit in [description, evaluator_target if evaluator_target != "—" else "", task_type, task_status] if bit]
+    meta_bits = [bit for bit in [description, task_type, task_status] if bit]
     flags = [
         ("Summary", bool(run["has_summary"])),
         ("Score", bool(run["has_score"])),
@@ -681,7 +718,7 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     checkbox_key = f"workflow_compare_pick::{name_raw}"
     if checkbox_key not in st.session_state:
         st.session_state[checkbox_key] = bool(selected)
-    row_cols = st.columns([0.45, 2.25, 1.05, 1.65, 1.25, 1.05, 1.18, 1.35, 0.75, 0.72], gap="small")
+    row_cols = st.columns([0.45, 2.35, 0.95, 1.55, 1.45, 1.0, 1.08, 1.3, 0.72, 0.72], gap="small")
     with row_cols[0]:
         checked = st.checkbox("Select run", key=checkbox_key, label_visibility="collapsed")
     with row_cols[1]:
@@ -702,11 +739,13 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
             st.markdown(f'<div class="wf-run-cell wf-run-text">{catalog_label}</div>', unsafe_allow_html=True)
     with row_cols[4]:
         if evaluator_report_url and evaluator_job_id:
-            evaluator_html = f'<div class="wf-run-title wf-run-text"><a href="{html.escape(evaluator_report_url)}" target="_blank">{evaluator_label}</a></div>'
+            evaluator_html = f'<div class="wf-run-title wf-run-text"><a href="{html.escape(evaluator_report_url)}" target="_blank">{evaluator_title}</a></div>'
         else:
-            evaluator_html = f'<div class="wf-run-cell wf-run-text">{evaluator_label}</div>'
-        if evaluator_target != "—":
-            evaluator_html += f'<div class="wf-meta-inline">{evaluator_target}</div>'
+            evaluator_html = f'<div class="wf-run-cell wf-run-text">{evaluator_title}</div>'
+        if source_url and source_label != "—":
+            evaluator_html += f'<div class="wf-meta-inline"><a href="{source_url}" target="_blank">{source_label}</a></div>'
+        elif source_label != "—":
+            evaluator_html += f'<div class="wf-meta-inline">{source_label}</div>'
         st.markdown(evaluator_html, unsafe_allow_html=True)
     with row_cols[5]:
         st.markdown(f'<div class="wf-run-cell wf-run-text">{result_label}</div>', unsafe_allow_html=True)
@@ -731,6 +770,20 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
     scenario_download_meta = metadata.get("scenario_download") if isinstance(metadata.get("scenario_download"), dict) else {}
     evaluation_meta = metadata.get("evaluation") if isinstance(metadata.get("evaluation"), dict) else {}
     parquet_meta = metadata.get("parquet") if isinstance(metadata.get("parquet"), dict) else {}
+    project_id = str(request_meta.get("project_id") or "").strip()
+    request_environment = str(request_meta.get("environment") or "default").strip() or "default"
+    evaluator_job_id = str(evaluator_meta.get("job_id") or request_meta.get("job_id") or "").strip()
+    evaluator_report_url = str(evaluator_meta.get("report_url") or "").strip()
+    evaluator_target = str(evaluator_meta.get("target") or evaluator_meta.get("target_name") or request_meta.get("target_name") or "").strip()
+    evaluator_detail = {}
+    if project_id and evaluator_job_id:
+        try:
+            evaluator_detail = _fetch_evaluator_job_detail(project_id, request_environment, evaluator_job_id)
+        except Exception:
+            evaluator_detail = {}
+    source_url = str(evaluator_detail.get("source_url") or evaluator_detail.get("git_ref_url") or "").strip()
+    catalog_url = str(evaluator_detail.get("catalog_url") or "").strip()
+    source_label = str(evaluator_detail.get("source_label") or evaluator_target or "").strip()
 
     with st.container(border=True):
         title_cols = st.columns([3.4, 1.0])
@@ -776,7 +829,6 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
             or ""
         ).strip()
         requested_by_label = requested_by or "—"
-        request_environment = str(request_meta.get("environment") or "default").strip() or "default"
         requested_by_label = _run_user_label(requested_by, request_environment)
 
         task_cols = st.columns(4)
@@ -800,6 +852,36 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
         detail_cols[2].text_input("Target", value=_metadata_text(evaluator_meta.get("target") or request_meta.get("target_name")), disabled=True, key=f"run_detail_target::{run['name']}")
 
         st.text_input("Description", value=_metadata_text(request_meta.get("description") or evaluator_meta.get("description")), disabled=True, key=f"run_detail_desc::{run['name']}")
+
+        if evaluator_job_id:
+            action_cols = st.columns([1.15, 1.15, 1.15, 2.55])
+            with action_cols[0]:
+                if evaluator_report_url:
+                    st.link_button("Open report", evaluator_report_url, use_container_width=True)
+            with action_cols[1]:
+                if source_url:
+                    st.link_button("Open source", source_url, use_container_width=True)
+            with action_cols[2]:
+                if catalog_url:
+                    st.link_button("Open catalog", catalog_url, use_container_width=True)
+            with action_cols[3]:
+                if st.button("Artifact retest", key=f"workflow_local_run_retest::{run['name']}", type="primary", use_container_width=True):
+                    st.session_state["workflow_local_run_retest"] = str(run["name"])
+                    st.rerun()
+
+            info_cols = st.columns([1.6, 2.4])
+            info_cols[0].text_input(
+                "Evaluator job",
+                value=evaluator_job_id,
+                disabled=True,
+                key=f"run_detail_job_full::{run['name']}",
+            )
+            info_cols[1].text_input(
+                "Source ref",
+                value=_metadata_text(source_label or evaluator_target),
+                disabled=True,
+                key=f"run_detail_source_ref::{run['name']}",
+            )
 
         if evaluator_meta:
             eval_cols = st.columns(4)
@@ -852,6 +934,45 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
 
         with st.expander("Raw run metadata", expanded=False):
             st.json(metadata or {})
+
+        selected_retest_run = str(st.session_state.get("workflow_local_run_retest") or "").strip()
+        if selected_retest_run == str(run["name"]) and evaluator_job_id:
+            dialog_job = {
+                "job_id": evaluator_job_id,
+                "title": str(evaluator_detail.get("title") or run.get("description") or run["name"]),
+            }
+            if callable(getattr(st, "dialog", None)):
+                try:
+                    @st.dialog(f"Artifact retest · {dialog_job['title']}", width="large")
+                    def _workflow_local_run_retest_dialog() -> None:
+                        _render_recent_evaluator_job_retest_dialog(
+                            project_id,
+                            request_environment,
+                            dialog_job,
+                            output_path_default="",
+                            phase_default=str(request_meta.get("phase") or "perception.object_recognition.tracking.objects"),
+                        )
+
+                    _workflow_local_run_retest_dialog()
+                finally:
+                    if st.session_state.get("workflow_local_run_retest") == str(run["name"]):
+                        st.session_state.pop("workflow_local_run_retest", None)
+            else:
+                st.markdown("---")
+                fallback_cols = st.columns([4.2, 1.0])
+                with fallback_cols[0]:
+                    st.subheader(f"Artifact retest · {dialog_job['title']}")
+                with fallback_cols[1]:
+                    if st.button("Close", key=f"workflow_local_run_retest_close::{run['name']}", use_container_width=True):
+                        st.session_state.pop("workflow_local_run_retest", None)
+                        st.rerun()
+                _render_recent_evaluator_job_retest_dialog(
+                    project_id,
+                    request_environment,
+                    dialog_job,
+                    output_path_default="",
+                    phase_default=str(request_meta.get("phase") or "perception.object_recognition.tracking.objects"),
+                )
 
 
 def _render_local_runs_section() -> None:

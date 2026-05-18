@@ -64,7 +64,8 @@ RUN --mount=type=secret,id=ssh,dst=/tmp/ssh_key \
  && python3 -m pip install --no-cache-dir --no-deps -e /opt/perception_catalog_analyzer \
  && rm -rf /root/.ssh # Clean up private key ASAP for security
 
-# Install public dependencies (after SSH deps so SSH failures surface fast)
+# Install public dependencies (after SSH deps so SSH failures surface fast).
+# Keep analyzer runtime deps that are not installed via `-e --no-deps` here too.
 COPY requirements-docker.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements-docker.txt
 
