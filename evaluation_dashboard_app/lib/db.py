@@ -406,7 +406,7 @@ def update_task_result_summary(task_id: str, summary: Dict[str, Any]) -> bool:
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
-    """Return task row as dict (includes ``rq_job_id`` for RQ cancel / reconcile)."""
+    """Return task row as dict (includes ``rq_job_id`` and ``session_id`` when available)."""
     url = get_database_url()
     if not url:
         return None
@@ -422,7 +422,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
                 cur.execute(
                     """SELECT id, type, status, parameters, result_path, error_message,
                        progress_message, progress_pct, log_output, result_summary, rq_job_id,
-                       created_at, updated_at
+                       session_id, created_at, updated_at
                        FROM tasks WHERE id = %s""",
                     (task_id,),
                 )
@@ -438,6 +438,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
 
 def list_recent_tasks(
     limit: int = 50,
+    offset: int = 0,
     session_id: Optional[str] = None,
     since_days: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
@@ -471,13 +472,13 @@ def list_recent_tasks(
                     )
                     params.append(int(since_days))
                 where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
-                params.append(limit)
+                params.extend([max(0, int(limit)), max(0, int(offset))])
                 cur.execute(
                     f"""
                     SELECT {cols}
                     FROM tasks{where}
                     ORDER BY created_at DESC
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,
                     params,
                 )
@@ -494,6 +495,45 @@ def list_recent_tasks(
     except Exception:
         pass
     return rows
+
+
+def count_recent_tasks(
+    session_id: Optional[str] = None,
+    since_days: Optional[int] = None,
+) -> int:
+    """Return total task count for the same filter shape as ``list_recent_tasks``."""
+    url = get_database_url()
+    if not url:
+        return 0
+    try:
+        import psycopg2
+    except ImportError:
+        return 0
+    try:
+        conn = psycopg2.connect(url)
+        try:
+            with conn.cursor() as cur:
+                conditions: List[str] = []
+                params: List[Any] = []
+                if session_id is not None:
+                    conditions.append("session_id = %s")
+                    params.append(session_id)
+                if since_days is not None:
+                    conditions.append(
+                        "created_at >= NOW() - (%s::integer * INTERVAL '1 day')"
+                    )
+                    params.append(int(since_days))
+                where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+                cur.execute(
+                    f"SELECT COUNT(*) FROM tasks{where}",
+                    params,
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            conn.close()
+    except Exception:
+        return 0
 
 
 def delete_task(task_id: str, session_id: Optional[str] = None) -> bool:

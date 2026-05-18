@@ -56,6 +56,7 @@ from lib.ui.download_ui import (
 from lib.ui.task_history import get_task_list_current_user, render_task_list
 from lib.ui.styles_download import inject_download_page_styles
 from lib.db import (
+    count_recent_tasks,
     create_task,
     delete_task,
     get_task,
@@ -76,6 +77,12 @@ except ImportError:
 # Task queue panel: time window + row cap (must match header + list_recent_tasks)
 _TASK_LIST_SINCE_DAYS = 7
 _TASK_LIST_MAX_ROWS = 200
+_TASK_HISTORY_RANGE_OPTIONS = {
+    "7 days": 7,
+    "30 days": 30,
+    "90 days": 90,
+    "All": None,
+}
 
 def _parse_rq_timeout_sec(raw: Optional[str], *, default: int, minimum: int) -> int:
     if raw is None or not str(raw).strip():
@@ -838,15 +845,58 @@ if is_task_queue_enabled():
         since_days=_TASK_LIST_SINCE_DAYS,
         max_rows=_TASK_LIST_MAX_ROWS,
     )
+    if "download_task_history_range" not in st.session_state:
+        st.session_state["download_task_history_range"] = "7 days"
+    if "download_task_history_page_size" not in st.session_state:
+        st.session_state["download_task_history_page_size"] = 20
+    if "download_task_history_page" not in st.session_state:
+        st.session_state["download_task_history_page"] = 1
+
+    _control_cols = st.columns([1.3, 1.0, 1.0, 2.7])
+    with _control_cols[0]:
+        _selected_range = st.selectbox(
+            "Task history range",
+            options=list(_TASK_HISTORY_RANGE_OPTIONS.keys()),
+            key="download_task_history_range",
+        )
+    with _control_cols[1]:
+        _page_size = int(
+            st.selectbox(
+                "Task rows",
+                options=[20, 50, 100],
+                key="download_task_history_page_size",
+            )
+        )
+    _since_days = _TASK_HISTORY_RANGE_OPTIONS.get(_selected_range, _TASK_LIST_SINCE_DAYS)
+    _total_tasks = count_recent_tasks(session_id=_current_user, since_days=_since_days)
+    _page_count = max(1, (_total_tasks + _page_size - 1) // _page_size) if _total_tasks else 1
+    _current_page = min(max(1, int(st.session_state.get("download_task_history_page", 1))), _page_count)
+    st.session_state["download_task_history_page"] = _current_page
+    with _control_cols[2]:
+        _selected_page = st.selectbox(
+            "Task page",
+            options=list(range(1, _page_count + 1)),
+            index=_current_page - 1,
+            key="download_task_history_page_select",
+        )
+        if int(_selected_page) != _current_page:
+            _current_page = int(_selected_page)
+            st.session_state["download_task_history_page"] = _current_page
+    with _control_cols[3]:
+        _range_label = _selected_range if _since_days is not None else "all time"
+        st.caption(f"Showing **{_total_tasks}** tasks across **{_page_count}** page(s) for **{_range_label}**.")
+
+    _offset = (_current_page - 1) * _page_size
     _use_fragment = getattr(st, "fragment", None) is not None
     if _use_fragment:
         try:
             @st.fragment(run_every=timedelta(seconds=3))
             def _task_list_poll():
                 _t = list_recent_tasks(
-                    limit=_TASK_LIST_MAX_ROWS,
+                    limit=_page_size,
+                    offset=_offset,
                     session_id=_current_user,
-                    since_days=_TASK_LIST_SINCE_DAYS,
+                    since_days=_since_days,
                 )
                 render_task_list(_t, _current_user)
             _task_list_poll()
@@ -854,9 +904,10 @@ if is_task_queue_enabled():
             _use_fragment = False
     if not _use_fragment:
         tasks = list_recent_tasks(
-            limit=_TASK_LIST_MAX_ROWS,
+            limit=_page_size,
+            offset=_offset,
             session_id=_current_user,
-            since_days=_TASK_LIST_SINCE_DAYS,
+            since_days=_since_days,
         )
         has_active = render_task_list(tasks, _current_user)
         if st.button("Refresh task list", key="refresh_tasks"):

@@ -7,14 +7,25 @@ import os
 import re
 import sys
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # App root on path for lib imports
 _APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_ROOT not in sys.path:
     sys.path.insert(0, _APP_ROOT)
 
-from lib.db import update_task_status, update_task_progress, append_task_log, update_task_result_summary
+from lib.db import (
+    append_task_log,
+    get_task,
+    update_task_progress,
+    update_task_result_summary,
+    update_task_status,
+)
+from lib.run_metadata import (
+    read_run_metadata,
+    resolve_run_directory_from_task_parameters,
+    upsert_run_metadata,
+)
 
 # Optional imports for tasks that need them
 def _import_eval_summary():
@@ -29,14 +40,170 @@ def _import_catalog_io():
         return None
 
 
+def _copy_task_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
+    copied: Dict[str, Any] = {}
+    for key, value in (parameters or {}).items():
+        if isinstance(value, (dict, list, tuple, str, int, float, bool)) or value is None:
+            copied[key] = value
+        else:
+            copied[key] = str(value)
+    return copied
+
+
+def _task_row_payload(task_id: str) -> Dict[str, Any]:
+    row = get_task(task_id) or {}
+    return {
+        "id": str(row.get("id") or task_id),
+        "type": str(row.get("type") or "").strip(),
+        "status": str(row.get("status") or "").strip(),
+        "requested_by": str(row.get("session_id") or "").strip(),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "result_path": str(row.get("result_path") or "").strip(),
+        "error_message": str(row.get("error_message") or "").strip(),
+        "progress_message": str(row.get("progress_message") or "").strip(),
+        "progress_pct": row.get("progress_pct"),
+    }
+
+
+def _task_request_payload(parameters: Dict[str, Any]) -> Dict[str, Any]:
+    params = _copy_task_parameters(parameters)
+    return {
+        "environment": str(params.get("environment") or "default").strip() or "default",
+        "project_id": str(params.get("project_id") or "").strip(),
+        "job_id": str(params.get("job_id") or "").strip(),
+        "catalog_id": str(params.get("catalog_id") or "").strip(),
+        "integration_id": str(params.get("integration_id") or "").strip(),
+        "source_job_id": str(params.get("source_job_id") or "").strip(),
+        "target_name": str(params.get("target_name") or "").strip(),
+        "description": str(params.get("description") or "").strip(),
+        "suite_id": str(params.get("suite_id") or "").strip(),
+        "suite_ids": list(params.get("suite_ids") or []),
+        "download_type": str(params.get("download_type") or "").strip(),
+        "phase": str(params.get("phase") or "").strip(),
+        "skip_large_file": bool(params.get("skip_large_file", False)),
+        "large_file_mb": params.get("large_file_mb"),
+        "keep_zip_files": bool(params.get("keep_zip_files", False)),
+        "run_eval": bool(params.get("run_eval", False)),
+        "generate_parquet": bool(params.get("generate_parquet", False)),
+        "eval_recursive": bool(params.get("eval_recursive", False)),
+        "eval_overwrite": bool(params.get("eval_overwrite", False)),
+        "max_retries": params.get("max_retries"),
+        "clean_build": bool(params.get("clean_build", False)),
+        "debug": bool(params.get("debug", False)),
+        "is_tag": bool(params.get("is_tag", False)),
+        "scenario_name_filter": str(params.get("scenario_name_filter") or "").strip(),
+        "selected_ids": list(params.get("selected_ids") or []),
+        "output_path": str(
+            params.get("output_path")
+            or params.get("output_dir")
+            or params.get("eval_root")
+            or params.get("pkl_dir")
+            or ""
+        ).strip(),
+        "parameters": params,
+    }
+
+
+def _build_run_metadata_patch(task_id: str, parameters: Dict[str, Any], *, task_type: str) -> Dict[str, Any]:
+    return {
+        "source_mode": task_type,
+        "task": _task_row_payload(task_id),
+        "request": _task_request_payload(parameters),
+    }
+
+
+def _update_run_metadata(
+    task_id: str,
+    parameters: Dict[str, Any],
+    *,
+    task_type: str,
+    create_missing: bool = False,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    run_dir = resolve_run_directory_from_task_parameters(parameters, create_missing=create_missing)
+    if run_dir is None:
+        return
+    patch = _build_run_metadata_patch(task_id, parameters, task_type=task_type)
+    if extra:
+        patch.update(extra)
+    try:
+        upsert_run_metadata(run_dir, patch, create_missing=create_missing)
+    except Exception:
+        pass
+
+
+def _append_run_event(
+    task_id: str,
+    parameters: Dict[str, Any],
+    *,
+    task_type: str,
+    message: str,
+) -> None:
+    run_dir = resolve_run_directory_from_task_parameters(parameters, create_missing=False)
+    if run_dir is None:
+        return
+    try:
+        metadata = read_run_metadata(run_dir)
+        events = list(metadata.get("events") or [])
+        events.append({"at": _task_row_payload(task_id).get("updated_at"), "message": message})
+        if len(events) > 50:
+            events = events[-50:]
+        upsert_run_metadata(
+            run_dir,
+            {
+                "events": events,
+                "task": _task_row_payload(task_id),
+            },
+            create_missing=False,
+        )
+    except Exception:
+        pass
+
+
+def _mark_run_status(
+    task_id: str,
+    parameters: Dict[str, Any],
+    *,
+    task_type: str,
+    status: str,
+    error_message: str = "",
+    result_path: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+    create_missing: bool = False,
+) -> None:
+    patch: Dict[str, Any] = {
+        "task": {
+            "status": status,
+        }
+    }
+    if error_message:
+        patch["task"]["error_message"] = error_message
+    if result_path:
+        patch["task"]["result_path"] = result_path
+    if extra:
+        patch.update(extra)
+    _update_run_metadata(
+        task_id,
+        parameters,
+        task_type=task_type,
+        create_missing=create_missing,
+        extra=patch,
+    )
+
+
 def job_generate_summary_csv(task_id: str, parameters: Dict[str, Any]) -> None:
     """Generate Summary.csv and Score.csv under eval_root."""
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting generate_summary_csv")
+    _mark_run_status(task_id, parameters, task_type="generate_summary_csv", status="running")
     try:
         eval_summary = _import_eval_summary()
         eval_root = parameters.get("eval_root")
         if not eval_root:
+            _mark_run_status(
+                task_id, parameters, task_type="generate_summary_csv", status="failed", error_message="Missing eval_root"
+            )
             update_task_status(task_id, "failed", error_message="Missing eval_root")
             return
         append_task_log(task_id, f"Generating summary under {eval_root}")
@@ -51,10 +218,28 @@ def job_generate_summary_csv(task_id: str, parameters: Dict[str, Any]) -> None:
                 "score_rows": info.get("score_rows", 0),
             },
         )
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="generate_summary_csv",
+            extra={
+                "evaluation": {
+                    "summary_path": result_path,
+                    "summary_rows": info.get("summary_rows", 0),
+                    "score_rows": info.get("score_rows", 0),
+                }
+            },
+        )
         append_task_log(task_id, f"Done. Output: {result_path}")
+        _mark_run_status(
+            task_id, parameters, task_type="generate_summary_csv", status="completed", result_path=str(result_path or "")
+        )
         update_task_status(task_id, "completed", result_path=result_path)
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(
+            task_id, parameters, task_type="generate_summary_csv", status="failed", error_message=str(e)
+        )
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 
@@ -63,16 +248,21 @@ def job_run_eval_dirs(task_id: str, parameters: Dict[str, Any]) -> None:
     """Run eval_result for each dir under eval_root, then generate Summary/Score CSV."""
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting run_eval_dirs")
+    _mark_run_status(task_id, parameters, task_type="run_eval_dirs", status="running")
     try:
         eval_summary = _import_eval_summary()
         eval_root = parameters.get("eval_root")
         recursive = parameters.get("recursive", True)
         overwrite = parameters.get("overwrite", False)
         if not eval_root:
+            _mark_run_status(task_id, parameters, task_type="run_eval_dirs", status="failed", error_message="Missing eval_root")
             update_task_status(task_id, "failed", error_message="Missing eval_root")
             return
         target_dirs = eval_summary.find_eval_result_dirs(eval_root, recursive=recursive)
         if not target_dirs:
+            _mark_run_status(
+                task_id, parameters, task_type="run_eval_dirs", status="failed", error_message="No result directories found"
+            )
             update_task_status(task_id, "failed", error_message="No result directories found")
             return
         total = len(target_dirs)
@@ -103,10 +293,28 @@ def job_run_eval_dirs(task_id: str, parameters: Dict[str, Any]) -> None:
             "score_rows": info.get("score_rows", 0),
         }
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="run_eval_dirs",
+            extra={
+                "evaluation": {
+                    "directories_processed": total,
+                    "success": len(succeeded),
+                    "failed": len(failed),
+                    "skipped": len(skipped),
+                    "summary_path": result_path,
+                    "summary_rows": info.get("summary_rows", 0),
+                    "score_rows": info.get("score_rows", 0),
+                }
+            },
+        )
         append_task_log(task_id, f"Done. Output: {result_path}")
+        _mark_run_status(task_id, parameters, task_type="run_eval_dirs", status="completed", result_path=result_path)
         update_task_status(task_id, "completed", result_path=result_path)
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(task_id, parameters, task_type="run_eval_dirs", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 
@@ -115,13 +323,18 @@ def job_build_parquet(task_id: str, parameters: Dict[str, Any]) -> None:
     """Build scene_result parquet from pkl directory."""
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting build_parquet")
+    _mark_run_status(task_id, parameters, task_type="build_parquet", status="running")
     try:
         pkl_archive_to_parquet = _import_catalog_io()
         if pkl_archive_to_parquet is None:
+            _mark_run_status(
+                task_id, parameters, task_type="build_parquet", status="failed", error_message="perception_catalog_io not available"
+            )
             update_task_status(task_id, "failed", error_message="perception_catalog_io not available")
             return
         pkl_dir = parameters.get("pkl_dir")
         if not pkl_dir:
+            _mark_run_status(task_id, parameters, task_type="build_parquet", status="failed", error_message="Missing pkl_dir")
             update_task_status(task_id, "failed", error_message="Missing pkl_dir")
             return
         append_task_log(task_id, f"Building parquet from {pkl_dir}")
@@ -135,10 +348,23 @@ def job_build_parquet(task_id: str, parameters: Dict[str, Any]) -> None:
             job_id=job_id,
         )
         update_task_result_summary(task_id, {"job": "build_parquet", "output_path": parquet_path})
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="build_parquet",
+            extra={
+                "parquet": {
+                    "enabled": True,
+                    "path": parquet_path,
+                }
+            },
+        )
         append_task_log(task_id, f"Done. Output: {parquet_path}")
+        _mark_run_status(task_id, parameters, task_type="build_parquet", status="completed", result_path=parquet_path)
         update_task_status(task_id, "completed", result_path=parquet_path)
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(task_id, parameters, task_type="build_parquet", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 
@@ -213,6 +439,35 @@ def _extract_failed_case_details(case_reports: Any, *, limit: int = 12) -> list[
     return failed[:limit]
 
 
+def _extract_git_target_from_report(report: Dict[str, Any]) -> str:
+    """Compact branch/tag label from evaluator report metadata."""
+    source = ((report.get("event") or {}).get("source") or {})
+    git_ref = str(source.get("git_ref") or "").strip()
+    if git_ref.startswith("refs/heads/"):
+        return git_ref[len("refs/heads/"):]
+    if git_ref.startswith("refs/tags/"):
+        return git_ref[len("refs/tags/"):]
+    return git_ref or str(source.get("git_sha") or "").strip()[:12] or ""
+
+
+def _extract_catalog_url_from_report(report: Dict[str, Any]) -> str:
+    """Best-effort catalog URL matching the recent evaluator jobs list."""
+    catalog = report.get("catalog") or {}
+    direct_url = str(
+        catalog.get("web_url")
+        or catalog.get("url")
+        or catalog.get("catalog_url")
+        or ""
+    ).strip()
+    if direct_url:
+        return direct_url
+    project_id = str(report.get("project_id") or "").strip()
+    catalog_id = str(catalog.get("catalog_id") or catalog.get("id") or "").strip()
+    if project_id and catalog_id:
+        return f"https://evaluation.tier4.jp/evaluation/vehicle_catalogs/{catalog_id}?project_id={project_id}"
+    return ""
+
+
 def _build_evaluator_result_summary(
     *,
     job_id: str,
@@ -238,6 +493,12 @@ def _build_evaluator_result_summary(
         "evaluator_job_id": job_id,
         "evaluator_report_url": report_url,
         "evaluator_status": evaluator_status,
+        "evaluator_scheduled_by": final_report.get("scheduled_by", ""),
+        "evaluator_catalog_id": ((final_report.get("catalog") or {}).get("id") or ""),
+        "evaluator_catalog_name": ((final_report.get("catalog") or {}).get("display_name") or ""),
+        "evaluator_catalog_version_id": ((final_report.get("catalog") or {}).get("version_id") or ""),
+        "evaluator_catalog_url": _extract_catalog_url_from_report(final_report),
+        "evaluator_target": _extract_git_target_from_report(final_report),
         "evaluator_build_status": build.get("status", ""),
         "evaluator_test_status": test.get("status", ""),
         "evaluator_fail_message": final_report.get("fail_message", ""),
@@ -247,15 +508,66 @@ def _build_evaluator_result_summary(
     }
 
 
+def _fetch_evaluator_context(
+    *,
+    project_id: str,
+    job_id: str,
+    environment: str,
+) -> Dict[str, Any]:
+    """Best-effort evaluator metadata for tasks that start from an existing evaluator job."""
+    if not project_id or not job_id:
+        return {}
+    try:
+        from lib import evaluator_api
+
+        os.environ["AUTH_PROFILE"] = environment or "default"
+        api = evaluator_api.EvaluationRunAPI()
+        report = api.get_job_status(project_id, job_id)
+        status = evaluator_api.extract_job_status(report)
+        build = report.get("build") or {}
+        test = report.get("test") or {}
+        available = test.get("available_case_results") or test.get("case_results") or {}
+        return {
+            "job_id": job_id,
+            "report_url": evaluator_api.get_job_report_url(project_id, job_id),
+            "status": status,
+            "scheduled_by": str(report.get("scheduled_by") or "").strip(),
+            "catalog_id": str(((report.get("catalog") or {}).get("id") or "")).strip(),
+            "catalog_name": str(((report.get("catalog") or {}).get("display_name") or "")).strip(),
+            "catalog_version_id": (report.get("catalog") or {}).get("version_id"),
+            "catalog_url": _extract_catalog_url_from_report(report),
+            "target": _extract_git_target_from_report(report),
+            "build_status": str(build.get("status") or "").strip(),
+            "test_status": str(test.get("status") or "").strip(),
+            "fail_message": str(report.get("fail_message") or "").strip(),
+            "case_totals": {
+                "total": int(available.get("total_count", 0) or 0),
+                "success": int(available.get("success_count", 0) or 0),
+                "failed": int(available.get("failure_count", 0) or 0),
+                "canceled": int(available.get("cancellation_count", 0) or 0),
+            },
+        }
+    except Exception:
+        return {}
+
+
 def job_download_results(task_id: str, parameters: Dict[str, Any]) -> None:
     """Download job results (archives or result JSON) and extract/organize. Requires auth."""
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting download_results")
+    _mark_run_status(
+        task_id,
+        parameters,
+        task_type="download_results",
+        status="running",
+        create_missing=True,
+    )
     try:
         from lib import download_core  # noqa: F401
         output_path = parameters.get("output_path")
         project_id = parameters.get("project_id")
         job_id = parameters.get("job_id")
+        environment = str(parameters.get("environment") or "default").strip() or "default"
         suite_id = parameters.get("suite_id")
         suite_ids = parameters.get("suite_ids")  # optional list
         download_type = parameters.get("download_type", "archives")  # archives | result_json
@@ -264,8 +576,25 @@ def job_download_results(task_id: str, parameters: Dict[str, Any]) -> None:
         large_file_mb = float(parameters.get("large_file_mb", 50.0))
         keep_zip_files = parameters.get("keep_zip_files", False)
         if not all([output_path, project_id, job_id]):
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_results",
+                status="failed",
+                error_message="Missing output_path, project_id, or job_id",
+                create_missing=True,
+            )
             update_task_status(task_id, "failed", error_message="Missing output_path, project_id, or job_id")
             return
+        evaluator_context = _fetch_evaluator_context(project_id=project_id, job_id=job_id, environment=environment)
+        if evaluator_context:
+            _update_run_metadata(
+                task_id,
+                parameters,
+                task_type="download_results",
+                create_missing=True,
+                extra={"evaluator": evaluator_context},
+            )
         on_progress = lambda msg: _progress_callback(task_id, msg)
         on_warning = lambda msg: append_task_log(task_id, msg)
         failure_count, total_attempted, rows = download_core.run_download_results(
@@ -292,22 +621,67 @@ def job_download_results(task_id: str, parameters: Dict[str, Any]) -> None:
             "rows": rows[:500],
         }
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="download_results",
+            create_missing=True,
+            extra={
+                "download": {
+                    "mode": "download_results",
+                    "total": total_attempted,
+                    "success": success_count,
+                    "failed": failure_count,
+                    "rows": rows[:100],
+                    "download_type": download_type,
+                    "phase": phase,
+                    "skip_large_file": bool(skip_large_file),
+                    "large_file_mb": large_file_mb,
+                    "keep_zip_files": bool(keep_zip_files),
+                }
+            },
+        )
         append_task_log(task_id, "Download and extract completed")
         if success_count == 0 and failure_count > 0:
             err_msg = f"Download completed with {failure_count} failures. See task log for details."
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_results",
+                status="failed",
+                result_path=output_path,
+                error_message=err_msg,
+            )
             update_task_status(task_id, "failed", result_path=output_path, error_message=err_msg)
         else:
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_results",
+                status="completed",
+                result_path=output_path,
+            )
             update_task_status(task_id, "completed", result_path=output_path)
     except ImportError:
+        _mark_run_status(
+            task_id,
+            parameters,
+            task_type="download_results",
+            status="failed",
+            error_message="Download worker not available: lib.download_core not implemented",
+            create_missing=True,
+        )
         update_task_status(
             task_id,
             "failed",
             error_message="Download worker not available: lib.download_core not implemented",
         )
     except NotImplementedError as e:
+        _mark_run_status(task_id, parameters, task_type="download_results", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(task_id, parameters, task_type="download_results", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 
@@ -316,19 +690,44 @@ def job_download_scenarios(task_id: str, parameters: Dict[str, Any]) -> None:
     """Download scenarios from job to output_dir. Requires auth."""
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting download_scenarios")
+    _mark_run_status(
+        task_id,
+        parameters,
+        task_type="download_scenarios",
+        status="running",
+        create_missing=True,
+    )
     try:
         from lib import download_core  # noqa: F401
         output_dir = parameters.get("output_dir") or parameters.get("output_path")
         project_id = parameters.get("project_id")
         job_id = parameters.get("job_id")
+        environment = str(parameters.get("environment") or "default").strip() or "default"
         suite_id = parameters.get("suite_id")
         suite_ids = parameters.get("suite_ids")
         overwrite = parameters.get("overwrite", False)
         scenario_name_filter = parameters.get("scenario_name_filter")
         selected_ids = parameters.get("selected_ids")
         if not all([output_dir, project_id, job_id]):
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_scenarios",
+                status="failed",
+                error_message="Missing output_dir, project_id, or job_id",
+                create_missing=True,
+            )
             update_task_status(task_id, "failed", error_message="Missing output_dir, project_id, or job_id")
             return
+        evaluator_context = _fetch_evaluator_context(project_id=project_id, job_id=job_id, environment=environment)
+        if evaluator_context:
+            _update_run_metadata(
+                task_id,
+                parameters,
+                task_type="download_scenarios",
+                create_missing=True,
+                extra={"evaluator": evaluator_context},
+            )
         on_progress = lambda msg: _progress_callback(task_id, msg)
         on_warning = lambda msg: append_task_log(task_id, msg)
         failure_count, total_attempted, rows = download_core.run_download_scenarios(
@@ -353,22 +752,64 @@ def job_download_scenarios(task_id: str, parameters: Dict[str, Any]) -> None:
             "rows": rows[:500],
         }
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="download_scenarios",
+            create_missing=True,
+            extra={
+                "scenario_download": {
+                    "total": total_attempted,
+                    "success": success_count,
+                    "failed": failure_count,
+                    "overwrite": bool(overwrite),
+                    "scenario_name_filter": str(scenario_name_filter or "").strip(),
+                    "selected_ids": list(selected_ids or []),
+                    "rows": rows[:100],
+                }
+            },
+        )
         append_task_log(task_id, "Download scenarios completed")
         if failure_count > 0:
             err_msg = f"Download completed with {failure_count} failures. See task log for details."
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_scenarios",
+                status="failed",
+                result_path=output_dir,
+                error_message=err_msg,
+            )
             update_task_status(task_id, "failed", result_path=output_dir, error_message=err_msg)
         else:
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_scenarios",
+                status="completed",
+                result_path=output_dir,
+            )
             update_task_status(task_id, "completed", result_path=output_dir)
     except ImportError:
+        _mark_run_status(
+            task_id,
+            parameters,
+            task_type="download_scenarios",
+            status="failed",
+            error_message="Download worker not available: lib.download_core not implemented",
+            create_missing=True,
+        )
         update_task_status(
             task_id,
             "failed",
             error_message="Download worker not available: lib.download_core not implemented",
         )
     except NotImplementedError as e:
+        _mark_run_status(task_id, parameters, task_type="download_scenarios", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(task_id, parameters, task_type="download_scenarios", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 
@@ -377,11 +818,19 @@ def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
     """Download results, then run eval and parquet generation. Stops on download failure."""
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting download_and_eval combined workflow")
+    _mark_run_status(
+        task_id,
+        parameters,
+        task_type="download_and_eval",
+        status="running",
+        create_missing=True,
+    )
     try:
         from lib import download_core
         output_path = parameters.get("output_path")
         project_id = parameters.get("project_id")
         job_id = parameters.get("job_id")
+        environment = str(parameters.get("environment") or "default").strip() or "default"
         suite_id = parameters.get("suite_id")
         suite_ids = parameters.get("suite_ids")
         download_type = parameters.get("download_type", "archives")
@@ -395,8 +844,25 @@ def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
         eval_overwrite = parameters.get("eval_overwrite", False)
         
         if not all([output_path, project_id, job_id]):
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_and_eval",
+                status="failed",
+                error_message="Missing output_path, project_id, or job_id",
+                create_missing=True,
+            )
             update_task_status(task_id, "failed", error_message="Missing output_path, project_id, or job_id")
             return
+        evaluator_context = _fetch_evaluator_context(project_id=project_id, job_id=job_id, environment=environment)
+        if evaluator_context:
+            _update_run_metadata(
+                task_id,
+                parameters,
+                task_type="download_and_eval",
+                create_missing=True,
+                extra={"evaluator": evaluator_context},
+            )
         
         on_progress = lambda msg: _progress_callback(task_id, msg)
         on_warning = lambda msg: append_task_log(task_id, msg)
@@ -430,22 +896,74 @@ def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
             "errors": result.get("errors", []),
         }
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="download_and_eval",
+            create_missing=True,
+            extra={
+                "download": {
+                    "mode": "download_and_eval",
+                    **(result.get("download_summary", {}) or {}),
+                    "download_type": download_type,
+                    "phase": phase,
+                    "skip_large_file": bool(skip_large_file),
+                    "large_file_mb": large_file_mb,
+                    "keep_zip_files": bool(keep_zip_files),
+                },
+                "evaluation": {
+                    **(result.get("eval_summary", {}) or {}),
+                    "enabled": bool(run_eval),
+                    "recursive": bool(eval_recursive),
+                    "overwrite": bool(eval_overwrite),
+                },
+                "parquet": {
+                    "enabled": bool(generate_parquet),
+                    "path": result.get("parquet_path", ""),
+                },
+                "errors": list(result.get("errors", []) or []),
+            },
+        )
         
         if not result.get("download_success"):
             err_msg = result.get("errors", ["Download failed"])[0]
             append_task_log(task_id, f"Stopped: {err_msg}")
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_and_eval",
+                status="failed",
+                result_path=output_path,
+                error_message=err_msg,
+            )
             update_task_status(task_id, "failed", result_path=output_path, error_message=err_msg)
         elif result.get("errors"):
             # Partial success with some errors
             errs = "; ".join(result["errors"][:5])
             append_task_log(task_id, f"Completed with errors: {errs}")
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_and_eval",
+                status="completed",
+                result_path=output_path,
+                error_message=errs,
+            )
             update_task_status(task_id, "completed", result_path=output_path)
         else:
             append_task_log(task_id, "Download and eval completed successfully")
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="download_and_eval",
+                status="completed",
+                result_path=output_path,
+            )
             update_task_status(task_id, "completed", result_path=output_path)
             
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(task_id, parameters, task_type="download_and_eval", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 
@@ -463,6 +981,13 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
     """
     update_task_status(task_id, "running")
     append_task_log(task_id, "Starting run_evaluator_and_process workflow")
+    _mark_run_status(
+        task_id,
+        parameters,
+        task_type="run_evaluator_and_process",
+        status="running",
+        create_missing=True,
+    )
     
     try:
         from lib import evaluator_api
@@ -512,6 +1037,14 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         has_source_job = bool(source_job_id)
         has_fresh_source = bool(integration_id and target_name)
         if not project_id or not catalog_id or not output_path or (not has_source_job and not has_fresh_source):
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="run_evaluator_and_process",
+                status="failed",
+                error_message="Missing required parameters",
+                create_missing=True,
+            )
             update_task_status(task_id, "failed", error_message="Missing required parameters")
             return
         
@@ -521,10 +1054,12 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         
         def on_progress(msg: str) -> None:
             append_task_log(task_id, msg)
+            _append_run_event(task_id, parameters, task_type="run_evaluator_and_process", message=msg)
             update_task_progress(task_id, message=msg)
         
         def on_warning(msg: str) -> None:
             append_task_log(task_id, f"WARNING: {msg}")
+            _append_run_event(task_id, parameters, task_type="run_evaluator_and_process", message=f"WARNING: {msg}")
         
         # Step 1: Schedule evaluator job
         on_progress("Step 1/5: Scheduling evaluator job...")
@@ -553,11 +1088,27 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                 is_tag=is_tag,
             )
         except Exception as e:
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="run_evaluator_and_process",
+                status="failed",
+                error_message=f"Failed to schedule evaluator job: {e}",
+                create_missing=True,
+            )
             update_task_status(task_id, "failed", error_message=f"Failed to schedule evaluator job: {e}")
             return
         
         job_id = result.get("job_id")
         if not job_id:
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="run_evaluator_and_process",
+                status="failed",
+                error_message="No job_id returned from evaluator API",
+                create_missing=True,
+            )
             update_task_status(task_id, "failed", error_message="No job_id returned from evaluator API")
             return
         
@@ -576,6 +1127,25 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             "parquet_path": "",
         }
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="run_evaluator_and_process",
+            create_missing=True,
+            extra={
+                "evaluator": {
+                    "job_id": job_id,
+                    "report_url": report_url,
+                    "status": "scheduled",
+                    "catalog_id": catalog_id,
+                    "integration_id": integration_id or "",
+                    "source_job_id": source_job_id or "",
+                    "target_name": target_name or "",
+                    "description": description or "",
+                    "is_tag": bool(is_tag),
+                }
+            },
+        )
         
         # Step 2: Poll for evaluator completion
         on_progress("Step 2/5: Waiting for evaluator to complete...")
@@ -615,6 +1185,18 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             if snapshot_key == last_suite_snapshot["key"]:
                 summary["evaluator_case_totals"] = totals
                 summary["evaluator_suites"] = suite_summary
+                _update_run_metadata(
+                    task_id,
+                    parameters,
+                    task_type="run_evaluator_and_process",
+                    extra={
+                        "evaluator": {
+                            "status": status,
+                            "case_totals": totals,
+                            "suites": suite_summary,
+                        }
+                    },
+                )
                 update_task_result_summary(task_id, summary)
                 return
 
@@ -643,6 +1225,18 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                             f"{totals['failed']} failed, {totals['canceled']} canceled."
                         ),
                     )
+            _update_run_metadata(
+                task_id,
+                parameters,
+                task_type="run_evaluator_and_process",
+                extra={
+                    "evaluator": {
+                        "status": status,
+                        "case_totals": totals,
+                        "suites": suite_summary,
+                    }
+                },
+            )
             update_task_result_summary(task_id, summary)
         
         try:
@@ -655,6 +1249,13 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             )
         except evaluator_api.EvaluationAPIError as e:
             append_task_log(task_id, f"Evaluator wait error: {e}")
+            _mark_run_status(
+                task_id,
+                parameters,
+                task_type="run_evaluator_and_process",
+                status="failed",
+                error_message=f"Evaluator failed or timed out: {e}",
+            )
             update_task_status(task_id, "failed", error_message=f"Evaluator failed or timed out: {e}")
             return
         
@@ -680,6 +1281,30 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         )
         summary.update(evaluator_summary)
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="run_evaluator_and_process",
+            extra={
+                "evaluator": {
+                    "job_id": job_id,
+                    "report_url": report_url,
+                    "status": test_status,
+                    "scheduled_by": summary.get("evaluator_scheduled_by", ""),
+                    "catalog_id": summary.get("evaluator_catalog_id", ""),
+                    "catalog_name": summary.get("evaluator_catalog_name", ""),
+                    "catalog_version_id": summary.get("evaluator_catalog_version_id", ""),
+                    "catalog_url": summary.get("evaluator_catalog_url", ""),
+                    "target": summary.get("evaluator_target", ""),
+                    "build_status": summary.get("evaluator_build_status", ""),
+                    "test_status": summary.get("evaluator_test_status", ""),
+                    "fail_message": summary.get("evaluator_fail_message", ""),
+                    "case_totals": summary.get("evaluator_case_totals", {}),
+                    "suites": summary.get("evaluator_suites", []),
+                    "failed_cases": summary.get("evaluator_failed_cases", []),
+                }
+            },
+        )
 
         fail_message = summary.get("evaluator_fail_message", "")
         if evaluator_api.is_success_job_status(test_status):
@@ -736,6 +1361,14 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                     evaluator_msg = ""
                     if not evaluator_api.is_success_job_status(test_status):
                         evaluator_msg = f" Evaluator status was {test_status}."
+                    _mark_run_status(
+                        task_id,
+                        parameters,
+                        task_type="run_evaluator_and_process",
+                        status="failed",
+                        error_message=f"Download failed: {failure_count} of {total_attempted} scenarios failed.{evaluator_msg}",
+                        result_path=output_path,
+                    )
                     update_task_status(task_id, "failed", 
                         error_message=f"Download failed: {failure_count} of {total_attempted} scenarios failed.{evaluator_msg}")
                     return
@@ -749,6 +1382,14 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                             f" Evaluator status was {test_status}. "
                             "This usually means the job failed before producing downloadable case logs."
                         )
+                    _mark_run_status(
+                        task_id,
+                        parameters,
+                        task_type="run_evaluator_and_process",
+                        status="failed",
+                        error_message=f"Download failed: {e}{evaluator_msg}",
+                        result_path=output_path,
+                    )
                     update_task_status(task_id, "failed", error_message=f"Download failed: {e}{evaluator_msg}")
                     return
 
@@ -762,6 +1403,14 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
                 time.sleep(wait_seconds)
                 
             except Exception as e:
+                _mark_run_status(
+                    task_id,
+                    parameters,
+                    task_type="run_evaluator_and_process",
+                    status="failed",
+                    error_message=f"Download failed: {e}",
+                    result_path=output_path,
+                )
                 update_task_status(task_id, "failed", error_message=f"Download failed: {e}")
                 return
         
@@ -773,6 +1422,25 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         }
         summary["download_rows"] = rows[:500]
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="run_evaluator_and_process",
+            extra={
+                "download": {
+                    "mode": "run_evaluator_and_process",
+                    "total": total_attempted,
+                    "success": success_count,
+                    "failed": failure_count,
+                    "download_type": download_type,
+                    "phase": phase,
+                    "skip_large_file": bool(skip_large_file),
+                    "large_file_mb": large_file_mb,
+                    "keep_zip_files": bool(keep_zip_files),
+                    "rows": rows[:100],
+                }
+            },
+        )
         
         # Step 4: Run eval
         if run_eval:
@@ -816,6 +1484,19 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         update_task_progress(task_id, message="Evaluation complete", pct=85)
         summary["eval_summary"] = eval_result_summary
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="run_evaluator_and_process",
+            extra={
+                "evaluation": {
+                    **eval_result_summary,
+                    "enabled": bool(run_eval),
+                    "recursive": bool(eval_recursive),
+                    "overwrite": bool(eval_overwrite),
+                }
+            },
+        )
         
         # Step 5: Generate parquet
         parquet_path = ""
@@ -841,14 +1522,33 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         
         # Build final summary
         update_task_result_summary(task_id, summary)
+        _update_run_metadata(
+            task_id,
+            parameters,
+            task_type="run_evaluator_and_process",
+            extra={
+                "parquet": {
+                    "enabled": bool(generate_parquet),
+                    "path": parquet_path,
+                }
+            },
+        )
         if evaluator_api.is_success_job_status(test_status):
             append_task_log(task_id, "Workflow complete!")
         else:
             append_task_log(task_id, "Workflow complete. Evaluator job had failed test cases, but downloadable results were processed.")
+        _mark_run_status(
+            task_id,
+            parameters,
+            task_type="run_evaluator_and_process",
+            status="completed",
+            result_path=output_path,
+        )
         update_task_status(task_id, "completed", result_path=output_path)
         
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
+        _mark_run_status(task_id, parameters, task_type="run_evaluator_and_process", status="failed", error_message=str(e))
         update_task_status(task_id, "failed", error_message=str(e))
         raise
 

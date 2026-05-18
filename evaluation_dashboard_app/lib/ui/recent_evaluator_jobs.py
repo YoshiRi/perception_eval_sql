@@ -1030,9 +1030,9 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
     }.get(status_variant, '<span class="evj-status-mark evj-status-mark--unknown" aria-hidden="true">?</span>')
     meta_line = job_id
     counts = (
-        f'S <strong>{int(job.get("success", 0))}</strong> · '
-        f'F <strong>{int(job.get("failed", 0))}</strong> · '
-        f'C <strong>{int(job.get("canceled", 0))}</strong> / '
+        f'✅ <strong>{int(job.get("success", 0))}</strong> · '
+        f'❌ <strong>{int(job.get("failed", 0))}</strong> · '
+        f'⏹ <strong>{int(job.get("canceled", 0))}</strong> / '
         f'<strong>{int(job.get("total", 0))}</strong>'
     )
     title_html = f'<a href="{report_url}" target="_blank" rel="noopener noreferrer">{title_text}</a>' if report_url else title_text

@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 import streamlit as st
 import requests
 
-from lib.db import create_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
+from lib.db import count_recent_tasks, create_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
 from lib.page_chrome import (
     inject_app_page_styles,
     render_page_hero,
@@ -31,6 +31,10 @@ from lib.path_utils import (
     get_run_info,
     list_run_directories,
     resolve_under_data_root,
+)
+from lib.run_metadata import (
+    build_run_search_blob,
+    read_run_metadata,
 )
 from lib.ui.recent_evaluator_jobs import (
     _render_recent_evaluator_jobs_section,
@@ -50,6 +54,12 @@ except ImportError:
 _JST = timezone(timedelta(hours=9))
 _TASK_LIST_MAX_ROWS = 200
 _TASK_LIST_SINCE_DAYS = 7
+_TASK_HISTORY_RANGE_OPTIONS = {
+    "7 days": 7,
+    "30 days": 30,
+    "90 days": 90,
+    "All": None,
+}
 
 
 st.set_page_config(
@@ -284,21 +294,148 @@ def _build_overview_url(run_a: str, compare_runs: Optional[List[str]] = None) ->
     return f"/?{urllib.parse.urlencode(query)}"
 
 
+def _format_metadata_time(value: object) -> str:
+    if not value:
+        return "—"
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return str(value)
+    if getattr(dt, "tzinfo", None) is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    try:
+        return dt.astimezone(_JST).strftime("%Y-%m-%d %H:%M JST")
+    except Exception:
+        return str(value)
+
+
+def _metadata_text(value: object) -> str:
+    text = str(value or "").strip()
+    return text or "—"
+
+
+def _run_user_label(subject_id: str, environment: str) -> str:
+    subject = str(subject_id or "").strip()
+    if not subject:
+        return "—"
+    if not subject.startswith("t4:"):
+        return subject
+    try:
+        profile = _resolve_subject_name(subject, environment or "default")
+        name = str(profile.get("name") or subject).strip()
+        return name or subject
+    except Exception:
+        return subject
+
+
+def _catalog_url(project_id: str, catalog_id: str, metadata_url: str = "") -> str:
+    direct_url = str(metadata_url or "").strip()
+    if direct_url:
+        return direct_url
+    project = str(project_id or "").strip()
+    catalog = str(catalog_id or "").strip()
+    if project and catalog:
+        return f"https://evaluation.tier4.jp/evaluation/vehicle_catalogs/{catalog}?project_id={project}"
+    return ""
+
+
 @st.cache_data(ttl=15, show_spinner=False)
 def _load_local_runs() -> List[Dict[str, object]]:
     runs: List[Dict[str, object]] = []
     for run_path in list_run_directories():
         info = get_run_info(run_path)
+        metadata = read_run_metadata(run_path)
+        task_meta = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+        request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+        evaluator_meta = metadata.get("evaluator") if isinstance(metadata.get("evaluator"), dict) else {}
+        description = str(
+            request_meta.get("description")
+            or evaluator_meta.get("description")
+            or ""
+        ).strip()
+        requested_by = str(
+            evaluator_meta.get("scheduled_by")
+            or task_meta.get("requested_by")
+            or ""
+        ).strip()
+        environment = str(request_meta.get("environment") or "default").strip() or "default"
+        requested_by_label = _run_user_label(requested_by, environment)
+        task_type = str(task_meta.get("type") or metadata.get("source_mode") or "").strip()
+        task_status = str(task_meta.get("status") or "").strip()
+        evaluator_job_id = str(
+            evaluator_meta.get("job_id")
+            or request_meta.get("job_id")
+            or ""
+        ).strip()
+        evaluator_report_url = str(evaluator_meta.get("report_url") or "").strip()
+        evaluator_target = str(
+            evaluator_meta.get("target")
+            or request_meta.get("target_name")
+            or ""
+        ).strip()
+        catalog_id = str(
+            evaluator_meta.get("catalog_id")
+            or request_meta.get("catalog_id")
+            or ""
+        ).strip()
+        catalog_name = str(evaluator_meta.get("catalog_name") or "").strip()
+        catalog_label = catalog_name or catalog_id
+        catalog_url = _catalog_url(
+            str(request_meta.get("project_id") or "").strip(),
+            catalog_id,
+            str(evaluator_meta.get("catalog_url") or "").strip(),
+        )
+        case_totals = evaluator_meta.get("case_totals") if isinstance(evaluator_meta.get("case_totals"), dict) else {}
+        passed_count = int(case_totals.get("success", 0) or 0)
+        failed_count = int(case_totals.get("failed", 0) or 0)
+        canceled_count = int(case_totals.get("canceled", 0) or 0)
+        search_blob = build_run_search_blob(
+            run_path,
+            metadata,
+            extra_values=[
+                description,
+                requested_by,
+                requested_by_label,
+                task_type,
+                task_status,
+                evaluator_job_id,
+                catalog_id,
+                catalog_name,
+                evaluator_target,
+            ],
+        )
         runs.append(
             {
                 "name": info["name"],
                 "path_display": f"{get_data_root_display()}/{info['name']}",
                 "size": format_size(info["size_bytes"]),
                 "mtime": float(info["mtime"] or 0),
+                "mtime_date": _to_jst(datetime.fromtimestamp(float(info["mtime"] or 0), tz=timezone.utc)).date() if info["mtime"] else None,
                 "modified": _format_run_mtime(info["mtime"]),
                 "has_summary": bool(info["has_summary"]),
                 "has_score": bool(info["has_score"]),
                 "has_parquet": bool(info["has_parquet"]),
+                "metadata": metadata,
+                "description": description,
+                "requested_by": requested_by,
+                "requested_by_label": requested_by_label,
+                "environment": environment,
+                "task_type": task_type,
+                "task_status": task_status,
+                "evaluator_job_id": evaluator_job_id,
+                "evaluator_report_url": evaluator_report_url,
+                "evaluator_target": evaluator_target,
+                "catalog_id": catalog_id,
+                "catalog_name": catalog_name,
+                "catalog_label": catalog_label,
+                "catalog_url": catalog_url,
+                "passed_count": passed_count,
+                "failed_count": failed_count,
+                "canceled_count": canceled_count,
+                "search_blob": search_blob,
             }
         )
     runs.sort(key=lambda row: (-float(row["mtime"]), str(row["name"]).lower()))
@@ -404,15 +541,19 @@ def _inject_workflow_page_styles() -> None:
             color: #0f172a;
             font-size: 0.78rem;
             line-height: 1.15;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .wf-run-text {
             padding-top: 0.26rem;
         }
         .wf-run-flags {
             display: flex;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
             gap: 0.24rem;
             padding-top: 0.18rem;
+            overflow: hidden;
         }
         .wf-flag {
             display: inline-flex;
@@ -424,6 +565,7 @@ def _inject_workflow_page_styles() -> None:
             letter-spacing: 0.02em;
             background: #e2e8f0;
             color: #475569;
+            white-space: nowrap;
         }
         .wf-flag--ok {
             background: #dcfce7;
@@ -495,19 +637,37 @@ def _inject_workflow_page_styles() -> None:
 
 
 def _render_local_runs_header() -> None:
-    header_cols = st.columns([0.7, 2.45, 1.35, 0.95, 1.55], gap="small")
+    header_cols = st.columns([0.45, 2.25, 1.05, 1.65, 1.25, 1.05, 1.18, 1.35, 0.75, 0.72], gap="small")
     header_cols[0].markdown('<div class="wf-toolbar-note">Pick</div>', unsafe_allow_html=True)
     header_cols[1].markdown('<div class="wf-toolbar-note">Name</div>', unsafe_allow_html=True)
-    header_cols[2].markdown('<div class="wf-toolbar-note">Updated</div>', unsafe_allow_html=True)
-    header_cols[3].markdown('<div class="wf-toolbar-note">Size</div>', unsafe_allow_html=True)
-    header_cols[4].markdown('<div class="wf-toolbar-note">Files</div>', unsafe_allow_html=True)
+    header_cols[2].markdown('<div class="wf-toolbar-note">User</div>', unsafe_allow_html=True)
+    header_cols[3].markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
+    header_cols[4].markdown('<div class="wf-toolbar-note">Evaluator</div>', unsafe_allow_html=True)
+    header_cols[5].markdown('<div class="wf-toolbar-note">Result</div>', unsafe_allow_html=True)
+    header_cols[6].markdown('<div class="wf-toolbar-note">Updated</div>', unsafe_allow_html=True)
+    header_cols[7].markdown('<div class="wf-toolbar-note">Files</div>', unsafe_allow_html=True)
+    header_cols[8].markdown('<div class="wf-toolbar-note">Size</div>', unsafe_allow_html=True)
+    header_cols[9].markdown('<div class="wf-toolbar-note">Details</div>', unsafe_allow_html=True)
 
 
 def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     name_raw = str(run["name"])
     name = html.escape(name_raw)
     modified = html.escape(str(run["modified"]))
-    size = html.escape(str(run["size"]))
+    user_label = html.escape(str(run.get("requested_by_label") or "—"))
+    catalog_label = html.escape(str(run.get("catalog_label") or run.get("catalog_id") or "—"))
+    catalog_url = html.escape(str(run.get("catalog_url") or ""))
+    evaluator_job_id = str(run.get("evaluator_job_id") or "").strip()
+    evaluator_report_url = str(run.get("evaluator_report_url") or "").strip()
+    evaluator_target = html.escape(str(run.get("evaluator_target") or "—"))
+    evaluator_label = html.escape(evaluator_job_id[:8] + "..." if len(evaluator_job_id) > 11 else (evaluator_job_id or "—"))
+    result_label = html.escape(
+        f"✅ {int(run.get('passed_count') or 0)}  ❌ {int(run.get('failed_count') or 0)}  ⏹ {int(run.get('canceled_count') or 0)}"
+    )
+    description = str(run.get("description") or "").strip()
+    task_type = str(run.get("task_type") or "").strip()
+    task_status = str(run.get("task_status") or "").strip()
+    meta_bits = [bit for bit in [description, evaluator_target if evaluator_target != "—" else "", task_type, task_status] if bit]
     flags = [
         ("Summary", bool(run["has_summary"])),
         ("Score", bool(run["has_score"])),
@@ -517,24 +677,181 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
         f'<span class="wf-flag {"wf-flag--ok" if enabled else ""}">{label}</span>'
         for label, enabled in flags
     )
+    size_label = html.escape(str(run["size"]))
     checkbox_key = f"workflow_compare_pick::{name_raw}"
     if checkbox_key not in st.session_state:
         st.session_state[checkbox_key] = bool(selected)
-    row_cols = st.columns([0.7, 2.45, 1.35, 0.95, 1.55], gap="small")
+    row_cols = st.columns([0.45, 2.25, 1.05, 1.65, 1.25, 1.05, 1.18, 1.35, 0.75, 0.72], gap="small")
     with row_cols[0]:
         checked = st.checkbox("Select run", key=checkbox_key, label_visibility="collapsed")
     with row_cols[1]:
-        st.markdown(
-            f'<div class="wf-run-title wf-run-text"><a href="{_build_overview_url(name_raw)}" target="_self">{name}</a></div>',
-            unsafe_allow_html=True,
-        )
+        title_html = f'<div class="wf-run-title wf-run-text"><a href="{_build_overview_url(name_raw)}" target="_self">{name}</a></div>'
+        if meta_bits:
+            meta_html = html.escape(" · ".join(meta_bits[:3]))
+            title_html += f'<div class="wf-meta-inline">{meta_html}</div>'
+        st.markdown(title_html, unsafe_allow_html=True)
     with row_cols[2]:
-        st.markdown(f'<div class="wf-run-cell wf-run-text">{modified}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="wf-run-cell wf-run-text">{user_label}</div>', unsafe_allow_html=True)
     with row_cols[3]:
-        st.markdown(f'<div class="wf-run-cell wf-run-text">{size}</div>', unsafe_allow_html=True)
+        if catalog_url and catalog_label != "—":
+            st.markdown(
+                f'<div class="wf-run-title wf-run-text"><a href="{catalog_url}" target="_blank">{catalog_label}</a></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f'<div class="wf-run-cell wf-run-text">{catalog_label}</div>', unsafe_allow_html=True)
     with row_cols[4]:
+        if evaluator_report_url and evaluator_job_id:
+            evaluator_html = f'<div class="wf-run-title wf-run-text"><a href="{html.escape(evaluator_report_url)}" target="_blank">{evaluator_label}</a></div>'
+        else:
+            evaluator_html = f'<div class="wf-run-cell wf-run-text">{evaluator_label}</div>'
+        if evaluator_target != "—":
+            evaluator_html += f'<div class="wf-meta-inline">{evaluator_target}</div>'
+        st.markdown(evaluator_html, unsafe_allow_html=True)
+    with row_cols[5]:
+        st.markdown(f'<div class="wf-run-cell wf-run-text">{result_label}</div>', unsafe_allow_html=True)
+    with row_cols[6]:
+        st.markdown(f'<div class="wf-run-cell wf-run-text">{modified}</div>', unsafe_allow_html=True)
+    with row_cols[7]:
         st.markdown(f'<div class="wf-run-cell"><div class="wf-run-flags">{flag_html}</div></div>', unsafe_allow_html=True)
+    with row_cols[8]:
+        st.markdown(f'<div class="wf-run-cell wf-run-text">{size_label}</div>', unsafe_allow_html=True)
+    with row_cols[9]:
+        if st.button("Details", key=f"workflow_run_details::{name_raw}", use_container_width=True):
+            st.session_state["workflow_local_run_detail"] = name_raw
     return bool(checked)
+
+
+def _render_local_run_details(run: Dict[str, object]) -> None:
+    metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+    task_meta = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+    request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+    evaluator_meta = metadata.get("evaluator") if isinstance(metadata.get("evaluator"), dict) else {}
+    download_meta = metadata.get("download") if isinstance(metadata.get("download"), dict) else {}
+    scenario_download_meta = metadata.get("scenario_download") if isinstance(metadata.get("scenario_download"), dict) else {}
+    evaluation_meta = metadata.get("evaluation") if isinstance(metadata.get("evaluation"), dict) else {}
+    parquet_meta = metadata.get("parquet") if isinstance(metadata.get("parquet"), dict) else {}
+
+    with st.container(border=True):
+        title_cols = st.columns([3.4, 1.0])
+        with title_cols[0]:
+            st.markdown(f"### Local Run Details: `{run['name']}`")
+        with title_cols[1]:
+            if st.button("Clear", key=f"workflow_clear_run_details::{run['name']}", use_container_width=True):
+                st.session_state["workflow_local_run_detail"] = ""
+                st.rerun()
+
+        if not metadata:
+            st.info("This run was created before metadata capture was added. Showing only filesystem information.")
+
+        top_cols = st.columns(4)
+        top_cols[0].metric("Updated", _metadata_text(run.get("modified")))
+        top_cols[1].metric("Size", _metadata_text(run.get("size")))
+        top_cols[2].metric("Task type", _metadata_text(task_meta.get("type") or metadata.get("source_mode")))
+        top_cols[3].metric("Task status", _metadata_text(task_meta.get("status")))
+
+        run_cols = st.columns(2)
+        with run_cols[0]:
+            st.caption("Run folder")
+            st.code(str(run.get("path_display") or run.get("name") or ""), language=None)
+        with run_cols[1]:
+            st.caption("Available outputs")
+            st.write(
+                " | ".join(
+                    label
+                    for label, enabled in [
+                        ("Summary.csv", bool(run.get("has_summary"))),
+                        ("Score.csv", bool(run.get("has_score"))),
+                        ("Parquet", bool(run.get("has_parquet"))),
+                    ]
+                    if enabled
+                )
+                or "—"
+            )
+
+        requested_by = str(task_meta.get("requested_by") or "").strip()
+        requested_by = str(
+            evaluator_meta.get("scheduled_by")
+            or requested_by
+            or ""
+        ).strip()
+        requested_by_label = requested_by or "—"
+        request_environment = str(request_meta.get("environment") or "default").strip() or "default"
+        requested_by_label = _run_user_label(requested_by, request_environment)
+
+        task_cols = st.columns(4)
+        task_cols[0].text_input("Requested by", value=requested_by_label, disabled=True, key=f"run_detail_user::{run['name']}")
+        task_cols[1].text_input("Task ID", value=_metadata_text(task_meta.get("id")), disabled=True, key=f"run_detail_tid::{run['name']}")
+        task_cols[2].text_input("Created", value=_format_metadata_time(task_meta.get("created_at") or metadata.get("created_at")), disabled=True, key=f"run_detail_created::{run['name']}")
+        task_cols[3].text_input("Updated", value=_format_metadata_time(task_meta.get("updated_at") or metadata.get("updated_at")), disabled=True, key=f"run_detail_updated::{run['name']}")
+        task_error = str(task_meta.get("error_message") or "").strip()
+        if task_error:
+            st.error(task_error)
+
+        request_cols = st.columns(4)
+        request_cols[0].text_input("Project", value=_metadata_text(request_meta.get("project_id")), disabled=True, key=f"run_detail_project::{run['name']}")
+        request_cols[1].text_input("Environment", value=_metadata_text(request_environment), disabled=True, key=f"run_detail_env::{run['name']}")
+        request_cols[2].text_input("Catalog ID", value=_metadata_text(evaluator_meta.get("catalog_id") or request_meta.get("catalog_id")), disabled=True, key=f"run_detail_catalog::{run['name']}")
+        request_cols[3].text_input("Integration ID", value=_metadata_text(evaluator_meta.get("integration_id") or request_meta.get("integration_id")), disabled=True, key=f"run_detail_integration::{run['name']}")
+
+        detail_cols = st.columns(3)
+        detail_cols[0].text_input("Evaluator job ID", value=_metadata_text(evaluator_meta.get("job_id") or request_meta.get("job_id")), disabled=True, key=f"run_detail_job::{run['name']}")
+        detail_cols[1].text_input("Source job ID", value=_metadata_text(evaluator_meta.get("source_job_id") or request_meta.get("source_job_id")), disabled=True, key=f"run_detail_source_job::{run['name']}")
+        detail_cols[2].text_input("Target", value=_metadata_text(evaluator_meta.get("target") or request_meta.get("target_name")), disabled=True, key=f"run_detail_target::{run['name']}")
+
+        st.text_input("Description", value=_metadata_text(request_meta.get("description") or evaluator_meta.get("description")), disabled=True, key=f"run_detail_desc::{run['name']}")
+
+        if evaluator_meta:
+            eval_cols = st.columns(4)
+            eval_cols[0].text_input("Evaluator status", value=_metadata_text(evaluator_meta.get("status")), disabled=True, key=f"run_detail_estatus::{run['name']}")
+            eval_cols[1].text_input("Build status", value=_metadata_text(evaluator_meta.get("build_status")), disabled=True, key=f"run_detail_build::{run['name']}")
+            eval_cols[2].text_input("Test status", value=_metadata_text(evaluator_meta.get("test_status")), disabled=True, key=f"run_detail_test::{run['name']}")
+            eval_cols[3].text_input("Report URL", value=_metadata_text(evaluator_meta.get("report_url")), disabled=True, key=f"run_detail_report::{run['name']}")
+            fail_message = str(evaluator_meta.get("fail_message") or "").strip()
+            if fail_message:
+                st.warning(fail_message)
+            case_totals = evaluator_meta.get("case_totals") if isinstance(evaluator_meta.get("case_totals"), dict) else {}
+            if case_totals:
+                case_cols = st.columns(4)
+                case_cols[0].metric("Cases total", str(case_totals.get("total", 0)))
+                case_cols[1].metric("Cases success", str(case_totals.get("success", 0)))
+                case_cols[2].metric("Cases failed", str(case_totals.get("failed", 0)))
+                case_cols[3].metric("Cases canceled", str(case_totals.get("canceled", 0)))
+
+        if download_meta or scenario_download_meta:
+            active_download_meta = download_meta or scenario_download_meta
+            download_cols = st.columns(4)
+            download_cols[0].text_input("Download mode", value=_metadata_text(active_download_meta.get("mode") or metadata.get("source_mode")), disabled=True, key=f"run_detail_dl_mode::{run['name']}")
+            download_cols[1].text_input("Download type", value=_metadata_text(download_meta.get("download_type") or request_meta.get("download_type")), disabled=True, key=f"run_detail_dl_type::{run['name']}")
+            download_cols[2].text_input("Phase", value=_metadata_text(download_meta.get("phase") or request_meta.get("phase")), disabled=True, key=f"run_detail_phase::{run['name']}")
+            download_cols[3].text_input("Skip large files", value="Yes" if bool(download_meta.get("skip_large_file") or request_meta.get("skip_large_file")) else "No", disabled=True, key=f"run_detail_skip::{run['name']}")
+
+            count_cols = st.columns(3)
+            count_cols[0].metric("Download total", str(active_download_meta.get("total", 0)))
+            count_cols[1].metric("Download success", str(active_download_meta.get("success", 0)))
+            count_cols[2].metric("Download failed", str(active_download_meta.get("failed", 0)))
+
+        if evaluation_meta:
+            eval_run_cols = st.columns(4)
+            eval_run_cols[0].text_input("Eval enabled", value="Yes" if bool(evaluation_meta.get("enabled") or request_meta.get("run_eval")) else "No", disabled=True, key=f"run_detail_eval_enabled::{run['name']}")
+            eval_run_cols[1].text_input("Recursive", value="Yes" if bool(evaluation_meta.get("recursive") or request_meta.get("eval_recursive")) else "No", disabled=True, key=f"run_detail_eval_recursive::{run['name']}")
+            eval_run_cols[2].text_input("Summary rows", value=str(evaluation_meta.get("summary_rows", "—")), disabled=True, key=f"run_detail_summary_rows::{run['name']}")
+            eval_run_cols[3].text_input("Score rows", value=str(evaluation_meta.get("score_rows", "—")), disabled=True, key=f"run_detail_score_rows::{run['name']}")
+
+        if parquet_meta:
+            st.text_input("Parquet path", value=_metadata_text(parquet_meta.get("path")), disabled=True, key=f"run_detail_parquet::{run['name']}")
+
+        suites = evaluator_meta.get("suites") if isinstance(evaluator_meta.get("suites"), list) else []
+        failed_cases = evaluator_meta.get("failed_cases") if isinstance(evaluator_meta.get("failed_cases"), list) else []
+        if suites:
+            with st.expander("Evaluator suites", expanded=False):
+                st.dataframe(suites, width="stretch", hide_index=True)
+        if failed_cases:
+            with st.expander("Failed cases", expanded=False):
+                st.dataframe(failed_cases, width="stretch", hide_index=True)
+
+        with st.expander("Raw run metadata", expanded=False):
+            st.json(metadata or {})
 
 
 def _render_local_runs_section() -> None:
@@ -550,11 +867,45 @@ def _render_local_runs_section() -> None:
         st.session_state["workflow_runs_summary_filter_applied"] = bool(st.session_state.get("workflow_runs_summary_filter", False))
     if "workflow_runs_parquet_filter_applied" not in st.session_state:
         st.session_state["workflow_runs_parquet_filter_applied"] = bool(st.session_state.get("workflow_runs_parquet_filter", False))
+    if "workflow_runs_user_filter_applied" not in st.session_state:
+        st.session_state["workflow_runs_user_filter_applied"] = str(st.session_state.get("workflow_runs_user_filter", "All users"))
+    if "workflow_runs_date_from_applied" not in st.session_state:
+        st.session_state["workflow_runs_date_from_applied"] = st.session_state.get("workflow_runs_date_from", None)
+    if "workflow_runs_date_to_applied" not in st.session_state:
+        st.session_state["workflow_runs_date_to_applied"] = st.session_state.get("workflow_runs_date_to", None)
     if "workflow_runs_page_size_applied" not in st.session_state:
         st.session_state["workflow_runs_page_size_applied"] = int(st.session_state.get("workflow_runs_page_size", 10) or 10)
 
+    current_user_id = str(get_task_list_current_user() or "").strip()
+    user_options = ["All users"]
+    if current_user_id:
+        user_options.append("My runs")
+    unique_users = []
+    seen_users = set()
+    user_option_subject_map = {"All users": "", "My runs": current_user_id}
+    for row in runs:
+        subject_id = str(row.get("requested_by") or "").strip()
+        label = str(row.get("requested_by_label") or "").strip()
+        if not subject_id:
+            continue
+        option = label or "Unknown"
+        deduped_option = option
+        suffix = 2
+        while deduped_option in seen_users and user_option_subject_map.get(deduped_option) != subject_id:
+            deduped_option = f"{option} [{suffix}]"
+            suffix += 1
+        if deduped_option not in seen_users:
+            unique_users.append(deduped_option)
+            seen_users.add(deduped_option)
+            user_option_subject_map[deduped_option] = subject_id
+    user_options.extend(unique_users)
+    applied_user_option = st.session_state.get("workflow_runs_user_filter_applied", "All users")
+    if applied_user_option not in user_options:
+        applied_user_option = "All users"
+        st.session_state["workflow_runs_user_filter_applied"] = applied_user_option
+
     with st.form("workflow_local_runs_filters", border=False):
-        control_cols = st.columns([2.2, 0.8, 0.8, 0.7, 0.8])
+        control_cols = st.columns([1.8, 1.25, 1.05, 1.05, 0.72, 0.72, 0.65, 0.76])
         with control_cols[0]:
             st.markdown('<div class="wf-toolbar-note">Search</div>', unsafe_allow_html=True)
             run_search_input = st.text_input(
@@ -562,9 +913,36 @@ def _render_local_runs_section() -> None:
                 value=st.session_state.get("workflow_runs_search_applied", ""),
                 key="workflow_runs_search",
                 label_visibility="collapsed",
-                placeholder="Filter by run name",
+                placeholder="Filter by name, description, job id, catalog, user",
             )
         with control_cols[1]:
+            st.markdown('<div class="wf-toolbar-note">User</div>', unsafe_allow_html=True)
+            user_filter_input = st.selectbox(
+                "User",
+                options=user_options,
+                index=user_options.index(applied_user_option),
+                key="workflow_runs_user_filter",
+                label_visibility="collapsed",
+            )
+        with control_cols[2]:
+            st.markdown('<div class="wf-toolbar-note">From</div>', unsafe_allow_html=True)
+            date_from_input = st.date_input(
+                "From",
+                value=st.session_state.get("workflow_runs_date_from_applied", None),
+                key="workflow_runs_date_from",
+                label_visibility="collapsed",
+                help="Run modified-date lower bound in JST.",
+            )
+        with control_cols[3]:
+            st.markdown('<div class="wf-toolbar-note">To</div>', unsafe_allow_html=True)
+            date_to_input = st.date_input(
+                "To",
+                value=st.session_state.get("workflow_runs_date_to_applied", None),
+                key="workflow_runs_date_to",
+                label_visibility="collapsed",
+                help="Run modified-date upper bound in JST.",
+            )
+        with control_cols[4]:
             st.markdown('<div class="wf-toolbar-note">Summary</div>', unsafe_allow_html=True)
             require_summary_input = st.toggle(
                 "Summary only",
@@ -572,7 +950,7 @@ def _render_local_runs_section() -> None:
                 key="workflow_runs_summary_filter",
                 label_visibility="collapsed",
             )
-        with control_cols[2]:
+        with control_cols[5]:
             st.markdown('<div class="wf-toolbar-note">Parquet</div>', unsafe_allow_html=True)
             require_parquet_input = st.toggle(
                 "Parquet only",
@@ -580,7 +958,7 @@ def _render_local_runs_section() -> None:
                 key="workflow_runs_parquet_filter",
                 label_visibility="collapsed",
             )
-        with control_cols[3]:
+        with control_cols[6]:
             st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
             page_size_input = int(
                 st.selectbox(
@@ -591,25 +969,44 @@ def _render_local_runs_section() -> None:
                     label_visibility="collapsed",
                 )
             )
-        with control_cols[4]:
+        with control_cols[7]:
             st.markdown('<div class="wf-toolbar-note">Apply</div>', unsafe_allow_html=True)
             apply_filters = st.form_submit_button("Apply", use_container_width=True)
 
     if apply_filters:
         st.session_state["workflow_runs_search_applied"] = run_search_input
+        st.session_state["workflow_runs_user_filter_applied"] = user_filter_input
+        st.session_state["workflow_runs_date_from_applied"] = date_from_input
+        st.session_state["workflow_runs_date_to_applied"] = date_to_input
         st.session_state["workflow_runs_summary_filter_applied"] = bool(require_summary_input)
         st.session_state["workflow_runs_parquet_filter_applied"] = bool(require_parquet_input)
         st.session_state["workflow_runs_page_size_applied"] = int(page_size_input)
         st.session_state["workflow_runs_page"] = 1
 
     run_search = str(st.session_state.get("workflow_runs_search_applied", "")).strip().lower()
+    selected_user_filter = str(st.session_state.get("workflow_runs_user_filter_applied", "All users")).strip()
+    selected_date_from = st.session_state.get("workflow_runs_date_from_applied", None)
+    selected_date_to = st.session_state.get("workflow_runs_date_to_applied", None)
     require_summary = bool(st.session_state.get("workflow_runs_summary_filter_applied", False))
     require_parquet = bool(st.session_state.get("workflow_runs_parquet_filter_applied", False))
     page_size = int(st.session_state.get("workflow_runs_page_size_applied", 10) or 10)
 
+    if selected_date_from and selected_date_to and selected_date_from > selected_date_to:
+        st.warning("`From` date must be earlier than or equal to `To` date.")
+        return
+
     filtered = runs
     if run_search:
-        filtered = [row for row in filtered if run_search in str(row["name"]).lower()]
+        filtered = [row for row in filtered if run_search in str(row.get("search_blob") or row["name"]).lower()]
+    if selected_user_filter == "My runs" and current_user_id:
+        filtered = [row for row in filtered if str(row.get("requested_by") or "").strip() == current_user_id]
+    elif selected_user_filter not in ("", "All users", "My runs"):
+        selected_subject_id = str(user_option_subject_map.get(selected_user_filter) or "").strip()
+        filtered = [row for row in filtered if str(row.get("requested_by") or "").strip() == selected_subject_id]
+    if selected_date_from:
+        filtered = [row for row in filtered if row.get("mtime_date") and row["mtime_date"] >= selected_date_from]
+    if selected_date_to:
+        filtered = [row for row in filtered if row.get("mtime_date") and row["mtime_date"] <= selected_date_to]
     if require_summary:
         filtered = [row for row in filtered if bool(row["has_summary"])]
     if require_parquet:
@@ -692,6 +1089,12 @@ def _render_local_runs_section() -> None:
             st.button("Open", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
     st.markdown("</div>", unsafe_allow_html=True)
 
+    detail_run_name = str(st.session_state.get("workflow_local_run_detail") or "").strip()
+    if detail_run_name:
+        detail_run = next((row for row in runs if str(row["name"]) == detail_run_name), None)
+        if detail_run is not None:
+            _render_local_run_details(detail_run)
+
 
 def _render_current_tasks_section() -> None:
     section_header("Current Tasks", "")
@@ -700,6 +1103,48 @@ def _render_current_tasks_section() -> None:
         return
 
     current_user = get_task_list_current_user()
+    if "workflow_task_history_range" not in st.session_state:
+        st.session_state["workflow_task_history_range"] = "7 days"
+    if "workflow_task_history_page_size" not in st.session_state:
+        st.session_state["workflow_task_history_page_size"] = 20
+    if "workflow_task_history_page" not in st.session_state:
+        st.session_state["workflow_task_history_page"] = 1
+
+    control_cols = st.columns([1.3, 1.0, 1.0, 2.7])
+    with control_cols[0]:
+        selected_range = st.selectbox(
+            "History range",
+            options=list(_TASK_HISTORY_RANGE_OPTIONS.keys()),
+            key="workflow_task_history_range",
+        )
+    with control_cols[1]:
+        page_size = int(
+            st.selectbox(
+                "Rows",
+                options=[20, 50, 100],
+                key="workflow_task_history_page_size",
+            )
+        )
+    since_days = _TASK_HISTORY_RANGE_OPTIONS.get(selected_range, _TASK_LIST_SINCE_DAYS)
+    total_tasks = count_recent_tasks(session_id=current_user, since_days=since_days)
+    page_count = max(1, (total_tasks + page_size - 1) // page_size) if total_tasks else 1
+    current_page = min(max(1, int(st.session_state.get("workflow_task_history_page", 1))), page_count)
+    st.session_state["workflow_task_history_page"] = current_page
+    with control_cols[2]:
+        selected_page = st.selectbox(
+            "Page",
+            options=list(range(1, page_count + 1)),
+            index=current_page - 1,
+            key="workflow_task_history_page_select",
+        )
+        if int(selected_page) != current_page:
+            current_page = int(selected_page)
+            st.session_state["workflow_task_history_page"] = current_page
+    with control_cols[3]:
+        label = selected_range if since_days is not None else "all time"
+        st.caption(f"Showing **{total_tasks}** tasks across **{page_count}** page(s) for **{label}**.")
+
+    offset = (current_page - 1) * page_size
     use_fragment = getattr(st, "fragment", None) is not None
     if use_fragment:
         try:
@@ -707,9 +1152,10 @@ def _render_current_tasks_section() -> None:
             @st.fragment(run_every=timedelta(seconds=3))
             def _task_list_poll():
                 current_tasks = list_recent_tasks(
-                    limit=_TASK_LIST_MAX_ROWS,
+                    limit=page_size,
+                    offset=offset,
                     session_id=current_user,
-                    since_days=_TASK_LIST_SINCE_DAYS,
+                    since_days=since_days,
                 )
                 render_task_list(current_tasks, current_user)
 
@@ -719,9 +1165,10 @@ def _render_current_tasks_section() -> None:
             use_fragment = False
 
     tasks = list_recent_tasks(
-        limit=_TASK_LIST_MAX_ROWS,
+        limit=page_size,
+        offset=offset,
         session_id=current_user,
-        since_days=_TASK_LIST_SINCE_DAYS,
+        since_days=since_days,
     )
     has_active = render_task_list(tasks, current_user)
     if st.button("Refresh tasks", key="workflow_refresh_tasks"):

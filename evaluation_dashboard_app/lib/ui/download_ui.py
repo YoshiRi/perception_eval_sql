@@ -127,15 +127,15 @@ def render_download_hero(*, queue_enabled: bool) -> None:
     )
 
 
-def render_download_task_section_header(*, since_days: int = 7, max_rows: int = 200) -> None:
+def render_download_task_section_header(*, since_days: Optional[int] = 7, max_rows: int = 200) -> None:
     """Lightweight title for the worker task list (no extra card chrome — task rows are the cards)."""
-    days = int(since_days)
     cap = int(max_rows)
     st.subheader("Recent tasks")
-    st.caption(
-        f"Queued/running jobs below; completed or failed in **Task history**. "
-        f"Last **{days}** days, up to **{cap}** rows."
-    )
+    if since_days is None:
+        window = "All time"
+    else:
+        window = f"Last **{int(since_days)}** days"
+    st.caption(f"Queued/running jobs below; completed or failed in **Task history**. {window}, up to **{cap}** rows.")
 
 
 def _coerce_progress_fraction(progress_pct: Optional[Any]) -> Optional[float]:
