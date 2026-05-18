@@ -158,6 +158,7 @@ def _update_template_compat(
     version: str,
     *,
     template_dir: Path,
+    context_dir: Path,
 ) -> Sequence[str]:
     """Call update_template across analyzer versions with different signatures."""
     try:
@@ -165,13 +166,170 @@ def _update_template_compat(
     except (TypeError, ValueError):
         parameters = {}
 
-    supports_template_dir = (
-        "template_dir" in parameters
-        or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+    semantic_kwargs = {
+        "project_id": project_id,
+        "pilot_auto_version": version,
+        "version": version,
+        "devops_data": {},
+        "devops_plot_path": None,
+        "performance_trend_data": [],
+        "map_trend_plot_path": context_dir / "map_trend.png",
+        "prediction_trend_plot_path": context_dir / "prediction_trend.png",
+        "devops_trend_data": [],
+        "devops_trend_plot_path": context_dir / "devops_trend.png",
+        "job_ids": [],
+        "template_name": "static_body.html",
+        "extensions": ["html"],
+        "template_dir": str(template_dir),
+        "show_other_infos": False,
+    }
+
+    accepts_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
     )
-    if supports_template_dir:
-        return update_template_func(project_id, version, template_dir=str(template_dir))
-    return update_template_func(project_id, version)
+    if accepts_kwargs or not parameters:
+        return update_template_func(**semantic_kwargs)
+
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for name, param in parameters.items():
+        if name not in semantic_kwargs:
+            continue
+        value = semantic_kwargs[name]
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            args.append(value)
+        elif param.kind == inspect.Parameter.KEYWORD_ONLY:
+            kwargs[name] = value
+    return update_template_func(*args, **kwargs)
+
+def _scene_dataframe_from_dir_compat(
+    scene_dataframe_cls,
+    run_path: Path,
+    *,
+    topic_name: str,
+):
+    """Call SceneDataFrame.from_dir across analyzer versions with/without topic."""
+    from_dir = scene_dataframe_cls.from_dir
+    try:
+        parameters = inspect.signature(from_dir).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    required_parameters = [
+        param
+        for param in parameters.values()
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+        and param.default is inspect.Parameter.empty
+    ]
+    accepts_varargs = any(
+        param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for param in parameters.values()
+    )
+
+    if accepts_varargs or len(required_parameters) >= 2:
+        return from_dir(run_path, topic_name)
+    return from_dir(run_path)
+
+
+def _get_blocks_compat(
+    get_blocks_func: Callable[..., tuple[Sequence[str], Sequence[str]]],
+    *,
+    df,
+    labels: Sequence[str],
+    metrics: Sequence[str],
+    topic_name: str,
+    outdir: Path,
+    evaluation_type: str,
+):
+    """Call get_blocks across analyzer versions with different keyword support."""
+    semantic_kwargs = {
+        "df": df,
+        "labels": list(labels),
+        "metrics": list(metrics),
+        "topic_name": topic_name,
+        "topic": topic_name,
+        "path": outdir,
+        "outdir": outdir,
+        "evaluation_type": evaluation_type,
+    }
+    try:
+        parameters = inspect.signature(get_blocks_func).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    accepts_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+    )
+    if accepts_kwargs or not parameters:
+        return get_blocks_func(**semantic_kwargs)
+
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for name, param in parameters.items():
+        if name not in semantic_kwargs:
+            continue
+        value = semantic_kwargs[name]
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            args.append(value)
+        elif param.kind == inspect.Parameter.KEYWORD_ONLY:
+            kwargs[name] = value
+    return get_blocks_func(*args, **kwargs)
+
+
+def _specsheet_compat(
+    specsheet_func: Callable[..., None],
+    *,
+    html: Sequence[str],
+    abstract_html: Sequence[str],
+    detailed_html: Sequence[str],
+    outdir: Path,
+    report_name: str,
+) -> None:
+    """Call specsheet across analyzer versions with path/outdir differences."""
+    semantic_kwargs = {
+        "html": list(html),
+        "abstract_html": list(abstract_html),
+        "detailed_html": list(detailed_html),
+        "path": outdir,
+        "outdir": outdir,
+        "report_name": report_name,
+    }
+    try:
+        parameters = inspect.signature(specsheet_func).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    accepts_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+    )
+    if accepts_kwargs or not parameters:
+        specsheet_func(**semantic_kwargs)
+        return
+
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for name, param in parameters.items():
+        if name not in semantic_kwargs:
+            continue
+        value = semantic_kwargs[name]
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            args.append(value)
+        elif param.kind == inspect.Parameter.KEYWORD_ONLY:
+            kwargs[name] = value
+    specsheet_func(*args, **kwargs)
 
 
 def ensure_specsheet_csvs(
@@ -264,14 +422,19 @@ def generate_specsheet_pdf(
     specsheet_dir.mkdir(parents=True, exist_ok=True)
 
     _notify(progress_callback, "Loading CSV files")
-    df = SceneDataFrame.from_dir(run_path)
+    df = _scene_dataframe_from_dir_compat(
+        SceneDataFrame,
+        run_path,
+        topic_name=topic_name,
+    )
     metrics = list(DEFAULT_SPECSHEET_METRICS)
     if getattr(df, "future", None) is not None:
         metrics.extend(FUTURE_SPECSHEET_METRICS)
 
     _notify(progress_callback, "Building abstract and detail sections")
     with _patch_block_generation_progress(progress_callback):
-        abstract, detailed = get_blocks(
+        abstract, detailed = _get_blocks_compat(
+            get_blocks,
             df=df,
             labels=list(labels),
             metrics=metrics,
@@ -288,9 +451,11 @@ def generate_specsheet_pdf(
             project_id,
             version,
             template_dir=template_dir,
+            context_dir=specsheet_dir,
         )
     )
-    specsheet(
+    _specsheet_compat(
+        specsheet,
         html=html,
         abstract_html=abstract,
         detailed_html=detailed,
