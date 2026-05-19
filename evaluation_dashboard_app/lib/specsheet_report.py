@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import inspect
 import json
 import re
@@ -45,6 +46,16 @@ date: 2025.11.7
 """
 _TREND_DATE_PATTERN = re.compile(r"^\d{4}\.\d{1,2}\.\d{1,2}$")
 _TREND_DATA_COUNT_PATTERN = re.compile(r"^\d[\d,]*\+?$")
+
+
+@dataclass
+class TrendReleaseGroup:
+    group_key: str
+    display_name: str
+    topic_name: str
+    group_kind: str
+    base_dir: Path
+    jobs: dict[str, dict[str, Any]]
 
 
 def get_specsheet_artifact_paths(run_dir: str | Path) -> dict[str, Path]:
@@ -245,6 +256,77 @@ def load_trend_summary_file(summary_path: str | Path) -> dict[str, Any]:
     return data
 
 
+def classify_trend_summary(summary: dict[str, Any]) -> str:
+    blocks = summary.get("blocks")
+    if isinstance(blocks, list):
+        headers = [str(block.get("header") or "") for block in blocks]
+        if "全数データセット評価" in headers:
+            return "full"
+        if "ユースケース評価" in headers:
+            return "usecase"
+        return "performance_blocks"
+    if isinstance(summary, dict) and summary:
+        return "devops"
+    return "unknown"
+
+
+def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[TrendReleaseGroup]:
+    metadata_files = discover_trend_metadata_files(root_dir)
+    grouped: dict[str, TrendReleaseGroup] = {}
+
+    for metadata_path in metadata_files:
+        summary_path = metadata_path.parent / TREND_SUMMARY_FILENAME
+        summary = load_trend_summary_file(summary_path)
+        role = classify_trend_summary(summary)
+        metadata = load_trend_metadata_file(metadata_path)
+
+        if metadata_path.parent.name == "resources":
+            run_dir = metadata_path.parent.parent
+            group_key = f"run::{run_dir.resolve()}"
+            display_name = run_dir.name
+            topic_name = str(metadata.get("topic_name") or "standalone")
+            group_kind = "standalone_run"
+            base_dir = run_dir
+        else:
+            job_dir = metadata_path.parent
+            topic_dir = job_dir.parent
+            combined_dir = topic_dir.parent
+            group_key = f"group::{combined_dir.resolve()}::{topic_dir.name}"
+            display_name = combined_dir.name
+            topic_name = topic_dir.name
+            group_kind = "library_pdf_group"
+            base_dir = combined_dir
+
+        if group_key not in grouped:
+            grouped[group_key] = TrendReleaseGroup(
+                group_key=group_key,
+                display_name=display_name,
+                topic_name=topic_name,
+                group_kind=group_kind,
+                base_dir=base_dir,
+                jobs={},
+            )
+        grouped[group_key].jobs[role] = {
+            "role": role,
+            "job_id": metadata_path.parent.name if metadata_path.parent.name != "resources" else run_dir.name,
+            "metadata_path": metadata_path.resolve(),
+            "summary_path": summary_path.resolve(),
+            "metadata": metadata,
+            "summary": summary,
+        }
+
+    def _sort_key(group: TrendReleaseGroup) -> tuple[str, str]:
+        dates = [
+            str(job["metadata"].get("date") or "")
+            for job in group.jobs.values()
+            if isinstance(job.get("metadata"), dict)
+        ]
+        newest = max(dates) if dates else ""
+        return (newest, group.display_name)
+
+    return sorted(grouped.values(), key=_sort_key)
+
+
 def _trend_version_sort_key(pilot_auto_version: str) -> tuple[tuple[int, int, int], str, tuple[int, int, int]]:
     pattern = r"v(\d+)\.(\d+)\.(\d+)\s*\(([^ ]+)\s+(.+)\)"
     match = re.search(pattern, str(pilot_auto_version or ""))
@@ -276,6 +358,73 @@ def _load_only_full_summary(summary_path: Path) -> list[dict[str, Any]]:
             if isinstance(table_data, dict) and table_data:
                 data_list.append(table_data)
     return data_list
+
+
+def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[str, float]:
+    """Return averaged full-performance metrics from a full summary payload."""
+    data_list: list[dict[str, Any]] = []
+    for block in summary.get("blocks", []):
+        if block.get("header") != "全数データセット評価":
+            continue
+        for table in block.get("tables", []):
+            table_data = table.get("data", {})
+            if isinstance(table_data, dict) and table_data:
+                data_list.append(table_data)
+
+    if len(data_list) != 1:
+        raise ValueError(f"Expected exactly one full summary table, but got {len(data_list)}")
+    metrics = data_list[0]
+
+    def _avg(metric_name: str) -> float:
+        values = metrics.get(metric_name, {})
+        if not isinstance(values, dict) or not values:
+            return float("nan")
+        numeric = pd.to_numeric(pd.Series(list(values.values())), errors="coerce")
+        return float(numeric.mean())
+
+    return {
+        "mAP": _avg("mAP"),
+        "precision": _avg("precision"),
+        "recall": _avg("recall"),
+        "FNR": _avg("FNR"),
+        "x_error": _avg("x_error"),
+        "y_error": _avg("y_error"),
+        "yaw_error": _avg("yaw_error"),
+        "speed_error": _avg("speed_error"),
+        "minADE@1s": _avg("minADE@1s"),
+        "minFDE@1s": _avg("minFDE@1s"),
+        "minADE@3s": _avg("minADE@3s"),
+        "minFDE@3s": _avg("minFDE@3s"),
+        "minADE@5s": _avg("minADE@5s"),
+        "minFDE@5s": _avg("minFDE@5s"),
+    }
+
+
+def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten nested devops/pass-rate summary into case rows."""
+    rows: list[dict[str, Any]] = []
+    for major_category, mid_categories in summary.items():
+        if not isinstance(mid_categories, dict):
+            continue
+        for mid_category, cases in mid_categories.items():
+            if not isinstance(cases, dict):
+                continue
+            for case_name, result in cases.items():
+                if not isinstance(result, dict):
+                    continue
+                passed = int(result.get("passed", 0) or 0)
+                total = int(result.get("total", 0) or 0)
+                rows.append(
+                    {
+                        "major_category": major_category,
+                        "mid_category": mid_category,
+                        "case_name": case_name,
+                        "passed": passed,
+                        "total": total,
+                        "pass_rate": (passed / total * 100.0) if total > 0 else None,
+                    }
+                )
+    return rows
 
 
 def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, str | int | float]]:
