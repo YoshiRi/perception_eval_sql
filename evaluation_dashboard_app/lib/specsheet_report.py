@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import inspect
+import json
 import re
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import pandas as pd
+import yaml
 
 from lib.perception_catalog_io import build_scene_dataframe_from_pkl_dir
+from lib.path_utils import get_data_root
 
 DEFAULT_SPECSHEET_TOPIC = "perception.object_recognition.tracking.objects"
 DEFAULT_SPECSHEET_PROJECT_ID = "x2_dev"
@@ -32,6 +35,16 @@ FUTURE_SPECSHEET_METRICS = [
     "minFDE@3s",
     "minFDE@5s",
 ]
+TREND_METADATA_FILENAME = "metadata.yaml"
+TREND_SUMMARY_FILENAME = "summary.json"
+DEFAULT_TREND_METADATA_TEXT = """tags: [trend]
+pilot_auto_version: "Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)"
+data_count: 99,776+
+description: データの追加
+date: 2025.11.7
+"""
+_TREND_DATE_PATTERN = re.compile(r"^\d{4}\.\d{1,2}\.\d{1,2}$")
+_TREND_DATA_COUNT_PATTERN = re.compile(r"^\d[\d,]*\+?$")
 
 
 def get_specsheet_artifact_paths(run_dir: str | Path) -> dict[str, Path]:
@@ -42,6 +55,9 @@ def get_specsheet_artifact_paths(run_dir: str | Path) -> dict[str, Path]:
         "future_csv": run_path / "future.csv",
         "current_parquet": run_path / "current.parquet",
         "future_parquet": run_path / "future.parquet",
+        "resource_dir": run_path / "resources",
+        "trend_metadata": run_path / "resources" / TREND_METADATA_FILENAME,
+        "trend_summary": run_path / "resources" / TREND_SUMMARY_FILENAME,
         "specsheet_dir": run_path / "specsheet",
         "specsheet_pdf": run_path / "specsheet" / "specsheet.pdf",
     }
@@ -152,6 +168,225 @@ def _prefer_cjk_font_stack(html_lines: Sequence[str]) -> list[str]:
     return [line.replace(generic, preferred) for line in rendered]
 
 
+def parse_trend_metadata_text(text: str) -> dict[str, Any]:
+    """Parse and validate manual trend metadata YAML input."""
+    raw = yaml.safe_load(text or "")
+    if not isinstance(raw, dict):
+        raise ValueError("Trend metadata must be a YAML object with key/value pairs.")
+
+    tags = raw.get("tags")
+    if isinstance(tags, str):
+        tags = [tags]
+    if not isinstance(tags, list) or not any(str(tag).strip() == "trend" for tag in tags):
+        raise ValueError("Trend metadata must include `tags: [trend]`.")
+
+    pilot_auto_version = str(raw.get("pilot_auto_version") or "").strip()
+    if not pilot_auto_version:
+        raise ValueError("Trend metadata requires a non-empty `pilot_auto_version`.")
+
+    data_count = str(raw.get("data_count") or "").strip()
+    if not data_count or not _TREND_DATA_COUNT_PATTERN.match(data_count):
+        raise ValueError(
+            "Trend metadata `data_count` must look like `99,776+` or `12345`."
+        )
+
+    description = str(raw.get("description") or "").strip()
+    date = str(raw.get("date") or "").strip()
+    if not date or not _TREND_DATE_PATTERN.match(date):
+        raise ValueError("Trend metadata `date` must look like `2025.11.7`.")
+
+    return {
+        "tags": ["trend"],
+        "pilot_auto_version": pilot_auto_version,
+        "data_count": data_count,
+        "description": description,
+        "date": date,
+    }
+
+
+def write_trend_metadata(run_dir: str | Path, metadata: dict[str, Any]) -> Path:
+    paths = get_specsheet_artifact_paths(run_dir)
+    resource_dir = paths["resource_dir"]
+    metadata_path = paths["trend_metadata"]
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    with metadata_path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(metadata, fh, allow_unicode=True, sort_keys=False)
+    return metadata_path
+
+
+def discover_trend_metadata_files(root_dir: str | Path | None = None) -> list[Path]:
+    base_dir = Path(root_dir) if root_dir is not None else get_data_root()
+    if not base_dir.exists():
+        return []
+
+    matches: list[Path] = []
+    for metadata_path in base_dir.rglob(TREND_METADATA_FILENAME):
+        if not metadata_path.is_file():
+            continue
+        if not (metadata_path.parent / TREND_SUMMARY_FILENAME).exists():
+            continue
+        matches.append(metadata_path)
+    return sorted(dict.fromkeys(path.resolve() for path in matches), key=lambda p: str(p))
+
+
+def load_trend_metadata_file(metadata_path: str | Path) -> dict[str, Any]:
+    with Path(metadata_path).open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid trend metadata file: {metadata_path}")
+    return data
+
+
+def load_trend_summary_file(summary_path: str | Path) -> dict[str, Any]:
+    with Path(summary_path).open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid trend summary file: {summary_path}")
+    return data
+
+
+def _trend_version_sort_key(pilot_auto_version: str) -> tuple[tuple[int, int, int], str, tuple[int, int, int]]:
+    pattern = r"v(\d+)\.(\d+)\.(\d+)\s*\(([^ ]+)\s+(.+)\)"
+    match = re.search(pattern, str(pilot_auto_version or ""))
+    if not match:
+        return ((999, 999, 999), str(pilot_auto_version or ""), (999, 999, 999))
+
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    patch = int(match.group(3))
+    ml_model_type = match.group(4)
+    ml_model_info = match.group(5)
+    try:
+        _, ml_model_version = ml_model_info.split("/")
+        ml_major, ml_minor, ml_patch = ml_model_version.split(".")
+        ml_version = (int(ml_major), int(ml_minor), int(ml_patch))
+    except ValueError:
+        ml_version = (999, 999, 999)
+    return ((major, minor, patch), ml_model_type, ml_version)
+
+
+def _load_only_full_summary(summary_path: Path) -> list[dict[str, Any]]:
+    summary = load_trend_summary_file(summary_path)
+    data_list: list[dict[str, Any]] = []
+    for block in summary.get("blocks", []):
+        if block.get("header") != "全数データセット評価":
+            continue
+        for tables in block.get("tables", []):
+            table_data = tables.get("data", {})
+            if isinstance(table_data, dict) and table_data:
+                data_list.append(table_data)
+    return data_list
+
+
+def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, str | int | float]]:
+    trend_data_rows: list[dict[str, Any]] = []
+    for metadata_path in metadata_list:
+        metadata = load_trend_metadata_file(metadata_path)
+        if "trend" not in [str(tag).strip() for tag in metadata.get("tags", [])]:
+            continue
+        summary_path = Path(metadata_path).parent / TREND_SUMMARY_FILENAME
+        if not summary_path.exists():
+            continue
+        summary_list = _load_only_full_summary(summary_path)
+        if not summary_list:
+            continue
+        trend_data_rows.append(
+            {
+                "version": metadata.get("pilot_auto_version"),
+                "data_count": metadata.get("data_count"),
+                "description": metadata.get("description"),
+                "date": metadata.get("date"),
+                "summary": summary_list,
+            }
+        )
+
+    trend_data_rows.sort(key=lambda row: _trend_version_sort_key(str(row.get("version") or "")))
+
+    output: list[dict[str, str | int | float]] = []
+    for row in trend_data_rows:
+        summary = row.get("summary") or []
+        if len(summary) != 1:
+            raise ValueError(
+                f"Expected exactly one summary block for version {row.get('version')}, but got {len(summary)}"
+            )
+        metrics = summary[0]
+
+        def _avg(metric_name: str) -> float:
+            values = metrics.get(metric_name, {})
+            if not isinstance(values, dict) or not values:
+                return float("nan")
+            numeric = pd.to_numeric(pd.Series(list(values.values())), errors="coerce")
+            return float(numeric.mean())
+
+        output.append(
+            {
+                "version": row.get("version"),
+                "data_count": row.get("data_count"),
+                "description": row.get("description"),
+                "date": row.get("date"),
+                "mAP": _avg("mAP"),
+                "minADE@1s": _avg("minADE@1s"),
+                "minFDE@1s": _avg("minFDE@1s"),
+                "minADE@3s": _avg("minADE@3s"),
+                "minFDE@3s": _avg("minFDE@3s"),
+                "minADE@5s": _avg("minADE@5s"),
+                "minFDE@5s": _avg("minFDE@5s"),
+            }
+        )
+    return output
+
+
+def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]]:
+    return []
+
+
+def _build_trend_context(
+    metadata_list: Sequence[Path],
+    output_dir: Path,
+    progress_callback: Callable[[str], None] | None = None,
+) -> dict[str, object]:
+    if not metadata_list:
+        return {
+            "performance_trend_data": [],
+            "map_trend_plot_path": output_dir / "map_trend.png",
+            "prediction_trend_plot_path": output_dir / "prediction_trend.png",
+            "devops_trend_data": [],
+            "devops_trend_plot_path": output_dir / "devops_trend.png",
+            "job_ids": [],
+        }
+
+    try:
+        from perception_catalog_analyzer.plot.map_trend import generate_map_trend_plot
+        from perception_catalog_analyzer.plot.prediction_trend import generate_prediction_trend_plot
+    except ImportError as exc:
+        raise RuntimeError(
+            "perception_catalog_analyzer trend support is unavailable. "
+            f"Original error: {exc!s}"
+        ) from exc
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _notify(progress_callback, "Collecting trend history")
+    performance_trend_data = load_performance_trend_data(list(metadata_list))
+    map_trend_plot_path = output_dir / "map_trend.png"
+    prediction_trend_plot_path = output_dir / "prediction_trend.png"
+    if performance_trend_data:
+        _notify(progress_callback, "Rendering trend plots")
+        generate_map_trend_plot(performance_trend_data, map_trend_plot_path)
+        generate_prediction_trend_plot(performance_trend_data, prediction_trend_plot_path)
+
+    devops_trend_data = load_devops_trend_data(list(metadata_list))
+    devops_trend_plot_path = output_dir / "devops_trend.png"
+
+    return {
+        "performance_trend_data": performance_trend_data,
+        "map_trend_plot_path": map_trend_plot_path,
+        "prediction_trend_plot_path": prediction_trend_plot_path,
+        "devops_trend_data": devops_trend_data,
+        "devops_trend_plot_path": devops_trend_plot_path,
+        "job_ids": [],
+    }
+
+
 def _update_template_compat(
     update_template_func: Callable[..., Sequence[str]],
     project_id: str,
@@ -159,6 +394,7 @@ def _update_template_compat(
     *,
     template_dir: Path,
     context_dir: Path,
+    trend_context: dict[str, object] | None = None,
 ) -> Sequence[str]:
     """Call update_template across analyzer versions with different signatures."""
     try:
@@ -166,22 +402,27 @@ def _update_template_compat(
     except (TypeError, ValueError):
         parameters = {}
 
+    trend_context = trend_context or {}
     semantic_kwargs = {
         "project_id": project_id,
         "pilot_auto_version": version,
         "version": version,
         "devops_data": {},
         "devops_plot_path": None,
-        "performance_trend_data": [],
-        "map_trend_plot_path": context_dir / "map_trend.png",
-        "prediction_trend_plot_path": context_dir / "prediction_trend.png",
-        "devops_trend_data": [],
-        "devops_trend_plot_path": context_dir / "devops_trend.png",
-        "job_ids": [],
+        "performance_trend_data": trend_context.get("performance_trend_data", []),
+        "map_trend_plot_path": trend_context.get("map_trend_plot_path", context_dir / "map_trend.png"),
+        "prediction_trend_plot_path": trend_context.get(
+            "prediction_trend_plot_path", context_dir / "prediction_trend.png"
+        ),
+        "devops_trend_data": trend_context.get("devops_trend_data", []),
+        "devops_trend_plot_path": trend_context.get(
+            "devops_trend_plot_path", context_dir / "devops_trend.png"
+        ),
+        "job_ids": trend_context.get("job_ids", []),
         "template_name": "static_body.html",
         "extensions": ["html"],
         "template_dir": str(template_dir),
-        "show_other_infos": False,
+        "show_other_infos": bool(trend_context.get("performance_trend_data")),
     }
 
     accepts_kwargs = any(
@@ -392,6 +633,8 @@ def generate_specsheet_pdf(
     version: str,
     labels: Sequence[str],
     topic_name: str = DEFAULT_SPECSHEET_TOPIC,
+    include_trend: bool = False,
+    trend_metadata: dict[str, Any] | None = None,
     force: bool = False,
     progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[Path, bool]:
@@ -443,6 +686,19 @@ def generate_specsheet_pdf(
             evaluation_type="full",
         )
 
+    trend_context: dict[str, object] | None = None
+    if include_trend:
+        if trend_metadata is None:
+            raise ValueError("Trend metadata is required when trend mode is enabled.")
+        _notify(progress_callback, "Saving trend metadata")
+        write_trend_metadata(run_path, trend_metadata)
+        metadata_list = discover_trend_metadata_files()
+        trend_context = _build_trend_context(
+            metadata_list,
+            specsheet_dir,
+            progress_callback=progress_callback,
+        )
+
     _notify(progress_callback, "Rendering PDF")
     template_dir = Path(template_module.__file__).resolve().parent.parent / "template"
     html = _prefer_cjk_font_stack(
@@ -452,6 +708,7 @@ def generate_specsheet_pdf(
             version,
             template_dir=template_dir,
             context_dir=specsheet_dir,
+            trend_context=trend_context,
         )
     )
     _specsheet_compat(

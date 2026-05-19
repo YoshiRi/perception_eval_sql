@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import zipfile
+import yaml
 from pathlib import Path
 from lib.run_loader import load_run
 from lib.path_utils import get_data_root, get_data_root_display, list_run_directories, path_display
@@ -14,10 +15,12 @@ from lib.specsheet_report import (
     DEFAULT_SPECSHEET_LABELS,
     DEFAULT_SPECSHEET_PROJECT_ID,
     DEFAULT_SPECSHEET_TOPIC,
+    DEFAULT_TREND_METADATA_TEXT,
     collect_candidate_specsheet_labels,
     generate_specsheet_pdf,
     get_specsheet_artifact_paths,
     is_specsheet_pdf_fresh,
+    parse_trend_metadata_text,
     progress_fraction_from_message,
 )
 from lib.page_chrome import (
@@ -759,6 +762,35 @@ if not specsheet_labels:
 if not selected_specsheet_run_paths:
     st.info("Pick at least one run to build the release spec-sheet.")
 
+specsheet_trend_enabled = st.toggle(
+    "Include trend data",
+    value=bool(st.session_state.get("specsheet_include_trend", False)),
+    key="specsheet_include_trend",
+    help="Release-report mode only. Saves `metadata.yaml` next to the generated `summary.json` and reuses all saved trend metadata files under the data root.",
+)
+
+trend_metadata_payload = None
+if specsheet_trend_enabled:
+    st.caption(
+        "Trend mode uses a slim analyzer-compatible `metadata.yaml`. Extra evaluator fields are ignored."
+    )
+    trend_metadata_text = st.text_area(
+        "Trend metadata YAML",
+        value=st.session_state.get("specsheet_trend_metadata_text", DEFAULT_TREND_METADATA_TEXT),
+        key="specsheet_trend_metadata_text",
+        height=180,
+        help="Required keys: tags, pilot_auto_version, data_count, description, date.",
+    )
+    try:
+        trend_metadata_payload = parse_trend_metadata_text(trend_metadata_text)
+        st.success("Trend metadata looks valid.")
+        st.code(
+            yaml.safe_dump(trend_metadata_payload, allow_unicode=True, sort_keys=False),
+            language="yaml",
+        )
+    except Exception as trend_exc:
+        st.error(f"Trend metadata error: {trend_exc}")
+
 specsheet_action_col1, specsheet_action_col2 = st.columns([1.2, 2.8])
 with specsheet_action_col1:
     if st.button("Generate Release Spec-sheet PDF", type="primary", use_container_width=True):
@@ -775,11 +807,18 @@ with specsheet_action_col1:
                 raise ValueError("At least one label is required.")
             if not selected_specsheet_run_paths:
                 raise ValueError("At least one run must be selected.")
+            if specsheet_trend_enabled and len(selected_specsheet_run_paths) != 1:
+                raise ValueError("Trend-enabled release spec-sheet generation currently supports exactly one run.")
+            if specsheet_trend_enabled and trend_metadata_payload is None:
+                raise ValueError("Valid trend metadata is required when trend mode is enabled.")
 
             stage_progress = {
                 "Using existing up-to-date spec-sheet PDF": 1.0,
                 "Loading CSV files": 0.15,
                 "Building abstract and detail sections": 0.2,
+                "Saving trend metadata": 0.9,
+                "Collecting trend history": 0.92,
+                "Rendering trend plots": 0.94,
                 "Rendering PDF": 0.95,
                 "Spec-sheet PDF is ready": 1.0,
             }
@@ -810,6 +849,8 @@ with specsheet_action_col1:
                     version=specsheet_version,
                     labels=specsheet_labels,
                     topic_name=specsheet_topic_name,
+                    include_trend=specsheet_trend_enabled,
+                    trend_metadata=trend_metadata_payload,
                     force=True,
                     progress_callback=_update_specsheet_status,
                 )
@@ -835,6 +876,8 @@ with specsheet_action_col1:
                 "version": specsheet_version,
                 "topic_name": specsheet_topic_name,
                 "labels": list(specsheet_labels),
+                "include_trend": specsheet_trend_enabled,
+                "trend_metadata": trend_metadata_payload if specsheet_trend_enabled else None,
                 "artifact_kind": "zip" if len(generated_pdfs) > 1 else "pdf",
             }
             st.session_state["specsheet_pdf_report_name"] = download_name
@@ -863,6 +906,8 @@ with specsheet_action_col2:
         "version": specsheet_version,
         "topic_name": specsheet_topic_name,
         "labels": list(specsheet_labels),
+        "include_trend": specsheet_trend_enabled,
+        "trend_metadata": trend_metadata_payload if specsheet_trend_enabled else None,
         "artifact_kind": "zip" if len(selected_specsheet_run_paths) > 1 else "pdf",
     }
     _specsheet_ready = (
