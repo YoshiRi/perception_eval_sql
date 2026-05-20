@@ -38,6 +38,223 @@ def _select_primary_metadata(group: TrendReleaseGroup) -> dict[str, Any]:
     return {}
 
 
+def _release_display_name(version: Any, date: Any, description: Any = "") -> str:
+    version_text = str(version or "").strip() or "Unknown Version"
+    date_text = str(date or "").strip()
+    description_text = str(description or "").strip()
+    suffix = f" | {date_text}" if date_text else ""
+    if description_text:
+        suffix += f" | {description_text}"
+    return f"{version_text}{suffix}"
+
+
+def _with_pass_rate(frame: pd.DataFrame, *, passed_col: str = "passed", total_col: str = "total") -> pd.DataFrame:
+    enriched = frame.copy()
+    total = pd.to_numeric(enriched[total_col], errors="coerce")
+    passed = pd.to_numeric(enriched[passed_col], errors="coerce")
+    enriched["pass_rate"] = (passed / total.replace(0, pd.NA)) * 100.0
+    return enriched
+
+
+def _update_version_axis(fig: go.Figure, versions: list[str]) -> None:
+    fig.update_xaxes(categoryorder="array", categoryarray=versions)
+
+
+def _build_pass_combo_chart(
+    frame: pd.DataFrame,
+    *,
+    title: str,
+    versions: list[str],
+    line_y_col: str = "pass_rate",
+    series_col: str | None = None,
+    scenario_count_col: str = "total",
+    hover_cols: list[str] | None = None,
+) -> go.Figure:
+    fig = go.Figure()
+    show_legend = series_col is not None
+    scenario_totals = (
+        frame.groupby("version", dropna=False)[scenario_count_col]
+        .sum()
+        .reindex(versions)
+        .fillna(0)
+    )
+    fig.add_bar(
+        x=versions,
+        y=scenario_totals.tolist(),
+        name="Scenario Count",
+        marker_color="#bfdbfe",
+        opacity=0.32,
+        yaxis="y2",
+        hovertemplate="<b>%{x}</b><br>Scenario Count: %{y:.0f}<extra></extra>",
+    )
+
+    hover_cols = hover_cols or ["date", "release_name", "passed", "total"]
+    plot_df = frame.copy()
+    if series_col is None:
+        fig.add_trace(
+            go.Scatter(
+                x=plot_df["version"],
+                y=plot_df[line_y_col],
+                name=title,
+                mode="lines+markers",
+                line=dict(color="#1d4ed8", width=3),
+                marker=dict(size=8, color="#1d4ed8"),
+                customdata=plot_df[hover_cols].to_numpy() if hover_cols else None,
+                hovertemplate="<b>%{x}</b><br>Pass Rate: %{y:.1f}%<br>Date: %{customdata[0]}<br>Release: %{customdata[1]}<extra></extra>",
+            )
+        )
+    else:
+        palette = px.colors.qualitative.Bold + px.colors.qualitative.Safe + px.colors.qualitative.Set2
+        for idx, series_name in enumerate(plot_df[series_col].dropna().astype(str).unique().tolist()):
+            series_df = plot_df[plot_df[series_col].astype(str) == series_name]
+            color = palette[idx % len(palette)]
+            fig.add_trace(
+                go.Scatter(
+                    x=series_df["version"],
+                    y=series_df[line_y_col],
+                    name=series_name,
+                    mode="lines+markers",
+                    line=dict(color=color, width=3),
+                    marker=dict(size=7, color=color),
+                    customdata=series_df[hover_cols].to_numpy() if hover_cols else None,
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        + f"{series_col.replace('_', ' ').title()}: {series_name}<br>"
+                        + "Pass Rate: %{y:.1f}%<br>"
+                        + "Date: %{customdata[0]}<br>"
+                        + "Release: %{customdata[1]}<br>"
+                        + "Passed: %{customdata[2]:.0f}<br>"
+                        + "Total: %{customdata[3]:.0f}<extra></extra>"
+                    ),
+                )
+            )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Pilot.Auto Version",
+        yaxis_title="Pass Rate (%)",
+        yaxis2=dict(title="Scenario Count", overlaying="y", side="right", showgrid=False),
+        height=440,
+        showlegend=show_legend,
+        legend=dict(orientation="h", yanchor="top", y=-0.22, x=0, xanchor="left"),
+        margin=dict(l=20, r=20, t=80, b=90),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+    )
+    fig.update_xaxes(showgrid=False, categoryorder="array", categoryarray=versions)
+    fig.update_yaxes(range=[0, 100], gridcolor="rgba(148, 163, 184, 0.18)")
+    return fig
+
+
+def _build_latest_hierarchy_bars(frame: pd.DataFrame, latest_release_name: str) -> go.Figure:
+    bars = frame.copy()
+    bars["major_category"] = bars["major_category"].fillna("Unspecified")
+    bars["mid_category"] = bars["mid_category"].fillna("Unspecified")
+    bars["label"] = bars["major_category"] + " / " + bars["mid_category"]
+    bars = bars.sort_values(["major_category", "pass_rate", "total"], ascending=[True, False, False])
+    fig = px.bar(
+        bars,
+        x="pass_rate",
+        y="label",
+        color="major_category",
+        orientation="h",
+        hover_data=["passed", "total"],
+        text=bars["pass_rate"].map(lambda value: f"{value:.1f}%" if pd.notna(value) else "n/a"),
+        title=f"Latest Release Pass-Rate Hierarchy: {latest_release_name}",
+    )
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=70, b=20),
+        xaxis_title="Pass Rate (%)",
+        yaxis_title="Major / Mid Category",
+        legend_title_text="Major Category",
+    )
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    return fig
+
+
+def _build_metric_timeline_heatmap(
+    frame: pd.DataFrame,
+    *,
+    value_col: str,
+    title: str,
+    color_title: str,
+) -> go.Figure:
+    matrix = frame.pivot_table(
+        index="label_name",
+        columns="release_axis",
+        values=value_col,
+        aggfunc="first",
+    ).dropna(how="all")
+    fig = px.imshow(
+        matrix,
+        aspect="auto",
+        color_continuous_scale=["#7f1d1d", "#f8fafc", "#14532d"] if "delta" in value_col else ["#f8fafc", "#8dd3c7", "#0f766e"],
+        color_continuous_midpoint=0 if "delta" in value_col else None,
+        text_auto=".3f",
+    )
+    fig.update_layout(
+        title=title,
+        margin=dict(l=20, r=20, t=70, b=20),
+        coloraxis_colorbar=dict(title=color_title),
+    )
+    return fig
+
+
+def _build_metric_label_lines(
+    frame: pd.DataFrame,
+    *,
+    title: str,
+    ordered_axes: list[str],
+) -> go.Figure:
+    fig = px.line(
+        frame,
+        x="release_axis",
+        y="value",
+        color="label_name",
+        markers=True,
+        hover_data=["version", "date", "release_name"],
+        title=title,
+    )
+    fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Label")
+    fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes)
+    return fig
+
+
+def _build_minade_horizon_heatmaps(frame: pd.DataFrame) -> list[tuple[str, go.Figure]]:
+    figures: list[tuple[str, go.Figure]] = []
+    for metric_name in ("minADE@1s", "minADE@3s", "minADE@5s"):
+        metric_df = frame[frame["metric_name"] == metric_name].copy()
+        if metric_df.empty:
+            continue
+        fig = _build_metric_timeline_heatmap(
+            metric_df,
+            value_col="value",
+            title=f"{metric_name} Timeline Heatmap",
+            color_title=metric_name,
+        )
+        figures.append((metric_name, fig))
+    return figures
+
+
+def _build_minade_label_profile(frame: pd.DataFrame, *, selected_label: str, ordered_axes: list[str]) -> go.Figure:
+    profile_df = frame[
+        (frame["metric_name"].isin(["minADE@1s", "minADE@3s", "minADE@5s"]))
+        & (frame["label_name"] == selected_label)
+    ].copy()
+    fig = px.line(
+        profile_df,
+        x="release_axis",
+        y="value",
+        color="metric_name",
+        markers=True,
+        hover_data=["version", "date", "release_name"],
+        title=f"{selected_label} minADE Horizon Profile",
+    )
+    fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Horizon")
+    fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes)
+    return fig
+
+
 def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     release_rows: list[dict[str, Any]] = []
     case_rows: list[dict[str, Any]] = []
@@ -133,12 +350,24 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
     release_df = pd.DataFrame(release_rows)
     if not release_df.empty:
         release_df["date_sort"] = pd.to_datetime(release_df["date"], format="%Y.%m.%d", errors="coerce")
+        release_df["release_display"] = release_df.apply(
+            lambda row: _release_display_name(row["version"], row["date"], row["description"]),
+            axis=1,
+        )
     case_df = pd.DataFrame(case_rows)
     if not case_df.empty:
         case_df["date_sort"] = pd.to_datetime(case_df["date"], format="%Y.%m.%d", errors="coerce")
+        case_df["release_display"] = case_df.apply(
+            lambda row: _release_display_name(row["version"], row["date"], row["description"]),
+            axis=1,
+        )
     metric_df = pd.DataFrame(metric_rows)
     if not metric_df.empty:
         metric_df["date_sort"] = pd.to_datetime(metric_df["date"], format="%Y.%m.%d", errors="coerce")
+        metric_df["release_display"] = metric_df.apply(
+            lambda row: _release_display_name(row["version"], row["date"], row["description"]),
+            axis=1,
+        )
     return release_df, case_df, metric_df
 
 
@@ -172,15 +401,17 @@ top4.metric("Groups with DevOps", f"{int(release_df['devops_job_id'].notna().sum
 top5.metric("Latest Date", release_df.sort_values("date_sort")["date"].iloc[-1] if not release_df.empty else "n/a")
 
 inventory_cols = [
+    "release_display",
     "version",
     "date",
     "description",
     "data_count",
+    "mAP",
+    "overall_pass_rate",
     "roles",
     "full_job_id",
     "usecase_job_id",
     "devops_job_id",
-    "release_name",
     "topic_name",
     "group_kind",
 ]
@@ -321,73 +552,16 @@ with perf_col2:
 if not metric_df.empty:
     atlas_df = metric_df[metric_df["block_header"] == "全数データセット評価"].copy()
     atlas_df = atlas_df.sort_values(["date_sort", "version", "release_name"], ascending=[True, True, True])
+    atlas_df["release_axis"] = atlas_df["version"].astype(str) + " | " + atlas_df["date"].astype(str)
     latest_group_key = perf_entries.iloc[-1]["group_key"] if not perf_entries.empty else None
     previous_group_key = perf_entries.iloc[-2]["group_key"] if len(perf_entries) >= 2 else None
-    latest_release_name = perf_entries.iloc[-1]["release_name"] if not perf_entries.empty else ""
-
-    atlas_col1, atlas_col2 = st.columns([1.0, 1.0])
-    if latest_group_key is not None:
-        latest_matrix = atlas_df[atlas_df["group_key"] == latest_group_key].pivot_table(
-            index="metric_name",
-            columns="label_name",
-            values="value",
-            aggfunc="first",
-        ).dropna(how="all")
-        if not latest_matrix.empty:
-            latest_min = latest_matrix.min(axis=1)
-            latest_range = (latest_matrix.max(axis=1) - latest_min).replace(0, 1)
-            latest_norm = latest_matrix.sub(latest_min, axis=0).div(latest_range, axis=0)
-            atlas_fig = px.imshow(
-                latest_norm,
-                aspect="auto",
-                color_continuous_scale=["#f8fafc", "#8dd3c7", "#0f766e"],
-                text_auto=".2f",
-            )
-            atlas_fig.update_traces(
-                text=latest_matrix.round(2).astype(str),
-                hovertemplate="Metric: %{y}<br>Label: %{x}<br>Value: %{text}<extra></extra>",
-            )
-            atlas_fig.update_layout(
-                title=f"Latest Release Metric Atlas: {latest_release_name}",
-                margin=dict(l=20, r=20, t=70, b=20),
-                coloraxis_colorbar=dict(title="Relative"),
-            )
-            atlas_col1.plotly_chart(atlas_fig, use_container_width=True)
-        else:
-            atlas_col1.info("No latest metric atlas is available yet.")
-
-    if latest_group_key is not None and previous_group_key is not None:
-        latest_matrix = atlas_df[atlas_df["group_key"] == latest_group_key].pivot_table(
-            index="metric_name",
-            columns="label_name",
-            values="value",
-            aggfunc="first",
-        )
-        previous_matrix = atlas_df[atlas_df["group_key"] == previous_group_key].pivot_table(
-            index="metric_name",
-            columns="label_name",
-            values="value",
-            aggfunc="first",
-        )
-        delta_matrix = latest_matrix.subtract(previous_matrix, fill_value=pd.NA).dropna(how="all")
-        if not delta_matrix.empty:
-            delta_fig = px.imshow(
-                delta_matrix,
-                aspect="auto",
-                color_continuous_scale=["#7f1d1d", "#f8fafc", "#14532d"],
-                color_continuous_midpoint=0,
-                text_auto=".2f",
-            )
-            delta_fig.update_layout(
-                title="Release-over-Release Metric Delta",
-                margin=dict(l=20, r=20, t=70, b=20),
-                coloraxis_colorbar=dict(title="Delta"),
-            )
-            atlas_col2.plotly_chart(delta_fig, use_container_width=True)
-        else:
-            atlas_col2.info("No previous release is available for metric delta yet.")
-    else:
-        atlas_col2.info("Metric delta becomes available after at least two grouped full releases exist.")
+    latest_release_name = perf_entries.iloc[-1]["version"] if not perf_entries.empty else ""
+    release_manifest = (
+        atlas_df[["group_key", "release_axis", "version", "date", "release_name", "release_display"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+    ordered_release_axes = release_manifest["release_axis"].tolist()
 
 section_header(
     "Pass Rate Trend",
@@ -398,117 +572,283 @@ pass_entries = release_df[release_df["devops_job_id"].notna()].sort_values(
     ["date_sort", "version", "release_name"],
     ascending=[True, True, True],
 )
-pass_col1, pass_col2 = st.columns([1.1, 1.0])
-with pass_col1:
-    if not pass_entries.empty and pass_entries["overall_pass_rate"].notna().any():
-        pass_fig = go.Figure()
-        pass_fig.add_bar(
-            x=pass_entries["version"],
-            y=pass_entries["scenario_count"],
-            name="Scenario Count",
-            marker_color="#86efac",
-            opacity=0.55,
-            yaxis="y2",
-        )
-        pass_fig.add_trace(
-            go.Scatter(
-                x=pass_entries["version"],
-                y=pass_entries["overall_pass_rate"],
-                name="Overall Pass Rate",
-                mode="lines+markers",
-                line=dict(color="#1d4ed8", width=3),
-                customdata=pass_entries[["release_name", "date"]].to_numpy(),
-                hovertemplate="<b>%{x}</b><br>Pass Rate: %{y:.1f}%<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<extra></extra>",
-            )
-        )
-        pass_fig.update_layout(
-            title="Overall Pass Rate vs Scenario Count",
-            xaxis_title="Pilot.Auto Version",
-            yaxis_title="Pass Rate (%)",
-            yaxis2=dict(title="Scenario Count", overlaying="y", side="right", showgrid=False),
-            height=520,
-            legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
-            margin=dict(l=20, r=20, t=90, b=20),
-        )
-        st.plotly_chart(pass_fig, use_container_width=True)
-    else:
-        st.info("No grouped pass-rate summaries are available yet.")
+ordered_versions = pass_entries["version"].drop_duplicates().tolist()
+overall_plot_df = pd.DataFrame()
+major_summary = pd.DataFrame()
+mid_summary = pd.DataFrame()
 
-with pass_col2:
-    if not case_df.empty:
-        major_summary = (
-            case_df.groupby(["version", "date", "release_name", "major_category"], dropna=False)[["passed", "total"]]
-            .sum()
-            .reset_index()
-        )
-        major_summary["pass_rate"] = major_summary["passed"] / major_summary["total"] * 100.0
-        major_summary["label"] = major_summary["major_category"].astype(str)
-        pass_cat_fig = px.line(
-            major_summary,
-            x="version",
-            y="pass_rate",
-            color="label",
-            markers=True,
-            hover_data=["date", "release_name", "passed", "total"],
-            title="Major Category Pass Rate",
-        )
-        pass_cat_fig.update_layout(margin=dict(l=20, r=20, t=60, b=20))
-        st.plotly_chart(pass_cat_fig, use_container_width=True)
+if not pass_entries.empty and pass_entries["overall_pass_rate"].notna().any():
+    overall_plot_df = pass_entries[
+        ["version", "date", "release_name", "overall_pass_rate", "scenario_count"]
+    ].rename(columns={"overall_pass_rate": "pass_rate", "scenario_count": "total"}).copy()
 
 if not case_df.empty:
-    pass_detail_col1, pass_detail_col2 = st.columns([1.0, 1.0])
-    with pass_detail_col1:
-        mid_summary = (
-            case_df.groupby(["mid_category", "version"], dropna=False)[["passed", "total"]]
-            .sum()
-            .reset_index()
-        )
-        mid_summary["pass_rate"] = mid_summary["passed"] / mid_summary["total"] * 100.0
-        mid_matrix = mid_summary.pivot_table(
-            index="mid_category",
-            columns="version",
-            values="pass_rate",
-            aggfunc="first",
-        )
-        mid_fig = px.imshow(
-            mid_matrix,
-            aspect="auto",
-            color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
-            zmin=0,
-            zmax=100,
-            text_auto=".1f",
-        )
-        mid_fig.update_layout(
-            title="Mid Category Pass Rate Matrix",
-            margin=dict(l=20, r=20, t=70, b=20),
-            coloraxis_colorbar=dict(title="%"),
-        )
-        st.plotly_chart(mid_fig, use_container_width=True)
+    major_summary = (
+        case_df.groupby(["version", "date", "release_name", "major_category"], dropna=False)[["passed", "total"]]
+        .sum()
+        .reset_index()
+    )
+    major_summary = _with_pass_rate(major_summary)
 
-    with pass_detail_col2:
-        latest_devops_group = pass_entries.iloc[-1]["group_key"] if not pass_entries.empty else None
-        latest_case_df = case_df[case_df["group_key"] == latest_devops_group].copy()
-        latest_major_mid = (
-            latest_case_df.groupby(["major_category", "mid_category"], dropna=False)[["passed", "total"]]
-            .sum()
-            .reset_index()
+    mid_summary = (
+        case_df.groupby(
+            ["version", "date", "release_name", "major_category", "mid_category"],
+            dropna=False,
+        )[["passed", "total"]]
+        .sum()
+        .reset_index()
+    )
+    mid_summary = _with_pass_rate(mid_summary)
+
+if not overall_plot_df.empty:
+    st.plotly_chart(
+        _build_pass_combo_chart(
+            overall_plot_df,
+            title="Overall Pass Rate",
+            versions=ordered_versions,
+            series_col=None,
+            hover_cols=["date", "release_name"],
+        ),
+        use_container_width=True,
+    )
+else:
+    st.info("No grouped pass-rate summaries are available yet.")
+
+if not major_summary.empty:
+    st.plotly_chart(
+        _build_pass_combo_chart(
+            major_summary,
+            title="Major Category Pass Rate",
+            versions=ordered_versions,
+            series_col="major_category",
+        ),
+        use_container_width=True,
+    )
+
+if not mid_summary.empty:
+    mid_summary_all = mid_summary.drop(columns=["major_category"], errors="ignore")
+    st.plotly_chart(
+        _build_pass_combo_chart(
+            mid_summary_all,
+            title="Mid Category Pass Rate",
+            versions=ordered_versions,
+            series_col="mid_category",
+        ),
+        use_container_width=True,
+    )
+    st.caption(
+        "These three charts share the same grouped DevOps source, version order, scenario-count backdrop, and pass-rate scale so you can compare overall, major-category, and mid-category movement directly."
+    )
+
+section_header(
+    "Deep Dive Explorer",
+    "Use this final section when you want to inspect the latest release state, compare label-level metric atlases against a baseline, or browse grouped raw details.",
+)
+
+if not case_df.empty:
+    latest_devops_group = pass_entries.iloc[-1]["group_key"] if not pass_entries.empty else None
+    latest_case_df = case_df[case_df["group_key"] == latest_devops_group].copy()
+    latest_major_mid = (
+        latest_case_df.groupby(["major_category", "mid_category"], dropna=False)[["passed", "total"]]
+        .sum()
+        .reset_index()
+    )
+    latest_major_mid = _with_pass_rate(latest_major_mid)
+    st.markdown("**Latest Release Snapshot**")
+    if not latest_major_mid.empty:
+        latest_view_mode = st.radio(
+            "Latest Snapshot View",
+            ["Bars", "Treemap", "Icicle", "Sunburst"],
+            horizontal=True,
         )
-        latest_major_mid["pass_rate"] = latest_major_mid["passed"] / latest_major_mid["total"] * 100.0
-        if not latest_major_mid.empty:
-            sunburst_fig = px.sunburst(
+        if latest_view_mode == "Bars":
+            latest_fig = _build_latest_hierarchy_bars(latest_major_mid, pass_entries.iloc[-1]["version"])
+        elif latest_view_mode == "Treemap":
+            latest_fig = px.treemap(
                 latest_major_mid,
                 path=["major_category", "mid_category"],
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title="Latest Release Pass-Rate Hierarchy",
+                title=f"Latest Release Pass-Rate Treemap: {pass_entries.iloc[-1]['version']}",
             )
-            sunburst_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
-            st.plotly_chart(sunburst_fig, use_container_width=True)
+            latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+        elif latest_view_mode == "Icicle":
+            latest_fig = px.icicle(
+                latest_major_mid,
+                path=["major_category", "mid_category"],
+                values="total",
+                color="pass_rate",
+                color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
+                range_color=(0, 100),
+                title=f"Latest Release Pass-Rate Icicle: {pass_entries.iloc[-1]['version']}",
+            )
+            latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
         else:
-            st.info("No latest release pass-rate hierarchy is available yet.")
+            latest_fig = px.sunburst(
+                latest_major_mid,
+                path=["major_category", "mid_category"],
+                values="total",
+                color="pass_rate",
+                color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
+                range_color=(0, 100),
+                title=f"Latest Release Pass-Rate Sunburst: {pass_entries.iloc[-1]['version']}",
+            )
+            latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+        st.plotly_chart(latest_fig, use_container_width=True)
+    else:
+        st.info("No latest release pass-rate hierarchy is available yet.")
 
+if not metric_df.empty:
+    st.markdown("**Metric Atlas Explorer**")
+    explorer_note_col1, explorer_note_col2 = st.columns([1.2, 1.0])
+    with explorer_note_col1:
+        st.caption(
+            "Choose one metric and inspect how each label evolved across releases. "
+            "Use the baseline comparison modes for fast regression checks, and use the combined minADE view when you want to compare prediction horizons together."
+        )
+    with explorer_note_col2:
+        atlas_mode = st.radio(
+            "Atlas Explorer Mode",
+            ["Latest Atlas", "Latest vs Previous", "Timeline Heatmap", "Label Trend Lines", "Combined minADE Explorer", "Chosen Baseline Delta"],
+            horizontal=True,
+        )
+
+    metric_options = sorted(atlas_df["metric_name"].dropna().unique().tolist())
+    atlas_control_col1, atlas_control_col2 = st.columns([1.0, 1.0])
+    with atlas_control_col1:
+        selected_metric = st.selectbox("Metric", metric_options)
+    with atlas_control_col2:
+        baseline_labels = release_manifest["release_axis"].tolist()
+        default_baseline_index = max(0, len(baseline_labels) - 2)
+        selected_baseline_axis = st.selectbox(
+            "Baseline Release",
+            baseline_labels,
+            index=default_baseline_index if baseline_labels else 0,
+        )
+
+    metric_trend_df = atlas_df[atlas_df["metric_name"] == selected_metric].copy()
+    if not metric_trend_df.empty:
+        latest_metric_df = metric_trend_df[metric_trend_df["group_key"] == latest_group_key].copy()
+        baseline_metric_df = metric_trend_df[metric_trend_df["release_axis"] == selected_baseline_axis].copy()
+
+        if atlas_mode == "Latest Atlas":
+            latest_matrix = atlas_df[atlas_df["group_key"] == latest_group_key].pivot_table(
+                index="metric_name",
+                columns="label_name",
+                values="value",
+                aggfunc="first",
+            ).dropna(how="all")
+            if not latest_matrix.empty:
+                latest_min = latest_matrix.min(axis=1)
+                latest_range = (latest_matrix.max(axis=1) - latest_min).replace(0, 1)
+                latest_norm = latest_matrix.sub(latest_min, axis=0).div(latest_range, axis=0)
+                explorer_fig = px.imshow(
+                    latest_norm,
+                    aspect="auto",
+                    color_continuous_scale=["#f8fafc", "#8dd3c7", "#0f766e"],
+                    text_auto=".2f",
+                )
+                explorer_fig.update_traces(
+                    text=latest_matrix.round(2).astype(str),
+                    hovertemplate="Metric: %{y}<br>Label: %{x}<br>Value: %{text}<extra></extra>",
+                )
+                explorer_fig.update_layout(
+                    title=f"Latest Release Metric Atlas: {latest_release_name}",
+                    margin=dict(l=20, r=20, t=70, b=20),
+                    coloraxis_colorbar=dict(title="Relative"),
+                )
+            else:
+                explorer_fig = None
+                st.info("No latest metric atlas is available yet.")
+        elif atlas_mode == "Latest vs Previous":
+            if latest_group_key is not None and previous_group_key is not None:
+                latest_matrix = atlas_df[atlas_df["group_key"] == latest_group_key].pivot_table(
+                    index="metric_name",
+                    columns="label_name",
+                    values="value",
+                    aggfunc="first",
+                )
+                previous_matrix = atlas_df[atlas_df["group_key"] == previous_group_key].pivot_table(
+                    index="metric_name",
+                    columns="label_name",
+                    values="value",
+                    aggfunc="first",
+                )
+                delta_matrix = latest_matrix.subtract(previous_matrix, fill_value=pd.NA).dropna(how="all")
+                if not delta_matrix.empty:
+                    explorer_fig = px.imshow(
+                        delta_matrix,
+                        aspect="auto",
+                        color_continuous_scale=["#7f1d1d", "#f8fafc", "#14532d"],
+                        color_continuous_midpoint=0,
+                        text_auto=".2f",
+                    )
+                    explorer_fig.update_layout(
+                        title=f"Release-over-Release Metric Delta: {latest_release_name}",
+                        margin=dict(l=20, r=20, t=70, b=20),
+                        coloraxis_colorbar=dict(title="Delta"),
+                    )
+                else:
+                    explorer_fig = None
+                    st.info("No previous release is available for metric delta yet.")
+            else:
+                explorer_fig = None
+                st.info("Metric delta becomes available after at least two grouped full releases exist.")
+        elif atlas_mode == "Timeline Heatmap":
+            explorer_fig = _build_metric_timeline_heatmap(
+                metric_trend_df,
+                value_col="value",
+                title=f"{selected_metric} Timeline Heatmap by Label",
+                color_title=selected_metric,
+            )
+        elif atlas_mode == "Label Trend Lines":
+            explorer_fig = _build_metric_label_lines(
+                metric_trend_df,
+                title=f"{selected_metric} Label Trend Lines",
+                ordered_axes=ordered_release_axes,
+            )
+        elif atlas_mode == "Combined minADE Explorer":
+            minade_metrics = {"minADE@1s", "minADE@3s", "minADE@5s"}
+            minade_df = atlas_df[atlas_df["metric_name"].isin(minade_metrics)].copy()
+            if minade_df.empty:
+                st.info("No minADE trend data is available yet.")
+            else:
+                heatmaps = _build_minade_horizon_heatmaps(minade_df)
+                heatmap_cols = st.columns(len(heatmaps)) if heatmaps else []
+                for col, (_, heatmap_fig) in zip(heatmap_cols, heatmaps):
+                    col.plotly_chart(heatmap_fig, use_container_width=True)
+                label_options = sorted(minade_df["label_name"].dropna().unique().tolist())
+                selected_label = st.selectbox("minADE Label Focus", label_options)
+                profile_fig = _build_minade_label_profile(
+                    minade_df,
+                    selected_label=selected_label,
+                    ordered_axes=ordered_release_axes,
+                )
+                st.plotly_chart(profile_fig, use_container_width=True)
+            explorer_fig = None
+        else:
+            delta_df = latest_metric_df[["label_name", "value"]].merge(
+                baseline_metric_df[["label_name", "value"]],
+                on="label_name",
+                how="outer",
+                suffixes=("_latest", "_baseline"),
+            )
+            delta_df["delta_value"] = delta_df["value_latest"] - delta_df["value_baseline"]
+            delta_df["release_axis"] = f"{latest_release_name} vs baseline"
+            explorer_fig = _build_metric_timeline_heatmap(
+                delta_df,
+                value_col="delta_value",
+                title=f"{selected_metric} Latest vs Baseline Delta by Label",
+                color_title="Delta",
+            )
+        if explorer_fig is not None:
+            st.plotly_chart(explorer_fig, use_container_width=True)
+    else:
+        st.info("No metric atlas trend data is available for the selected metric yet.")
+
+if not case_df.empty:
     st.markdown("**Case Explorer**")
     filter_col1, filter_col2, filter_col3 = st.columns(3)
     with filter_col1:
@@ -531,14 +871,11 @@ if not case_df.empty:
         hide_index=True,
     )
 
-section_header(
-    "Grouped Raw Browser",
-    "Inspect one grouped release and its child roles directly. This makes it obvious which full, usecase, and devops job folders are contributing to the combined trend view.",
-)
+st.markdown("**Grouped Raw Browser**")
 
 selection_df = release_df.sort_values(["date_sort", "version", "release_name"], ascending=[False, False, False]).reset_index(drop=True)
 selection_labels = [
-    f"{row.release_name} | {row.version} | {row.date} | roles: {row.roles}"
+    f"{row.release_display} | roles: {row.roles}"
     for row in selection_df.itertuples()
 ]
 selected_label = st.selectbox("Release Group", selection_labels)
