@@ -40,6 +40,7 @@ from lib.path_utils import (
 from lib.run_metadata import (
     build_run_search_blob,
     read_run_metadata,
+    upsert_run_metadata,
 )
 from lib.ui.recent_evaluator_jobs import (
     _fetch_evaluator_job_detail,
@@ -329,7 +330,7 @@ def _metadata_text(value: object) -> str:
 def _run_user_label(subject_id: str, environment: str) -> str:
     subject = str(subject_id or "").strip()
     if not subject:
-        return "—"
+        return "(Auto)"
     if not subject.startswith("t4:"):
         return subject
     try:
@@ -337,7 +338,7 @@ def _run_user_label(subject_id: str, environment: str) -> str:
         name = str(profile.get("name") or subject).strip()
         return name or subject
     except Exception:
-        return subject
+        return "(Auto)"
 
 
 def _catalog_url(project_id: str, catalog_id: str, metadata_url: str = "") -> str:
@@ -349,6 +350,31 @@ def _catalog_url(project_id: str, catalog_id: str, metadata_url: str = "") -> st
     if project and catalog:
         return f"https://evaluation.tier4.jp/evaluation/vehicle_catalogs/{catalog}?project_id={project}"
     return ""
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def _catalog_preset_name_map() -> Dict[str, str]:
+    presets, _, _ = _load_catalog_presets()
+    mapping: Dict[str, str] = {}
+    for item in presets:
+        if not isinstance(item, dict):
+            continue
+        catalog_id = str(item.get("catalog_id") or "").strip()
+        display_name = str(item.get("display_name") or item.get("name") or "").strip()
+        if catalog_id and display_name:
+            mapping[catalog_id] = display_name
+    return mapping
+
+
+def _catalog_label_for_run(catalog_id: str, catalog_name: str) -> str:
+    resolved_name = str(catalog_name or "").strip()
+    if resolved_name:
+        return resolved_name
+    catalog = str(catalog_id or "").strip()
+    if not catalog:
+        return "—"
+    preset_match = _catalog_preset_name_map().get(catalog, "").strip()
+    return preset_match or catalog
 
 
 @st.cache_data(ttl=15, show_spinner=False)
@@ -397,7 +423,7 @@ def _load_local_runs() -> List[Dict[str, object]]:
             or ""
         ).strip()
         catalog_name = str(evaluator_meta.get("catalog_name") or "").strip()
-        catalog_label = catalog_name or catalog_id
+        catalog_label = _catalog_label_for_run(catalog_id, catalog_name)
         catalog_url = _catalog_url(
             str(request_meta.get("project_id") or "").strip(),
             catalog_id,
@@ -425,6 +451,7 @@ def _load_local_runs() -> List[Dict[str, object]]:
         runs.append(
             {
                 "name": info["name"],
+                "run_path": run_path,
                 "path_display": f"{get_data_root_display()}/{info['name']}",
                 "size": format_size(info["size_bytes"]),
                 "mtime": float(info["mtime"] or 0),
@@ -438,12 +465,14 @@ def _load_local_runs() -> List[Dict[str, object]]:
                 "requested_by": requested_by,
                 "requested_by_label": requested_by_label,
                 "environment": environment,
+                "project_id": str(request_meta.get("project_id") or "").strip(),
                 "task_type": task_type,
                 "task_status": task_status,
                 "evaluator_job_id": evaluator_job_id,
                 "evaluator_report_url": evaluator_report_url,
                 "evaluator_title": evaluator_title,
                 "evaluator_target": evaluator_target,
+                "branch_label": evaluator_target,
                 "evaluator_git_sha": str(evaluator_meta.get("git_sha") or "").strip(),
                 "evaluator_git_ref_url": str(evaluator_meta.get("git_ref_url") or "").strip(),
                 "evaluator_git_commit_url": str(evaluator_meta.get("git_commit_url") or "").strip(),
@@ -529,6 +558,32 @@ def _inject_workflow_page_styles() -> None:
             font-size: 0.9rem;
             line-height: 1.5;
         }
+        .wf-filter-strip,
+        .wf-pager-strip {
+            border: none;
+            background: linear-gradient(180deg, rgba(248,250,252,0.72) 0%, rgba(248,250,252,0.28) 100%);
+            border-radius: 14px;
+            padding: 0.72rem 0.78rem 0.28rem 0.78rem;
+            box-shadow: none;
+            margin-bottom: 0.32rem;
+        }
+        .wf-filter-strip {
+            margin-top: 0.12rem;
+        }
+        .wf-pager-strip {
+            padding-top: 0.28rem;
+            padding-bottom: 0.28rem;
+        }
+        .wf-pager-summary {
+            padding-top: 0.2rem;
+            color: #475569;
+            font-size: 0.82rem;
+            line-height: 1.35;
+        }
+        .wf-pager-summary strong {
+            color: #0f172a;
+            font-weight: 700;
+        }
         .wf-meta-inline {
             margin-top: 0.2rem;
             color: #64748b;
@@ -539,6 +594,20 @@ def _inject_workflow_page_styles() -> None:
             text-decoration: none;
         }
         .wf-meta-inline a:hover {
+            text-decoration: underline;
+        }
+        .wf-linked-ref {
+            margin-top: 0.35rem;
+            color: #475569;
+            font-size: 0.82rem;
+            line-height: 1.35;
+        }
+        .wf-linked-ref a {
+            color: #0f766e;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .wf-linked-ref a:hover {
             text-decoration: underline;
         }
         .wf-run-list {
@@ -629,11 +698,11 @@ def _inject_workflow_page_styles() -> None:
             letter-spacing: 0.01em;
         }
         .wf-compare-bar {
-            border: 1px solid rgba(148, 163, 184, 0.24);
-            background: linear-gradient(135deg, #f8fafc 0%, #ecfeff 100%);
+            border: none;
+            background: linear-gradient(135deg, rgba(248,250,252,0.65) 0%, rgba(236,254,255,0.55) 100%);
             border-radius: 12px;
-            padding: 0.7rem 0.85rem;
-            margin: 0.35rem 0 0.55rem 0;
+            padding: 0.62rem 0.78rem;
+            margin: 0.18rem 0 0.4rem 0;
         }
         .wf-compare-title {
             margin: 0;
@@ -654,7 +723,30 @@ def _inject_workflow_page_styles() -> None:
             transform: scale(1.2);
         }
         [class*="st-key-workflow_runs_page_select"] div[data-baseweb="select"] {
-            min-height: 2rem;
+            min-height: 1.72rem;
+        }
+        [class*="st-key-workflow_runs_page_select"] [data-baseweb="select"] > div {
+            min-height: 1.72rem;
+            font-size: 0.8rem;
+        }
+        [class*="st-key-workflow_runs_page_prev"] button,
+        [class*="st-key-workflow_runs_page_next"] button {
+            min-height: 1.72rem;
+            height: 1.72rem;
+            padding: 0 0.3rem;
+            font-size: 0.8rem;
+            line-height: 1;
+        }
+        [class*="st-key-workflow_run_details__"] button,
+        [class*="st-key-workflow_run_download__"] button,
+        [class*="st-key-workflow_run_delete__"] button,
+        [class*="st-key-workflow_local_run_retest__"] button {
+            white-space: nowrap;
+            min-height: 2.2rem;
+            font-size: 0.72rem;
+            padding-left: 0.35rem;
+            padding-right: 0.35rem;
+            letter-spacing: 0.01em;
         }
         .wf-launcher {
             border: 1px solid rgba(20, 184, 166, 0.22);
@@ -803,6 +895,60 @@ def _render_local_runs_header() -> None:
     header_cols[9].markdown('<div class="wf-toolbar-note">Actions</div>', unsafe_allow_html=True)
 
 
+def _run_needs_source_backfill(run: Dict[str, object]) -> bool:
+    return bool(
+        str(run.get("evaluator_job_id") or "").strip()
+        and str(run.get("project_id") or "").strip()
+        and (
+            not str(run.get("evaluator_git_ref_url") or "").strip()
+            or not str(run.get("evaluator_git_commit_url") or "").strip()
+            or not str(run.get("evaluator_source_url") or "").strip()
+            or not str(run.get("evaluator_git_sha") or "").strip()
+        )
+    )
+
+
+def _backfill_local_run_source_metadata(runs: List[Dict[str, object]]) -> Dict[str, int]:
+    updated = 0
+    skipped = 0
+    failed = 0
+    for run in runs:
+        if not _run_needs_source_backfill(run):
+            skipped += 1
+            continue
+        run_path = run.get("run_path")
+        if not isinstance(run_path, Path):
+            failed += 1
+            continue
+        project_id = str(run.get("project_id") or "").strip()
+        environment = str(run.get("environment") or "default").strip() or "default"
+        evaluator_job_id = str(run.get("evaluator_job_id") or "").strip()
+        try:
+            detail = _fetch_evaluator_job_detail(project_id, environment, evaluator_job_id)
+        except Exception:
+            failed += 1
+            continue
+
+        patch = {
+            "evaluator": {
+                "target": str(detail.get("source_label") or run.get("evaluator_target") or "").strip(),
+                "git_sha": str(detail.get("git_sha") or run.get("evaluator_git_sha") or "").strip(),
+                "git_ref_url": str(detail.get("git_ref_url") or run.get("evaluator_git_ref_url") or "").strip(),
+                "git_commit_url": str(detail.get("git_commit_url") or run.get("evaluator_git_commit_url") or "").strip(),
+                "source_url": str(detail.get("source_url") or run.get("evaluator_source_url") or "").strip(),
+                "source_repo_label": str(detail.get("source_repo_label") or run.get("evaluator_source_repo_label") or "").strip(),
+                "catalog_name": str(detail.get("catalog") or run.get("catalog_name") or "").strip(),
+                "catalog_url": str(detail.get("catalog_url") or run.get("catalog_url") or "").strip(),
+            }
+        }
+        try:
+            upsert_run_metadata(run_path, patch, create_missing=False)
+            updated += 1
+        except Exception:
+            failed += 1
+    return {"updated": updated, "skipped": skipped, "failed": failed}
+
+
 def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     name_raw = str(run["name"])
     name = html.escape(name_raw)
@@ -889,15 +1035,15 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     with row_cols[8]:
         st.markdown(f'<div class="{cell_class}">{size_label}</div>', unsafe_allow_html=True)
     with row_cols[9]:
-        action_cols = st.columns([1.0, 1.0, 1.0], gap="small")
+        action_cols = st.columns([0.78, 0.82, 0.82], gap="small")
         with action_cols[0]:
-            if st.button("Info", key=f"workflow_run_details::{name_raw}", use_container_width=True):
+            if st.button("ℹ", key=f"workflow_run_details::{name_raw}", use_container_width=True, help="Show run details"):
                 st.session_state["workflow_local_run_detail"] = name_raw
         with action_cols[1]:
-            if st.button("ZIP", key=f"workflow_run_download::{name_raw}", use_container_width=True):
+            if st.button("⬇", key=f"workflow_run_download::{name_raw}", use_container_width=True, help="Prepare ZIP download"):
                 st.session_state["workflow_local_run_download"] = name_raw
         with action_cols[2]:
-            if st.button("Delete", key=f"workflow_run_delete::{name_raw}", use_container_width=True):
+            if st.button("🗑", key=f"workflow_run_delete::{name_raw}", use_container_width=True, help="Delete this local run"):
                 st.session_state["workflow_local_run_delete"] = name_raw
     return bool(checked)
 
@@ -929,10 +1075,16 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
         or evaluator_detail.get("git_ref_url")
         or ""
     ).strip()
+    source_commit_url = str(
+        evaluator_meta.get("git_commit_url")
+        or evaluator_detail.get("git_commit_url")
+        or ""
+    ).strip()
     catalog_url = str(evaluator_detail.get("catalog_url") or "").strip()
     source_label = str(evaluator_meta.get("target") or evaluator_detail.get("source_label") or evaluator_target or "").strip()
     source_git_sha = str(evaluator_meta.get("git_sha") or evaluator_detail.get("git_sha") or "").strip()
     source_ref_text = _format_source_ref_text(source_label or evaluator_target, source_git_sha)
+    source_ref_html = _format_source_ref_html(source_label or evaluator_target, source_url, source_git_sha, source_commit_url)
 
     with st.container(border=True):
         title_cols = st.columns([3.4, 1.0])
@@ -1032,6 +1184,11 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                 disabled=True,
                 key=f"run_detail_source_ref::{run['name']}",
             )
+            if source_ref_html and source_ref_html != "—":
+                st.markdown(
+                    f'<div class="wf-linked-ref">GitHub: {source_ref_html}</div>',
+                    unsafe_allow_html=True,
+                )
 
         if evaluator_meta:
             eval_cols = st.columns(4)
@@ -1131,21 +1288,29 @@ def _render_local_runs_section() -> None:
     if not runs:
         st.markdown('<div class="wf-empty">No finished runs were found on this server yet.</div>', unsafe_allow_html=True)
         return
-
-    if "workflow_runs_search_applied" not in st.session_state:
-        st.session_state["workflow_runs_search_applied"] = st.session_state.get("workflow_runs_search", "")
-    if "workflow_runs_summary_filter_applied" not in st.session_state:
-        st.session_state["workflow_runs_summary_filter_applied"] = bool(st.session_state.get("workflow_runs_summary_filter", False))
-    if "workflow_runs_parquet_filter_applied" not in st.session_state:
-        st.session_state["workflow_runs_parquet_filter_applied"] = bool(st.session_state.get("workflow_runs_parquet_filter", False))
-    if "workflow_runs_user_filter_applied" not in st.session_state:
-        st.session_state["workflow_runs_user_filter_applied"] = str(st.session_state.get("workflow_runs_user_filter", "All users"))
-    if "workflow_runs_date_from_applied" not in st.session_state:
-        st.session_state["workflow_runs_date_from_applied"] = st.session_state.get("workflow_runs_date_from", None)
-    if "workflow_runs_date_to_applied" not in st.session_state:
-        st.session_state["workflow_runs_date_to_applied"] = st.session_state.get("workflow_runs_date_to", None)
-    if "workflow_runs_page_size_applied" not in st.session_state:
-        st.session_state["workflow_runs_page_size_applied"] = int(st.session_state.get("workflow_runs_page_size", 10) or 10)
+    missing_source_runs = sum(1 for run in runs if _run_needs_source_backfill(run))
+    local_runs_toolbar_cols = st.columns([4.2, 1.2])
+    with local_runs_toolbar_cols[0]:
+        if missing_source_runs:
+            st.caption(f"{missing_source_runs} run(s) are missing stored GitHub metadata.")
+    with local_runs_toolbar_cols[1]:
+        if missing_source_runs and st.button(
+            "Backfill GitHub",
+            key="workflow_backfill_local_run_source_meta",
+            use_container_width=True,
+        ):
+            with st.spinner("Backfilling missing GitHub metadata for local runs..."):
+                result = _backfill_local_run_source_metadata(runs)
+            _load_local_runs.clear()
+            if result["failed"]:
+                st.warning(
+                    f"Backfill updated {result['updated']} run(s), skipped {result['skipped']} run(s), failed on {result['failed']} run(s)."
+                )
+            else:
+                st.success(
+                    f"Backfill updated {result['updated']} run(s); {result['skipped']} run(s) already had metadata."
+                )
+            st.rerun()
 
     current_user_id = str(get_task_list_current_user() or "").strip()
     user_options = ["All users"]
@@ -1153,13 +1318,15 @@ def _render_local_runs_section() -> None:
         user_options.append("My runs")
     unique_users = []
     seen_users = set()
-    user_option_subject_map = {"All users": "", "My runs": current_user_id}
+    user_option_subject_map = {"All users": "", "My runs": current_user_id, "(Auto)": "__auto__"}
     for row in runs:
         subject_id = str(row.get("requested_by") or "").strip()
         label = str(row.get("requested_by_label") or "").strip()
+        option = label or "(Auto)"
         if not subject_id:
+            if "(Auto)" not in user_options:
+                user_options.append("(Auto)")
             continue
-        option = label or "Unknown"
         deduped_option = option
         suffix = 2
         while deduped_option in seen_users and user_option_subject_map.get(deduped_option) != subject_id:
@@ -1170,97 +1337,170 @@ def _render_local_runs_section() -> None:
             seen_users.add(deduped_option)
             user_option_subject_map[deduped_option] = subject_id
     user_options.extend(unique_users)
-    applied_user_option = st.session_state.get("workflow_runs_user_filter_applied", "All users")
-    if applied_user_option not in user_options:
-        applied_user_option = "All users"
-        st.session_state["workflow_runs_user_filter_applied"] = applied_user_option
 
-    with st.form("workflow_local_runs_filters", border=False):
-        control_cols = st.columns([1.8, 1.25, 1.05, 1.05, 0.72, 0.72, 0.65, 0.76])
-        with control_cols[0]:
-            st.markdown('<div class="wf-toolbar-note">Search</div>', unsafe_allow_html=True)
-            run_search_input = st.text_input(
-                "Search runs",
-                value=st.session_state.get("workflow_runs_search_applied", ""),
-                key="workflow_runs_search",
-                label_visibility="collapsed",
-                placeholder="Filter by name, description, job id, catalog, user",
-            )
-        with control_cols[1]:
-            st.markdown('<div class="wf-toolbar-note">User</div>', unsafe_allow_html=True)
-            user_filter_input = st.selectbox(
-                "User",
-                options=user_options,
-                index=user_options.index(applied_user_option),
-                key="workflow_runs_user_filter",
-                label_visibility="collapsed",
-            )
-        with control_cols[2]:
-            st.markdown('<div class="wf-toolbar-note">From</div>', unsafe_allow_html=True)
-            date_from_input = st.date_input(
-                "From",
-                value=st.session_state.get("workflow_runs_date_from_applied", None),
-                key="workflow_runs_date_from",
-                label_visibility="collapsed",
-                help="Run modified-date lower bound in JST.",
-            )
-        with control_cols[3]:
-            st.markdown('<div class="wf-toolbar-note">To</div>', unsafe_allow_html=True)
-            date_to_input = st.date_input(
-                "To",
-                value=st.session_state.get("workflow_runs_date_to_applied", None),
-                key="workflow_runs_date_to",
-                label_visibility="collapsed",
-                help="Run modified-date upper bound in JST.",
-            )
-        with control_cols[4]:
-            st.markdown('<div class="wf-toolbar-note">Summary</div>', unsafe_allow_html=True)
-            require_summary_input = st.toggle(
-                "Summary only",
-                value=bool(st.session_state.get("workflow_runs_summary_filter_applied", False)),
-                key="workflow_runs_summary_filter",
-                label_visibility="collapsed",
-            )
-        with control_cols[5]:
-            st.markdown('<div class="wf-toolbar-note">Parquet</div>', unsafe_allow_html=True)
-            require_parquet_input = st.toggle(
-                "Parquet only",
-                value=bool(st.session_state.get("workflow_runs_parquet_filter_applied", False)),
-                key="workflow_runs_parquet_filter",
-                label_visibility="collapsed",
-            )
-        with control_cols[6]:
-            st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
-            page_size_input = int(
-                st.selectbox(
-                    "Rows",
-                    options=[10, 20, 50, 100],
-                    index=[10, 20, 50, 100].index(int(st.session_state.get("workflow_runs_page_size_applied", 10) or 10)),
-                    key="workflow_runs_page_size",
-                    label_visibility="collapsed",
-                )
-            )
-        with control_cols[7]:
-            st.markdown('<div class="wf-toolbar-note">Apply</div>', unsafe_allow_html=True)
-            apply_filters = st.form_submit_button("Apply", use_container_width=True)
+    catalog_options = ["All catalogs"]
+    catalog_option_id_map = {"All catalogs": ""}
+    unique_catalogs = []
+    seen_catalogs = set()
+    for row in runs:
+        catalog_id = str(row.get("catalog_id") or "").strip()
+        catalog_label = str(row.get("catalog_label") or row.get("catalog_name") or catalog_id or "—").strip()
+        if not catalog_id:
+            continue
+        option = catalog_label or catalog_id
+        deduped_option = option
+        suffix = 2
+        while deduped_option in seen_catalogs and catalog_option_id_map.get(deduped_option) != catalog_id:
+            deduped_option = f"{option} [{suffix}]"
+            suffix += 1
+        if deduped_option not in seen_catalogs:
+            unique_catalogs.append(deduped_option)
+            seen_catalogs.add(deduped_option)
+            catalog_option_id_map[deduped_option] = catalog_id
+    catalog_options.extend(sorted(unique_catalogs, key=str.lower))
 
-    if apply_filters:
-        st.session_state["workflow_runs_search_applied"] = run_search_input
-        st.session_state["workflow_runs_user_filter_applied"] = user_filter_input
-        st.session_state["workflow_runs_date_from_applied"] = date_from_input
-        st.session_state["workflow_runs_date_to_applied"] = date_to_input
-        st.session_state["workflow_runs_summary_filter_applied"] = bool(require_summary_input)
-        st.session_state["workflow_runs_parquet_filter_applied"] = bool(require_parquet_input)
-        st.session_state["workflow_runs_page_size_applied"] = int(page_size_input)
+    current_user_option = str(st.session_state.get("workflow_runs_user_filter", "All users"))
+    if current_user_option not in user_options:
+        current_user_option = "All users"
+        st.session_state["workflow_runs_user_filter"] = current_user_option
+    current_catalog_option = str(st.session_state.get("workflow_runs_catalog_filter", "All catalogs"))
+    if current_catalog_option not in catalog_options:
+        current_catalog_option = "All catalogs"
+        st.session_state["workflow_runs_catalog_filter"] = current_catalog_option
+    branch_options = ["All branches"]
+    unique_branches = sorted(
+        {
+            str(row.get("branch_label") or row.get("evaluator_target") or "").strip()
+            for row in runs
+            if str(row.get("branch_label") or row.get("evaluator_target") or "").strip()
+        },
+        key=str.lower,
+    )
+    branch_options.extend(unique_branches)
+    current_branch_option = str(st.session_state.get("workflow_runs_branch_filter", "All branches"))
+    if current_branch_option not in branch_options:
+        current_branch_option = "All branches"
+        st.session_state["workflow_runs_branch_filter"] = current_branch_option
+
+    st.markdown('<div class="wf-filter-strip">', unsafe_allow_html=True)
+    control_cols = st.columns([1.7, 1.15, 1.1, 0.95, 0.95])
+    with control_cols[0]:
+        st.markdown('<div class="wf-toolbar-note">Search</div>', unsafe_allow_html=True)
+        run_search_input = st.text_input(
+            "Search runs",
+            value=st.session_state.get("workflow_runs_search", ""),
+            key="workflow_runs_search",
+            label_visibility="collapsed",
+            placeholder="Filter by name, description, job id, catalog, user",
+        )
+    with control_cols[1]:
+        st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
+        catalog_filter_input = st.selectbox(
+            "Catalog",
+            options=catalog_options,
+            index=catalog_options.index(current_catalog_option),
+            key="workflow_runs_catalog_filter",
+            label_visibility="collapsed",
+        )
+    with control_cols[2]:
+        st.markdown('<div class="wf-toolbar-note">Branch</div>', unsafe_allow_html=True)
+        branch_filter_input = st.selectbox(
+            "Branch",
+            options=branch_options,
+            index=branch_options.index(current_branch_option),
+            key="workflow_runs_branch_filter",
+            label_visibility="collapsed",
+        )
+    with control_cols[3]:
+        st.markdown('<div class="wf-toolbar-note">User</div>', unsafe_allow_html=True)
+        user_filter_input = st.selectbox(
+            "User",
+            options=user_options,
+            index=user_options.index(current_user_option),
+            key="workflow_runs_user_filter",
+            label_visibility="collapsed",
+        )
+    with control_cols[4]:
+        st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
+        page_size_input = int(
+            st.selectbox(
+                "Rows",
+                options=[10, 20, 50, 100],
+                index=[10, 20, 50, 100].index(int(st.session_state.get("workflow_runs_page_size", 10) or 10)),
+                key="workflow_runs_page_size",
+                label_visibility="collapsed",
+            )
+        )
+
+    second_control_cols = st.columns([0.92, 0.92, 0.6, 0.6, 2.4])
+    with second_control_cols[0]:
+        st.markdown('<div class="wf-toolbar-note">From</div>', unsafe_allow_html=True)
+        date_from_input = st.date_input(
+            "From",
+            value=st.session_state.get("workflow_runs_date_from", None),
+            key="workflow_runs_date_from",
+            label_visibility="collapsed",
+            help="Run modified-date lower bound in JST.",
+        )
+    with second_control_cols[1]:
+        st.markdown('<div class="wf-toolbar-note">To</div>', unsafe_allow_html=True)
+        date_to_input = st.date_input(
+            "To",
+            value=st.session_state.get("workflow_runs_date_to", None),
+            key="workflow_runs_date_to",
+            label_visibility="collapsed",
+            help="Run modified-date upper bound in JST.",
+        )
+    with second_control_cols[2]:
+        st.markdown('<div class="wf-toolbar-note">Summary</div>', unsafe_allow_html=True)
+        require_summary_input = st.toggle(
+            "Summary only",
+            value=bool(st.session_state.get("workflow_runs_summary_filter", False)),
+            key="workflow_runs_summary_filter",
+            label_visibility="collapsed",
+        )
+    with second_control_cols[3]:
+        st.markdown('<div class="wf-toolbar-note">Parquet</div>', unsafe_allow_html=True)
+        require_parquet_input = st.toggle(
+            "Parquet only",
+            value=bool(st.session_state.get("workflow_runs_parquet_filter", False)),
+            key="workflow_runs_parquet_filter",
+            label_visibility="collapsed",
+        )
+    with second_control_cols[4]:
+        st.markdown(
+            '<div class="wf-pager-summary">Pick a catalog, branch, or user directly, or narrow with text and dates.</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    current_filter_signature = (
+        str(run_search_input or ""),
+        str(catalog_filter_input or "All catalogs"),
+        str(branch_filter_input or "All branches"),
+        str(user_filter_input or "All users"),
+        date_from_input,
+        date_to_input,
+        bool(require_summary_input),
+        bool(require_parquet_input),
+        int(page_size_input),
+    )
+    previous_filter_signature = st.session_state.get("workflow_runs_filter_signature")
+    if previous_filter_signature is None:
+        st.session_state["workflow_runs_filter_signature"] = current_filter_signature
+    elif previous_filter_signature != current_filter_signature:
+        st.session_state["workflow_runs_filter_signature"] = current_filter_signature
         st.session_state["workflow_runs_page"] = 1
 
-    run_search = str(st.session_state.get("workflow_runs_search_applied", "")).strip().lower()
-    selected_user_filter = str(st.session_state.get("workflow_runs_user_filter_applied", "All users")).strip()
-    selected_date_from = st.session_state.get("workflow_runs_date_from_applied", None)
-    selected_date_to = st.session_state.get("workflow_runs_date_to_applied", None)
-    require_summary = bool(st.session_state.get("workflow_runs_summary_filter_applied", False))
-    require_parquet = bool(st.session_state.get("workflow_runs_parquet_filter_applied", False))
-    page_size = int(st.session_state.get("workflow_runs_page_size_applied", 10) or 10)
+    run_search = str(run_search_input).strip().lower()
+    selected_catalog_filter = str(catalog_filter_input).strip()
+    selected_branch_filter = str(branch_filter_input).strip()
+    selected_user_filter = str(user_filter_input).strip()
+    selected_date_from = date_from_input
+    selected_date_to = date_to_input
+    require_summary = bool(require_summary_input)
+    require_parquet = bool(require_parquet_input)
+    page_size = int(page_size_input)
 
     if selected_date_from and selected_date_to and selected_date_from > selected_date_to:
         st.warning("`From` date must be earlier than or equal to `To` date.")
@@ -1269,8 +1509,18 @@ def _render_local_runs_section() -> None:
     filtered = runs
     if run_search:
         filtered = [row for row in filtered if run_search in str(row.get("search_blob") or row["name"]).lower()]
+    if selected_catalog_filter not in ("", "All catalogs"):
+        selected_catalog_id = str(catalog_option_id_map.get(selected_catalog_filter) or "").strip()
+        filtered = [row for row in filtered if str(row.get("catalog_id") or "").strip() == selected_catalog_id]
+    if selected_branch_filter not in ("", "All branches"):
+        filtered = [
+            row for row in filtered
+            if str(row.get("branch_label") or row.get("evaluator_target") or "").strip() == selected_branch_filter
+        ]
     if selected_user_filter == "My runs" and current_user_id:
         filtered = [row for row in filtered if str(row.get("requested_by") or "").strip() == current_user_id]
+    elif selected_user_filter == "(Auto)":
+        filtered = [row for row in filtered if not str(row.get("requested_by") or "").strip()]
     elif selected_user_filter not in ("", "All users", "My runs"):
         selected_subject_id = str(user_option_subject_map.get(selected_user_filter) or "").strip()
         filtered = [row for row in filtered if str(row.get("requested_by") or "").strip() == selected_subject_id]
@@ -1311,14 +1561,19 @@ def _render_local_runs_section() -> None:
     visible_runs = filtered[start_idx:start_idx + page_size]
     visible_names = {str(run["name"]) for run in visible_runs}
 
-    pager_cols = st.columns([0.9, 1.2, 4.1])
+    visible_end = min(len(filtered), start_idx + len(visible_runs))
+    st.markdown('<div class="wf-pager-strip">', unsafe_allow_html=True)
+    pager_cols = st.columns([0.65, 1.0, 0.65, 3.2])
     with pager_cols[0]:
-        st.markdown('<div class="wf-toolbar-note">Page</div>', unsafe_allow_html=True)
+        if st.button("‹", key="workflow_runs_page_prev", use_container_width=True, disabled=current_page <= 1):
+            current_page -= 1
+            st.session_state[page_key] = current_page
+            st.rerun()
+    with pager_cols[1]:
         selected_page = st.selectbox(
             "Page",
             options=list(range(1, page_count + 1)),
             index=max(0, current_page - 1),
-            key="workflow_runs_page_select",
             label_visibility="collapsed",
         )
         if selected_page != current_page:
@@ -1327,12 +1582,17 @@ def _render_local_runs_section() -> None:
             start_idx = (current_page - 1) * page_size
             visible_runs = filtered[start_idx:start_idx + page_size]
             visible_names = {str(run["name"]) for run in visible_runs}
-    with pager_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Rows</div>', unsafe_allow_html=True)
-        st.caption(str(len(visible_runs)))
     with pager_cols[2]:
-        st.markdown('<div class="wf-toolbar-note">Total</div>', unsafe_allow_html=True)
-        st.caption(f"{len(filtered)} runs")
+        if st.button("›", key="workflow_runs_page_next", use_container_width=True, disabled=current_page >= page_count):
+            current_page += 1
+            st.session_state[page_key] = current_page
+            st.rerun()
+    with pager_cols[3]:
+        st.markdown(
+            f'<div class="wf-pager-summary"><strong>{start_idx + 1}</strong>–<strong>{visible_end}</strong> of <strong>{len(filtered)}</strong> runs · {page_size} per page</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
 
     _render_local_runs_header()
     next_selected = [name for name in st.session_state.get("workflow_compare_runs", []) if name not in visible_names]

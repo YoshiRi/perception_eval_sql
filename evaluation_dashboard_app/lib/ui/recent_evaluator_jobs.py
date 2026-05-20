@@ -1097,7 +1097,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
     )
 
 
-def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = "Unknown") -> None:
+def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = "(Auto)") -> None:
     """Render one recent evaluator job as a single-row list item."""
     variant = html.escape(job.get("status_variant", "unknown"))
     status = html.escape(_status_display_label(job.get("status", "unknown") or "unknown"))
@@ -1113,7 +1113,7 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
     created_label = html.escape(job.get("created_label", "—"))
     git_sha = str(job.get("git_sha", "") or "").strip()
     source_label = str(job.get("source_label", "") or "—").strip()
-    user_text = html.escape(user_label or "Unknown")
+    user_text = html.escape(user_label or "(Auto)")
     report_url = html.escape(job.get("report_url", "") or "")
     source_url = str(job.get("git_ref_url", "") or job.get("source_url", "") or "").strip()
     git_commit_url = str(job.get("git_commit_url", "") or "").strip()
@@ -1125,12 +1125,19 @@ def _render_recent_evaluator_job_card(job: Dict[str, Any], *, user_label: str = 
         "canceled": '<span class="evj-status-mark evj-status-mark--canceled" aria-hidden="true">×</span>',
     }.get(status_variant, '<span class="evj-status-mark evj-status-mark--unknown" aria-hidden="true">?</span>')
     meta_line = job_id
-    counts = (
-        f'✅ <strong>{int(job.get("success", 0))}</strong> · '
-        f'❌ <strong>{int(job.get("failed", 0))}</strong> · '
-        f'⏹ <strong>{int(job.get("canceled", 0))}</strong> / '
-        f'<strong>{int(job.get("total", 0))}</strong>'
-    )
+    total = int(job.get("total", 0) or 0)
+    success = int(job.get("success", 0) or 0)
+    failed = int(job.get("failed", 0) or 0)
+    canceled = int(job.get("canceled", 0) or 0)
+    if status_variant == "running" and total == 0 and success == 0 and failed == 0 and canceled == 0:
+        counts = "Running..."
+    else:
+        counts = (
+            f'✅ <strong>{success}</strong> · '
+            f'❌ <strong>{failed}</strong> · '
+            f'⏹ <strong>{canceled}</strong> / '
+            f'<strong>{total}</strong>'
+        )
     title_html = f'<a href="{report_url}" target="_blank" rel="noopener noreferrer">{title_text}</a>' if report_url else title_text
     source_html = _format_source_ref_html(source_label, source_url, git_sha, git_commit_url)
     catalog_html = (
@@ -1930,7 +1937,7 @@ def _render_recent_evaluator_jobs_section(
         for job in visible_jobs:
             subject_id = str(job.get("scheduled_by") or "").strip()
             user_info = user_directory.get(subject_id, {})
-            user_label = str(user_info.get("name") or subject_id or "Unknown").strip()
+            user_label = str(user_info.get("name") or subject_id or "(Auto)").strip()
             row_cols = st.columns([9.2, 2.6])
             with row_cols[0]:
                 _render_recent_evaluator_job_card(job, user_label=user_label)
