@@ -146,29 +146,77 @@ def _build_pass_combo_chart(
     return fig
 
 
-def _build_latest_hierarchy_bars(frame: pd.DataFrame, latest_release_name: str) -> go.Figure:
+def _build_defect_hierarchy_bars(
+    frame: pd.DataFrame,
+    *,
+    category_cols: list[str],
+    title: str,
+    color_col: str = "major_category",
+    label_cols: list[str] | None = None,
+    color_map: dict[str, str] | None = None,
+) -> go.Figure:
     bars = frame.copy()
-    bars["major_category"] = bars["major_category"].fillna("Unspecified")
-    bars["mid_category"] = bars["mid_category"].fillna("Unspecified")
-    bars["label"] = bars["major_category"] + " / " + bars["mid_category"]
-    bars = bars.sort_values(["major_category", "pass_rate", "total"], ascending=[True, False, False])
+    for category_col in category_cols:
+        bars[category_col] = bars[category_col].fillna("Unspecified")
+    label_cols = label_cols or category_cols
+    bars["full_label"] = bars[label_cols].astype(str).agg(" / ".join, axis=1)
+    bars["label"] = bars["full_label"]
+    bars = bars.sort_values(category_cols + ["pass_rate", "total"], ascending=[True] * len(category_cols) + [False, False])
     fig = px.bar(
         bars,
-        x="pass_rate",
-        y="label",
-        color="major_category",
-        orientation="h",
-        hover_data=["passed", "total"],
+        x="label",
+        y="pass_rate",
+        color=color_col,
+        color_discrete_map=color_map,
+        hover_data={"label": False, "full_label": True, "passed": True, "total": True},
         text=bars["pass_rate"].map(lambda value: f"{value:.1f}%" if pd.notna(value) else "n/a"),
-        title=f"Defect Evaluation by Category: {latest_release_name}",
+        title=title,
     )
     fig.update_layout(
-        margin=dict(l=20, r=20, t=70, b=20),
-        xaxis_title="Pass Rate (%)",
-        yaxis_title="Major / Mid Category",
-        legend_title_text="Major Category",
+        height=500,
+        margin=dict(l=20, r=20, t=70, b=140),
+        xaxis_title=" / ".join(label.replace("_", " ").title() for label in label_cols),
+        yaxis_title="Pass Rate (%)",
+        legend_title_text=color_col.replace("_", " ").title(),
     )
     fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_xaxes(tickangle=-35, automargin=True)
+    fig.update_yaxes(range=[0, 100], automargin=True)
+    return fig
+
+
+def _build_defect_case_bars(
+    frame: pd.DataFrame,
+    *,
+    ordered_mid_categories: list[str],
+    max_cases: int = 20,
+) -> go.Figure:
+    case_bars = frame.copy()
+    case_bars["minor_category"] = case_bars["minor_category"].fillna(case_bars["case_name"])
+    case_bars["mid_order"] = case_bars["mid_category"].map(
+        {mid_category: idx for idx, mid_category in enumerate(ordered_mid_categories)}
+    )
+    case_bars = case_bars.sort_values(["mid_order", "pass_rate", "total"], ascending=[True, True, False])
+    case_bars = case_bars.head(max_cases)
+    fig = px.bar(
+        case_bars,
+        x="minor_category",
+        y="pass_rate",
+        color="mid_category",
+        hover_data=["major_category", "mid_category", "passed", "total"],
+        text=case_bars["pass_rate"].map(lambda value: f"{value:.1f}%" if pd.notna(value) else "n/a"),
+        title="Case Pass Rates",
+    )
+    fig.update_layout(
+        height=500,
+        margin=dict(l=20, r=20, t=70, b=140),
+        xaxis_title="Case",
+        yaxis_title="Pass Rate (%)",
+        legend_title_text="Mid Category",
+    )
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_xaxes(tickangle=-35, automargin=True, categoryorder="array", categoryarray=case_bars["minor_category"].tolist())
+    fig.update_yaxes(range=[0, 100], automargin=True)
     return fig
 
 
@@ -706,8 +754,9 @@ if not case_df.empty and not pass_entries.empty:
     )
     selected_defect_row = pass_entries.iloc[defect_release_options.index(selected_defect_release)]
     selected_defect_case_df = case_df[case_df["group_key"] == selected_defect_row["group_key"]].copy()
+    defect_category_cols = ["major_category", "mid_category", "minor_category"]
     selected_major_mid = (
-        selected_defect_case_df.groupby(["major_category", "mid_category"], dropna=False)[["passed", "total"]]
+        selected_defect_case_df.groupby(defect_category_cols, dropna=False)[["passed", "total"]]
         .sum()
         .reset_index()
     )
@@ -719,41 +768,81 @@ if not case_df.empty and not pass_entries.empty:
             horizontal=True,
         )
         if latest_view_mode == "Bars":
-            latest_fig = _build_latest_hierarchy_bars(selected_major_mid, selected_defect_row["version"])
+            mid_level = (
+                selected_defect_case_df.groupby(["major_category", "mid_category"], dropna=False)[["passed", "total"]]
+                .sum()
+                .reset_index()
+            )
+            mid_level = _with_pass_rate(mid_level)
+            mid_level = mid_level.sort_values(
+                ["major_category", "mid_category", "pass_rate", "total"],
+                ascending=[True, True, False, False],
+            )
+            ordered_mid_categories = mid_level["mid_category"].tolist()
+            st.plotly_chart(
+                _build_defect_hierarchy_bars(
+                    mid_level,
+                    category_cols=["major_category", "mid_category"],
+                    color_col="major_category",
+                    title="Major / Mid",
+                ),
+                use_container_width=True,
+            )
+            st.plotly_chart(
+                _build_defect_case_bars(
+                    selected_defect_case_df,
+                    ordered_mid_categories=ordered_mid_categories,
+                ),
+                use_container_width=True,
+            )
         elif latest_view_mode == "Treemap":
             latest_fig = px.treemap(
                 selected_major_mid,
-                path=["major_category", "mid_category"],
+                path=defect_category_cols,
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title=f"Defect Evaluation Treemap: {selected_defect_row['version']}",
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+            st.plotly_chart(latest_fig, use_container_width=True)
         elif latest_view_mode == "Icicle":
             latest_fig = px.icicle(
                 selected_major_mid,
-                path=["major_category", "mid_category"],
+                path=defect_category_cols,
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title=f"Defect Evaluation Icicle: {selected_defect_row['version']}",
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+            st.plotly_chart(latest_fig, use_container_width=True)
         else:
             latest_fig = px.sunburst(
                 selected_major_mid,
-                path=["major_category", "mid_category"],
+                path=defect_category_cols,
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title=f"Defect Evaluation Sunburst: {selected_defect_row['version']}",
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
-        st.plotly_chart(latest_fig, use_container_width=True)
+            st.plotly_chart(latest_fig, use_container_width=True)
+
+        case_pass_rate = selected_defect_case_df.copy()
+        case_pass_rate["case"] = case_pass_rate["minor_category"].fillna(case_pass_rate["case_name"])
+        case_pass_rate = case_pass_rate.sort_values(["pass_rate", "total"], ascending=[True, False])
+        with st.expander("Case Pass Rates", expanded=False):
+            st.dataframe(
+                case_pass_rate[
+                    ["major_category", "mid_category", "case", "pass_rate", "passed", "total"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "pass_rate": st.column_config.NumberColumn("pass_rate", format="%.1f%%"),
+                },
+            )
     else:
         st.info("No defect evaluation hierarchy is available yet.")
 else:
@@ -891,7 +980,7 @@ elif not metric_df.empty:
 
 if not case_df.empty:
     with st.expander("Case Explorer", expanded=False):
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
         with filter_col1:
             selected_major = st.selectbox("Major Category", ["All"] + sorted(case_df["major_category"].dropna().unique().tolist()))
         case_filtered = case_df.copy()
@@ -902,6 +991,10 @@ if not case_df.empty:
         if selected_mid != "All":
             case_filtered = case_filtered[case_filtered["mid_category"] == selected_mid]
         with filter_col3:
+            selected_minor = st.selectbox("Minor Category", ["All"] + sorted(case_filtered["minor_category"].dropna().unique().tolist()))
+        if selected_minor != "All":
+            case_filtered = case_filtered[case_filtered["minor_category"] == selected_minor]
+        with filter_col4:
             selected_case = st.selectbox("Case", ["All"] + sorted(case_filtered["case_name"].dropna().unique().tolist()))
         if selected_case != "All":
             case_filtered = case_filtered[case_filtered["case_name"] == selected_case]

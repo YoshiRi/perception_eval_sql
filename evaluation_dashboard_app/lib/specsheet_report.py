@@ -38,6 +38,7 @@ FUTURE_SPECSHEET_METRICS = [
 ]
 TREND_METADATA_FILENAME = "metadata.yaml"
 TREND_SUMMARY_FILENAME = "summary.json"
+FULL_DATASET_EVALUATION_HEADER = "全数データセット評価"
 DEFAULT_TREND_METADATA_TEXT = """tags: [trend]
 pilot_auto_version: "Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)"
 data_count: 99,776+
@@ -347,32 +348,59 @@ def _trend_version_sort_key(pilot_auto_version: str) -> tuple[tuple[int, int, in
     return ((major, minor, patch), ml_model_type, ml_version)
 
 
-def _load_only_full_summary(summary_path: Path) -> list[dict[str, Any]]:
-    summary = load_trend_summary_file(summary_path)
-    data_list: list[dict[str, Any]] = []
-    for block in summary.get("blocks", []):
-        if block.get("header") != "全数データセット評価":
+def _canonical_summary_table_key(table_data: dict[str, Any]) -> str:
+    return json.dumps(table_data, ensure_ascii=False, sort_keys=True, allow_nan=True)
+
+
+def _deduplicate_summary_tables(data_list: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduplicated: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for table_data in data_list:
+        key = _canonical_summary_table_key(table_data)
+        if key in seen:
             continue
-        for tables in block.get("tables", []):
+        seen.add(key)
+        deduplicated.append(table_data)
+    return deduplicated
+
+
+def _extract_full_metric_tables(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    data_list: list[dict[str, Any]] = []
+    blocks = summary.get("blocks", [])
+    if not isinstance(blocks, list):
+        return data_list
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("header") != FULL_DATASET_EVALUATION_HEADER:
+            continue
+        if block.get("mode") not in (None, "metrics"):
+            continue
+        if block.get("evaluation_type") not in (None, "full"):
+            continue
+        block_tables = block.get("tables", [])
+        if not isinstance(block_tables, list):
+            continue
+        for tables in block_tables:
+            if not isinstance(tables, dict):
+                continue
             table_data = tables.get("data", {})
             if isinstance(table_data, dict) and table_data:
                 data_list.append(table_data)
-    return data_list
+    return _deduplicate_summary_tables(data_list)
+
+
+def _load_only_full_summary(summary_path: Path) -> list[dict[str, Any]]:
+    summary = load_trend_summary_file(summary_path)
+    return _extract_full_metric_tables(summary)
 
 
 def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[str, float]:
     """Return averaged full-performance metrics from a full summary payload."""
-    data_list: list[dict[str, Any]] = []
-    for block in summary.get("blocks", []):
-        if block.get("header") != "全数データセット評価":
-            continue
-        for table in block.get("tables", []):
-            table_data = table.get("data", {})
-            if isinstance(table_data, dict) and table_data:
-                data_list.append(table_data)
+    data_list = _extract_full_metric_tables(summary)
 
     if len(data_list) != 1:
-        raise ValueError(f"Expected exactly one full summary table, but got {len(data_list)}")
+        raise ValueError(f"Expected exactly one distinct full summary table, but got {len(data_list)}")
     metrics = data_list[0]
 
     def _avg(metric_name: str) -> float:
@@ -406,24 +434,37 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     for major_category, mid_categories in summary.items():
         if not isinstance(mid_categories, dict):
             continue
-        for mid_category, cases in mid_categories.items():
-            if not isinstance(cases, dict):
+        for mid_category, minor_or_cases in mid_categories.items():
+            if not isinstance(minor_or_cases, dict):
                 continue
-            for case_name, result in cases.items():
-                if not isinstance(result, dict):
+            for minor_or_case_name, result_or_cases in minor_or_cases.items():
+                if not isinstance(result_or_cases, dict):
                     continue
-                passed = int(result.get("passed", 0) or 0)
-                total = int(result.get("total", 0) or 0)
-                rows.append(
-                    {
-                        "major_category": major_category,
-                        "mid_category": mid_category,
-                        "case_name": case_name,
-                        "passed": passed,
-                        "total": total,
-                        "pass_rate": (passed / total * 100.0) if total > 0 else None,
-                    }
-                )
+                if {"passed", "total"}.intersection(result_or_cases.keys()):
+                    case_items = [(minor_or_case_name, result_or_cases)]
+                    minor_category = minor_or_case_name
+                else:
+                    case_items = [
+                        (case_name, result)
+                        for case_name, result in result_or_cases.items()
+                        if isinstance(result, dict)
+                    ]
+                    minor_category = minor_or_case_name
+
+                for case_name, result in case_items:
+                    passed = int(result.get("passed", 0) or 0)
+                    total = int(result.get("total", 0) or 0)
+                    rows.append(
+                        {
+                            "major_category": major_category,
+                            "mid_category": mid_category,
+                            "minor_category": minor_category,
+                            "case_name": case_name,
+                            "passed": passed,
+                            "total": total,
+                            "pass_rate": (passed / total * 100.0) if total > 0 else None,
+                        }
+                    )
     return rows
 
 
@@ -456,7 +497,8 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
         summary = row.get("summary") or []
         if len(summary) != 1:
             raise ValueError(
-                f"Expected exactly one summary block for version {row.get('version')}, but got {len(summary)}"
+                f"Expected exactly one distinct summary block for version {row.get('version')}, "
+                f"but got {len(summary)}"
             )
         metrics = summary[0]
 
@@ -486,7 +528,66 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
 
 
 def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]]:
-    return []
+    trend_data_rows: list[dict[str, Any]] = []
+    for metadata_path in metadata_list:
+        metadata = load_trend_metadata_file(metadata_path)
+        if "trend" not in [str(tag).strip() for tag in metadata.get("tags", [])]:
+            continue
+        summary_path = Path(metadata_path).parent / TREND_SUMMARY_FILENAME
+        if not summary_path.exists():
+            continue
+        summary = load_trend_summary_file(summary_path)
+        if classify_trend_summary(summary) != "devops":
+            continue
+
+        rows = extract_devops_case_rows(summary)
+        if not rows:
+            continue
+        overall_passed = sum(int(row["passed"]) for row in rows)
+        overall_total = sum(int(row["total"]) for row in rows)
+        trend_data_rows.append(
+            {
+                "version": metadata.get("pilot_auto_version"),
+                "data_count": metadata.get("data_count"),
+                "description": metadata.get("description"),
+                "date": metadata.get("date"),
+                "overall_pass_rate": (overall_passed / overall_total * 100.0)
+                if overall_total > 0
+                else 0.0,
+                "scenario_count": overall_total,
+                "devops_data": summary,
+            }
+        )
+
+    trend_data_rows.sort(key=lambda row: _trend_version_sort_key(str(row.get("version") or "")))
+    return trend_data_rows
+
+
+def _add_devops_detail_trend_rates(devops_trend_data: Sequence[dict[str, Any]]) -> list[str]:
+    cases: set[str] = set()
+    for row in devops_trend_data:
+        devops_data = row.get("devops_data", {})
+        if not isinstance(devops_data, dict):
+            continue
+        for mid_categories in devops_data.values():
+            if not isinstance(mid_categories, dict):
+                continue
+            for sub_category, sub_categories in mid_categories.items():
+                if not isinstance(sub_categories, dict):
+                    continue
+                total_passed = sum(
+                    int(result.get("passed", 0) or 0)
+                    for result in sub_categories.values()
+                    if isinstance(result, dict)
+                )
+                total = sum(
+                    int(result.get("total", 0) or 0)
+                    for result in sub_categories.values()
+                    if isinstance(result, dict)
+                )
+                row[sub_category] = total_passed / total * 100.0 if total > 0 else 0.0
+                cases.add(str(sub_category))
+    return sorted(cases)
 
 
 def _build_trend_context(
@@ -507,6 +608,10 @@ def _build_trend_context(
     try:
         from perception_catalog_analyzer.plot.map_trend import generate_map_trend_plot
         from perception_catalog_analyzer.plot.prediction_trend import generate_prediction_trend_plot
+        from perception_catalog_analyzer.plot.devops_trend import (
+            generate_devops_trend_detail_plot,
+            generate_devops_trend_plot,
+        )
     except ImportError as exc:
         raise RuntimeError(
             "perception_catalog_analyzer trend support is unavailable. "
@@ -525,6 +630,16 @@ def _build_trend_context(
 
     devops_trend_data = load_devops_trend_data(list(metadata_list))
     devops_trend_plot_path = output_dir / "devops_trend.png"
+    if devops_trend_data:
+        _notify(progress_callback, "Rendering pass-rate trend plots")
+        generate_devops_trend_plot(devops_trend_data, devops_trend_plot_path)
+        detail_cases = _add_devops_detail_trend_rates(devops_trend_data)
+        if detail_cases:
+            generate_devops_trend_detail_plot(
+                devops_trend_data,
+                detail_cases,
+                devops_trend_plot_path,
+            )
 
     return {
         "performance_trend_data": performance_trend_data,
