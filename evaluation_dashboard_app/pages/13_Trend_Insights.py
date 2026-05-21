@@ -160,7 +160,7 @@ def _build_latest_hierarchy_bars(frame: pd.DataFrame, latest_release_name: str) 
         orientation="h",
         hover_data=["passed", "total"],
         text=bars["pass_rate"].map(lambda value: f"{value:.1f}%" if pd.notna(value) else "n/a"),
-        title=f"Latest Release Pass-Rate Hierarchy: {latest_release_name}",
+        title=f"Defect Evaluation by Category: {latest_release_name}",
     )
     fig.update_layout(
         margin=dict(l=20, r=20, t=70, b=20),
@@ -197,6 +197,8 @@ def _build_metric_timeline_heatmap(
         margin=dict(l=20, r=20, t=70, b=20),
         coloraxis_colorbar=dict(title=color_title),
     )
+    fig.update_xaxes(tickangle=-30, automargin=True)
+    fig.update_yaxes(automargin=True)
     return fig
 
 
@@ -216,29 +218,45 @@ def _build_metric_label_lines(
         title=title,
     )
     fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Label")
-    fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes)
+    fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes, tickangle=-30, automargin=True)
     return fig
 
 
-def _build_minade_horizon_heatmaps(frame: pd.DataFrame) -> list[tuple[str, go.Figure]]:
-    figures: list[tuple[str, go.Figure]] = []
-    for metric_name in ("minADE@1s", "minADE@3s", "minADE@5s"):
-        metric_df = frame[frame["metric_name"] == metric_name].copy()
-        if metric_df.empty:
-            continue
-        fig = _build_metric_timeline_heatmap(
-            metric_df,
-            value_col="value",
-            title=f"{metric_name} Timeline Heatmap",
-            color_title=metric_name,
+def _horizon_metric_sort_key(metric_name: str) -> tuple[float, str]:
+    horizon_text = str(metric_name).rsplit("@", 1)[-1].removesuffix("s")
+    try:
+        return float(horizon_text), str(metric_name)
+    except ValueError:
+        return float("inf"), str(metric_name)
+
+
+def _horizon_metric_label(metric_name: str) -> str:
+    return str(metric_name).rsplit("@", 1)[-1] if "@" in str(metric_name) else str(metric_name)
+
+
+def _available_prediction_metric_groups(frame: pd.DataFrame) -> dict[str, tuple[str, ...]]:
+    groups: dict[str, tuple[str, ...]] = {}
+    metric_series = frame["metric_name"].dropna().astype(str)
+    for metric_family in ("minADE", "minFDE"):
+        metric_names = sorted(
+            metric_series[metric_series.str.startswith(f"{metric_family}@")].unique().tolist(),
+            key=_horizon_metric_sort_key,
         )
-        figures.append((metric_name, fig))
-    return figures
+        if metric_names:
+            groups[metric_family] = tuple(metric_names)
+    return groups
 
 
-def _build_minade_label_profile(frame: pd.DataFrame, *, selected_label: str, ordered_axes: list[str]) -> go.Figure:
+def _build_prediction_label_profile(
+    frame: pd.DataFrame,
+    *,
+    selected_label: str,
+    metric_family: str,
+    metric_names: tuple[str, ...],
+    ordered_axes: list[str],
+) -> go.Figure:
     profile_df = frame[
-        (frame["metric_name"].isin(["minADE@1s", "minADE@3s", "minADE@5s"]))
+        (frame["metric_name"].isin(metric_names))
         & (frame["label_name"] == selected_label)
     ].copy()
     fig = px.line(
@@ -248,10 +266,53 @@ def _build_minade_label_profile(frame: pd.DataFrame, *, selected_label: str, ord
         color="metric_name",
         markers=True,
         hover_data=["version", "date", "release_name"],
-        title=f"{selected_label} minADE Horizon Profile",
+        title=f"{selected_label} {metric_family} Horizon Profile",
     )
     fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Horizon")
-    fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes)
+    fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes, tickangle=-30, automargin=True)
+    return fig
+
+
+def _build_prediction_release_label_profile(
+    frame: pd.DataFrame,
+    *,
+    metric_family: str,
+    selected_release_axis: str,
+    selected_labels: list[str],
+    metric_names: tuple[str, ...],
+) -> go.Figure | None:
+    release_df = frame[
+        (frame["release_axis"] == selected_release_axis)
+        & (frame["label_name"].isin(selected_labels))
+        & (frame["metric_name"].isin(metric_names))
+    ].copy()
+    if release_df.empty:
+        return None
+
+    release_df["horizon"] = release_df["metric_name"].map(_horizon_metric_label)
+    release_df["horizon_sort"] = release_df["metric_name"].map(lambda name: _horizon_metric_sort_key(str(name))[0])
+    release_df = release_df.sort_values(["label_name", "horizon_sort"])
+    fig = px.line(
+        release_df,
+        x="horizon",
+        y="value",
+        color="label_name",
+        markers=True,
+        category_orders={"horizon": [_horizon_metric_label(metric_name) for metric_name in metric_names]},
+        hover_data=["version", "date", "release_name"],
+        title=f"{metric_family} by Label and Horizon",
+    )
+    fig.update_layout(
+        height=460,
+        margin=dict(l=20, r=20, t=70, b=30),
+        legend_title_text="Label",
+        xaxis_title="Prediction Horizon",
+        yaxis_title=f"{metric_family} (m)",
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
     return fig
 
 
@@ -374,13 +435,10 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
 render_page_hero(
     kicker="Release Analytics",
     title="Trend Insights",
-    description="Inspect grouped release trend data the same way the catalog analyzer models it: one release group with sibling full, usecase, and devops job folders under the same topic.",
+    description="Release-level trends across grouped full, usecase, and devops runs.",
 )
 
-section_header(
-    "Release Inventory",
-    "Each row below is one grouped release entry. When full, usecase, and devops sibling folders exist under the same combined PDF group and topic, they are merged into one release view.",
-)
+section_header("Release Inventory")
 
 groups = discover_trend_release_groups()
 if not groups:
@@ -401,7 +459,6 @@ top4.metric("Groups with DevOps", f"{int(release_df['devops_job_id'].notna().sum
 top5.metric("Latest Date", release_df.sort_values("date_sort")["date"].iloc[-1] if not release_df.empty else "n/a")
 
 inventory_cols = [
-    "release_display",
     "version",
     "date",
     "description",
@@ -421,10 +478,7 @@ st.dataframe(
     hide_index=True,
 )
 
-section_header(
-    "Performance Trend",
-    "Full-performance summaries are now plotted one release group at a time, even when they arrived with sibling usecase and devops folders.",
-)
+section_header("mAP Trend")
 
 perf_entries = release_df[release_df["full_job_id"].notna()].sort_values(
     ["date_sort", "version", "release_name"],
@@ -438,124 +492,130 @@ prediction_cols = [
     "minFDE@3s",
     "minFDE@5s",
 ]
+if not perf_entries.empty and perf_entries["mAP"].notna().any():
+    latest_map_row = perf_entries.dropna(subset=["mAP"]).iloc[-1]
+    map_card_col1, map_card_col2 = st.columns(2)
+    map_card_col1.metric(
+        "Latest mAP",
+        f"{latest_map_row['mAP']:.3f}" if pd.notna(latest_map_row["mAP"]) else "n/a",
+    )
+    map_card_col2.metric(
+        "Latest Data Count",
+        f"{int(latest_map_row['data_count_num']):,}" if pd.notna(latest_map_row["data_count_num"]) else "n/a",
+    )
+    fig = go.Figure()
+    fig.add_bar(
+        x=perf_entries["version"],
+        y=perf_entries["data_count_num"],
+        name="Data Count",
+        marker_color="#f4a7a7",
+        opacity=0.5,
+        yaxis="y2",
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=perf_entries["version"],
+            y=perf_entries["mAP"],
+            name="mAP",
+            mode="lines+markers",
+            line=dict(color="#0f766e", width=3),
+            customdata=perf_entries[["release_name", "date", "data_count"]].to_numpy(),
+            hovertemplate="<b>%{x}</b><br>mAP: %{y:.3f}<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title="mAP Trend",
+        xaxis_title="Pilot.Auto Version",
+        yaxis_title="mAP",
+        yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
+        height=460,
+        legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
+        margin=dict(l=20, r=20, t=90, b=20),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No grouped mAP trend entries are available yet.")
+
+section_header("Prediction Trend")
 
 if not perf_entries.empty and perf_entries[prediction_cols].notna().any().any():
     pred_card_col1, pred_card_col2, pred_card_col3 = st.columns(3)
-    latest_pred_row = perf_entries.dropna(subset=["minADE@3s", "minFDE@5s"], how="all").iloc[-1]
+    latest_pred_row = perf_entries.dropna(subset=prediction_cols, how="all").iloc[-1]
+    latest_minade_mean = pd.to_numeric(latest_pred_row[["minADE@1s", "minADE@3s", "minADE@5s"]], errors="coerce").mean()
+    latest_minfde_mean = pd.to_numeric(latest_pred_row[["minFDE@1s", "minFDE@3s", "minFDE@5s"]], errors="coerce").mean()
     pred_card_col1.metric(
-        "Latest minADE@3s",
-        f"{latest_pred_row['minADE@3s']:.2f} m" if pd.notna(latest_pred_row["minADE@3s"]) else "n/a",
+        "Mean minADE",
+        f"{latest_minade_mean:.2f} m" if pd.notna(latest_minade_mean) else "n/a",
     )
     pred_card_col2.metric(
-        "Latest minFDE@5s",
-        f"{latest_pred_row['minFDE@5s']:.2f} m" if pd.notna(latest_pred_row["minFDE@5s"]) else "n/a",
+        "Mean minFDE",
+        f"{latest_minfde_mean:.2f} m" if pd.notna(latest_minfde_mean) else "n/a",
     )
     pred_card_col3.metric(
         "Latest Data Count",
         f"{int(latest_pred_row['data_count_num']):,}" if pd.notna(latest_pred_row["data_count_num"]) else "n/a",
     )
-
-perf_col1, perf_col2 = st.columns([1.1, 1.0])
-with perf_col1:
-    if not perf_entries.empty and perf_entries["mAP"].notna().any():
-        fig = go.Figure()
-        fig.add_bar(
-            x=perf_entries["version"],
-            y=perf_entries["data_count_num"],
-            name="Data Count",
-            marker_color="#f4a7a7",
-            opacity=0.5,
-            yaxis="y2",
-        )
-        fig.add_trace(
+    pred_story = perf_entries[["version", "date", "description", "release_name", "data_count", "data_count_num"] + prediction_cols].copy()
+    pred_fig = go.Figure()
+    pred_fig.add_bar(
+        x=pred_story["version"],
+        y=pred_story["data_count_num"],
+        name="Data Count",
+        marker_color="#fbbf24",
+        opacity=0.20,
+        yaxis="y2",
+        hovertemplate="<b>%{x}</b><br>Data Count: %{y:,}<extra></extra>",
+    )
+    series_specs = [
+        ("minADE@1s", "#0f766e", "solid"),
+        ("minADE@3s", "#14b8a6", "solid"),
+        ("minADE@5s", "#99f6e4", "solid"),
+        ("minFDE@1s", "#1d4ed8", "dot"),
+        ("minFDE@3s", "#60a5fa", "dot"),
+        ("minFDE@5s", "#bfdbfe", "dot"),
+    ]
+    for metric_name, color, dash in series_specs:
+        pred_fig.add_trace(
             go.Scatter(
-                x=perf_entries["version"],
-                y=perf_entries["mAP"],
-                name="mAP",
+                x=pred_story["version"],
+                y=pred_story[metric_name],
+                name=metric_name,
                 mode="lines+markers",
-                line=dict(color="#0f766e", width=3),
-                customdata=perf_entries[["release_name", "date", "data_count"]].to_numpy(),
-                hovertemplate="<b>%{x}</b><br>mAP: %{y:.3f}<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>",
+                line=dict(color=color, width=3 if metric_name.endswith("@3s") else 2, dash=dash),
+                marker=dict(size=8),
+                customdata=pred_story[["date", "release_name", "data_count"]].to_numpy(),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    + metric_name
+                    + ": %{y:.2f} m<br>Date: %{customdata[0]}<br>Release: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>"
+                ),
             )
         )
-        fig.update_layout(
-            title="mAP vs Data Count",
-            xaxis_title="Pilot.Auto Version",
-            yaxis_title="mAP",
-            yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
-            height=520,
-            legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
-            margin=dict(l=20, r=20, t=90, b=20),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No grouped full-performance trend entries are available yet.")
+    pred_fig.update_layout(
+        title="Prediction Error Trend",
+        xaxis_title="Pilot.Auto Version",
+        yaxis_title="Prediction Error (m)",
+        yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
+        height=480,
+        legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
+        margin=dict(l=20, r=20, t=100, b=20),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+    )
+    pred_fig.update_xaxes(showgrid=False)
+    pred_fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
+    st.plotly_chart(pred_fig, use_container_width=True)
+else:
+    st.info("No usable grouped prediction trend values are available yet.")
 
-with perf_col2:
-    if not perf_entries.empty and perf_entries[prediction_cols].notna().any().any():
-        pred_story = perf_entries[["version", "date", "description", "release_name", "data_count", "data_count_num"] + prediction_cols].copy()
-        pred_fig = go.Figure()
-        pred_fig.add_bar(
-            x=pred_story["version"],
-            y=pred_story["data_count_num"],
-            name="Data Count",
-            marker_color="#fbbf24",
-            opacity=0.20,
-            yaxis="y2",
-            hovertemplate="<b>%{x}</b><br>Data Count: %{y:,}<extra></extra>",
-        )
-        series_specs = [
-            ("minADE@1s", "#0f766e", "solid"),
-            ("minADE@3s", "#14b8a6", "solid"),
-            ("minADE@5s", "#99f6e4", "solid"),
-            ("minFDE@1s", "#1d4ed8", "dot"),
-            ("minFDE@3s", "#60a5fa", "dot"),
-            ("minFDE@5s", "#bfdbfe", "dot"),
-        ]
-        for metric_name, color, dash in series_specs:
-            pred_fig.add_trace(
-                go.Scatter(
-                    x=pred_story["version"],
-                    y=pred_story[metric_name],
-                    name=metric_name,
-                    mode="lines+markers",
-                    line=dict(color=color, width=3 if metric_name.endswith("@3s") else 2, dash=dash),
-                    marker=dict(size=8),
-                    customdata=pred_story[["date", "release_name", "data_count"]].to_numpy(),
-                    hovertemplate=(
-                        "<b>%{x}</b><br>"
-                        + metric_name
-                        + ": %{y:.2f} m<br>Date: %{customdata[0]}<br>Release: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>"
-                    ),
-                )
-            )
-        pred_fig.update_layout(
-            title="Prediction Quality Story: All Horizons with Data Count",
-            xaxis_title="Pilot.Auto Version",
-            yaxis_title="Prediction Error (m)",
-            yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
-            height=520,
-            legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
-            margin=dict(l=20, r=20, t=100, b=20),
-            plot_bgcolor="#ffffff",
-            paper_bgcolor="#ffffff",
-        )
-        pred_fig.update_xaxes(showgrid=False)
-        pred_fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
-        st.plotly_chart(pred_fig, use_container_width=True)
-        st.caption(
-            "Each point is one grouped release. The chart now keeps sibling full/usecase/devops folders together so the performance story stays release-centric."
-        )
-    else:
-        st.info("No usable grouped prediction trend values are available yet.")
+atlas_df = pd.DataFrame()
+release_manifest = pd.DataFrame()
+ordered_release_axes: list[str] = []
 
 if not metric_df.empty:
     atlas_df = metric_df[metric_df["block_header"] == "全数データセット評価"].copy()
     atlas_df = atlas_df.sort_values(["date_sort", "version", "release_name"], ascending=[True, True, True])
     atlas_df["release_axis"] = atlas_df["version"].astype(str) + " | " + atlas_df["date"].astype(str)
-    latest_group_key = perf_entries.iloc[-1]["group_key"] if not perf_entries.empty else None
-    previous_group_key = perf_entries.iloc[-2]["group_key"] if len(perf_entries) >= 2 else None
-    latest_release_name = perf_entries.iloc[-1]["version"] if not perf_entries.empty else ""
     release_manifest = (
         atlas_df[["group_key", "release_axis", "version", "date", "release_name", "release_display"]]
         .drop_duplicates()
@@ -563,10 +623,7 @@ if not metric_df.empty:
     )
     ordered_release_axes = release_manifest["release_axis"].tolist()
 
-section_header(
-    "Pass Rate Trend",
-    "DevOps-style nested summaries are also grouped by release, so one pass-rate point represents the same release group as the matching performance metrics.",
-)
+section_header("Pass Rate Trend")
 
 pass_entries = release_df[release_df["devops_job_id"].notna()].sort_values(
     ["date_sort", "version", "release_name"],
@@ -636,276 +693,262 @@ if not mid_summary.empty:
         ),
         use_container_width=True,
     )
-    st.caption(
-        "These three charts share the same grouped DevOps source, version order, scenario-count backdrop, and pass-rate scale so you can compare overall, major-category, and mid-category movement directly."
+
+section_header("Defect Evaluation")
+
+if not case_df.empty and not pass_entries.empty:
+    defect_release_options = pass_entries["release_display"].tolist()
+    selected_defect_release = st.selectbox(
+        "Version",
+        defect_release_options,
+        index=len(defect_release_options) - 1,
+        key="defect_evaluation_release",
     )
-
-section_header(
-    "Deep Dive Explorer",
-    "Use this final section when you want to inspect the latest release state, compare label-level metric atlases against a baseline, or browse grouped raw details.",
-)
-
-if not case_df.empty:
-    latest_devops_group = pass_entries.iloc[-1]["group_key"] if not pass_entries.empty else None
-    latest_case_df = case_df[case_df["group_key"] == latest_devops_group].copy()
-    latest_major_mid = (
-        latest_case_df.groupby(["major_category", "mid_category"], dropna=False)[["passed", "total"]]
+    selected_defect_row = pass_entries.iloc[defect_release_options.index(selected_defect_release)]
+    selected_defect_case_df = case_df[case_df["group_key"] == selected_defect_row["group_key"]].copy()
+    selected_major_mid = (
+        selected_defect_case_df.groupby(["major_category", "mid_category"], dropna=False)[["passed", "total"]]
         .sum()
         .reset_index()
     )
-    latest_major_mid = _with_pass_rate(latest_major_mid)
-    st.markdown("**Latest Release Snapshot**")
-    if not latest_major_mid.empty:
+    selected_major_mid = _with_pass_rate(selected_major_mid)
+    if not selected_major_mid.empty:
         latest_view_mode = st.radio(
-            "Latest Snapshot View",
+            "View",
             ["Bars", "Treemap", "Icicle", "Sunburst"],
             horizontal=True,
         )
         if latest_view_mode == "Bars":
-            latest_fig = _build_latest_hierarchy_bars(latest_major_mid, pass_entries.iloc[-1]["version"])
+            latest_fig = _build_latest_hierarchy_bars(selected_major_mid, selected_defect_row["version"])
         elif latest_view_mode == "Treemap":
             latest_fig = px.treemap(
-                latest_major_mid,
+                selected_major_mid,
                 path=["major_category", "mid_category"],
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title=f"Latest Release Pass-Rate Treemap: {pass_entries.iloc[-1]['version']}",
+                title=f"Defect Evaluation Treemap: {selected_defect_row['version']}",
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
         elif latest_view_mode == "Icicle":
             latest_fig = px.icicle(
-                latest_major_mid,
+                selected_major_mid,
                 path=["major_category", "mid_category"],
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title=f"Latest Release Pass-Rate Icicle: {pass_entries.iloc[-1]['version']}",
+                title=f"Defect Evaluation Icicle: {selected_defect_row['version']}",
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
         else:
             latest_fig = px.sunburst(
-                latest_major_mid,
+                selected_major_mid,
                 path=["major_category", "mid_category"],
                 values="total",
                 color="pass_rate",
                 color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
                 range_color=(0, 100),
-                title=f"Latest Release Pass-Rate Sunburst: {pass_entries.iloc[-1]['version']}",
+                title=f"Defect Evaluation Sunburst: {selected_defect_row['version']}",
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
         st.plotly_chart(latest_fig, use_container_width=True)
     else:
-        st.info("No latest release pass-rate hierarchy is available yet.")
+        st.info("No defect evaluation hierarchy is available yet.")
+else:
+    st.info("No defect evaluation summaries are available yet.")
 
-if not metric_df.empty:
-    st.markdown("**Metric Atlas Explorer**")
-    explorer_note_col1, explorer_note_col2 = st.columns([1.2, 1.0])
-    with explorer_note_col1:
-        st.caption(
-            "Choose one metric and inspect how each label evolved across releases. "
-            "Use the baseline comparison modes for fast regression checks, and use the combined minADE view when you want to compare prediction horizons together."
+if not atlas_df.empty:
+    release_options = release_manifest["release_axis"].tolist()
+    section_header("Release Details")
+    selected_detail_release = st.selectbox(
+        "Version",
+        release_options,
+        index=len(release_options) - 1,
+        key="deep_dive_release_detail",
+    )
+    horizon_metric_groups = _available_prediction_metric_groups(atlas_df)
+    available_horizon_families = [metric_family for metric_family in ("minADE", "minFDE") if metric_family in horizon_metric_groups]
+    horizon_labels = sorted(
+        atlas_df[
+            atlas_df["metric_name"].isin(
+                [metric_name for metric_names in horizon_metric_groups.values() for metric_name in metric_names]
+            )
+        ]["label_name"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+
+    selected_atlas_group_key = release_manifest.loc[
+        release_manifest["release_axis"] == selected_detail_release,
+        "group_key",
+    ].iloc[0]
+    latest_matrix = atlas_df[atlas_df["group_key"] == selected_atlas_group_key].pivot_table(
+        index="metric_name",
+        columns="label_name",
+        values="value",
+        aggfunc="first",
+    ).dropna(how="all")
+    if not latest_matrix.empty:
+        latest_min = latest_matrix.min(axis=1)
+        latest_range = (latest_matrix.max(axis=1) - latest_min).replace(0, 1)
+        latest_norm = latest_matrix.sub(latest_min, axis=0).div(latest_range, axis=0)
+        latest_atlas_fig = px.imshow(
+            latest_norm,
+            aspect="auto",
+            color_continuous_scale=["#f8fafc", "#8dd3c7", "#0f766e"],
+            text_auto=".2f",
         )
-    with explorer_note_col2:
-        atlas_mode = st.radio(
-            "Atlas Explorer Mode",
-            ["Latest Atlas", "Latest vs Previous", "Timeline Heatmap", "Label Trend Lines", "Combined minADE Explorer", "Chosen Baseline Delta"],
-            horizontal=True,
+        latest_atlas_fig.update_traces(
+            text=latest_matrix.round(2).astype(str),
+            hovertemplate="Metric: %{y}<br>Label: %{x}<br>Value: %{text}<extra></extra>",
         )
+        latest_atlas_fig.update_layout(
+            title="Metric Atlas",
+            margin=dict(l=20, r=20, t=70, b=20),
+            coloraxis_colorbar=dict(title="Relative"),
+        )
+        latest_atlas_fig.update_xaxes(automargin=True)
+        latest_atlas_fig.update_yaxes(automargin=True)
+        st.plotly_chart(latest_atlas_fig, use_container_width=True)
+    else:
+        st.info("No metric atlas is available for the selected release yet.")
+
+    if available_horizon_families and horizon_labels:
+        release_detail_cols = st.columns(len(available_horizon_families))
+        for col, metric_family in zip(release_detail_cols, available_horizon_families):
+            metric_names = horizon_metric_groups[metric_family]
+            family_df = atlas_df[atlas_df["metric_name"].isin(metric_names)].copy()
+            release_fig = _build_prediction_release_label_profile(
+                family_df,
+                metric_family=metric_family,
+                selected_release_axis=selected_detail_release,
+                selected_labels=horizon_labels,
+                metric_names=metric_names,
+            )
+            with col:
+                if release_fig is not None:
+                    st.plotly_chart(release_fig, use_container_width=True)
+                else:
+                    st.info(f"No {metric_family} horizon values are available for the selected release.")
+
+    section_header("Trend Details")
+    if available_horizon_families and horizon_labels:
+        selected_horizon_label = st.selectbox(
+            "Label Trend Focus",
+            horizon_labels,
+            key="prediction_horizon_label_focus",
+        )
+        trend_profile_cols = st.columns(len(available_horizon_families))
+        for col, metric_family in zip(trend_profile_cols, available_horizon_families):
+            metric_names = horizon_metric_groups[metric_family]
+            family_df = atlas_df[atlas_df["metric_name"].isin(metric_names)].copy()
+            profile_fig = _build_prediction_label_profile(
+                family_df,
+                selected_label=selected_horizon_label,
+                metric_family=metric_family,
+                metric_names=metric_names,
+                ordered_axes=ordered_release_axes,
+            )
+            with col:
+                st.plotly_chart(profile_fig, use_container_width=True)
+    else:
+        st.info("No minADE/minFDE horizon trend data is available yet.")
+
+    trend_mode = st.radio(
+        "Trend View",
+        ["Timeline Heatmap", "Label Trend Lines"],
+        horizontal=True,
+        key="detailed_metric_trend_view",
+    )
 
     metric_options = sorted(atlas_df["metric_name"].dropna().unique().tolist())
-    atlas_control_col1, atlas_control_col2 = st.columns([1.0, 1.0])
-    with atlas_control_col1:
-        selected_metric = st.selectbox("Metric", metric_options)
-    with atlas_control_col2:
-        baseline_labels = release_manifest["release_axis"].tolist()
-        default_baseline_index = max(0, len(baseline_labels) - 2)
-        selected_baseline_axis = st.selectbox(
-            "Baseline Release",
-            baseline_labels,
-            index=default_baseline_index if baseline_labels else 0,
-        )
+    selected_metric = st.selectbox("Metric", metric_options, key="detailed_metric_trend_metric")
 
     metric_trend_df = atlas_df[atlas_df["metric_name"] == selected_metric].copy()
     if not metric_trend_df.empty:
-        latest_metric_df = metric_trend_df[metric_trend_df["group_key"] == latest_group_key].copy()
-        baseline_metric_df = metric_trend_df[metric_trend_df["release_axis"] == selected_baseline_axis].copy()
-
-        if atlas_mode == "Latest Atlas":
-            latest_matrix = atlas_df[atlas_df["group_key"] == latest_group_key].pivot_table(
-                index="metric_name",
-                columns="label_name",
-                values="value",
-                aggfunc="first",
-            ).dropna(how="all")
-            if not latest_matrix.empty:
-                latest_min = latest_matrix.min(axis=1)
-                latest_range = (latest_matrix.max(axis=1) - latest_min).replace(0, 1)
-                latest_norm = latest_matrix.sub(latest_min, axis=0).div(latest_range, axis=0)
-                explorer_fig = px.imshow(
-                    latest_norm,
-                    aspect="auto",
-                    color_continuous_scale=["#f8fafc", "#8dd3c7", "#0f766e"],
-                    text_auto=".2f",
-                )
-                explorer_fig.update_traces(
-                    text=latest_matrix.round(2).astype(str),
-                    hovertemplate="Metric: %{y}<br>Label: %{x}<br>Value: %{text}<extra></extra>",
-                )
-                explorer_fig.update_layout(
-                    title=f"Latest Release Metric Atlas: {latest_release_name}",
-                    margin=dict(l=20, r=20, t=70, b=20),
-                    coloraxis_colorbar=dict(title="Relative"),
-                )
-            else:
-                explorer_fig = None
-                st.info("No latest metric atlas is available yet.")
-        elif atlas_mode == "Latest vs Previous":
-            if latest_group_key is not None and previous_group_key is not None:
-                latest_matrix = atlas_df[atlas_df["group_key"] == latest_group_key].pivot_table(
-                    index="metric_name",
-                    columns="label_name",
-                    values="value",
-                    aggfunc="first",
-                )
-                previous_matrix = atlas_df[atlas_df["group_key"] == previous_group_key].pivot_table(
-                    index="metric_name",
-                    columns="label_name",
-                    values="value",
-                    aggfunc="first",
-                )
-                delta_matrix = latest_matrix.subtract(previous_matrix, fill_value=pd.NA).dropna(how="all")
-                if not delta_matrix.empty:
-                    explorer_fig = px.imshow(
-                        delta_matrix,
-                        aspect="auto",
-                        color_continuous_scale=["#7f1d1d", "#f8fafc", "#14532d"],
-                        color_continuous_midpoint=0,
-                        text_auto=".2f",
-                    )
-                    explorer_fig.update_layout(
-                        title=f"Release-over-Release Metric Delta: {latest_release_name}",
-                        margin=dict(l=20, r=20, t=70, b=20),
-                        coloraxis_colorbar=dict(title="Delta"),
-                    )
-                else:
-                    explorer_fig = None
-                    st.info("No previous release is available for metric delta yet.")
-            else:
-                explorer_fig = None
-                st.info("Metric delta becomes available after at least two grouped full releases exist.")
-        elif atlas_mode == "Timeline Heatmap":
+        if trend_mode == "Timeline Heatmap":
             explorer_fig = _build_metric_timeline_heatmap(
                 metric_trend_df,
                 value_col="value",
                 title=f"{selected_metric} Timeline Heatmap by Label",
                 color_title=selected_metric,
             )
-        elif atlas_mode == "Label Trend Lines":
+        else:
             explorer_fig = _build_metric_label_lines(
                 metric_trend_df,
                 title=f"{selected_metric} Label Trend Lines",
                 ordered_axes=ordered_release_axes,
             )
-        elif atlas_mode == "Combined minADE Explorer":
-            minade_metrics = {"minADE@1s", "minADE@3s", "minADE@5s"}
-            minade_df = atlas_df[atlas_df["metric_name"].isin(minade_metrics)].copy()
-            if minade_df.empty:
-                st.info("No minADE trend data is available yet.")
-            else:
-                heatmaps = _build_minade_horizon_heatmaps(minade_df)
-                heatmap_cols = st.columns(len(heatmaps)) if heatmaps else []
-                for col, (_, heatmap_fig) in zip(heatmap_cols, heatmaps):
-                    col.plotly_chart(heatmap_fig, use_container_width=True)
-                label_options = sorted(minade_df["label_name"].dropna().unique().tolist())
-                selected_label = st.selectbox("minADE Label Focus", label_options)
-                profile_fig = _build_minade_label_profile(
-                    minade_df,
-                    selected_label=selected_label,
-                    ordered_axes=ordered_release_axes,
-                )
-                st.plotly_chart(profile_fig, use_container_width=True)
-            explorer_fig = None
-        else:
-            delta_df = latest_metric_df[["label_name", "value"]].merge(
-                baseline_metric_df[["label_name", "value"]],
-                on="label_name",
-                how="outer",
-                suffixes=("_latest", "_baseline"),
-            )
-            delta_df["delta_value"] = delta_df["value_latest"] - delta_df["value_baseline"]
-            delta_df["release_axis"] = f"{latest_release_name} vs baseline"
-            explorer_fig = _build_metric_timeline_heatmap(
-                delta_df,
-                value_col="delta_value",
-                title=f"{selected_metric} Latest vs Baseline Delta by Label",
-                color_title="Delta",
-            )
-        if explorer_fig is not None:
-            st.plotly_chart(explorer_fig, use_container_width=True)
+        st.plotly_chart(explorer_fig, use_container_width=True)
     else:
-        st.info("No metric atlas trend data is available for the selected metric yet.")
+        st.info("No detailed trend data is available for the selected metric yet.")
+elif not metric_df.empty:
+    st.info("No full-dataset metric atlas data is available yet.")
 
 if not case_df.empty:
-    st.markdown("**Case Explorer**")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
-    with filter_col1:
-        selected_major = st.selectbox("Major Category", ["All"] + sorted(case_df["major_category"].dropna().unique().tolist()))
-    case_filtered = case_df.copy()
-    if selected_major != "All":
-        case_filtered = case_filtered[case_filtered["major_category"] == selected_major]
-    with filter_col2:
-        selected_mid = st.selectbox("Mid Category", ["All"] + sorted(case_filtered["mid_category"].dropna().unique().tolist()))
-    if selected_mid != "All":
-        case_filtered = case_filtered[case_filtered["mid_category"] == selected_mid]
-    with filter_col3:
-        selected_case = st.selectbox("Case", ["All"] + sorted(case_filtered["case_name"].dropna().unique().tolist()))
-    if selected_case != "All":
-        case_filtered = case_filtered[case_filtered["case_name"] == selected_case]
+    with st.expander("Case Explorer", expanded=False):
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        with filter_col1:
+            selected_major = st.selectbox("Major Category", ["All"] + sorted(case_df["major_category"].dropna().unique().tolist()))
+        case_filtered = case_df.copy()
+        if selected_major != "All":
+            case_filtered = case_filtered[case_filtered["major_category"] == selected_major]
+        with filter_col2:
+            selected_mid = st.selectbox("Mid Category", ["All"] + sorted(case_filtered["mid_category"].dropna().unique().tolist()))
+        if selected_mid != "All":
+            case_filtered = case_filtered[case_filtered["mid_category"] == selected_mid]
+        with filter_col3:
+            selected_case = st.selectbox("Case", ["All"] + sorted(case_filtered["case_name"].dropna().unique().tolist()))
+        if selected_case != "All":
+            case_filtered = case_filtered[case_filtered["case_name"] == selected_case]
 
-    st.dataframe(
-        case_filtered.sort_values(["date_sort", "version", "case_name"]).drop(columns=["date_sort"], errors="ignore"),
-        use_container_width=True,
-        hide_index=True,
-    )
+        st.dataframe(
+            case_filtered.sort_values(["date_sort", "version", "case_name"]).drop(columns=["date_sort"], errors="ignore"),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-st.markdown("**Grouped Raw Browser**")
+with st.expander("Grouped Raw Browser", expanded=False):
+    selection_df = release_df.sort_values(
+        ["date_sort", "version", "release_name"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+    selection_labels = [
+        f"{row.release_display} | roles: {row.roles}"
+        for row in selection_df.itertuples()
+    ]
+    selected_label = st.selectbox("Release Group", selection_labels)
+    selected_release = selection_df.iloc[selection_labels.index(selected_label)]
+    selected_group = next(group for group in groups if group.group_key == selected_release["group_key"])
 
-selection_df = release_df.sort_values(["date_sort", "version", "release_name"], ascending=[False, False, False]).reset_index(drop=True)
-selection_labels = [
-    f"{row.release_display} | roles: {row.roles}"
-    for row in selection_df.itertuples()
-]
-selected_label = st.selectbox("Release Group", selection_labels)
-selected_release = selection_df.iloc[selection_labels.index(selected_label)]
-selected_group = next(group for group in groups if group.group_key == selected_release["group_key"])
+    group_manifest = {
+        "display_name": selected_group.display_name,
+        "topic_name": selected_group.topic_name,
+        "group_kind": selected_group.group_kind,
+        "base_dir": str(selected_group.base_dir),
+        "jobs": {
+            role: {
+                "job_id": payload["job_id"],
+                "metadata_path": str(payload["metadata_path"]),
+                "summary_path": str(payload["summary_path"]),
+            }
+            for role, payload in selected_group.jobs.items()
+        },
+    }
 
-group_manifest = {
-    "display_name": selected_group.display_name,
-    "topic_name": selected_group.topic_name,
-    "group_kind": selected_group.group_kind,
-    "base_dir": str(selected_group.base_dir),
-    "jobs": {
-        role: {
-            "job_id": payload["job_id"],
-            "metadata_path": str(payload["metadata_path"]),
-            "summary_path": str(payload["summary_path"]),
-        }
-        for role, payload in selected_group.jobs.items()
-    },
-}
+    detail_col1, detail_col2 = st.columns([0.9, 1.1])
+    with detail_col1:
+        st.markdown("**Release Group Manifest**")
+        st.code(json.dumps(group_manifest, ensure_ascii=False, indent=2), language="json")
+        role_choice = st.selectbox("Child Role", sorted(selected_group.jobs.keys()))
 
-detail_col1, detail_col2 = st.columns([0.9, 1.1])
-with detail_col1:
-    st.markdown("**Release Group Manifest**")
-    st.code(json.dumps(group_manifest, ensure_ascii=False, indent=2), language="json")
-    role_choice = st.selectbox("Child Role", sorted(selected_group.jobs.keys()))
-
-with detail_col2:
-    st.markdown("**Selected Child Summary JSON**")
-    st.code(
-        json.dumps(selected_group.jobs[role_choice]["summary"], ensure_ascii=False, indent=2)[:30000],
-        language="json",
-    )
+    with detail_col2:
+        st.markdown("**Selected Child Summary JSON**")
+        st.code(
+            json.dumps(selected_group.jobs[role_choice]["summary"], ensure_ascii=False, indent=2)[:30000],
+            language="json",
+        )
