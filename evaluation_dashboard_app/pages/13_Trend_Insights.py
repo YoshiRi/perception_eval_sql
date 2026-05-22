@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,11 +12,18 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
+from lib.path_utils import get_data_root, path_display, resolve_under_data_root
 from lib.specsheet_report import (
+    DEFAULT_TREND_METADATA_TEXT,
+    TREND_METADATA_FILENAME,
+    TREND_SUMMARY_FILENAME,
     TrendReleaseGroup,
+    classify_trend_summary,
     discover_trend_release_groups,
     extract_devops_case_rows,
     extract_performance_metrics_from_summary,
+    load_trend_summary_file,
+    parse_trend_metadata_text,
 )
 
 st.set_page_config(page_title="Trend Insights", layout="wide", initial_sidebar_state="expanded")
@@ -36,6 +45,137 @@ def _select_primary_metadata(group: TrendReleaseGroup) -> dict[str, Any]:
         if role in group.jobs:
             return group.jobs[role]["metadata"]
     return {}
+
+
+def _safe_path_part(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"[^\w.\-]+", "_", text).strip("._")
+    return text or fallback
+
+
+def _resolve_summary_json_input(user_path: str) -> tuple[Path | None, str]:
+    resolved, err = resolve_under_data_root(user_path, allow_missing=False)
+    if err:
+        return None, err
+    assert resolved is not None
+    if resolved.is_file():
+        if resolved.name != TREND_SUMMARY_FILENAME:
+            return None, f"Expected a {TREND_SUMMARY_FILENAME} file: {path_display(resolved)}"
+        return resolved, ""
+    for candidate in (
+        resolved / TREND_SUMMARY_FILENAME,
+        resolved / "resources" / TREND_SUMMARY_FILENAME,
+    ):
+        if candidate.exists():
+            return candidate, ""
+    return None, f"No {TREND_SUMMARY_FILENAME} found in {path_display(resolved)} or its resources/ folder."
+
+
+def _default_job_id_from_summary(summary_path: Path) -> str:
+    if summary_path.parent.name == "resources":
+        return summary_path.parent.parent.name
+    return summary_path.parent.name
+
+
+def _assemble_trend_release_group(
+    *,
+    release_name: str,
+    topic_name: str,
+    role_sources: dict[str, str],
+    role_job_ids: dict[str, str],
+    metadata: dict[str, Any],
+) -> Path:
+    data_root = get_data_root()
+    release_dir = data_root / _safe_path_part(release_name, "trend_release")
+    topic_dir = release_dir / _safe_path_part(topic_name, "perception.object_recognition.objects")
+    expected_roles = {"full", "usecase", "devops"}
+    seen_roles: dict[str, Path] = {}
+
+    for expected_role, source_text in role_sources.items():
+        summary_path, err = _resolve_summary_json_input(source_text)
+        if err:
+            raise ValueError(f"{expected_role}: {err}")
+        assert summary_path is not None
+        summary = load_trend_summary_file(summary_path)
+        actual_role = classify_trend_summary(summary)
+        if actual_role != expected_role:
+            raise ValueError(
+                f"{expected_role}: {path_display(summary_path)} classified as `{actual_role}`, "
+                f"not `{expected_role}`."
+            )
+        seen_roles[actual_role] = summary_path
+
+    missing = sorted(expected_roles - set(seen_roles))
+    if missing:
+        raise ValueError(f"Missing required trend roles: {', '.join(missing)}")
+
+    for role, summary_path in seen_roles.items():
+        job_id = _safe_path_part(role_job_ids.get(role) or _default_job_id_from_summary(summary_path), role)
+        job_dir = topic_dir / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(summary_path, job_dir / TREND_SUMMARY_FILENAME)
+        with (job_dir / TREND_METADATA_FILENAME).open("w", encoding="utf-8") as fh:
+            import yaml
+
+            yaml.safe_dump(metadata, fh, allow_unicode=True, sort_keys=False)
+    return release_dir
+
+
+def _render_release_trend_builder() -> None:
+    section_header("Build Release Trend Group")
+    with st.expander("Assemble full/usecase/devops summaries into one release", expanded=False):
+        st.caption(
+            "Use this after the three evaluator jobs have analyzer-compatible summary.json files. "
+            "Each source can be a job folder, a run folder containing resources/summary.json, or the summary.json file itself."
+        )
+        with st.form("release_trend_builder_form"):
+            form_col1, form_col2 = st.columns([1.1, 1.2])
+            with form_col1:
+                release_name = st.text_input(
+                    "Release folder name",
+                    value="trend_release_<full_job>_<usecase_job>_<devops_job>",
+                )
+                topic_name = st.text_input(
+                    "Topic folder",
+                    value="perception.object_recognition.objects",
+                )
+                full_source = st.text_input("Full summary source")
+                usecase_source = st.text_input("Usecase summary source")
+                devops_source = st.text_input("DevOps summary source")
+            with form_col2:
+                full_job_id = st.text_input("Full job id override", value="")
+                usecase_job_id = st.text_input("Usecase job id override", value="")
+                devops_job_id = st.text_input("DevOps job id override", value="")
+                metadata_text = st.text_area(
+                    "Release metadata YAML",
+                    value=DEFAULT_TREND_METADATA_TEXT,
+                    height=180,
+                    help="Required keys: tags, pilot_auto_version, data_count, description, date.",
+                )
+            submitted = st.form_submit_button("Create Release Trend Group", type="primary")
+
+        if submitted:
+            try:
+                metadata = parse_trend_metadata_text(metadata_text)
+                created_dir = _assemble_trend_release_group(
+                    release_name=release_name,
+                    topic_name=topic_name,
+                    role_sources={
+                        "full": full_source,
+                        "usecase": usecase_source,
+                        "devops": devops_source,
+                    },
+                    role_job_ids={
+                        "full": full_job_id,
+                        "usecase": usecase_job_id,
+                        "devops": devops_job_id,
+                    },
+                    metadata=metadata,
+                )
+                st.success(f"Created release trend group at `{path_display(created_dir)}`. Refreshing inventory...")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not create release trend group: {exc}")
 
 
 def _release_display_name(version: Any, date: Any, description: Any = "") -> str:
@@ -486,11 +626,13 @@ render_page_hero(
     description="Release-level trends across grouped full, usecase, and devops runs.",
 )
 
+_render_release_trend_builder()
+
 section_header("Release Inventory")
 
 groups = discover_trend_release_groups()
 if not groups:
-    st.info("No saved trend metadata was found yet. Generate a release spec-sheet with trend mode enabled first.")
+    st.info("No saved trend metadata was found yet. Use the release trend builder above after the three job summaries are available.")
     st.stop()
 
 try:

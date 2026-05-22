@@ -772,7 +772,7 @@ specsheet_trend_enabled = st.toggle(
 trend_metadata_payload = None
 if specsheet_trend_enabled:
     st.caption(
-        "Trend mode uses a slim analyzer-compatible `metadata.yaml`. Extra evaluator fields are ignored."
+        "Select the full/performance run for the PDF body. Other full/usecase/devops trend runs are discovered from matching metadata under the data root."
     )
     trend_metadata_text = st.text_area(
         "Trend metadata YAML",
