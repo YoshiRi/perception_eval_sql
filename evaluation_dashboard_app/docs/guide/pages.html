@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Evaluation Dashboard Page Guide</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero compact">
+    <div class="shell">
+      <div class="eyebrow"><span class="signal"></span>Page-by-Page Guide</div>
+      <h1>Pages</h1>
+      <p class="lead">
+        A detailed guide to every dashboard page: what it needs, what it shows, how it behaves in compare mode,
+        and when users should open it.
+      </p>
+    </div>
+  </header>
+  <nav>
+    <div class="shell nav-inner">
+      <a href="index.html">Home</a>
+      <a href="getting_started.html">How to Use</a>
+      <a class="active" href="pages.html">Pages</a>
+      <a href="data_reports.html">Data & Reports</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="visual_systems.html">Diagrams</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">State Model</div>
+          <h2>Start in Overview, then go deep.</h2>
+          <p class="lead">
+            Overview sets mode, selected runs, and shared filters. Detail pages often read those values from
+            <code>st.session_state</code>, so opening Overview first prevents confusing “please load data” messages.
+          </p>
+        </div>
+        <div class="flow">
+          <div class="step"><strong>Overview</strong><span>Select run A, optional run B, labels, and mode.</span></div>
+          <div class="step"><strong>Shared state</strong><span>The app stores run objects and filters in session state.</span></div>
+          <div class="step"><strong>Detail pages</strong><span>Pages read the active run and specialize the analysis.</span></div>
+          <div class="step"><strong>URL sharing</strong><span>Overview can encode mode and run names into query params.</span></div>
+          <div class="step"><strong>Team review</strong><span>Users open the same linked comparison on the shared server.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Core Pages</div>
+          <h2>The pages most users touch first.</h2>
+        </div>
+        <div class="grid cols-2">
+          <div class="card feature-card">
+            <h3>Overview</h3>
+            <p><strong>Use when:</strong> starting any review, choosing runs, comparing A/B, exporting dashboard PDFs, or generating release specsheets.</p>
+            <ul>
+              <li><strong>Inputs:</strong> run folders under data root, <code>Summary.csv</code>, labels, compare mode.</li>
+              <li><strong>Shows:</strong> summary metrics, label/product filters, A/B charts, dashboard report export, specsheet export.</li>
+              <li><strong>Watch out:</strong> if a run has no Summary.csv, high-level summary metrics are limited.</li>
+            </ul>
+          </div>
+          <div class="card feature-card">
+            <h3>Download</h3>
+            <p><strong>Use when:</strong> acquiring evaluator results, scenario data, or generating Summary/Score artifacts.</p>
+            <ul>
+              <li><strong>Tabs:</strong> Download Results, Download Scenarios, View Downloads, Eval Results.</li>
+              <li><strong>Outputs:</strong> downloaded archives, result JSON, scenario data, <code>Summary.csv</code>, <code>Score.csv</code>.</li>
+              <li><strong>Queue behavior:</strong> with <code>USE_TASK_QUEUE=true</code>, heavy tasks run in workers and appear in Recent Tasks.</li>
+            </ul>
+          </div>
+          <div class="card feature-card">
+            <h3>Evaluator Workflow</h3>
+            <p><strong>Use when:</strong> you want a more guided operational flow for local runs, background tasks, fresh evaluator pipelines, and report reuse.</p>
+            <ul>
+              <li><strong>Good for:</strong> launching longer evaluator workflows without jumping between many manual steps.</li>
+              <li><strong>Depends on:</strong> evaluator API configuration, task queue for long-running jobs in production.</li>
+            </ul>
+          </div>
+          <div class="card feature-card ops">
+            <h3>Data Management</h3>
+            <p><strong>Use when:</strong> managing a shared server or cleaning up old run outputs.</p>
+            <ul>
+              <li><strong>Shows:</strong> run folders, sizes, modified time, Summary/Score/parquet presence.</li>
+              <li><strong>Actions:</strong> create share links, download ZIP outputs, delete run folders under the data root.</li>
+              <li><strong>Safety:</strong> deletion is restricted to run-level directories under the data root.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Metric Analysis Pages</div>
+          <h2>Turn CSV and parquet artifacts into engineering signals.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Page</th><th>Prerequisite</th><th>Main Use</th><th>Compare Behavior</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>TP Summary</strong></td>
+              <td><code>Summary.csv</code></td>
+              <td>TP, RMS/STD, velocity scatter, metric distribution, density, scenario delta ranking.</td>
+              <td>Shows candidate-vs-baseline deltas such as Delta TP and metric shifts.</td>
+            </tr>
+            <tr>
+              <td><strong>Criteria Based Score</strong></td>
+              <td><code>Score.csv</code></td>
+              <td>Criteria block selection, pass-rate distribution, group means, box plots, absolute gates.</td>
+              <td>Compares pass-rate changes, gate pass/fail status, and per-scenario deltas.</td>
+            </tr>
+            <tr>
+              <td><strong>Detection Stats</strong></td>
+              <td>Parquet files</td>
+              <td>TP/FP/FN rates, distance bins, status distribution, object counts, label and scenario breakdown.</td>
+              <td>Side-by-side and delta-oriented detection metrics across selected runs.</td>
+            </tr>
+            <tr>
+              <td><strong>Prediction Evaluation</strong></td>
+              <td>Prediction parquet/artifacts</td>
+              <td>Specsheet-aligned ADE/FDE, label matrices, distance bins, polar/radial breakdowns.</td>
+              <td>ADE/FDE delta matrix and per-distance comparisons between A and B.</td>
+            </tr>
+            <tr>
+              <td><strong>Trend Insights</strong></td>
+              <td>Trend <code>metadata.yaml</code> + <code>summary.json</code></td>
+              <td>Release inventory, mAP trend, prediction trend, pass-rate trend, defect evaluation, metric atlas.</td>
+              <td>Not A/B in the same way; it groups release history over versions.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Spatial and Visual Pages</div>
+          <h2>Use these when numbers are not enough.</h2>
+        </div>
+        <div class="grid cols-3">
+          <div class="card feature-card spatial">
+            <h3>Bounding Box Viewer</h3>
+            <p>BEV inspection from parquet data. Filter by t4dataset, topic, label, visibility, source, status, frame, and run. Best for understanding where misses and false positives happen spatially.</p>
+          </div>
+          <div class="card feature-card spatial">
+            <h3>T4 3D Viewer</h3>
+            <p>3D-oriented visual inspection and T4 visualizer integration. Best when BEV alone is not enough and users need camera or rendered context.</p>
+          </div>
+          <div class="card feature-card spatial">
+            <h3>T4 Dataset Server</h3>
+            <p>Integration helper for liveness checks, render requests, target object JSON, and camera PNG embed workflows. More operational than analysis-focused.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Specialized Pages</div>
+          <h2>Tools for narrower investigations and operations.</h2>
+        </div>
+        <div class="grid cols-2">
+          <div class="card feature-card analysis">
+            <h3>TLR Analysis</h3>
+            <p>Traffic Light Recognition evaluation. Use after downloading scenario data from Download Scenarios. It visualizes criteria matrices, vehicle status vs signal type, important zones, and compare-mode deltas.</p>
+          </div>
+          <div class="card feature-card advanced">
+            <h3>Parquet Debug</h3>
+            <p>Developer troubleshooting page for parquet, pkl, and result JSON. Use it when a page fails to parse data, schemas look suspicious, or criteria state needs low-level inspection.</p>
+          </div>
+          <div class="card feature-card">
+            <h3>Help</h3>
+            <p>In-app README viewer with Japanese/English switching. Useful when users are inside Streamlit and need setup or workflow reminders without leaving the app.</p>
+          </div>
+          <div class="card feature-card ops">
+            <h3>Deployment Debug</h3>
+            <p>Docker-only operations page. Checks environment, Postgres, Redis, RQ, task rows, container status, logs, and optional restricted exec. Keep access controlled.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+  <script src="guide.js"></script>
+</body>
+</html>

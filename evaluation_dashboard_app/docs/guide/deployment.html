@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Evaluation Dashboard Deployment Guide</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero compact">
+    <div class="shell">
+      <div class="eyebrow"><span class="signal"></span>Deployment and Operations</div>
+      <h1>Deploy</h1>
+      <p class="lead">
+        Run locally for development. Use the production compose stack when multiple people need a shared server,
+        background workers, task history, and operational visibility.
+      </p>
+    </div>
+  </header>
+  <nav>
+    <div class="shell nav-inner">
+      <a href="index.html">Home</a>
+      <a href="getting_started.html">How to Use</a>
+      <a href="pages.html">Pages</a>
+      <a href="data_reports.html">Data & Reports</a>
+      <a class="active" href="deployment.html">Deployment</a>
+      <a href="visual_systems.html">Diagrams</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Local Development</div>
+          <h2>Fastest way to run the app.</h2>
+          <p class="lead">
+            Local mode is best for development, one-person analysis, and debugging. Heavy jobs run in the Streamlit process
+            unless task queue environment variables are enabled.
+          </p>
+        </div>
+        <div class="split">
+          <div class="code">
+            <div class="code-title">local start</div>
+            <pre>cd evaluation_dashboard_app
+pip install -r requirements.txt
+streamlit run Overview.py</pre>
+          </div>
+          <div class="card">
+            <h3>Local prerequisites</h3>
+            <ul>
+              <li>Python packages from <code>requirements.txt</code>.</li>
+              <li>pilot-auto / <code>perception_eval</code> environment only when generating Summary/Score.</li>
+              <li>Evaluator API credentials when using Download pages.</li>
+              <li>Chrome availability for some static image/PDF export flows.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Single Docker Container</div>
+          <h2>Portable app container for simple usage.</h2>
+        </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Build image</h3>
+            <p>Private dependencies may require passing a GitHub SSH key as a Docker build secret.</p>
+            <div class="code" style="margin-top:12px">
+              <div class="code-title">build</div>
+              <pre>docker build --no-cache \
+  --secret id=ssh,src=$HOME/.ssh/id_rsa \
+  -t evaluation-dashboard .</pre>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Run with persistent data</h3>
+            <p>Always mount the data directory so runs survive container restarts.</p>
+            <div class="code" style="margin-top:12px">
+              <div class="code-title">run</div>
+              <pre>docker run -p 8501:8501 \
+  -v "$(pwd)/data:/app/data" \
+  -v ~/.webauto:/root/.webauto \
+  evaluation-dashboard</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Production Stack</div>
+          <h2>Nginx to Streamlit to Redis workers to Postgres.</h2>
+          <p class="lead">
+            In production, heavy operations should not block Streamlit. The app enqueues jobs to Redis, workers execute them,
+            and Postgres stores task state for Recent Tasks and operational visibility.
+          </p>
+        </div>
+        <div class="flow">
+          <div class="step"><strong>Browser</strong><span>Team users open the shared app.</span></div>
+          <div class="step"><strong>Nginx</strong><span>Reverse proxy, optional TLS/load balancing.</span></div>
+          <div class="step"><strong>Streamlit</strong><span>UI, filters, enqueue requests, task status.</span></div>
+          <div class="step"><strong>Redis + Worker</strong><span>RQ queue and heavy background jobs.</span></div>
+          <div class="step"><strong>Postgres + Data</strong><span>Task metadata and shared run artifacts.</span></div>
+        </div>
+        <div class="code" style="margin-top:24px">
+          <div class="code-title">recommended numbered scripts</div>
+          <pre>cd deploy
+./01_SETUP_ENV.sh       # create .env if missing, then edit manually
+./02_BUILD.sh --no-cache
+./03_INIT_DB.sh         # first time only
+./04_START.sh           # start nginx, streamlit, redis, postgres, workers
+./06_STATUS.sh          # inspect service status
+./07_LOGS.sh worker     # tail logs for a service</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Environment Variables</div>
+          <h2>The settings that matter most.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>EVAL_DASHBOARD_DATA_ROOT</code></td><td>Shared evaluation data root. Streamlit and workers must see the same path.</td></tr>
+            <tr><td><code>USE_TASK_QUEUE</code></td><td>Enable Redis/RQ worker mode. Recommended for production.</td></tr>
+            <tr><td><code>DATABASE_URL</code></td><td>Postgres task metadata connection string.</td></tr>
+            <tr><td><code>REDIS_URL</code></td><td>Redis queue connection string.</td></tr>
+            <tr><td><code>RQ_JOB_TIMEOUT_SEC</code></td><td>Long timeout for downloads/eval jobs; default is intentionally much longer than RQ's built-in default.</td></tr>
+            <tr><td><code>EVAL_DASHBOARD_CONFIG</code></td><td>Docker-specific JSON config path mounted from <code>deploy/configs/</code>.</td></tr>
+            <tr><td><code>EVAL_DEPLOYMENT_DEBUG_EXEC</code></td><td>Enables Docker exec from Deployment Debug. Keep off unless briefly needed on a trusted network.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Multi-User Operation</div>
+          <h2>A shared server, not per-user accounts.</h2>
+          <p class="lead">
+            The app is designed as a local-team tool. Everyone who can access the server can see shared data and use server-side API credentials.
+          </p>
+        </div>
+        <div class="grid cols-4">
+          <div class="card"><h3>Shared data</h3><p>All run folders under the data root are visible to all users.</p></div>
+          <div class="card"><h3>Path safety</h3><p>Download and eval paths are resolved under the data root; traversal is rejected.</p></div>
+          <div class="card"><h3>Shared credentials</h3><p>Download API credentials are mounted server-side, not entered by each user.</p></div>
+          <div class="card"><h3>Share links</h3><p>Users share Overview URLs with <code>mode</code>, <code>run_a</code>, and <code>run_b</code>.</p></div>
+        </div>
+        <div class="callout warn" style="margin-top:20px">
+          <strong>Access control lives outside the app:</strong> use VPN, firewall, SSO proxy, or network controls if the server should only be reachable by your team.
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Operations Checklist</div>
+          <h2>What to check when production feels unhealthy.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Issue</th><th>Check</th></tr></thead>
+          <tbody>
+            <tr><td>Failed to enqueue task</td><td>Confirm Redis, Postgres, <code>USE_TASK_QUEUE=true</code>, and matching URLs.</td></tr>
+            <tr><td>Tasks stay pending</td><td>Worker is running, same <code>RQ_QUEUE</code>, worker logs show no import/config errors.</td></tr>
+            <tr><td>Nginx 502</td><td>Streamlit is listening on 8501, not OOM-killed, and Nginx upstream matches service names.</td></tr>
+            <tr><td>Subpage forgets Overview state</td><td>Use Overview share link with <code>run_a</code> query params, especially with multiple Streamlit replicas.</td></tr>
+            <tr><td>Detection Stats freezes</td><td>Set <code>EVAL_DETECTION_STATS_DEBUG=1</code> and inspect section timing/memory output.</td></tr>
+            <tr><td>PDF Chrome/Kaleido error</td><td>Rebuild the image so Chrome is installed in the Docker environment.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+  <script src="guide.js"></script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>How to Use the Evaluation Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero compact">
+    <div class="shell">
+      <div class="eyebrow"><span class="signal"></span>User Workflow</div>
+      <h1>How to Use</h1>
+      <p class="lead">
+        This is the practical path for users: get evaluator data, generate artifacts, view a run,
+        compare candidate results, and share the exact dashboard state with teammates.
+      </p>
+    </div>
+  </header>
+  <nav>
+    <div class="shell nav-inner">
+      <a href="index.html">Home</a>
+      <a class="active" href="getting_started.html">How to Use</a>
+      <a href="pages.html">Pages</a>
+      <a href="data_reports.html">Data & Reports</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="visual_systems.html">Diagrams</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="download" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Workflow 1</div>
+          <h2>Download evaluator results into a run folder.</h2>
+          <p class="lead">
+            A run is normally one direct subdirectory under <code>data/</code>. Use one folder per test so
+            it is easy to select in Overview and safe to delete later.
+          </p>
+        </div>
+        <div class="flow">
+          <div class="step"><strong>Open Download</strong><span>Use <code>pages/6_Download.py</code> from the sidebar.</span></div>
+          <div class="step"><strong>Select Download Results</strong><span>Enter Project ID, Job ID, and optional Suite ID.</span></div>
+          <div class="step"><strong>Choose Output Path</strong><span>Recommended: <code>data/&lt;test_name&gt;</code>.</span></div>
+          <div class="step"><strong>Pick Download Type</strong><span>Archives for full local analysis, Result JSON only for lightweight summary generation.</span></div>
+          <div class="step"><strong>Run Download</strong><span>Wait for completion or watch Recent Tasks when queue mode is enabled.</span></div>
+        </div>
+        <div class="split" style="margin-top:24px">
+          <div class="media">
+            <img src="../images/download_config.png" alt="Download Results configuration" />
+            <div class="caption">Use a dedicated output folder under the data root. That folder becomes the run you select later.</div>
+          </div>
+          <div class="card">
+            <h3>Decision: Archives or Result JSON only?</h3>
+            <ul>
+              <li><strong>Archives (ZIP):</strong> best for complete local investigation. It downloads and extracts richer source data.</li>
+              <li><strong>Result JSON only:</strong> faster and lighter. Good when you mainly need summary and score generation.</li>
+              <li><strong>Scenario downloads:</strong> use the Download Scenarios tab when TLR Analysis needs scenario data.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="generate" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Workflow 2</div>
+          <h2>Generate Summary.csv and Score.csv.</h2>
+          <p class="lead">
+            Most analysis pages need generated CSV artifacts. Stay on Download, switch to Eval Results,
+            and point the root directory to the same folder you used as the download output path.
+          </p>
+        </div>
+        <div class="grid cols-3">
+          <div class="card">
+            <div class="number">1</div>
+            <h3>Root directory to evaluate</h3>
+            <p>Use the same path, for example <code>data/my_test_20250203</code>. This keeps generated artifacts next to the run.</p>
+          </div>
+          <div class="card">
+            <div class="number">2</div>
+            <h3>Search subdirectories</h3>
+            <p>Usually enable this. It lets the app find <code>result.txt</code> or <code>score.json</code> in job/suite subfolders.</p>
+          </div>
+          <div class="card">
+            <div class="number">3</div>
+            <h3>Choose generation mode</h3>
+            <p>If results already exist, generate only Summary/Score. If not, run full eval_result generation.</p>
+          </div>
+        </div>
+        <div class="split" style="margin-top:24px">
+          <div class="media">
+            <img src="../images/eval_result.png" alt="Eval Results screen" />
+            <div class="caption">Eval Results produces the CSVs consumed by Overview, TP Summary, and Criteria pages.</div>
+          </div>
+          <div class="callout warn">
+            <strong>Environment note:</strong> when generation uses <code>perception_eval</code>, activate the pilot-auto ROS environment first:
+            <div class="code" style="margin-top:12px">
+              <div class="code-title">before running generation</div>
+              <pre>source path_to_pilot/install/setup.sh</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Workflow 3</div>
+          <h2>Select the run in Overview and explore.</h2>
+          <p class="lead">
+            Overview is the state hub. Many pages use the run selection and compare mode from Overview,
+            so users should start there before opening detail pages.
+          </p>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h3>Single-run review</h3>
+            <ol>
+              <li>Open <strong>Overview</strong>.</li>
+              <li>Select <strong>Single Mode</strong>.</li>
+              <li>Choose your run as <strong>Baseline (A)</strong>.</li>
+              <li>Apply Perception Label or Product Label filters if needed.</li>
+              <li>Move to TP Summary, Criteria, Detection Stats, Bounding Box Viewer, or Prediction Evaluation.</li>
+            </ol>
+          </div>
+          <div class="media">
+            <img src="../images/overview.png" alt="Overview screen" />
+            <div class="caption">Overview gives the first read: summary metrics, filters, report export, and links to specialized pages.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="compare" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Workflow 4</div>
+          <h2>Compare baseline A against candidate B.</h2>
+          <p class="lead">
+            Compare mode lets users answer the product question: did this candidate improve, regress,
+            or change behavior in a specific slice?
+          </p>
+        </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>How to set up compare mode</h3>
+            <ol>
+              <li>Open Overview.</li>
+              <li>Switch to <strong>Compare Mode</strong>.</li>
+              <li>Select Baseline (A), usually the current accepted run.</li>
+              <li>Select Candidate (B), usually the new run.</li>
+              <li>Check the summary metric deltas before going deeper.</li>
+            </ol>
+          </div>
+          <div class="card">
+            <h3>Where compare mode is most useful</h3>
+            <ul>
+              <li><strong>TP Summary:</strong> TP and kinematic metric deltas.</li>
+              <li><strong>Criteria Score:</strong> pass-rate changes and absolute gate comparison.</li>
+              <li><strong>Detection Stats:</strong> TP/FP distance-bin and status distribution differences.</li>
+              <li><strong>Bounding Box Viewer:</strong> spatial inspection across runs.</li>
+              <li><strong>Prediction Evaluation:</strong> ADE/FDE delta matrices and distance bins.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:20px">
+          <strong>Sharing:</strong> Overview stores mode and run choices in URL query parameters such as
+          <code>?mode=compare&amp;run_a=old_run&amp;run_b=new_run</code>. Copy that link to let another user open the same comparison.
+        </div>
+      </div>
+    </section>
+
+    <section id="recommended" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Recommended Review Route</div>
+          <h2>A good investigation has a rhythm.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Step</th><th>Page</th><th>What to look for</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Overview</td><td>High-level TP, error metrics, filters, and immediate A/B signal.</td></tr>
+            <tr><td>2</td><td>Criteria Score</td><td>Pass-rate distribution, failing scenarios, absolute gates, and scenario leaderboard.</td></tr>
+            <tr><td>3</td><td>Detection Stats</td><td>Status distribution, TP/FP by distance, label/scenario concentration, and object-count shifts.</td></tr>
+            <tr><td>4</td><td>Bounding Box Viewer</td><td>Frame-level spatial causes: missed objects, false positives, geometry, visibility, source/status.</td></tr>
+            <tr><td>5</td><td>Prediction Evaluation</td><td>ADE/FDE behavior by label, horizon, distance bin, and polar region.</td></tr>
+            <tr><td>6</td><td>Trend Insights</td><td>Release-level story across full, usecase, and devops jobs.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+  <script src="guide.js"></script>
+</body>
+</html>

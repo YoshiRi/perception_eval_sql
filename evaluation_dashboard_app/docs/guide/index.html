@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Evaluation Dashboard Engineer Guide</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="shell hero-grid">
+      <div>
+        <div class="eyebrow"><span class="signal"></span>Engineer Documentation</div>
+        <h1>Evaluation Dashboard<br>Engineer Guide</h1>
+        <p class="lead">
+          This guide is the entry point for engineers who operate, debug, extend, and deploy the
+          evaluation dashboard. The home page gives the system map; each substantial topic lives in
+          its own focused chapter.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="getting_started.html">Use the Tool</a>
+          <a class="button" href="visual_systems.html">Architecture Diagrams</a>
+          <a class="button" href="deployment.html">Deploy</a>
+        </div>
+      </div>
+      <div class="card hero-console">
+        <h3>Guide Structure</h3>
+        <ul>
+          <li><strong>Home:</strong> system role, ownership map, and chapter routing.</li>
+          <li><strong>Workflow:</strong> Download -> Eval Results -> Overview -> Compare.</li>
+          <li><strong>Page Guide:</strong> page-by-page artifact and state contracts.</li>
+          <li><strong>Data/Reports:</strong> run artifacts, trend data, dashboard PDF, specsheet.</li>
+          <li><strong>Deployment:</strong> local, Docker, production, task queue, multi-user operations.</li>
+          <li><strong>Diagrams:</strong> real sequence/system diagrams for key flows.</li>
+        </ul>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <div class="shell nav-inner">
+      <a class="active" href="index.html">Home</a>
+      <a href="getting_started.html">Workflow</a>
+      <a href="pages.html">Pages</a>
+      <a href="data_reports.html">Data & Reports</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="visual_systems.html">Diagrams</a>
+      <a href="../specsheet_pipeline_explainer.html">Specsheet</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">System Role</div>
+          <h2>The dashboard turns evaluator outputs into explorable engineering evidence.</h2>
+          <p>
+            It reads run folders under the configured data root, generates dashboard artifacts when
+            needed, shares selected run state across Streamlit pages, and provides local or production
+            workflows for comparison, report generation, T4 visualization, and release trend review.
+          </p>
+        </div>
+        <div class="grid cols-4 metric-grid">
+          <div class="card metric"><strong>Overview.py</strong><span>Run selection, compare mode, filters, share links, dashboard PDF, and specsheet entry.</span></div>
+          <div class="card metric"><strong>pages/</strong><span>Numbered Streamlit pages. Filename order is part of the navigation contract.</span></div>
+          <div class="card metric"><strong>lib/</strong><span>Data loading, plotting, reporting, T4 clients, task queue integration, and shared UI utilities.</span></div>
+          <div class="card metric"><strong>deploy/</strong><span>Docker Compose, Nginx, Redis/RQ workers, Postgres, and production scripts.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal alt">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Chapter Map</div>
+          <h2>Open the chapter that matches the engineering question.</h2>
+        </div>
+        <div class="grid cols-3">
+          <a class="card feature-card" href="getting_started.html" style="text-decoration:none">
+            <h3>How do I use this tool?</h3>
+            <p>Download results, generate Eval Results, select runs in Overview, compare baseline and candidate, then inspect detail pages.</p>
+          </a>
+          <a class="card feature-card analysis" href="pages.html" style="text-decoration:none">
+            <h3>What does each page require?</h3>
+            <p>Inputs, outputs, compare behavior, and empty-state causes for Overview, TP, Criteria, Detection, BEV, T4, TLR, Trend, and debug pages.</p>
+          </a>
+          <a class="card feature-card ops" href="data_reports.html" style="text-decoration:none">
+            <h3>How are data and reports handled?</h3>
+            <p>Summary.csv, Score.csv, parquet, trend metadata, dashboard PDFs, release specsheets, and report troubleshooting.</p>
+          </a>
+          <a class="card feature-card advanced" href="deployment.html" style="text-decoration:none">
+            <h3>How should this be deployed?</h3>
+            <p>Local development, single-container Docker, production compose, Nginx, Redis/RQ, Postgres, env vars, and multi-user operation.</p>
+          </a>
+          <a class="card feature-card spatial" href="visual_systems.html" style="text-decoration:none">
+            <h3>How does the system really flow?</h3>
+            <p>Artifact maps, Download/Eval sequence, Compare state propagation, T4 camera rendering, T4 Three.js overlays, and report generation.</p>
+          </a>
+          <a class="card feature-card advanced" href="../specsheet_pipeline_explainer.html" style="text-decoration:none">
+            <h3>How does specsheet work?</h3>
+            <p>Focused deep dive for release specsheet generation, trend context, DevOps/pass-rate plots, and generated PDF sections.</p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell split">
+        <div>
+          <div class="kicker">Primary Flow</div>
+          <h2>The common operational path is still one clear chain.</h2>
+          <p>
+            The detailed instructions live in the Workflow chapter, but the mental model is simple:
+            create or choose a run folder, generate the dashboard artifacts, select run A in Overview,
+            optionally select candidate B, then use the dedicated pages for deeper analysis.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="getting_started.html">Open Workflow Chapter</a>
+            <a class="button" href="visual_systems.html#download-sequence">Open Sequence Diagram</a>
+          </div>
+        </div>
+        <div class="flow compact-flow">
+          <div class="step"><strong>Download</strong><span>Project/Job/Suite results into a run folder.</span></div>
+          <div class="step"><strong>Eval Results</strong><span>Generate Summary, Score, and parquet artifacts.</span></div>
+          <div class="step"><strong>Overview</strong><span>Select run A and synchronize state.</span></div>
+          <div class="step"><strong>Compare</strong><span>Add candidate B when needed.</span></div>
+          <div class="step"><strong>Detail Pages</strong><span>Investigate the specific signal.</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <strong>Evaluation Dashboard Engineer Guide</strong>
+      <p>This home page routes to the detailed chapters instead of duplicating them.</p>
+    </div>
+  </footer>
+  <script src="guide.js"></script>
+</body>
+</html>

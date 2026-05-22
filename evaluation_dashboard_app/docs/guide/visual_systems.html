@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Evaluation Dashboard Technical Diagrams</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero compact">
+    <div class="shell">
+      <div class="eyebrow"><span class="signal"></span>Technical Diagrams</div>
+      <h1>Real Flows</h1>
+      <p class="lead">
+        Precise diagrams for the parts users and maintainers actually ask about: download/eval execution,
+        compare-mode state, page artifact dependencies, T4 camera rendering, T4 Three.js 3D overlays,
+        production queueing, and report generation.
+      </p>
+    </div>
+  </header>
+  <nav>
+    <div class="shell nav-inner">
+      <a href="index.html">Home</a>
+      <a href="getting_started.html">How to Use</a>
+      <a href="pages.html">Pages</a>
+      <a href="data_reports.html">Data & Reports</a>
+      <a href="deployment.html">Deployment</a>
+      <a class="active" href="visual_systems.html">Diagrams</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="artifact-map" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Artifact Dependency Map</div>
+          <h2>Which generated files unlock which pages?</h2>
+          <p class="lead">
+            This is the first diagram to check when a user asks why a page is empty.
+            Most UI behavior follows directly from whether these files exist under the selected run.
+          </p>
+        </div>
+        <div class="real-diagram">
+          <svg viewBox="0 0 1200 610" role="img" aria-label="Artifact dependency map">
+            <defs>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+              </marker>
+              <marker id="arrow-teal" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#0f766e"></path>
+              </marker>
+            </defs>
+            <text x="40" y="42" class="svg-title">Run folder artifact dependency map</text>
+
+            <rect x="40" y="80" width="210" height="410" rx="10" class="svg-note"></rect>
+            <text x="70" y="118" class="svg-actor-text">data/&lt;run&gt;/</text>
+            <text x="70" y="152" class="svg-note-text">Summary.csv</text>
+            <text x="70" y="192" class="svg-note-text">Score.csv</text>
+            <text x="70" y="232" class="svg-note-text">*.parquet</text>
+            <text x="70" y="272" class="svg-note-text">result.txt / score.json</text>
+            <text x="70" y="312" class="svg-note-text">resources/metadata.yaml</text>
+            <text x="70" y="340" class="svg-note-text">resources/summary.json</text>
+            <text x="70" y="380" class="svg-note-text">specsheet/*.png</text>
+            <text x="70" y="408" class="svg-note-text">specsheet/specsheet.pdf</text>
+
+            <rect x="390" y="70" width="230" height="70" rx="10" class="svg-actor"></rect>
+            <text x="425" y="101" class="svg-actor-text">Overview</text>
+            <text x="425" y="122" class="svg-small">run selection + summary</text>
+
+            <rect x="390" y="165" width="230" height="70" rx="10" class="svg-actor"></rect>
+            <text x="425" y="196" class="svg-actor-text">TP Summary</text>
+            <text x="425" y="217" class="svg-small">TP/RMS/velocity charts</text>
+
+            <rect x="390" y="260" width="230" height="70" rx="10" class="svg-actor"></rect>
+            <text x="425" y="291" class="svg-actor-text">Criteria Score</text>
+            <text x="425" y="312" class="svg-small">pass rate + gates</text>
+
+            <rect x="730" y="70" width="250" height="70" rx="10" class="svg-actor"></rect>
+            <text x="765" y="101" class="svg-actor-text">Detection Stats</text>
+            <text x="765" y="122" class="svg-small">DuckDB + parquet scan</text>
+
+            <rect x="730" y="165" width="250" height="70" rx="10" class="svg-actor"></rect>
+            <text x="765" y="196" class="svg-actor-text">Bounding Box / T4 3D</text>
+            <text x="765" y="217" class="svg-small">BEV + Three.js overlays</text>
+
+            <rect x="730" y="260" width="250" height="70" rx="10" class="svg-actor"></rect>
+            <text x="765" y="291" class="svg-actor-text">Prediction Evaluation</text>
+            <text x="765" y="312" class="svg-small">ADE/FDE matrices</text>
+
+            <rect x="730" y="355" width="250" height="70" rx="10" class="svg-actor"></rect>
+            <text x="765" y="386" class="svg-actor-text">Trend Insights</text>
+            <text x="765" y="407" class="svg-small">release metadata + summaries</text>
+
+            <rect x="390" y="355" width="230" height="70" rx="10" class="svg-actor"></rect>
+            <text x="425" y="386" class="svg-actor-text">Download / Workflow</text>
+            <text x="425" y="407" class="svg-small">creates / refreshes files</text>
+
+            <rect x="730" y="450" width="250" height="70" rx="10" class="svg-actor"></rect>
+            <text x="765" y="481" class="svg-actor-text">Reports</text>
+            <text x="765" y="502" class="svg-small">dashboard PDF + specsheet</text>
+
+            <path d="M250 152 C310 130,330 110,390 105" class="svg-msg"></path>
+            <path d="M250 152 C315 165,330 190,390 200" class="svg-msg"></path>
+            <path d="M250 192 C315 210,330 275,390 295" class="svg-msg"></path>
+            <path d="M250 232 C470 95,565 95,730 105" class="svg-msg"></path>
+            <path d="M250 232 C470 195,565 195,730 200" class="svg-msg"></path>
+            <path d="M250 232 C470 300,565 300,730 295" class="svg-msg"></path>
+            <path d="M250 326 C470 370,565 382,730 390" class="svg-msg"></path>
+            <path d="M250 394 C470 470,565 480,730 485" class="svg-msg"></path>
+            <path d="M505 355 C420 285,360 230,250 200" class="svg-msg-return"></path>
+            <text x="280" y="545" class="svg-note-text">Blue = page reads artifact. Dashed green = workflow produces or refreshes artifact.</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section id="download-sequence" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Real Sequence</div>
+          <h2>Download Results -> Eval Results -> Overview selection.</h2>
+          <p class="lead">
+            This sequence shows both inline and production task-queue modes. In production, the UI does not run long jobs directly.
+          </p>
+        </div>
+        <div class="real-diagram">
+          <svg viewBox="0 0 1220 760" role="img" aria-label="Download and eval sequence diagram">
+            <defs>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+              </marker>
+              <marker id="arrow-teal" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#0f766e"></path>
+              </marker>
+            </defs>
+            <text x="40" y="40" class="svg-title">Sequence: user downloads a job, generates CSV artifacts, then opens Overview</text>
+
+            <g>
+              <rect x="40" y="70" width="150" height="58" rx="8" class="svg-actor"></rect>
+              <text x="82" y="102" class="svg-actor-text">User</text>
+              <line x1="115" y1="128" x2="115" y2="710" class="svg-line"></line>
+            </g>
+            <g>
+              <rect x="240" y="70" width="170" height="58" rx="8" class="svg-actor"></rect>
+              <text x="278" y="95" class="svg-actor-text">Streamlit</text>
+              <text x="282" y="116" class="svg-small">Download page</text>
+              <line x1="325" y1="128" x2="325" y2="710" class="svg-line"></line>
+            </g>
+            <g>
+              <rect x="465" y="70" width="160" height="58" rx="8" class="svg-actor"></rect>
+              <text x="497" y="95" class="svg-actor-text">Redis / RQ</text>
+              <text x="507" y="116" class="svg-small">queue mode</text>
+              <line x1="545" y1="128" x2="545" y2="710" class="svg-line"></line>
+            </g>
+            <g>
+              <rect x="680" y="70" width="160" height="58" rx="8" class="svg-actor"></rect>
+              <text x="724" y="95" class="svg-actor-text">Worker</text>
+              <text x="710" y="116" class="svg-small">heavy tasks</text>
+              <line x1="760" y1="128" x2="760" y2="710" class="svg-line"></line>
+            </g>
+            <g>
+              <rect x="895" y="70" width="160" height="58" rx="8" class="svg-actor"></rect>
+              <text x="930" y="95" class="svg-actor-text">Evaluator</text>
+              <text x="934" y="116" class="svg-small">API / files</text>
+              <line x1="975" y1="128" x2="975" y2="710" class="svg-line"></line>
+            </g>
+            <g>
+              <rect x="1100" y="70" width="90" height="58" rx="8" class="svg-actor"></rect>
+              <text x="1120" y="95" class="svg-actor-text">Data</text>
+              <text x="1117" y="116" class="svg-small">root</text>
+              <line x1="1145" y1="128" x2="1145" y2="710" class="svg-line"></line>
+            </g>
+
+            <path d="M115 165 L325 165" class="svg-msg"></path>
+            <text x="140" y="156" class="svg-step">1. Submit Project ID, Job ID, output path</text>
+
+            <path d="M325 215 L545 215" class="svg-msg"></path>
+            <text x="350" y="206" class="svg-step">2a. Queue task if USE_TASK_QUEUE=true</text>
+            <path d="M545 255 L760 255" class="svg-msg"></path>
+            <text x="570" y="246" class="svg-step">2b. Worker consumes RQ job</text>
+
+            <rect x="268" y="284" width="235" height="54" rx="8" class="svg-note-warn"></rect>
+            <text x="284" y="306" class="svg-note-text">If queue mode is off, Streamlit</text>
+            <text x="284" y="324" class="svg-note-text">runs this work inline.</text>
+
+            <path d="M760 370 L975 370" class="svg-msg"></path>
+            <text x="785" y="361" class="svg-step">3. Download archives / result JSON / scenario data</text>
+            <path d="M975 410 L760 410" class="svg-msg-return"></path>
+            <text x="790" y="401" class="svg-step">4. API response / downloaded files</text>
+
+            <path d="M760 465 L1145 465" class="svg-msg"></path>
+            <text x="790" y="456" class="svg-step">5. Write result.txt, score.json, extracted archives</text>
+
+            <path d="M115 520 L325 520" class="svg-msg"></path>
+            <text x="140" y="511" class="svg-step">6. User runs Eval Results for same root</text>
+            <path d="M760 565 L1145 565" class="svg-msg"></path>
+            <text x="790" y="556" class="svg-step">7. Generate Summary.csv + Score.csv</text>
+            <path d="M325 620 L1145 620" class="svg-msg-return"></path>
+            <text x="350" y="611" class="svg-step">8. Overview lists data/&lt;run&gt; and reads generated artifacts</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section id="t4-camera-render" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">T4 Camera Rendering</div>
+          <h2>Bounding Box Viewer / T4 Dataset Server: HTTP render path.</h2>
+          <p class="lead">
+            This path is for camera PNGs or HTML camera render previews. It is separate from the Three.js 3D overlay path below.
+          </p>
+        </div>
+        <div class="real-diagram">
+          <svg viewBox="0 0 1220 680" role="img" aria-label="T4 camera render sequence">
+            <defs>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+              </marker>
+              <marker id="arrow-teal" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#0f766e"></path>
+              </marker>
+            </defs>
+            <text x="40" y="40" class="svg-title">Sequence: camera preview render through T4 visualizer HTTP API</text>
+
+            <rect x="45" y="78" width="150" height="58" rx="8" class="svg-actor"></rect>
+            <text x="82" y="110" class="svg-actor-text">Streamlit</text>
+            <line x1="120" y1="136" x2="120" y2="625" class="svg-line"></line>
+            <rect x="265" y="78" width="170" height="58" rx="8" class="svg-actor"></rect>
+            <text x="294" y="103" class="svg-actor-text">T4 Client</text>
+            <text x="290" y="124" class="svg-small">requests wrapper</text>
+            <line x1="350" y1="136" x2="350" y2="625" class="svg-line"></line>
+            <rect x="505" y="78" width="170" height="58" rx="8" class="svg-actor"></rect>
+            <text x="533" y="103" class="svg-actor-text">T4 Server</text>
+            <text x="535" y="124" class="svg-small">FastAPI</text>
+            <line x1="590" y1="136" x2="590" y2="625" class="svg-line"></line>
+            <rect x="745" y="78" width="170" height="58" rx="8" class="svg-actor"></rect>
+            <text x="778" y="103" class="svg-actor-text">Dataset</text>
+            <text x="770" y="124" class="svg-small">local T4 files</text>
+            <line x1="830" y1="136" x2="830" y2="625" class="svg-line"></line>
+            <rect x="985" y="78" width="170" height="58" rx="8" class="svg-actor"></rect>
+            <text x="1028" y="103" class="svg-actor-text">Browser</text>
+            <text x="1012" y="124" class="svg-small">PNG / iframe</text>
+            <line x1="1070" y1="136" x2="1070" y2="625" class="svg-line"></line>
+
+            <path d="M120 175 L350 175" class="svg-msg"></path>
+            <text x="145" y="166" class="svg-step">1. User selects server base URL, dataset, scenario, frame</text>
+            <path d="M350 220 L590 220" class="svg-msg"></path>
+            <text x="375" y="211" class="svg-step">2. GET /health, /datasets, /datasets/{id}/scenarios</text>
+            <path d="M590 260 L830 260" class="svg-msg"></path>
+            <text x="615" y="251" class="svg-step">3. Server reads available datasets and scene metadata</text>
+            <path d="M590 305 L350 305" class="svg-msg-return"></path>
+            <text x="375" y="296" class="svg-step">4. JSON lists: ids, scenarios, frame counts</text>
+
+            <path d="M120 365 L350 365" class="svg-msg"></path>
+            <text x="145" y="356" class="svg-step">5. Build RenderRequest from UI and optional GT rows</text>
+            <path d="M350 410 L590 410" class="svg-msg"></path>
+            <text x="375" y="401" class="svg-step">6. POST /render {dataset, scenario, frame, target_objects}</text>
+            <path d="M590 455 L830 455" class="svg-msg"></path>
+            <text x="615" y="446" class="svg-step">7. Load camera/sample data and draw annotations</text>
+            <path d="M590 505 L350 505" class="svg-msg-return"></path>
+            <text x="375" y="496" class="svg-step">8. RenderResult JSON with images[].png_base64</text>
+            <path d="M350 555 L1070 555" class="svg-msg-return"></path>
+            <text x="375" y="546" class="svg-step">9. Streamlit decodes/display PNGs or embeds /render/html iframe</text>
+          </svg>
+        </div>
+        <div class="payload-grid">
+          <div class="payload-card">
+            <h3>RenderRequest body</h3>
+            <pre>{
+  "t4dataset_id": "...",
+  "scenario_name": "...",
+  "frame_index": 42,
+  "target_objects": [{ "uuid": "...", "x": 1.2 }],
+  "show_annotations": true,
+  "crop_cameras": false
+}</pre>
+          </div>
+          <div class="payload-card">
+            <h3>RenderResult response</h3>
+            <pre>{
+  "sample_token": "...",
+  "timestamp_us": 123,
+  "images": [
+    { "label": "CAM_FRONT", "png_base64": "..." }
+  ],
+  "elapsed_ms": 812.4
+}</pre>
+          </div>
+          <div class="payload-card">
+            <h3>Source code touchpoints</h3>
+            <pre>lib/t4_visualizer_client.py
+lib/t4_dataset_embed.py
+pages/11_T4_Dataset_Server.py
+pages/4_Bounding_Box_Viewer.py</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="t4-three-viewer" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">T4 3D Rendering</div>
+          <h2>Three.js overlay path: parquet -> all-frame layers -> iframe postMessage.</h2>
+          <p class="lead">
+            This is the precise flow used by <code>pages/5_T4_3D_Viewer.py</code>. The app deliberately uses
+            the viewer’s own frame slider: Streamlit loads the iframe once, sends all frame overlays, and the
+            viewer selects overlays internally as the user scrubs time.
+          </p>
+        </div>
+        <div class="real-diagram">
+          <svg viewBox="0 0 1280 900" role="img" aria-label="T4 Three.js 3D sequence diagram">
+            <defs>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+              </marker>
+              <marker id="arrow-teal" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#0f766e"></path>
+              </marker>
+            </defs>
+            <text x="40" y="40" class="svg-title">Sequence: T4 3D Viewer iframe + postMessage overlay synchronization</text>
+
+            <rect x="35" y="76" width="145" height="60" rx="8" class="svg-actor"></rect>
+            <text x="74" y="101" class="svg-actor-text">User</text>
+            <text x="58" y="122" class="svg-small">browser</text>
+            <line x1="107" y1="136" x2="107" y2="850" class="svg-line"></line>
+
+            <rect x="220" y="76" width="165" height="60" rx="8" class="svg-actor"></rect>
+            <text x="253" y="101" class="svg-actor-text">Streamlit</text>
+            <text x="240" y="122" class="svg-small">5_T4_3D_Viewer</text>
+            <line x1="302" y1="136" x2="302" y2="850" class="svg-line"></line>
+
+            <rect x="425" y="76" width="155" height="60" rx="8" class="svg-actor"></rect>
+            <text x="468" y="101" class="svg-actor-text">DuckDB</text>
+            <text x="448" y="122" class="svg-small">parquet_scan</text>
+            <line x1="502" y1="136" x2="502" y2="850" class="svg-line"></line>
+
+            <rect x="620" y="76" width="165" height="60" rx="8" class="svg-actor"></rect>
+            <text x="654" y="101" class="svg-actor-text">Layer Builder</text>
+            <text x="642" y="122" class="svg-small">t4_three_layers</text>
+            <line x1="702" y1="136" x2="702" y2="850" class="svg-line"></line>
+
+            <rect x="825" y="76" width="165" height="60" rx="8" class="svg-actor"></rect>
+            <text x="858" y="101" class="svg-actor-text">T4 Server</text>
+            <text x="842" y="122" class="svg-small">/viewer/three</text>
+            <line x1="907" y1="136" x2="907" y2="850" class="svg-line"></line>
+
+            <rect x="1030" y="76" width="195" height="60" rx="8" class="svg-actor"></rect>
+            <text x="1074" y="101" class="svg-actor-text">Three.js iframe</text>
+            <text x="1060" y="122" class="svg-small">viewer runtime</text>
+            <line x1="1127" y1="136" x2="1127" y2="850" class="svg-line"></line>
+
+            <path d="M107 170 L302 170" class="svg-msg"></path>
+            <text x="128" y="161" class="svg-step">1. Open T4 3D Viewer after Overview selected run(s)</text>
+
+            <path d="M302 215 L502 215" class="svg-msg"></path>
+            <text x="325" y="206" class="svg-step">2. DESCRIBE + SELECT parquet_scan(?) with filters</text>
+
+            <path d="M502 260 L302 260" class="svg-msg-return"></path>
+            <text x="325" y="251" class="svg-step">3. DataFrame rows: frame_index, source GT/EST, status, geometry</text>
+
+            <rect x="225" y="292" width="330" height="78" rx="8" class="svg-note"></rect>
+            <text x="242" y="315" class="svg-note-text">Filters come from shared BEV keys:</text>
+            <text x="242" y="335" class="svg-note-text">suite, scenario, t4dataset, topic, label, visibility, runs.</text>
+            <text x="242" y="355" class="svg-note-text">frame_index is normalized to int.</text>
+
+            <path d="M302 400 L907 400" class="svg-msg"></path>
+            <text x="325" y="391" class="svg-step">4. GET /datasets/{t4dataset_id}/availability</text>
+            <path d="M907 445 L302 445" class="svg-msg-return"></path>
+            <text x="325" y="436" class="svg-step">5. { available: true/false, dataset path metadata }</text>
+
+            <path d="M302 500 L702 500" class="svg-msg"></path>
+            <text x="325" y="491" class="svg-step">6. build_three_layer_payload_all_frames(df)</text>
+
+            <rect x="624" y="527" width="290" height="112" rx="8" class="svg-note-warn"></rect>
+            <text x="642" y="550" class="svg-note-text">For each frame_index:</text>
+            <text x="642" y="570" class="svg-note-text">source == GT -> gt[] boxes</text>
+            <text x="642" y="590" class="svg-note-text">source == EST -> pred[] boxes</text>
+            <text x="642" y="610" class="svg-note-text">TP pair_uuid/uuid -> matched_pairs[]</text>
+
+            <path d="M702 670 L302 670" class="svg-msg-return"></path>
+            <text x="325" y="661" class="svg-step">7. Payload: { type: "bbox_layers_by_frame", frames: { "0": ... } }</text>
+
+            <path d="M302 720 L907 720" class="svg-msg"></path>
+            <text x="325" y="711" class="svg-step">8. iframe src = {base}/viewer/three?t4dataset_id=...&amp;scenario_name=...&amp;frame_index=min</text>
+
+            <path d="M907 760 L1127 760" class="svg-msg"></path>
+            <text x="930" y="751" class="svg-step">9. Viewer loads dataset/scenario and its own time slider</text>
+
+            <path d="M302 805 L1127 805" class="svg-msg"></path>
+            <text x="325" y="796" class="svg-step">10. JS hex-decodes payload and iframe.contentWindow.postMessage(payload, targetOrigin)</text>
+
+            <path d="M1127 840 C1160 840,1160 810,1127 810" class="svg-msg-return"></path>
+            <text x="845" y="835" class="svg-step">11. User scrubs inside viewer; runtime selects frames[frame_index] without Streamlit rerun</text>
+          </svg>
+        </div>
+
+        <div class="payload-grid">
+          <div class="payload-card">
+            <h3>Layer payload</h3>
+            <pre>{
+  "type": "bbox_layers_by_frame",
+  "frames": {
+    "42": {
+      "gt": [{ "x": 1.0, "source": "GT" }],
+      "pred": [{ "x": 1.2, "source": "EST" }],
+      "matched_pairs": [
+        { "gt_idx": 0, "pred_idx": 0, "pair_uuid": "..." }
+      ]
+    }
+  }
+}</pre>
+          </div>
+          <div class="payload-card">
+            <h3>Iframe URL</h3>
+            <pre>viewer_three_url =
+  T4_VISUALIZER_BASE_URL
+  + "/viewer/three?"
+  + "t4dataset_id=..."
+  + "&scenario_name=..."
+  + "&frame_index=min_frame"</pre>
+          </div>
+          <div class="payload-card">
+            <h3>Post timing</h3>
+            <pre>post("iframe-load")
+retry every 250ms up to 12 times
+post("initial-delay-300ms")
+post("initial-delay-1200ms")
+
+targetOrigin = new URL(iframe.src).origin</pre>
+          </div>
+        </div>
+
+        <div class="callout warn" style="margin-top:20px">
+          <strong>Key distinction:</strong> the 3D viewer does not call <code>POST /render</code> for every frame.
+          It embeds <code>/viewer/three</code> once and sends all-frame overlay data via <code>postMessage</code>.
+          Camera PNG rendering is a separate HTTP render path.
+        </div>
+      </div>
+    </section>
+
+    <section id="compare-state" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Compare Mode State</div>
+          <h2>Overview is the state source for comparison pages.</h2>
+        </div>
+        <div class="real-diagram">
+          <svg viewBox="0 0 1180 520" role="img" aria-label="Compare mode state diagram">
+            <defs>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+              </marker>
+            </defs>
+            <text x="40" y="40" class="svg-title">Compare mode data/state propagation</text>
+
+            <rect x="50" y="95" width="240" height="300" rx="12" class="svg-note"></rect>
+            <text x="82" y="130" class="svg-actor-text">Overview</text>
+            <text x="82" y="165" class="svg-note-text">mode = Compare Mode</text>
+            <text x="82" y="195" class="svg-note-text">runA = Baseline</text>
+            <text x="82" y="225" class="svg-note-text">runB / all_runs = Candidates</text>
+            <text x="82" y="255" class="svg-note-text">run_labels = A, B, C...</text>
+            <text x="82" y="285" class="svg-note-text">label filters</text>
+            <text x="82" y="315" class="svg-note-text">query params run_a/run_b</text>
+
+            <rect x="420" y="95" width="260" height="300" rx="12" class="svg-note-warn"></rect>
+            <text x="455" y="130" class="svg-actor-text">Session State + URL Hydration</text>
+            <text x="455" y="165" class="svg-note-text">st.session_state stores run objects</text>
+            <text x="455" y="195" class="svg-note-text">overview_url_hydrate can rebuild</text>
+            <text x="455" y="225" class="svg-note-text">state from query parameters</text>
+            <text x="455" y="255" class="svg-note-text">important with multiple Streamlit</text>
+            <text x="455" y="285" class="svg-note-text">replicas or direct subpage links</text>
+
+            <rect x="810" y="65" width="300" height="360" rx="12" class="svg-note"></rect>
+            <text x="845" y="100" class="svg-actor-text">Pages consume shared state</text>
+            <text x="845" y="140" class="svg-note-text">TP Summary -> ΔTP / metric deltas</text>
+            <text x="845" y="175" class="svg-note-text">Criteria -> pass-rate / gate deltas</text>
+            <text x="845" y="210" class="svg-note-text">Detection Stats -> status + distance diffs</text>
+            <text x="845" y="245" class="svg-note-text">Bounding Box -> side-by-side/overlay BEV</text>
+            <text x="845" y="280" class="svg-note-text">T4 3D -> selected run layers</text>
+            <text x="845" y="315" class="svg-note-text">Prediction -> ADE/FDE delta matrices</text>
+
+            <path d="M290 210 L420 210" class="svg-msg"></path>
+            <text x="310" y="198" class="svg-step">write</text>
+            <path d="M680 210 L810 210" class="svg-msg"></path>
+            <text x="705" y="198" class="svg-step">read</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section id="reports" class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Report Generation</div>
+          <h2>Dashboard PDF and specsheet PDF are different engines.</h2>
+        </div>
+        <div class="real-diagram">
+          <svg viewBox="0 0 1180 520" role="img" aria-label="Report generation diagram">
+            <defs>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#2563eb"></path>
+              </marker>
+              <marker id="arrow-teal" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 z" fill="#0f766e"></path>
+              </marker>
+            </defs>
+            <text x="40" y="40" class="svg-title">Two report paths</text>
+
+            <rect x="60" y="95" width="220" height="110" rx="12" class="svg-actor"></rect>
+            <text x="94" y="130" class="svg-actor-text">Overview selection</text>
+            <text x="94" y="154" class="svg-small">mode, run(s), filters</text>
+            <text x="94" y="176" class="svg-small">Summary.csv charts</text>
+
+            <rect x="410" y="70" width="260" height="160" rx="12" class="svg-note"></rect>
+            <text x="445" y="105" class="svg-actor-text">Dashboard PDF</text>
+            <text x="445" y="140" class="svg-note-text">lib/overview_pdf_report.py</text>
+            <text x="445" y="170" class="svg-note-text">curated dashboard snapshot</text>
+            <text x="445" y="200" class="svg-note-text">current view + selected filters</text>
+
+            <rect x="410" y="290" width="260" height="160" rx="12" class="svg-note-warn"></rect>
+            <text x="445" y="325" class="svg-actor-text">Release Specsheet PDF</text>
+            <text x="445" y="360" class="svg-note-text">lib/specsheet_report.py</text>
+            <text x="445" y="390" class="svg-note-text">perception_catalog_analyzer</text>
+            <text x="445" y="420" class="svg-note-text">blocks + trend plots + template</text>
+
+            <rect x="820" y="120" width="250" height="85" rx="12" class="svg-actor"></rect>
+            <text x="868" y="155" class="svg-actor-text">overview_report.pdf</text>
+            <text x="868" y="178" class="svg-small">dashboard narrative</text>
+
+            <rect x="820" y="335" width="250" height="85" rx="12" class="svg-actor"></rect>
+            <text x="875" y="370" class="svg-actor-text">specsheet.pdf</text>
+            <text x="875" y="393" class="svg-small">release specsheet</text>
+
+            <path d="M280 150 L410 150" class="svg-msg"></path>
+            <path d="M670 150 L820 160" class="svg-msg"></path>
+            <path d="M280 175 C350 250,350 330,410 370" class="svg-msg"></path>
+            <path d="M670 370 L820 377" class="svg-msg"></path>
+            <text x="85" y="485" class="svg-note-text">Specsheet is an advanced report path. Most users first use the dashboard pages and dashboard PDF.</text>
+            <text x="650" y="485" class="svg-note-text">For full detail, open the Specsheet Pipeline Explorer.</text>
+          </svg>
+        </div>
+        <div class="actions">
+          <a class="button" href="../specsheet_pipeline_explainer.html">Open Specsheet Pipeline Explorer</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+  <script src="guide.js"></script>
+</body>
+</html>

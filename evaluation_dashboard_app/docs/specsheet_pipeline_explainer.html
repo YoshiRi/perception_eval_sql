@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Specsheet Pipeline Explorer</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #5d697d;
+      --line: #d9e2ef;
+      --paper: #fbfcff;
+      --blue: #2563eb;
+      --teal: #0f766e;
+      --gold: #b7791f;
+      --rose: #be123c;
+      --green: #15803d;
+      --slate: #334155;
+      --panel: #ffffff;
+      --shadow: 0 18px 50px rgba(28, 45, 76, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background:
+        radial-gradient(circle at 18% 10%, rgba(37, 99, 235, 0.10), transparent 28rem),
+        radial-gradient(circle at 80% 20%, rgba(15, 118, 110, 0.12), transparent 24rem),
+        linear-gradient(180deg, #f8fbff 0%, #ffffff 42%, #f7fafc 100%);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(23, 32, 51, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 32, 51, 0.045) 1px, transparent 1px);
+      background-size: 38px 38px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.7), transparent 74%);
+    }
+
+    a { color: inherit; }
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 36px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      min-height: 92vh;
+      display: grid;
+      align-items: center;
+      padding: 52px 0 34px;
+      position: relative;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 420px;
+      gap: 42px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--teal);
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      font-size: .78rem;
+    }
+
+    .pulse {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--teal);
+      box-shadow: 0 0 0 rgba(15, 118, 110, .45);
+      animation: pulse 1.9s infinite;
+    }
+
+    h1 {
+      margin: 18px 0 18px;
+      font-size: clamp(3rem, 7vw, 6.9rem);
+      line-height: .9;
+      letter-spacing: 0;
+      max-width: 900px;
+    }
+
+    h2 {
+      font-size: clamp(2rem, 4vw, 4rem);
+      line-height: 1;
+      margin: 0 0 18px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 1.08rem;
+    }
+
+    .lead {
+      max-width: 770px;
+      font-size: 1.16rem;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      text-decoration: none;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-weight: 750;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, .07);
+    }
+
+    .button.primary {
+      background: var(--ink);
+      color: white;
+      border-color: var(--ink);
+    }
+
+    .orbit {
+      aspect-ratio: 1;
+      border: 1px solid rgba(23, 32, 51, .12);
+      border-radius: 50%;
+      position: relative;
+      display: grid;
+      place-items: center;
+      background: rgba(255,255,255,.62);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .orbit::before, .orbit::after {
+      content: "";
+      position: absolute;
+      inset: 54px;
+      border: 1px dashed rgba(37, 99, 235, .22);
+      border-radius: 50%;
+      animation: spin 18s linear infinite;
+    }
+
+    .orbit::after {
+      inset: 112px;
+      animation-duration: 11s;
+      animation-direction: reverse;
+      border-color: rgba(15, 118, 110, .28);
+    }
+
+    .core {
+      width: 166px;
+      aspect-ratio: 1;
+      border-radius: 24px;
+      background: var(--ink);
+      color: white;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 18px;
+      font-weight: 900;
+      z-index: 2;
+      box-shadow: 0 18px 44px rgba(23,32,51,.28);
+    }
+
+    .node {
+      position: absolute;
+      width: 108px;
+      min-height: 72px;
+      border-radius: 10px;
+      background: white;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 10px;
+      font-size: .82rem;
+      font-weight: 850;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, .10);
+    }
+
+    .n1 { top: 36px; left: 50%; transform: translateX(-50%); color: var(--blue); }
+    .n2 { right: 28px; top: 48%; transform: translateY(-50%); color: var(--teal); }
+    .n3 { bottom: 42px; left: 50%; transform: translateX(-50%); color: var(--rose); }
+    .n4 { left: 28px; top: 48%; transform: translateY(-50%); color: var(--gold); }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(14px);
+      background: rgba(248, 251, 255, .80);
+      border-block: 1px solid rgba(217, 226, 239, .9);
+    }
+
+    .nav-inner {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      overflow-x: auto;
+      padding: 12px 0;
+    }
+
+    .nav-inner a {
+      white-space: nowrap;
+      text-decoration: none;
+      color: var(--slate);
+      font-size: .88rem;
+      font-weight: 760;
+      padding: 8px 10px;
+      border-radius: 7px;
+    }
+
+    .nav-inner a:hover { background: white; color: var(--blue); }
+
+    section {
+      padding: 86px 0;
+      position: relative;
+    }
+
+    .section-head {
+      max-width: 820px;
+      margin-bottom: 32px;
+    }
+
+    .kicker {
+      color: var(--blue);
+      font-size: .78rem;
+      font-weight: 900;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      background: rgba(255,255,255,.86);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 8px 28px rgba(15, 23, 42, .06);
+    }
+
+    .card p { color: var(--muted); margin: 0; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      color: white;
+      background: var(--blue);
+      font-weight: 900;
+      margin-bottom: 12px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      margin-top: 24px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 138px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      overflow: hidden;
+      animation: rise .65s ease both;
+    }
+
+    .step:nth-child(2) { animation-delay: .08s; }
+    .step:nth-child(3) { animation-delay: .16s; }
+    .step:nth-child(4) { animation-delay: .24s; }
+    .step:nth-child(5) { animation-delay: .32s; }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -18px;
+      width: 34px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--blue), transparent);
+    }
+
+    .step:last-child::after { display: none; }
+    .step strong { display: block; margin-bottom: 8px; }
+    .step span { color: var(--muted); font-size: .9rem; }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      gap: 16px;
+      align-items: stretch;
+      margin-top: 18px;
+    }
+
+    .lane-title {
+      border-radius: 8px;
+      padding: 18px;
+      color: white;
+      font-weight: 900;
+      display: grid;
+      align-items: center;
+    }
+
+    .lane-title.app { background: var(--blue); }
+    .lane-title.wrapper { background: var(--teal); }
+    .lane-title.library { background: var(--slate); }
+    .lane-title.disk { background: var(--gold); }
+
+    .lane-body {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .mini {
+      border: 1px solid #e8eef6;
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .mini b { display: block; margin-bottom: 5px; }
+    .mini small { color: var(--muted); }
+
+    .code {
+      background: #101827;
+      color: #dbeafe;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.08);
+      box-shadow: 0 16px 44px rgba(15, 23, 42, .18);
+    }
+
+    .code-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,.1);
+      color: #bfdbfe;
+      font-weight: 800;
+      font-size: .88rem;
+    }
+
+    pre {
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      font-size: .82rem;
+      line-height: 1.55;
+    }
+
+    .token-key { color: #93c5fd; }
+    .token-string { color: #86efac; }
+    .token-number { color: #fbbf24; }
+    .token-comment { color: #94a3b8; }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 20px;
+      align-items: stretch;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .file-tree {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      color: var(--slate);
+      overflow-x: auto;
+    }
+
+    .tree-line {
+      opacity: 0;
+      transform: translateX(-12px);
+      animation: treeIn .5s ease forwards;
+      white-space: nowrap;
+    }
+
+    .tree-line:nth-child(2) { animation-delay: .08s; }
+    .tree-line:nth-child(3) { animation-delay: .16s; }
+    .tree-line:nth-child(4) { animation-delay: .24s; }
+    .tree-line:nth-child(5) { animation-delay: .32s; }
+    .tree-line:nth-child(6) { animation-delay: .40s; }
+    .tree-line:nth-child(7) { animation-delay: .48s; }
+
+    .callout {
+      border-left: 5px solid var(--teal);
+      background: #ecfdf5;
+      padding: 18px;
+      border-radius: 8px;
+      color: #124038;
+    }
+
+    .warning {
+      border-left-color: var(--gold);
+      background: #fff8e7;
+      color: #513a13;
+    }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      gap: 18px;
+      margin-top: 26px;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 17px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      background: linear-gradient(var(--blue), var(--teal), var(--gold));
+      border-radius: 99px;
+    }
+
+    .event {
+      position: relative;
+      padding-left: 54px;
+    }
+
+    .event::before {
+      content: "";
+      position: absolute;
+      left: 8px;
+      top: 5px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: white;
+      border: 5px solid var(--blue);
+    }
+
+    .event:nth-child(2)::before { border-color: var(--teal); }
+    .event:nth-child(3)::before { border-color: var(--gold); }
+    .event:nth-child(4)::before { border-color: var(--rose); }
+
+    .footer {
+      padding: 54px 0 70px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(15, 118, 110, .42); }
+      70% { box-shadow: 0 0 0 12px rgba(15, 118, 110, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(15, 118, 110, 0); }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes treeIn {
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @media (max-width: 900px) {
+      .hero-grid, .split, .compare, .cols-2, .cols-3, .cols-4 {
+        grid-template-columns: 1fr;
+      }
+      .orbit { max-width: 440px; margin: 0 auto; }
+      .flow { grid-template-columns: 1fr; }
+      .step::after { display: none; }
+      .lane { grid-template-columns: 1fr; }
+      .lane-body { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="shell hero-grid">
+      <div>
+        <div class="eyebrow"><span class="pulse"></span>Evaluation Dashboard App</div>
+        <h1>Specsheet Pipeline Explorer</h1>
+        <p class="lead">
+          A visual engineering guide to how the Streamlit dashboard calls
+          <code>perception_catalog_analyzer</code>, builds release specsheet PDFs, and turns saved
+          trend metadata into mAP, prediction, and pass-rate trend sections.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#pipeline">Explore Pipeline</a>
+          <a class="button" href="guide/index.html">Guide Home</a>
+          <a class="button" href="#trend">Understand Trend Data</a>
+          <a class="button" href="#debugging">Debug Missing Sections</a>
+        </div>
+      </div>
+      <div class="orbit" aria-label="Animated orbit diagram">
+        <div class="core">specsheet.pdf</div>
+        <div class="node n1">Overview.py</div>
+        <div class="node n2">specsheet_report.py</div>
+        <div class="node n3">metadata + summary</div>
+        <div class="node n4">analyzer library</div>
+      </div>
+    </div>
+  </header>
+
+  <nav>
+    <div class="shell nav-inner">
+      <a href="#pipeline">Pipeline</a>
+      <a href="#app-library">App ⇄ Library</a>
+      <a href="#artifacts">Artifacts</a>
+      <a href="#trend">Trend Data</a>
+      <a href="#pdf">PDF Assembly</a>
+      <a href="#fix">Pass Rate Fix</a>
+      <a href="#debugging">Debugging</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="pipeline">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">One Button, Many Systems</div>
+          <h2>The dashboard is the conductor; the analyzer is the orchestra.</h2>
+          <p class="lead">
+            The app owns the Streamlit UI, local run selection, path safety, progress reporting,
+            trend metadata capture, and compatibility glue. The library owns the domain-heavy work:
+            SceneDataFrame loading, metric block generation, HTML templating, matplotlib plots, and PDF rendering.
+          </p>
+        </div>
+
+        <div class="flow">
+          <div class="step">
+            <strong>1. User selects a run</strong>
+            <span><code>Overview.py</code> gathers project, version, topic, labels, and optional trend metadata.</span>
+          </div>
+          <div class="step">
+            <strong>2. Wrapper prepares files</strong>
+            <span><code>ensure_specsheet_csvs()</code> creates <code>current.csv</code> / <code>future.csv</code> when missing.</span>
+          </div>
+          <div class="step">
+            <strong>3. Analyzer builds blocks</strong>
+            <span><code>SceneDataFrame.from_dir()</code> and <code>get_blocks()</code> produce abstract and detailed HTML.</span>
+          </div>
+          <div class="step">
+            <strong>4. Trend context is assembled</strong>
+            <span>Saved <code>metadata.yaml</code> + <code>summary.json</code> files become trend rows and plot PNGs.</span>
+          </div>
+          <div class="step">
+            <strong>5. PDF is rendered</strong>
+            <span><code>update_template()</code> creates the body HTML, then <code>specsheet()</code> writes PDF output.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="app-library">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Code Boundary</div>
+          <h2>How the current app connects to the library.</h2>
+          <p class="lead">
+            The integration lives mostly in <code>lib/specsheet_report.py</code>. It imports analyzer functions lazily,
+            then calls them through compatibility adapters so different analyzer versions can still work.
+          </p>
+        </div>
+
+        <div class="lane">
+          <div class="lane-title app">Streamlit UI<br><small>Overview.py</small></div>
+          <div class="lane-body">
+            <div class="mini"><b>Inputs</b><small>Project ID, version, topic name, labels, run path.</small></div>
+            <div class="mini"><b>Trend toggle</b><small>Validates YAML and asks for exactly one trend-enabled run.</small></div>
+            <div class="mini"><b>Progress</b><small>Maps generator callback messages to the progress bar.</small></div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-title wrapper">Dashboard Wrapper<br><small>lib/specsheet_report.py</small></div>
+          <div class="lane-body">
+            <div class="mini"><b>Artifact paths</b><small>Defines CSV, parquet, resources, specsheet dir, and PDF paths.</small></div>
+            <div class="mini"><b>Compatibility</b><small>Adapts analyzer signatures with <code>inspect.signature()</code>.</small></div>
+            <div class="mini"><b>Trend bridge</b><small>Discovers trend files, classifies summaries, and renders trend plots.</small></div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-title library">Analyzer Library<br><small>perception_catalog_analyzer</small></div>
+          <div class="lane-body">
+            <div class="mini"><b>Dataframe</b><small><code>SceneDataFrame.from_dir()</code> reads current/future CSVs.</small></div>
+            <div class="mini"><b>Specsheet blocks</b><small><code>get_blocks()</code> emits abstract and detailed HTML sections.</small></div>
+            <div class="mini"><b>Rendering</b><small><code>update_template()</code> + <code>specsheet()</code> build HTML and PDF.</small></div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-title disk">Local Artifacts<br><small>data/...</small></div>
+          <div class="lane-body">
+            <div class="mini"><b>Run files</b><small><code>current.parquet</code>, <code>future.parquet</code>, generated CSVs.</small></div>
+            <div class="mini"><b>Trend files</b><small><code>metadata.yaml</code> and <code>summary.json</code> beside each trend job.</small></div>
+            <div class="mini"><b>Output</b><small><code>specsheet/specsheet.html</code>, PNG plots, and <code>specsheet.pdf</code>.</small></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="artifacts">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">File Geography</div>
+          <h2>Two trend folder shapes are supported.</h2>
+          <p class="lead">
+            The app can read trend files from standalone dashboard-generated runs and grouped library-style release folders.
+            The loader only requires sibling <code>metadata.yaml</code> and <code>summary.json</code>; the grouping logic uses folder shape to connect full/usecase/devops jobs into one release.
+          </p>
+        </div>
+
+        <div class="compare">
+          <div class="card">
+            <h3>Standalone run shape</h3>
+            <div class="file-tree" aria-label="Standalone file tree">
+              <div class="tree-line">data/my_run/</div>
+              <div class="tree-line">  current.csv</div>
+              <div class="tree-line">  future.csv</div>
+              <div class="tree-line">  resources/</div>
+              <div class="tree-line">    metadata.yaml</div>
+              <div class="tree-line">    summary.json</div>
+              <div class="tree-line">  specsheet/specsheet.pdf</div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Trend release shape</h3>
+            <div class="file-tree" aria-label="Trend release file tree">
+              <div class="tree-line">data/trend_release_full_usecase_devops/</div>
+              <div class="tree-line">  perception.object_recognition.objects/</div>
+              <div class="tree-line">    &lt;full_job_id&gt;/metadata.yaml + summary.json</div>
+              <div class="tree-line">    &lt;usecase_job_id&gt;/metadata.yaml + summary.json</div>
+              <div class="tree-line">    &lt;devops_job_id&gt;/metadata.yaml + summary.json</div>
+              <div class="tree-line">  specsheet/</div>
+              <div class="tree-line">    map_trend.png, devops_trend.png, specsheet.pdf</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout" style="margin-top: 20px;">
+          <strong>Important:</strong> <code>discover_trend_metadata_files()</code> scans the data root for every
+          <code>metadata.yaml</code> that has a sibling <code>summary.json</code>. Then
+          <code>discover_trend_release_groups()</code> decides whether that metadata belongs to a standalone run or a grouped release.
+        </div>
+      </div>
+    </section>
+
+    <section id="trend">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Trend Engine</div>
+          <h2>Trend data is not one format. It is classified by summary shape.</h2>
+          <p class="lead">
+            The metadata provides release identity. The summary payload determines the role: full, usecase, devops, or unknown.
+            That role decides which charts and sections can be produced.
+          </p>
+        </div>
+
+        <div class="split">
+          <div class="code">
+            <div class="code-title">metadata.yaml</div>
+            <pre><span class="token-key">tags</span>: [<span class="token-string">trend</span>]
+<span class="token-key">pilot_auto_version</span>: <span class="token-string">"Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)"</span>
+<span class="token-key">data_count</span>: <span class="token-string">"99,776+"</span>
+<span class="token-key">description</span>: <span class="token-string">"データの追加"</span>
+<span class="token-key">date</span>: <span class="token-string">"2025.11.7"</span></pre>
+          </div>
+          <div class="code">
+            <div class="code-title">classification logic</div>
+            <pre><span class="token-comment"># summary has blocks with 全数データセット評価</span>
+role = <span class="token-string">"full"</span>
+
+<span class="token-comment"># summary has blocks with ユースケース評価</span>
+role = <span class="token-string">"usecase"</span>
+
+<span class="token-comment"># summary is a non-empty nested dict, no blocks</span>
+role = <span class="token-string">"devops"</span></pre>
+          </div>
+        </div>
+
+        <div class="grid cols-3" style="margin-top: 20px;">
+          <div class="card">
+            <div class="badge">F</div>
+            <h3>Full performance trend</h3>
+            <p>Extracts mAP, precision, recall, error metrics, and prediction metrics from the full summary block. These rows feed <code>map_trend.png</code> and <code>prediction_trend.png</code>.</p>
+          </div>
+          <div class="card">
+            <div class="badge" style="background: var(--gold);">U</div>
+            <h3>Usecase summaries</h3>
+            <p>Classified and grouped for inventory views. The current PDF trend context does not render a dedicated usecase trend plot.</p>
+          </div>
+          <div class="card">
+            <div class="badge" style="background: var(--teal);">D</div>
+            <h3>DevOps pass-rate trend</h3>
+            <p>Flattens nested pass/fail totals, calculates overall pass rate, and feeds <code>devops_trend.png</code> plus <code>devops_trend_detail.png</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="pdf">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Rendering</div>
+          <h2>The final PDF is assembled from three streams of HTML.</h2>
+          <p class="lead">
+            The analyzer’s template body contributes the cover, executive summary, trend sections, DevOps section, and dataset information.
+            The analyzer’s block generator contributes abstract and detailed metric sections.
+          </p>
+        </div>
+
+        <div class="timeline">
+          <div class="event card">
+            <h3><code>ensure_specsheet_csvs()</code></h3>
+            <p>Creates <code>current.csv</code> and optional <code>future.csv</code> from parquet or pkl-derived data so the analyzer can load a consistent run directory.</p>
+          </div>
+          <div class="event card">
+            <h3><code>_get_blocks_compat(get_blocks, ...)</code></h3>
+            <p>Calls the analyzer to create <code>abstract</code> and <code>detailed</code> HTML fragments for labels, metrics, and evaluation type.</p>
+          </div>
+          <div class="event card">
+            <h3><code>_update_template_compat(update_template, ...)</code></h3>
+            <p>Passes project/version plus trend context into the analyzer’s Jinja template. Paths are resolved to generated PNGs when they exist.</p>
+          </div>
+          <div class="event card">
+            <h3><code>_specsheet_compat(specsheet, ...)</code></h3>
+            <p>Hands body HTML, abstract HTML, and detailed HTML to the analyzer renderer, which writes <code>specsheet.html</code> and <code>specsheet.pdf</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="fix">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">What We Fixed</div>
+          <h2>Pass Rate Trend was visible in Trend Insights but missing in the PDF.</h2>
+          <p class="lead">
+            Trend Insights already knew how to flatten DevOps summaries. The PDF exporter had the right template fields, but its DevOps trend loader returned an empty list and no pass-rate PNGs were generated.
+          </p>
+        </div>
+
+        <div class="split">
+          <div class="card">
+            <h3>Before</h3>
+            <div class="code">
+              <div class="code-title">old exporter behavior</div>
+              <pre>def load_devops_trend_data(metadata_list):
+    return []
+
+devops_trend_plot_path = output_dir / "devops_trend.png"
+<span class="token-comment"># no plot generation</span></pre>
+            </div>
+          </div>
+          <div class="card">
+            <h3>After</h3>
+            <div class="code">
+              <div class="code-title">new exporter behavior</div>
+              <pre>summary = load_trend_summary_file(summary_path)
+if classify_trend_summary(summary) == "devops":
+    rows = extract_devops_case_rows(summary)
+    overall_pass_rate = sum(passed) / sum(total) * 100
+    generate_devops_trend_plot(...)
+    generate_devops_trend_detail_plot(...)</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout warning" style="margin-top: 20px;">
+          <strong>Template rule:</strong> the analyzer template only renders Pass Rate Trend when
+          <code>devops_trend_data</code> is non-empty and <code>devops_trend.png</code> exists. It only renders Pass Rate Detail when
+          <code>devops_trend_detail.png</code> exists too.
+        </div>
+      </div>
+    </section>
+
+    <section id="debugging">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Debug Playbook</div>
+          <h2>When a trend section disappears, check the contract.</h2>
+        </div>
+
+        <div class="grid cols-4">
+          <div class="card">
+            <div class="badge">1</div>
+            <h3>Find metadata</h3>
+            <p>Confirm the data root contains <code>metadata.yaml</code> with a sibling <code>summary.json</code>.</p>
+          </div>
+          <div class="card">
+            <div class="badge">2</div>
+            <h3>Check role</h3>
+            <p>Full summaries need <code>blocks</code>. DevOps summaries should be a nested dict with <code>passed</code> and <code>total</code>.</p>
+          </div>
+          <div class="card">
+            <div class="badge">3</div>
+            <h3>Check generated PNGs</h3>
+            <p>The PDF template needs <code>map_trend.png</code>, <code>prediction_trend.png</code>, <code>devops_trend.png</code>, and detail PNGs when enabled.</p>
+          </div>
+          <div class="card">
+            <div class="badge">4</div>
+            <h3>Check template context</h3>
+            <p><code>show_other_infos</code> gates the executive summary trend pages. Empty trend data means “該当データなし。”</p>
+          </div>
+        </div>
+
+        <div class="code" style="margin-top: 20px;">
+          <div class="code-title">quick local verification</div>
+          <pre>PYTHONPATH=. python - <<'PY'
+from pathlib import Path
+from lib.specsheet_report import _build_trend_context, discover_trend_metadata_files
+
+ctx = _build_trend_context(discover_trend_metadata_files(), Path('/tmp/specsheet-trend-check'))
+print(len(ctx['performance_trend_data']), len(ctx['devops_trend_data']))
+PY</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <strong>Specsheet Pipeline Explorer</strong>
+      <p>
+        Generated for the evaluation dashboard repository. Key files:
+        <code>Overview.py</code>, <code>lib/specsheet_report.py</code>,
+        <code>pages/13_Trend_Insights.py</code>, and <code>perception_catalog_analyzer.template</code>.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Evaluation Dashboard Data and Reports</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero compact">
+    <div class="shell">
+      <div class="eyebrow"><span class="signal"></span>Data and Reports</div>
+      <h1>Artifacts</h1>
+      <p class="lead">
+        The dashboard is driven by files. Understanding which file powers which page makes the app much easier to use and debug.
+      </p>
+    </div>
+  </header>
+  <nav>
+    <div class="shell nav-inner">
+      <a href="index.html">Home</a>
+      <a href="getting_started.html">How to Use</a>
+      <a href="pages.html">Pages</a>
+      <a class="active" href="data_reports.html">Data & Reports</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="visual_systems.html">Diagrams</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Run Model</div>
+          <h2>A run is a folder under the data root.</h2>
+          <p class="lead">
+            The default data root is <code>data/</code>. In production it can be changed with
+            <code>EVAL_DASHBOARD_DATA_ROOT</code>. Download and Eval paths are restricted under this root.
+          </p>
+        </div>
+        <div class="split">
+          <div class="tree">
+            <div>data/</div>
+            <div>  my_test_20250203/</div>
+            <div>    Summary.csv</div>
+            <div>    Score.csv</div>
+            <div>    result.txt / score.json / logs...</div>
+            <div>    current.parquet / future.parquet</div>
+            <div>    resources/metadata.yaml + summary.json</div>
+            <div>    specsheet/specsheet.pdf</div>
+          </div>
+          <div class="card">
+            <h3>Why one folder per test?</h3>
+            <p>
+              It keeps Overview selection simple, makes Data Management safer, and lets users share links using stable run names.
+              If output is scattered across arbitrary folders, users cannot easily know what to select or delete.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Core Files</div>
+          <h2>Which artifact powers which page?</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Artifact</th><th>Created By</th><th>Used By</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>Summary.csv</code></td>
+              <td>Download -> Eval Results</td>
+              <td>Overview, TP Summary</td>
+              <td>Object-level summary metrics such as TP, x/y RMS, x/y STD, velocity, perception labels, and product labels.</td>
+            </tr>
+            <tr>
+              <td><code>Score.csv</code></td>
+              <td>Download -> Eval Results</td>
+              <td>Criteria Based Score</td>
+              <td>Criteria block metrics including scenario, option, GT object, distance, NM, TP/TN, pass rate, thresholds, and counts.</td>
+            </tr>
+            <tr>
+              <td><code>.parquet</code></td>
+              <td>Download/eval/parquet build workflows</td>
+              <td>Detection Stats, Bounding Box Viewer, Prediction Evaluation, Debug</td>
+              <td>Structured frame/object rows: position, dimensions, yaw, label, status, source, scenario metadata, and prediction metrics.</td>
+            </tr>
+            <tr>
+              <td><code>metadata.yaml</code> + <code>summary.json</code></td>
+              <td>Specsheet/trend generation or analyzer output</td>
+              <td>Trend Insights, Specsheet trend export</td>
+              <td>Release identity and trend summary payloads. Summary shape decides full/usecase/devops role.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Trend Data</div>
+          <h2>Trend summaries are classified by JSON shape.</h2>
+          <p class="lead">
+            Trend Insights scans the data root for <code>metadata.yaml</code> files that have sibling <code>summary.json</code>.
+            It then classifies the summary and groups related jobs into releases.
+          </p>
+        </div>
+        <div class="grid cols-3">
+          <div class="card">
+            <h3>Full performance</h3>
+            <p>Summary has <code>blocks</code> containing the header <code>全数データセット評価</code>. Used for mAP, precision, recall, error, and prediction trends.</p>
+          </div>
+          <div class="card">
+            <h3>Usecase</h3>
+            <p>Summary has <code>blocks</code> containing <code>ユースケース評価</code>. It participates in release grouping and inventory.</p>
+          </div>
+          <div class="card">
+            <h3>DevOps pass-rate</h3>
+            <p>Summary is a nested dictionary without <code>blocks</code>, with category results containing <code>passed</code> and <code>total</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Report Outputs</div>
+          <h2>Reports are optional outputs, not the main app path.</h2>
+          <p class="lead">
+            Users can explore directly in Streamlit, then export when they need a portable artifact for review.
+          </p>
+        </div>
+        <div class="grid cols-3">
+          <div class="card">
+            <h3>Dashboard PDF</h3>
+            <p>Generated from the current Overview selection and filters. Best for summarizing the dashboard state as a curated report.</p>
+          </div>
+          <div class="card">
+            <h3>Release Specsheet PDF</h3>
+            <p>Advanced release-oriented report generated through <code>perception_catalog_analyzer</code>. It can include trend pages when trend metadata is enabled.</p>
+            <div class="actions"><a class="button" href="../specsheet_pipeline_explainer.html">Open specsheet details</a></div>
+          </div>
+          <div class="card">
+            <h3>ZIP outputs</h3>
+            <p>Data Management can package outputs for download, useful when moving run artifacts out of a shared server.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Debugging by Artifact</div>
+          <h2>When a page is empty, first check the file it needs.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Symptom</th><th>Likely missing</th><th>Fix</th></tr></thead>
+          <tbody>
+            <tr><td>Overview summary is sparse</td><td><code>Summary.csv</code></td><td>Generate Summary.csv from Download -> Eval Results.</td></tr>
+            <tr><td>Criteria page has no rows</td><td><code>Score.csv</code></td><td>Generate Score.csv from result files or score JSON.</td></tr>
+            <tr><td>Detection/BEV pages cannot load</td><td>Parquet files</td><td>Build or place parquet artifacts under the expected data root/run path.</td></tr>
+            <tr><td>Trend Insights has no releases</td><td><code>metadata.yaml</code> + <code>summary.json</code></td><td>Generate or copy trend-compatible release outputs under data root.</td></tr>
+            <tr><td>Specsheet trend section says no data</td><td>Trend rows or PNG plots</td><td>Check trend classification and generated plot files in <code>specsheet/</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+  <script src="guide.js"></script>
+</body>
+</html>
