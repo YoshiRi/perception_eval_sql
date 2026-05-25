@@ -31,6 +31,7 @@ TASK_TYPES = (
     "build_parquet",
     "download_and_eval",
     "run_evaluator_and_process",
+    "run_release_specsheet_workflow",
 )
 TASK_STATUSES = ("pending", "running", "completed", "failed")
 

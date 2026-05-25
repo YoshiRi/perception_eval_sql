@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 04 — Start the full stack, or if it is already running: up -d (apply compose/scale) then restart all services.
+# 04 — Start or update the full stack with docker compose up -d.
 # Default: 2 worker replicas (EVAL_COMPOSE_SCALE_WORKER in .env). Override: ./04_START.sh --scale worker=1 (last --scale wins).
 set -euo pipefail
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,10 +17,4 @@ WORKER_SCALE="${EVAL_COMPOSE_SCALE_WORKER:-2}"
 
 dc() { docker compose --env-file .env "$@"; }
 
-if [[ -n "$(dc ps -q --status running 2>/dev/null || true)" ]]; then
-  echo "Stack already running — updating with up -d, then restarting all services."
-  dc up -d --scale "worker=${WORKER_SCALE}" "$@"
-  dc restart
-else
-  dc up -d --scale "worker=${WORKER_SCALE}" "$@"
-fi
+dc up -d --scale "worker=${WORKER_SCALE}" "$@"

@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import io
+import urllib.parse
 import zipfile
 import yaml
 from pathlib import Path
 from lib.run_loader import load_run
-from lib.path_utils import get_data_root, get_data_root_display, list_run_directories, path_display
+from lib.path_utils import get_data_root, get_data_root_display, get_run_display_name, list_run_directories, path_display
 import plotly.express as px
 import plotly.graph_objects as go
 from lib.user_config import UserConfig
@@ -278,7 +279,7 @@ if not RUN_ROOT.exists() or not RUN_ROOT.is_dir():
 
 # List run directories (subdirectories in RUN_ROOT)
 run_dirs = list_run_directories()
-run_names = [p.name for p in run_dirs]
+run_names = [get_run_display_name(p) for p in run_dirs]
 
 if not run_dirs:
     st.warning(f"No runs found in '{get_data_root_display()}'.\n\nPlease add at least one sub-directory with evaluation results, e.g. `{get_data_root_display()}/my_eval_run/`.")
@@ -300,8 +301,9 @@ if url_run_a in run_names:
     saved_run_a = url_run_a
 
 run_a_index = run_names.index(saved_run_a) if saved_run_a in run_names else 0
-run_a_dir = st.sidebar.selectbox("Baseline (A)", run_dirs, index=run_a_index, format_func=lambda p: p.name)
-user_config.set("overview_run_a", run_a_dir.name)
+run_a_dir = st.sidebar.selectbox("Baseline (A)", run_dirs, index=run_a_index, format_func=get_run_display_name)
+run_a_name = get_run_display_name(run_a_dir)
+user_config.set("overview_run_a", run_a_name)
 
 compare_run_names = []  # list of run names for candidates B, C, D, ...
 if mode == "Compare Mode":
@@ -331,10 +333,10 @@ if mode == "Compare Mode":
                 f"Candidate ({letter})",
                 run_dirs,
                 index=idx,
-                format_func=lambda p: p.name,
+                format_func=get_run_display_name,
                 key=f"compare_run_select_{i}",
             )
-            new_compare_run_names.append(selected.name)
+            new_compare_run_names.append(get_run_display_name(selected))
         with col_rm:
             if len(compare_run_names) > 1:
                 if st.button("✕", key=f"compare_remove_{i}", help="Remove this run"):
@@ -348,7 +350,7 @@ if mode == "Compare Mode":
     st.session_state["overview_compare_run_names"] = compare_run_names
 
     if st.sidebar.button("➕ Add run", help="Add another run to compare"):
-        used = {run_a_dir.name} | set(compare_run_names)
+        used = {run_a_name} | set(compare_run_names)
         next_name = next((n for n in run_names if n not in used), run_names[0])
         new_list = compare_run_names + [next_name]
         st.session_state["overview_compare_run_names"] = new_list
@@ -361,13 +363,13 @@ if mode == "Compare Mode":
 
 compare_run_dirs = []
 if mode == "Compare Mode" and compare_run_names:
-    name_to_dir = {p.name: p for p in run_dirs}
+    name_to_dir = {get_run_display_name(p): p for p in run_dirs}
     compare_run_dirs = [name_to_dir[n] for n in compare_run_names if n in name_to_dir]
 
 # ====== SYNC URL (NON-DESTRUCTIVE) ======
 query = {
     "mode": "compare" if mode == "Compare Mode" else "single",
-    "run_a": run_a_dir.name,
+    "run_a": run_a_name,
 }
 for j, name in enumerate(compare_run_names):
     query[f"run_{chr(98 + j)}"] = name  # run_b, run_c, ...
@@ -495,10 +497,14 @@ if mode == "Compare Mode" and compare_run_dirs:
                         st.caption(f"Up to 5 keys only in {cand}")
                         st.code("\n".join(sc) if sc else "(none)")
 
-share_q = f"mode={'compare' if mode == 'Compare Mode' else 'single'}&run_a={run_a_dir.name}"
+share_query = {
+    "mode": "compare" if mode == "Compare Mode" else "single",
+    "run_a": run_a_name,
+}
 if mode == "Compare Mode" and compare_run_names:
     for j, name in enumerate(compare_run_names):
-        share_q += f"&run_{chr(98 + j)}={name}"
+        share_query[f"run_{chr(98 + j)}"] = name
+share_q = urllib.parse.urlencode(share_query)
 render_share_link_callout(
     share_q,
     caption="Append to your server URL (e.g. `https://host:8501/?` + query). Build links from Data Management too.",
@@ -649,7 +655,7 @@ _report_key = {
 _specsheet_run_records = _report_runs
 _specsheet_run_labels = _report_labels
 _specsheet_run_options = {
-    f"{label} · {record['path'].name}": record["path"]
+    f"{label} · {get_run_display_name(record['path'])}": record["path"]
     for label, record in zip(_specsheet_run_labels, _specsheet_run_records)
 }
 _specsheet_run_option_keys = list(_specsheet_run_options.keys())
@@ -663,7 +669,7 @@ _detected_specsheet_labels = collect_candidate_specsheet_labels(
 )
 _specsheet_label_options = list(dict.fromkeys(_default_specsheet_labels + _detected_specsheet_labels))
 _single_specsheet_run_path = _specsheet_run_records[0]["path"]
-_default_specsheet_version = st.session_state.get("specsheet_version", _single_specsheet_run_path.name)
+_default_specsheet_version = st.session_state.get("specsheet_version", get_run_display_name(_single_specsheet_run_path))
 
 pdf_col1, pdf_col2 = st.columns([1.2, 2.8])
 with pdf_col1:
@@ -684,7 +690,7 @@ with pdf_col1:
             )
             st.session_state["overview_pdf_report_bytes"] = pdf_bytes
             st.session_state["overview_pdf_report_key"] = _report_key
-            run_names_for_file = [r["path"].name for r in _report_runs if r.get("path") is not None]
+            run_names_for_file = [get_run_display_name(r["path"]) for r in _report_runs if r.get("path") is not None]
             st.session_state["overview_pdf_report_name"] = make_report_filename(run_names_for_file)
             _pdf_status.success("PDF report is ready.")
         except Exception as e:
@@ -729,6 +735,12 @@ selected_specsheet_run_paths = [
     if key in _specsheet_run_options
 ]
 _active_specsheet_paths = [get_specsheet_artifact_paths(path) for path in selected_specsheet_run_paths]
+_selected_trend_metadata_text = ""
+if len(_active_specsheet_paths) == 1 and _active_specsheet_paths[0]["trend_metadata"].exists():
+    try:
+        _selected_trend_metadata_text = _active_specsheet_paths[0]["trend_metadata"].read_text(encoding="utf-8")
+    except Exception:
+        _selected_trend_metadata_text = ""
 
 specsheet_cfg_col1, specsheet_cfg_col2, specsheet_cfg_col3 = st.columns([1.4, 1.2, 1.4])
 with specsheet_cfg_col1:
@@ -764,7 +776,7 @@ if not selected_specsheet_run_paths:
 
 specsheet_trend_enabled = st.toggle(
     "Include trend data",
-    value=bool(st.session_state.get("specsheet_include_trend", False)),
+    value=bool(st.session_state.get("specsheet_include_trend", bool(_selected_trend_metadata_text))),
     key="specsheet_include_trend",
     help="Release-report mode only. Saves `metadata.yaml` next to the generated `summary.json` and reuses all saved trend metadata files under the data root.",
 )
@@ -776,7 +788,10 @@ if specsheet_trend_enabled:
     )
     trend_metadata_text = st.text_area(
         "Trend metadata YAML",
-        value=st.session_state.get("specsheet_trend_metadata_text", DEFAULT_TREND_METADATA_TEXT),
+        value=st.session_state.get(
+            "specsheet_trend_metadata_text",
+            _selected_trend_metadata_text or DEFAULT_TREND_METADATA_TEXT,
+        ),
         key="specsheet_trend_metadata_text",
         height=180,
         help="Required keys: tags, pilot_auto_version, data_count, description, date.",
@@ -816,6 +831,7 @@ with specsheet_action_col1:
                 "Using existing up-to-date spec-sheet PDF": 1.0,
                 "Loading CSV files": 0.15,
                 "Building abstract and detail sections": 0.2,
+                "Validating full trend summary": 0.9,
                 "Saving trend metadata": 0.9,
                 "Collecting trend history": 0.92,
                 "Rendering trend plots": 0.94,
@@ -842,7 +858,7 @@ with specsheet_action_col1:
 
             generated_pdfs: list[tuple[Path, bool]] = []
             for idx, run_path in enumerate(selected_specsheet_run_paths, start=1):
-                _update_specsheet_status(f"Run {idx}/{len(selected_specsheet_run_paths)}: {run_path.name}")
+                _update_specsheet_status(f"Run {idx}/{len(selected_specsheet_run_paths)}: {get_run_display_name(run_path)}")
                 pdf_path, generated = generate_specsheet_pdf(
                     run_path,
                     project_id=specsheet_project_id,

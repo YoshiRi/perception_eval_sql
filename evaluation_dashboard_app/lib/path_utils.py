@@ -112,12 +112,45 @@ def resolve_under_data_root(
         return None, str(e)
 
 
+def _looks_like_analysis_run(path: Path) -> bool:
+    return (
+        (path / "Summary.csv").exists()
+        or (path / "Score.csv").exists()
+        or any(path.glob("*.parquet"))
+        or (path / "current.csv").exists()
+        or (path / "future.csv").exists()
+    )
+
+
+def get_run_display_name(run_path: Path) -> str:
+    """Return a stable run selector name relative to the data root."""
+    root = get_data_root()
+    try:
+        return run_path.resolve().relative_to(root).as_posix()
+    except Exception:
+        return run_path.name
+
+
 def list_run_directories() -> List[Path]:
-    """Return sorted list of run directories (immediate subdirs of data root) that exist."""
+    """Return sorted run directories, including release analysis children."""
     root = get_data_root()
     if not root.exists():
         return []
-    return sorted([p for p in root.iterdir() if p.is_dir()])
+    runs: List[Path] = []
+    seen = set()
+    for child in sorted([p for p in root.iterdir() if p.is_dir()]):
+        resolved = child.resolve()
+        if resolved not in seen:
+            runs.append(child)
+            seen.add(resolved)
+        for release_child_name in ("performance", "devops"):
+            release_child = child / release_child_name
+            if release_child.is_dir() and _looks_like_analysis_run(release_child):
+                release_resolved = release_child.resolve()
+                if release_resolved not in seen:
+                    runs.append(release_child)
+                    seen.add(release_resolved)
+    return sorted(runs, key=get_run_display_name)
 
 
 def count_tlr_scenarios(path: Path) -> int:
@@ -174,7 +207,7 @@ def get_run_info(run_path: Path) -> dict:
     has_score = (run_path / "Score.csv").exists()
     has_parquet = any(run_path.glob("*.parquet"))
     return {
-        "name": run_path.name,
+        "name": get_run_display_name(run_path),
         "path": run_path,
         "size_bytes": size_bytes,
         "mtime": mtime,
@@ -186,23 +219,25 @@ def get_run_info(run_path: Path) -> dict:
 
 def resolve_run_subdirectory(run_name: str) -> Tuple[Optional[Path], str]:
     """
-    Resolve a run directory by name (must be a direct child of data root).
+    Resolve a run directory by display name under the data root.
     Returns (path, "") on success, or (None, error_message).
     """
     root = get_data_root()
     if not run_name or run_name.strip() != run_name:
         return None, "Invalid run name."
-    if os.sep in run_name or "/" in run_name or ".." in run_name:
+    if "\x00" in run_name or "\\" in run_name:
         return None, "Invalid run name."
-    run_path = root / run_name
-    if not run_path.exists():
-        return None, f"Run does not exist: {run_name}"
-    if not run_path.is_dir():
-        return None, "Not a directory."
+    run_path = (root / run_name).resolve()
     try:
         run_path.relative_to(root)
     except ValueError:
         return None, "Run is not under data root."
+    if run_path == root:
+        return None, "Invalid run name."
+    if not run_path.exists():
+        return None, f"Run does not exist: {run_name}"
+    if not run_path.is_dir():
+        return None, "Not a directory."
     return run_path, ""
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from lib.path_utils import get_data_root, list_run_directories
+from lib.path_utils import get_data_root, get_run_display_name, list_run_directories
 from lib.run_loader import load_run
 
 
@@ -30,7 +30,7 @@ def try_hydrate_session_from_overview_query_params() -> bool:
     if not root.exists() or not root.is_dir():
         return False
     run_dirs = list_run_directories()
-    name_to_dir = {p.name: p for p in run_dirs}
+    name_to_dir = {get_run_display_name(p): p for p in run_dirs}
     if run_a_name not in name_to_dir:
         return False
     mode_param = (params.get("mode") or "single").lower()

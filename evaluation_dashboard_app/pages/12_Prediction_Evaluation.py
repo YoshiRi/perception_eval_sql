@@ -13,7 +13,7 @@ import streamlit as st
 
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero, section_header
-from lib.path_utils import list_run_directories, path_display
+from lib.path_utils import get_run_display_name, list_run_directories, path_display
 from lib.prediction_eval import build_specsheet_aligned_prediction_artifacts
 
 
@@ -503,7 +503,7 @@ def merge_polar_compare(polar_a: pd.DataFrame, polar_b: pd.DataFrame) -> pd.Data
 
 run_dirs = list_run_directories()
 run_dirs = [p for p in run_dirs if _run_has_prediction_source(p)]
-run_names = [p.name for p in run_dirs]
+run_names = [get_run_display_name(p) for p in run_dirs]
 if not run_names:
     st.warning("No run directories with `future.parquet` or `future.csv` found under `data/`.")
     st.stop()
@@ -512,7 +512,8 @@ try_hydrate_session_from_overview_query_params()
 mode_default = "Compare Mode" if st.session_state.get("mode") == "Compare Mode" else "Single Run"
 mode = st.sidebar.selectbox("Mode", ["Single Run", "Compare Mode"], index=0 if mode_default == "Single Run" else 1)
 
-default_run_name = st.session_state.get("runA", {}).get("path").name if st.session_state.get("runA") else run_names[0]
+session_run_path = st.session_state.get("runA", {}).get("path") if st.session_state.get("runA") else None
+default_run_name = get_run_display_name(session_run_path) if isinstance(session_run_path, Path) else run_names[0]
 if default_run_name not in run_names:
     default_run_name = run_names[0]
 
@@ -530,8 +531,8 @@ if mode == "Compare Mode":
         default_b = compare_candidates[0]
     selected_run_b = st.sidebar.selectbox("Candidate (B)", compare_candidates, index=compare_candidates.index(default_b))
 
-run_path_a = next(p for p in run_dirs if p.name == selected_run_a)
-run_path_b = next((p for p in run_dirs if p.name == selected_run_b), None)
+run_path_a = next(p for p in run_dirs if get_run_display_name(p) == selected_run_a)
+run_path_b = next((p for p in run_dirs if get_run_display_name(p) == selected_run_b), None)
 metadata_a = load_prediction_metadata(str(run_path_a))
 cache_ready_a = prediction_artifacts_ready(run_path_a)
 metadata_b = load_prediction_metadata(str(run_path_b)) if run_path_b is not None else None

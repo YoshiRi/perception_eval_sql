@@ -174,5 +174,49 @@ def render_task_result_summary(summary: Dict[str, Any]) -> None:
 
         if evaluator_report_url:
             st.markdown(f"### [📊 View Evaluator Report]({evaluator_report_url})")
+    elif job == "run_release_specsheet_workflow":
+        st.subheader("Release Specsheet Summary")
+        st.write(f"📁 **Release root:** `{summary.get('release_root', '')}`")
+        st.write(f"🏷️ **Version:** `{summary.get('version', '')}`")
+        evaluator_jobs = summary.get("evaluator_jobs", {})
+        if evaluator_jobs:
+            rows = []
+            for role, payload in evaluator_jobs.items():
+                rows.append(
+                    {
+                        "role": role,
+                        "job_id": payload.get("job_id", ""),
+                        "status": payload.get("status", ""),
+                        "catalog_id": payload.get("catalog_id", ""),
+                        "suite_count": payload.get("suite_count", ""),
+                        "description": payload.get("description", ""),
+                        "report_url": payload.get("report_url", ""),
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        analysis_artifacts = summary.get("analysis_artifacts", {})
+        if analysis_artifacts:
+            st.write("🔎 **Detailed analysis artifacts:**")
+            rows = []
+            for role, payload in analysis_artifacts.items():
+                download = payload.get("download", {}) if isinstance(payload.get("download"), dict) else {}
+                eval_summary = payload.get("eval", {}) if isinstance(payload.get("eval"), dict) else {}
+                warnings = payload.get("warnings", []) if isinstance(payload.get("warnings"), list) else []
+                rows.append(
+                    {
+                        "role": role,
+                        "path": payload.get("path", ""),
+                        "download_success": download.get("success", ""),
+                        "download_total": download.get("total", ""),
+                        "summary_rows": eval_summary.get("summary_rows", ""),
+                        "score_rows": eval_summary.get("score_rows", ""),
+                        "parquet_path": payload.get("parquet_path", ""),
+                        "warnings": "; ".join(str(item) for item in warnings[:3]),
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        specsheet_pdf = summary.get("specsheet_pdf", "")
+        if specsheet_pdf:
+            st.write(f"✅ **Specsheet PDF:** `{specsheet_pdf}`")
     else:
         st.json(summary)

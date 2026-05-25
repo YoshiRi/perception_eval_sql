@@ -39,6 +39,7 @@ def _task_type_label(task_type: str) -> str:
         "build_parquet": "Build parquet",
         "download_and_eval": "Download + Eval",
         "run_evaluator_and_process": "Run Evaluator + Process",
+        "run_release_specsheet_workflow": "Release Specsheet",
     }
     return labels.get(task_type, task_type or "Task")
 
@@ -65,6 +66,10 @@ def _task_summary(t: Dict[str, Any]) -> str:
             parts.append("parquet")
         return f"job_id={params.get('job_id', '')} [{'+'.join(parts)}] → {out}"
     if task_type == "run_evaluator_and_process":
+        target = params.get("target_name", "")
+        target_type = "tag" if params.get("is_tag", False) else "branch"
+        return f"{target_type}={target} → {params.get('output_path', '')}"
+    if task_type == "run_release_specsheet_workflow":
         target = params.get("target_name", "")
         target_type = "tag" if params.get("is_tag", False) else "branch"
         return f"{target_type}={target} → {params.get('output_path', '')}"

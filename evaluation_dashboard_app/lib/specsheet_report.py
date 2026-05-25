@@ -207,13 +207,18 @@ def parse_trend_metadata_text(text: str) -> dict[str, Any]:
     if not date or not _TREND_DATE_PATTERN.match(date):
         raise ValueError("Trend metadata `date` must look like `2025.11.7`.")
 
-    return {
+    parsed = {
         "tags": ["trend"],
         "pilot_auto_version": pilot_auto_version,
         "data_count": data_count,
         "description": description,
         "date": date,
     }
+    for optional_key in ("release_group", "topic_name"):
+        optional_value = str(raw.get(optional_key) or "").strip()
+        if optional_value:
+            parsed[optional_key] = optional_value
+    return parsed
 
 
 def write_trend_metadata(run_dir: str | Path, metadata: dict[str, Any]) -> Path:
@@ -274,6 +279,7 @@ def classify_trend_summary(summary: dict[str, Any]) -> str:
 def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[TrendReleaseGroup]:
     metadata_files = discover_trend_metadata_files(root_dir)
     grouped: dict[str, TrendReleaseGroup] = {}
+    standalone_records: list[dict[str, Any]] = []
 
     for metadata_path in metadata_files:
         summary_path = metadata_path.parent / TREND_SUMMARY_FILENAME
@@ -288,6 +294,22 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
             topic_name = str(metadata.get("topic_name") or "standalone")
             group_kind = "standalone_run"
             base_dir = run_dir
+            standalone_records.append(
+                {
+                    "group_key": group_key,
+                    "display_name": display_name,
+                    "topic_name": topic_name,
+                    "group_kind": group_kind,
+                    "base_dir": base_dir,
+                    "role": role,
+                    "job_id": run_dir.name,
+                    "metadata_path": metadata_path,
+                    "summary_path": summary_path,
+                    "metadata": metadata,
+                    "summary": summary,
+                }
+            )
+            continue
         else:
             job_dir = metadata_path.parent
             topic_dir = job_dir.parent
@@ -315,6 +337,77 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
             "metadata": metadata,
             "summary": summary,
         }
+
+    standalone_by_release: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = {}
+    for record in standalone_records:
+        metadata = record["metadata"]
+        release_key = (
+            str(metadata.get("release_group") or ""),
+            str(record["topic_name"] or ""),
+            str(metadata.get("pilot_auto_version") or ""),
+            str(metadata.get("date") or ""),
+            str(metadata.get("description") or ""),
+            str(metadata.get("data_count") or ""),
+        )
+        standalone_by_release.setdefault(release_key, []).append(record)
+
+    for release_key, records in standalone_by_release.items():
+        role_counts: dict[str, int] = {}
+        for record in records:
+            role = str(record["role"])
+            role_counts[role] = role_counts.get(role, 0) + 1
+
+        can_group = len(records) > 1 and all(count == 1 for count in role_counts.values())
+        if can_group:
+            sample = records[0]
+            metadata = sample["metadata"]
+            release_label = (
+                str(metadata.get("release_group") or "").strip()
+                or str(metadata.get("pilot_auto_version") or "").strip()
+                or "standalone_release"
+            )
+            date_label = str(metadata.get("date") or "").strip()
+            display_name = f"{release_label} | {date_label}" if date_label else release_label
+            group_key = "standalone_group::" + "::".join(release_key)
+            grouped[group_key] = TrendReleaseGroup(
+                group_key=group_key,
+                display_name=display_name,
+                topic_name=str(sample["topic_name"]),
+                group_kind="standalone_release_group",
+                base_dir=Path(root_dir) if root_dir is not None else get_data_root(),
+                jobs={},
+            )
+            target_group = grouped[group_key]
+            for record in records:
+                target_group.jobs[str(record["role"])] = {
+                    "role": record["role"],
+                    "job_id": record["job_id"],
+                    "metadata_path": record["metadata_path"].resolve(),
+                    "summary_path": record["summary_path"].resolve(),
+                    "metadata": record["metadata"],
+                    "summary": record["summary"],
+                }
+            continue
+
+        for record in records:
+            group_key = str(record["group_key"])
+            grouped[group_key] = TrendReleaseGroup(
+                group_key=group_key,
+                display_name=str(record["display_name"]),
+                topic_name=str(record["topic_name"]),
+                group_kind=str(record["group_kind"]),
+                base_dir=record["base_dir"],
+                jobs={
+                    str(record["role"]): {
+                        "role": record["role"],
+                        "job_id": record["job_id"],
+                        "metadata_path": record["metadata_path"].resolve(),
+                        "summary_path": record["summary_path"].resolve(),
+                        "metadata": record["metadata"],
+                        "summary": record["summary"],
+                    }
+                },
+            )
 
     def _sort_key(group: TrendReleaseGroup) -> tuple[str, str]:
         dates = [
@@ -393,6 +486,22 @@ def _extract_full_metric_tables(summary: dict[str, Any]) -> list[dict[str, Any]]
 def _load_only_full_summary(summary_path: Path) -> list[dict[str, Any]]:
     summary = load_trend_summary_file(summary_path)
     return _extract_full_metric_tables(summary)
+
+
+def ensure_full_trend_summary(summary_path: str | Path) -> Path:
+    """Validate that analyzer block generation produced a full trend summary."""
+    path = Path(summary_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Full trend summary was not created: {path}. "
+            "The analyzer must write resources/summary.json before trend PDF generation."
+        )
+    summary = load_trend_summary_file(path)
+    role = classify_trend_summary(summary)
+    if role != "full":
+        raise ValueError(f"Expected a full trend summary at {path}, but it classified as `{role}`.")
+    extract_performance_metrics_from_summary(summary)
+    return path
 
 
 def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[str, float]:
@@ -743,6 +852,55 @@ def _scene_dataframe_from_dir_compat(
     return from_dir(run_path)
 
 
+_CURRENT_NUMERIC_COLUMNS = {
+    "unix_time",
+    "x",
+    "y",
+    "confidence",
+    "pointcloud_num",
+    "visibility",
+    "x_error",
+    "y_error",
+    "yaw_error",
+    "speed_error",
+    "frame_index",
+}
+_FUTURE_NUMERIC_COLUMNS = {
+    "x",
+    "y",
+    "tx",
+    "ty",
+    "confidence",
+    "visibility",
+    "relative_time",
+    "pair_dt_sec",
+}
+
+
+def _coerce_numeric_columns(frame: pd.DataFrame, columns: set[str]) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    coerced = frame.copy()
+    for column in sorted(columns.intersection(coerced.columns)):
+        coerced[column] = pd.to_numeric(coerced[column], errors="coerce")
+    return coerced
+
+
+def _coerce_specsheet_scene_numeric_columns(df):
+    """Normalize analyzer-loaded CSV values before NumPy-heavy specsheet metrics."""
+    if hasattr(df, "current"):
+        df.current = _coerce_numeric_columns(df.current, _CURRENT_NUMERIC_COLUMNS)
+        if getattr(df, "future", None) is not None:
+            df.future = _coerce_numeric_columns(df.future, _FUTURE_NUMERIC_COLUMNS)
+        return df
+    if isinstance(df, pd.DataFrame):
+        return _coerce_numeric_columns(
+            df,
+            _CURRENT_NUMERIC_COLUMNS | _FUTURE_NUMERIC_COLUMNS,
+        )
+    return df
+
+
 def _get_blocks_compat(
     get_blocks_func: Callable[..., tuple[Sequence[str], Sequence[str]]],
     *,
@@ -934,6 +1092,7 @@ def generate_specsheet_pdf(
         run_path,
         topic_name=topic_name,
     )
+    df = _coerce_specsheet_scene_numeric_columns(df)
     metrics = list(DEFAULT_SPECSHEET_METRICS)
     if getattr(df, "future", None) is not None:
         metrics.extend(FUTURE_SPECSHEET_METRICS)
@@ -954,6 +1113,8 @@ def generate_specsheet_pdf(
     if include_trend:
         if trend_metadata is None:
             raise ValueError("Trend metadata is required when trend mode is enabled.")
+        _notify(progress_callback, "Validating full trend summary")
+        ensure_full_trend_summary(paths["trend_summary"])
         _notify(progress_callback, "Saving trend metadata")
         write_trend_metadata(run_path, trend_metadata)
         metadata_list = discover_trend_metadata_files()

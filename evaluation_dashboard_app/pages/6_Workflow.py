@@ -64,6 +64,10 @@ except ImportError:
 _JST = timezone(timedelta(hours=9))
 _TASK_LIST_MAX_ROWS = 200
 _TASK_LIST_SINCE_DAYS = 7
+_RELEASE_PERFORMANCE_CATALOG_ID = "e36d75b9-6c3a-4970-9b9b-5cd13f7a9da3"
+_RELEASE_PERFORMANCE_INTEGRATION_ID = "96ad8fba-0228-4c2b-9166-07d4de1a0760"
+_RELEASE_DEVOPS_CATALOG_ID = "ab0f8498-cc1b-4726-836f-e18e8bcb3200"
+_RELEASE_DEVOPS_INTEGRATION_ID = "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
 _TASK_HISTORY_RANGE_OPTIONS = {
     "7 days": 7,
     "30 days": 30,
@@ -251,6 +255,11 @@ def _make_default_output_path(branch_name: str) -> str:
     return f"eval_{clean_branch}_{ts}"
 
 
+def _safe_output_part(value: object, fallback: str) -> str:
+    text = re.sub(r"[^\w.\-]+", "_", str(value or "").strip()).strip("._")
+    return text or fallback
+
+
 def _catalog_preset_emoji(preset_name: str, *, has_custom_catalog: bool = False) -> str:
     mapping = {
         "Build Test Catalog": "🛠️",
@@ -283,6 +292,13 @@ def _make_auto_workflow_description(
         f"🚀 evaluator workflow [{clean_target}] [{stamp}] "
         f"{_catalog_preset_emoji(preset_name, has_custom_catalog=has_custom_catalog)}"
     )
+
+
+def _make_auto_release_workflow_description(target_name: str) -> str:
+    clean_target = str(target_name or "").strip() or "default"
+    clean_target = re.sub(r"\s+", " ", clean_target)
+    stamp = datetime.now().strftime("%m-%d %H:%M")
+    return f"🚀 release workflow [{clean_target}] [{stamp}]"
 
 
 def _format_run_mtime(mtime: float) -> str:
@@ -1808,6 +1824,17 @@ def _render_start_workflow_form(
         f"{item['display_name']} ({item['catalog_id']})": item for item in server_catalogs
     }
 
+    release_mode = st.checkbox(
+        "Release data workflow: schedule Performance Test + Devops Test",
+        value=bool(st.session_state.get("workflow_release_mode", False)),
+        key="workflow_release_mode",
+        help="Queues the two standard release evaluator jobs, processes both as normal app runs, then generates a release specsheet with trend data.",
+    )
+    if release_mode:
+        st.info(
+            "Release mode uses the app-native flow: schedule Performance Test and Devops Test, create normal CSV/parquet analysis folders, write release metadata, and generate the trend-enabled specsheet PDF."
+        )
+
     top_cols = st.columns([1.0, 1.9, 1.2])
     with top_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Project</div>', unsafe_allow_html=True)
@@ -1828,12 +1855,14 @@ def _render_start_workflow_form(
                 key="workflow_catalog_name",
                 label_visibility="collapsed",
                 format_func=lambda value: value or "Choose a catalog",
+                disabled=release_mode,
             )
         with catalog_picker_cols[1]:
             fetch_catalogs_clicked = st.button(
                 "Fetch",
                 key="workflow_fetch_server_catalogs",
                 use_container_width=True,
+                disabled=release_mode,
             )
             if fetch_catalogs_clicked:
                 try:
@@ -1891,21 +1920,36 @@ def _render_start_workflow_form(
 
     picker_cols = st.columns([1.2, 1.2, 1.75])
     with picker_cols[0]:
-        st.markdown('<div class="wf-toolbar-note">Output folder</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="wf-toolbar-note">{"Release output folder" if release_mode else "Output folder"}</div>',
+            unsafe_allow_html=True,
+        )
         output_path = st.text_input(
-            "Output folder",
+            "Release output folder" if release_mode else "Output folder",
             value=default_output,
             key="workflow_output_path",
             label_visibility="collapsed",
             placeholder=_make_default_output_path(target_name),
+            help=(
+                "Folder under data/. Release mode creates metadata.yaml, performance/, devops/, and specsheet/ in this single folder."
+                if release_mode
+                else "Output folder under the data directory."
+            ),
         ).strip()
     with picker_cols[1]:
         st.markdown('<div class="wf-toolbar-note">Phase</div>', unsafe_allow_html=True)
+        phase_value = "perception.object_recognition.tracking.objects" if release_mode else default_phase
         phase = st.text_input(
             "Phase",
-            value=default_phase,
+            value=phase_value,
             key="workflow_phase",
             label_visibility="collapsed",
+            disabled=release_mode,
+            help=(
+                "Release mode uses this standard phase automatically for both detailed-analysis downloads."
+                if release_mode
+                else None
+            ),
         )
     with picker_cols[2]:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
@@ -1917,12 +1961,73 @@ def _render_start_workflow_form(
             placeholder="Optional label for the evaluator run",
         ).strip()
 
+    trend_metadata: Dict[str, object] = {}
+    if release_mode:
+        release_cols = st.columns([1.15, 1.1, 0.8])
+        with release_cols[0]:
+            release_group = st.text_input(
+                "Release group",
+                value=st.session_state.get("workflow_release_group", _safe_output_part(target_name, "release")),
+                key="workflow_release_group",
+                help="Stable key used to group this release with older app-generated trend history.",
+            ).strip()
+        with release_cols[1]:
+            pilot_auto_version = st.text_input(
+                "Pilot.Auto version",
+                value=st.session_state.get("workflow_release_pilot_auto_version", ""),
+                key="workflow_release_pilot_auto_version",
+                placeholder='Pilot.Auto v4.4.0 (bevfusion x2/2.5.1)',
+            ).strip()
+        with release_cols[2]:
+            release_date = st.text_input(
+                "Release date",
+                value=st.session_state.get("workflow_release_date", datetime.now(_JST).strftime("%Y.%m.%d")),
+                key="workflow_release_date",
+                placeholder="2026.5.22",
+            ).strip()
+        release_meta_cols = st.columns([0.8, 1.1, 1.1])
+        with release_meta_cols[0]:
+            data_count = st.text_input(
+                "Data count",
+                value=st.session_state.get("workflow_release_data_count", ""),
+                key="workflow_release_data_count",
+                placeholder="123,708+",
+            ).strip()
+        with release_meta_cols[1]:
+            release_description = st.text_input(
+                "Release description",
+                value=st.session_state.get("workflow_release_description", ""),
+                key="workflow_release_description",
+            ).strip()
+        with release_meta_cols[2]:
+            release_topic_name = st.text_input(
+                "Trend topic",
+                value=st.session_state.get("workflow_release_topic_name", "perception.object_recognition.objects"),
+                key="workflow_release_topic_name",
+            ).strip()
+        trend_metadata = {
+            "tags": ["trend"],
+            "release_group": release_group,
+            "pilot_auto_version": pilot_auto_version,
+            "data_count": data_count,
+            "description": release_description,
+            "date": release_date,
+            "topic_name": release_topic_name,
+        }
+        st.caption(
+            "Normal detailed-analysis outputs are generated automatically under `performance/` and `devops/`; the release PDF is copied to `specsheet/`."
+        )
+
     confirm_cols = st.columns([1.0, 1.0])
     with confirm_cols[0]:
-        if catalog_id:
+        if release_mode:
+            st.caption(f"Performance catalog: `{_RELEASE_PERFORMANCE_CATALOG_ID}`")
+        elif catalog_id:
             st.caption(f"Catalog ID: `{catalog_id}`")
     with confirm_cols[1]:
-        if integration_id:
+        if release_mode:
+            st.caption(f"DevOps catalog: `{_RELEASE_DEVOPS_CATALOG_ID}`")
+        elif integration_id:
             st.caption(f"Integration ID: `{integration_id}`")
     if st.session_state.get("workflow_catalog_resolution_error"):
         st.warning(f"Could not resolve integration automatically: {st.session_state['workflow_catalog_resolution_error']}")
@@ -1944,6 +2049,12 @@ def _render_start_workflow_form(
                 horizontal=True,
                 index=0 if default_download_type == "Archives (ZIP)" else 1,
                 key="workflow_download_type",
+                disabled=release_mode,
+                help=(
+                    "Release mode always downloads archives so Summary.csv, Score.csv, and parquet can be generated."
+                    if release_mode
+                    else None
+                ),
             )
         with adv_cols[1]:
             environment = st.selectbox(
@@ -1973,29 +2084,45 @@ def _render_start_workflow_form(
 
         option_cols = st.columns(5)
         with option_cols[0]:
-            run_eval = st.checkbox("Run evaluation", value=True, key="workflow_run_eval")
+            run_eval = st.checkbox(
+                "Run evaluation",
+                value=False if release_mode else True,
+                key="workflow_run_eval",
+                disabled=release_mode,
+                help="Release mode runs evaluation automatically for both release jobs.",
+            )
         with option_cols[1]:
             generate_parquet = st.checkbox(
                 "Generate parquet",
-                value=CATALOG_IO_AVAILABLE,
-                disabled=not CATALOG_IO_AVAILABLE,
+                value=False if release_mode else CATALOG_IO_AVAILABLE,
+                disabled=release_mode or not CATALOG_IO_AVAILABLE,
                 key="workflow_generate_parquet",
+                help="Release mode generates detailed-analysis CSV/parquet automatically under performance/ and devops/.",
             )
         with option_cols[2]:
             skip_large_file = st.checkbox(
                 "Skip large files",
-                value=default_skip_large_file,
+                value=False if release_mode else default_skip_large_file,
                 key="workflow_skip_large_file",
+                disabled=release_mode,
+                help="Release mode keeps the standard release artifacts needed for analysis.",
             )
         with option_cols[3]:
-            eval_recursive = st.checkbox("Recursive scan", value=True, key="workflow_eval_recursive")
+            eval_recursive = st.checkbox(
+                "Recursive scan",
+                value=False if release_mode else True,
+                key="workflow_eval_recursive",
+                disabled=release_mode,
+                help="Not used in release mode.",
+            )
         with option_cols[4]:
             is_tag = st.checkbox("Target is tag", value=False, key="workflow_is_tag")
 
     set_config_value("eval_project_id", project_id)
     set_config_value("target_name", target_name)
-    set_config_value("eval_download_type", download_type)
-    set_config_value("eval_phase", phase)
+    if not release_mode:
+        set_config_value("eval_download_type", download_type)
+        set_config_value("eval_phase", phase)
     set_config_value("poll_interval", poll_interval)
     set_config_value("max_wait_hours", max_wait_hours)
     set_config_value("environment", environment)
@@ -2003,17 +2130,26 @@ def _render_start_workflow_form(
     errors = []
     if not project_id:
         errors.append("Project ID")
-    if not catalog_id:
+    if not release_mode and not catalog_id:
         errors.append("Catalog")
-    if not integration_id:
+    if not release_mode and not integration_id:
         errors.append("Integration ID")
     if not target_name:
         errors.append("Branch or tag")
+    if release_mode:
+        if not trend_metadata.get("release_group"):
+            errors.append("Release group")
+        if not trend_metadata.get("pilot_auto_version"):
+            errors.append("Pilot.Auto version")
+        if not trend_metadata.get("data_count"):
+            errors.append("Data count")
+        if not trend_metadata.get("date"):
+            errors.append("Release date")
 
     resolved_output = None
     path_error = ""
     if output_path:
-        resolved_output, path_error = resolve_under_data_root(output_path, allow_create=False)
+        resolved_output, path_error = resolve_under_data_root(output_path, allow_missing=True)
         if path_error:
             errors.append(path_error)
     else:
@@ -2044,10 +2180,12 @@ def _render_start_workflow_form(
             "phase": phase,
             "poll_interval": int(poll_interval),
             "max_wait_hours": int(max_wait_hours),
-            "run_eval": bool(run_eval),
-            "generate_parquet": bool(generate_parquet),
-            "skip_large_file": bool(skip_large_file),
-            "eval_recursive": bool(eval_recursive),
+            "run_eval": False if release_mode else bool(run_eval),
+            "generate_parquet": False if release_mode else bool(generate_parquet),
+            "skip_large_file": False if release_mode else bool(skip_large_file),
+            "eval_recursive": False if release_mode else bool(eval_recursive),
+            "release_mode": bool(release_mode),
+            "trend_metadata": trend_metadata if release_mode else {},
         },
     }
 
@@ -2102,36 +2240,78 @@ def _render_workflow_launcher_section(
                 elif not is_task_queue_enabled():
                     st.error("Task queue not enabled. Set `USE_TASK_QUEUE=true` and `REDIS_URL`.")
                 else:
+                    common_params = {
+                        "project_id": dialog_payload["project_id"],
+                        "suite_ids": None,
+                        "target_name": dialog_payload["target_name"],
+                        "environment": dialog_payload["environment"],
+                        "max_retries": 0,
+                        "clean_build": False,
+                        "debug": False,
+                        "release": False,
+                        "record_caret": False,
+                        "log_expiration_time_in_days": 14.0,
+                        "is_tag": dialog_payload["is_tag"],
+                        "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
+                        "phase": dialog_payload["phase"],
+                        "skip_large_file": bool(dialog_payload.get("skip_large_file", True)),
+                        "large_file_mb": 50.0,
+                        "keep_zip_files": False,
+                        "poll_interval": dialog_payload["poll_interval"],
+                        "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
+                        "run_eval": dialog_payload["run_eval"],
+                        "generate_parquet": dialog_payload["generate_parquet"],
+                        "eval_recursive": dialog_payload["eval_recursive"],
+                        "eval_overwrite": False,
+                    }
+                    if dialog_payload.get("release_mode"):
+                        base_description = dialog_payload["description"] or _make_auto_release_workflow_description(
+                            dialog_payload["target_name"]
+                        )
+                        trend_metadata = dict(dialog_payload.get("trend_metadata") or {})
+                        task_id = _enqueue_task(
+                            "run_release_specsheet_workflow",
+                            {
+                                "project_id": dialog_payload["project_id"],
+                                "target_name": dialog_payload["target_name"],
+                                "description": base_description,
+                                "output_path": dialog_payload["resolved_output"],
+                                "environment": dialog_payload["environment"],
+                                "is_tag": dialog_payload["is_tag"],
+                                "poll_interval": dialog_payload["poll_interval"],
+                                "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
+                                "trend_metadata": trend_metadata,
+                                "version": trend_metadata.get("pilot_auto_version", ""),
+                                "topic": trend_metadata.get("topic_name", "perception.object_recognition.objects"),
+                                "performance_catalog_id": _RELEASE_PERFORMANCE_CATALOG_ID,
+                                "performance_integration_id": _RELEASE_PERFORMANCE_INTEGRATION_ID,
+                                "devops_catalog_id": _RELEASE_DEVOPS_CATALOG_ID,
+                                "devops_integration_id": _RELEASE_DEVOPS_INTEGRATION_ID,
+                                "analysis_phase": "perception.object_recognition.tracking.objects",
+                                "overwrite": True,
+                            },
+                        )
+                        if task_id:
+                            st.session_state["workflow_start_dialog_open"] = False
+                            st.success(f"Release specsheet workflow queued. Task id: `{task_id}`")
+                            st.rerun()
+                        else:
+                            st.error("Failed to enqueue release specsheet workflow. Check worker logs.")
+                        return
+
                     task_id = _enqueue_task(
                         "run_evaluator_and_process",
                         {
-                            "project_id": dialog_payload["project_id"],
+                            **common_params,
                             "catalog_id": dialog_payload["catalog_id"],
                             "integration_id": dialog_payload["integration_id"],
-                            "suite_ids": None,
-                            "target_name": dialog_payload["target_name"],
+                            "catalog_preset_name": dialog_payload.get("catalog_preset_name", ""),
                             "description": dialog_payload["description"] or _make_auto_workflow_description(
                                 dialog_payload["target_name"],
                                 dialog_payload.get("catalog_preset_name", ""),
                                 has_custom_catalog=bool(dialog_payload.get("has_custom_catalog", False)),
                             ),
                             "output_path": dialog_payload["resolved_output"],
-                            "environment": dialog_payload["environment"],
-                            "max_retries": 0,
-                            "clean_build": False,
-                            "debug": False,
-                            "is_tag": dialog_payload["is_tag"],
-                            "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
-                            "phase": dialog_payload["phase"],
-                            "skip_large_file": bool(dialog_payload.get("skip_large_file", True)),
-                            "large_file_mb": 50.0,
-                            "keep_zip_files": False,
-                            "poll_interval": dialog_payload["poll_interval"],
-                            "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
-                            "run_eval": dialog_payload["run_eval"],
-                            "generate_parquet": dialog_payload["generate_parquet"],
-                            "eval_recursive": dialog_payload["eval_recursive"],
-                            "eval_overwrite": False,
                         },
                     )
                     if task_id:
