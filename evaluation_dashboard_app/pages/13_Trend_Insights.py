@@ -654,6 +654,8 @@ inventory_cols = [
     "description",
     "data_count",
     "mAP",
+    "precision",
+    "recall",
     "overall_pass_rate",
     "roles",
     "full_job_id",
@@ -668,12 +670,13 @@ st.dataframe(
     hide_index=True,
 )
 
-section_header("mAP Trend")
+section_header("Major Metrics Trend")
 
 perf_entries = release_df[release_df["full_job_id"].notna()].sort_values(
     ["date_sort", "version", "release_name"],
     ascending=[True, True, True],
 )
+major_metric_cols = ["mAP", "precision", "recall"]
 prediction_cols = [
     "minADE@1s",
     "minADE@3s",
@@ -682,16 +685,19 @@ prediction_cols = [
     "minFDE@3s",
     "minFDE@5s",
 ]
-if not perf_entries.empty and perf_entries["mAP"].notna().any():
-    latest_map_row = perf_entries.dropna(subset=["mAP"]).iloc[-1]
-    map_card_col1, map_card_col2 = st.columns(2)
-    map_card_col1.metric(
-        "Latest mAP",
-        f"{latest_map_row['mAP']:.3f}" if pd.notna(latest_map_row["mAP"]) else "n/a",
-    )
-    map_card_col2.metric(
+if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any():
+    latest_major_row = perf_entries.dropna(subset=major_metric_cols, how="all").iloc[-1]
+    metric_card_cols = st.columns(4)
+    for metric_col, card_col in zip(major_metric_cols, metric_card_cols[:3]):
+        metric_series = perf_entries.dropna(subset=[metric_col])
+        latest_metric_value = metric_series[metric_col].iloc[-1] if not metric_series.empty else pd.NA
+        card_col.metric(
+            f"Latest {metric_col}",
+            f"{latest_metric_value:.3f}" if pd.notna(latest_metric_value) else "n/a",
+        )
+    metric_card_cols[3].metric(
         "Latest Data Count",
-        f"{int(latest_map_row['data_count_num']):,}" if pd.notna(latest_map_row["data_count_num"]) else "n/a",
+        f"{int(latest_major_row['data_count_num']):,}" if pd.notna(latest_major_row["data_count_num"]) else "n/a",
     )
     fig = go.Figure()
     fig.add_bar(
@@ -702,21 +708,35 @@ if not perf_entries.empty and perf_entries["mAP"].notna().any():
         opacity=0.5,
         yaxis="y2",
     )
-    fig.add_trace(
-        go.Scatter(
-            x=perf_entries["version"],
-            y=perf_entries["mAP"],
-            name="mAP",
-            mode="lines+markers",
-            line=dict(color="#0f766e", width=3),
-            customdata=perf_entries[["release_name", "date", "data_count"]].to_numpy(),
-            hovertemplate="<b>%{x}</b><br>mAP: %{y:.3f}<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>",
+    metric_styles = {
+        "mAP": {"color": "#0f766e", "dash": "solid"},
+        "precision": {"color": "#1d4ed8", "dash": "solid"},
+        "recall": {"color": "#be123c", "dash": "dot"},
+    }
+    for metric_col in major_metric_cols:
+        fig.add_trace(
+            go.Scatter(
+                x=perf_entries["version"],
+                y=perf_entries[metric_col],
+                name=metric_col,
+                mode="lines+markers",
+                line=dict(
+                    color=metric_styles[metric_col]["color"],
+                    width=3,
+                    dash=metric_styles[metric_col]["dash"],
+                ),
+                customdata=perf_entries[["release_name", "date", "data_count"]].to_numpy(),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    + metric_col
+                    + ": %{y:.3f}<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>"
+                ),
+            )
         )
-    )
     fig.update_layout(
-        title="mAP Trend",
+        title="Major Detection Metrics Trend",
         xaxis_title="Pilot.Auto Version",
-        yaxis_title="mAP",
+        yaxis_title="Score",
         yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
         height=460,
         legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
@@ -724,7 +744,7 @@ if not perf_entries.empty and perf_entries["mAP"].notna().any():
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No grouped mAP trend entries are available yet.")
+    st.info("No grouped major metric trend entries are available yet.")
 
 section_header("Prediction Trend")
 

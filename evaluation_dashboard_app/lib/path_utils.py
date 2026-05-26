@@ -122,6 +122,14 @@ def _looks_like_analysis_run(path: Path) -> bool:
     )
 
 
+def _looks_like_release_container(path: Path) -> bool:
+    return (
+        (path / "metadata.yaml").exists()
+        and any((path / name).is_dir() for name in ("performance", "devops"))
+        and not _looks_like_analysis_run(path)
+    )
+
+
 def get_run_display_name(run_path: Path) -> str:
     """Return a stable run selector name relative to the data root."""
     root = get_data_root()
@@ -140,7 +148,7 @@ def list_run_directories() -> List[Path]:
     seen = set()
     for child in sorted([p for p in root.iterdir() if p.is_dir()]):
         resolved = child.resolve()
-        if resolved not in seen:
+        if resolved not in seen and not _looks_like_release_container(child):
             runs.append(child)
             seen.add(resolved)
         for release_child_name in ("performance", "devops"):

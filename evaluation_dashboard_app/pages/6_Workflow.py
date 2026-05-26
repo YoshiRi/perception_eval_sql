@@ -301,6 +301,14 @@ def _make_auto_release_workflow_description(target_name: str) -> str:
     return f"🚀 release workflow [{clean_target}] [{stamp}]"
 
 
+def _make_default_release_pilot_auto_version(target_name: str) -> str:
+    target = str(target_name or "").strip()
+    match = re.search(r"v?(\d+\.\d+\.\d+)", target)
+    if match:
+        return f"Pilot.Auto v{match.group(1)}"
+    return f"Pilot.Auto {target}" if target else "Pilot.Auto release"
+
+
 def _format_run_mtime(mtime: float) -> str:
     if not mtime:
         return "—"
@@ -1963,6 +1971,16 @@ def _render_start_workflow_form(
 
     trend_metadata: Dict[str, object] = {}
     if release_mode:
+        release_version_default = _make_default_release_pilot_auto_version(target_name)
+        release_description_default = f"{target_name} release data update" if target_name else "Release data update"
+        release_data_count_default = "99,776+"
+        if not st.session_state.get("workflow_release_pilot_auto_version"):
+            st.session_state["workflow_release_pilot_auto_version"] = release_version_default
+        if not st.session_state.get("workflow_release_description"):
+            st.session_state["workflow_release_description"] = release_description_default
+        if not st.session_state.get("workflow_release_data_count"):
+            st.session_state["workflow_release_data_count"] = release_data_count_default
+
         release_cols = st.columns([1.15, 1.1, 0.8])
         with release_cols[0]:
             release_group = st.text_input(
@@ -1974,7 +1992,7 @@ def _render_start_workflow_form(
         with release_cols[1]:
             pilot_auto_version = st.text_input(
                 "Pilot.Auto version",
-                value=st.session_state.get("workflow_release_pilot_auto_version", ""),
+                value=st.session_state.get("workflow_release_pilot_auto_version", release_version_default),
                 key="workflow_release_pilot_auto_version",
                 placeholder='Pilot.Auto v4.4.0 (bevfusion x2/2.5.1)',
             ).strip()
@@ -1989,14 +2007,14 @@ def _render_start_workflow_form(
         with release_meta_cols[0]:
             data_count = st.text_input(
                 "Data count",
-                value=st.session_state.get("workflow_release_data_count", ""),
+                value=st.session_state.get("workflow_release_data_count", release_data_count_default),
                 key="workflow_release_data_count",
                 placeholder="123,708+",
             ).strip()
         with release_meta_cols[1]:
             release_description = st.text_input(
                 "Release description",
-                value=st.session_state.get("workflow_release_description", ""),
+                value=st.session_state.get("workflow_release_description", release_description_default),
                 key="workflow_release_description",
             ).strip()
         with release_meta_cols[2]:
@@ -2014,9 +2032,29 @@ def _render_start_workflow_form(
             "date": release_date,
             "topic_name": release_topic_name,
         }
+        existing_job_cols = st.columns(2)
+        with existing_job_cols[0]:
+            performance_job_id = st.text_input(
+                "Existing Performance job ID",
+                value=st.session_state.get("workflow_release_performance_job_id", ""),
+                key="workflow_release_performance_job_id",
+                placeholder="Leave empty to schedule a new Performance job",
+                help="Use this when the release Performance evaluator job is already scheduled or finished.",
+            ).strip()
+        with existing_job_cols[1]:
+            devops_job_id = st.text_input(
+                "Existing DevOps job ID",
+                value=st.session_state.get("workflow_release_devops_job_id", ""),
+                key="workflow_release_devops_job_id",
+                placeholder="Leave empty to schedule a new DevOps job",
+                help="Use this when the release DevOps evaluator job is already scheduled or finished.",
+            ).strip()
         st.caption(
-            "Normal detailed-analysis outputs are generated automatically under `performance/` and `devops/`; the release PDF is copied to `specsheet/`."
+            "Normal detailed-analysis outputs are generated automatically under `performance/` and `devops/`; existing job IDs are waited on if still running and downloaded if already finished."
         )
+    else:
+        performance_job_id = ""
+        devops_job_id = ""
 
     confirm_cols = st.columns([1.0, 1.0])
     with confirm_cols[0]:
@@ -2186,6 +2224,8 @@ def _render_start_workflow_form(
             "eval_recursive": False if release_mode else bool(eval_recursive),
             "release_mode": bool(release_mode),
             "trend_metadata": trend_metadata if release_mode else {},
+            "performance_job_id": performance_job_id if release_mode else "",
+            "devops_job_id": devops_job_id if release_mode else "",
         },
     }
 
@@ -2219,6 +2259,8 @@ def _render_workflow_launcher_section(
         st.session_state["workflow_selected_server_catalog_label"] = ""
         st.session_state["workflow_catalog_resolution_error"] = ""
         st.session_state["workflow_last_catalog_selection"] = ""
+        st.session_state["workflow_release_performance_job_id"] = ""
+        st.session_state["workflow_release_devops_job_id"] = ""
         st.session_state["workflow_output_path"] = _make_default_output_path(fresh_target)
 
         @st.dialog("Start evaluator workflow", width="large")
@@ -2285,8 +2327,10 @@ def _render_workflow_launcher_section(
                                 "topic": trend_metadata.get("topic_name", "perception.object_recognition.objects"),
                                 "performance_catalog_id": _RELEASE_PERFORMANCE_CATALOG_ID,
                                 "performance_integration_id": _RELEASE_PERFORMANCE_INTEGRATION_ID,
+                                "performance_job_id": dialog_payload.get("performance_job_id", ""),
                                 "devops_catalog_id": _RELEASE_DEVOPS_CATALOG_ID,
                                 "devops_integration_id": _RELEASE_DEVOPS_INTEGRATION_ID,
+                                "devops_job_id": dialog_payload.get("devops_job_id", ""),
                                 "analysis_phase": "perception.object_recognition.tracking.objects",
                                 "overwrite": True,
                             },

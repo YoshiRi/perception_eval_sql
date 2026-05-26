@@ -1061,6 +1061,8 @@ def _build_release_analysis_artifacts(
     role: str,
     output_path: Path,
     phase: str,
+    progress_start: float = 48.0,
+    progress_end: float = 78.0,
 ) -> Dict[str, Any]:
     """Create the normal app analysis files for a release job."""
     from lib import download_core
@@ -1078,11 +1080,22 @@ def _build_release_analysis_artifacts(
 
     def _on_progress(msg: str) -> None:
         append_task_log(task_id, f"{role}: {msg}")
+        progress_msg = f"{role}: {msg}"
+        pct = progress_start
+        match = re.search(r"Downloading\s+(\d+)\s*/\s*(\d+)", msg)
+        if match:
+            current = int(match.group(1))
+            total = max(1, int(match.group(2)))
+            pct = progress_start + ((current - 1) / total) * max(0.0, progress_end - progress_start)
+        elif "Extracting" in msg or "Organizing" in msg:
+            pct = progress_end
+        update_task_progress(task_id, message=progress_msg, pct=min(progress_end, pct))
 
     def _on_warning(msg: str) -> None:
         result["warnings"].append(msg)
         append_task_log(task_id, f"WARNING: {role}: {msg}")
 
+    update_task_progress(task_id, message=f"{role}: finding downloadable case logs", pct=progress_start)
     failure_count, total_attempted, rows = download_core.run_download_results(
         project_id=project_id,
         job_id=job_id,
@@ -1108,6 +1121,7 @@ def _build_release_analysis_artifacts(
         raise RuntimeError(f"{role}: download produced no successful case artifacts.")
 
     if eval_summary:
+        update_task_progress(task_id, message=f"{role}: running eval_result", pct=progress_end)
         target_dirs = eval_summary.find_eval_result_dirs(str(output_path), recursive=True)
         statuses = []
         for result_dir in target_dirs:
@@ -1133,6 +1147,7 @@ def _build_release_analysis_artifacts(
 
     if pkl_archive_to_parquet:
         try:
+            update_task_progress(task_id, message=f"{role}: generating parquet", pct=progress_end)
             result["parquet_path"] = pkl_archive_to_parquet(
                 str(output_path),
                 on_progress=None,
@@ -1215,12 +1230,14 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 "label": "Performance Test",
                 "catalog_id": str(parameters.get("performance_catalog_id") or _RELEASE_PERFORMANCE_CATALOG_ID),
                 "integration_id": str(parameters.get("performance_integration_id") or _RELEASE_PERFORMANCE_INTEGRATION_ID),
+                "job_id": str(parameters.get("performance_job_id") or "").strip(),
             },
             {
                 "role": "devops",
                 "label": "Devops Test",
                 "catalog_id": str(parameters.get("devops_catalog_id") or _RELEASE_DEVOPS_CATALOG_ID),
                 "integration_id": str(parameters.get("devops_integration_id") or _RELEASE_DEVOPS_INTEGRATION_ID),
+                "job_id": str(parameters.get("devops_job_id") or "").strip(),
             },
         ]
         summary: Dict[str, Any] = {
@@ -1233,40 +1250,48 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             "specsheet_pdf": "",
         }
         update_task_result_summary(task_id, summary)
-        update_task_progress(task_id, message="Scheduling release evaluator jobs", pct=2)
+        update_task_progress(task_id, message="Preparing release evaluator jobs", pct=2)
 
         for item in jobs:
-            append_task_log(task_id, f"Scheduling {item['label']}: catalog={item['catalog_id']}")
             schedule_description = f"{description} | {item['label']}"
-            result = api.schedule_job(
-                project_id=project_id,
-                catalog_id=item["catalog_id"],
-                integration_id=item["integration_id"],
-                target_name=target_name,
-                suite_ids=None,
-                max_retries=0,
-                description=schedule_description,
-                clean_build=True,
-                debug=False,
-                release=False,
-                record_caret=False,
-                log_expiration_time_in_days=10.0,
-                is_tag=is_tag,
-            )
-            job_id = str(result.get("job_id") or "").strip()
-            if not job_id:
-                raise RuntimeError(f"No job_id returned for {item['label']}.")
-            item["job_id"] = job_id
+            item["description"] = schedule_description
+            job_id = str(item.get("job_id") or "").strip()
+            if job_id:
+                append_task_log(task_id, f"Using existing {item['label']}: {job_id}")
+                status = "existing"
+            else:
+                append_task_log(task_id, f"Scheduling {item['label']}: catalog={item['catalog_id']}")
+                result = api.schedule_job(
+                    project_id=project_id,
+                    catalog_id=item["catalog_id"],
+                    integration_id=item["integration_id"],
+                    target_name=target_name,
+                    suite_ids=None,
+                    max_retries=0,
+                    description=schedule_description,
+                    clean_build=True,
+                    debug=False,
+                    release=False,
+                    record_caret=False,
+                    log_expiration_time_in_days=10.0,
+                    is_tag=is_tag,
+                )
+                job_id = str(result.get("job_id") or "").strip()
+                if not job_id:
+                    raise RuntimeError(f"No job_id returned for {item['label']}.")
+                item["job_id"] = job_id
+                status = "scheduled"
             report_url = evaluator_api.get_job_report_url(project_id, job_id)
             summary["evaluator_jobs"][item["role"]] = {
                 "job_id": job_id,
                 "report_url": report_url,
                 "catalog_id": item["catalog_id"],
                 "integration_id": item["integration_id"],
-                "status": "scheduled",
+                "status": status,
                 "description": schedule_description,
             }
-            append_task_log(task_id, f"Scheduled {item['label']}: {job_id}")
+            if status == "scheduled":
+                append_task_log(task_id, f"Scheduled {item['label']}: {job_id}")
             update_task_result_summary(task_id, summary)
 
         for idx, item in enumerate(jobs, start=1):
@@ -1306,7 +1331,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
 
         update_task_progress(task_id, message="Building normal CSV/parquet analysis artifacts", pct=48)
         role_paths = {"performance": performance_path, "devops": devops_path}
-        for item in jobs:
+        for artifact_idx, item in enumerate(jobs):
             role = str(item["role"])
             analysis_path = role_paths[role]
             artifact_summary = _build_release_analysis_artifacts(
@@ -1316,6 +1341,8 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 role=role,
                 output_path=analysis_path,
                 phase=analysis_phase,
+                progress_start=48 + (20 * artifact_idx),
+                progress_end=64 + (14 * artifact_idx),
             )
             summary["analysis_artifacts"][role] = artifact_summary
             update_task_result_summary(task_id, summary)
@@ -1352,8 +1379,8 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                         "catalog_id": item["catalog_id"],
                         "integration_id": item["integration_id"],
                         "target_name": target_name,
-                        "description": schedule_description,
-                        "title": schedule_description,
+                        "description": str(item.get("description") or ""),
+                        "title": str(item.get("description") or ""),
                     },
                     "download": {
                         **artifact_summary.get("download", {}),

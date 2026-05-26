@@ -5,6 +5,7 @@ For multi-user server deployment so users can manage evaluation data.
 
 import io
 import re
+import urllib.parse
 import zipfile
 import streamlit as st
 from pathlib import Path
@@ -79,9 +80,10 @@ with col_b:
             key="share_run_b",
         )
 mode = "compare" if share_compare and share_run_b else "single"
-q = f"mode={mode}&run_a={share_run_a}"
+query = {"mode": mode, "run_a": share_run_a}
 if mode == "compare":
-    q += f"&run_b={share_run_b}"
+    query["run_b"] = share_run_b
+q = urllib.parse.urlencode(query)
 st.code(q, language=None)
 st.caption("Example: `https://your-server:8501/?` + the query above.")
 
