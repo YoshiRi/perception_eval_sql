@@ -1078,6 +1078,10 @@ def _build_release_analysis_artifacts(
         "warnings": [],
     }
 
+    progress_span = max(0.0, progress_end - progress_start)
+    download_end = progress_start + progress_span * 0.55
+    eval_end = progress_start + progress_span * 0.90
+
     def _on_progress(msg: str) -> None:
         append_task_log(task_id, f"{role}: {msg}")
         progress_msg = f"{role}: {msg}"
@@ -1086,10 +1090,10 @@ def _build_release_analysis_artifacts(
         if match:
             current = int(match.group(1))
             total = max(1, int(match.group(2)))
-            pct = progress_start + ((current - 1) / total) * max(0.0, progress_end - progress_start)
+            pct = progress_start + ((current - 1) / total) * max(0.0, download_end - progress_start)
         elif "Extracting" in msg or "Organizing" in msg:
-            pct = progress_end
-        update_task_progress(task_id, message=progress_msg, pct=min(progress_end, pct))
+            pct = download_end
+        update_task_progress(task_id, message=progress_msg, pct=min(download_end, pct))
 
     def _on_warning(msg: str) -> None:
         result["warnings"].append(msg)
@@ -1121,12 +1125,27 @@ def _build_release_analysis_artifacts(
         raise RuntimeError(f"{role}: download produced no successful case artifacts.")
 
     if eval_summary:
-        update_task_progress(task_id, message=f"{role}: running eval_result", pct=progress_end)
         target_dirs = eval_summary.find_eval_result_dirs(str(output_path), recursive=True)
         statuses = []
-        for result_dir in target_dirs:
-            statuses.append(eval_summary.run_eval_result_for_dir(result_dir, overwrite=False))
+        total = len(target_dirs)
         if target_dirs:
+            append_task_log(task_id, f"{role}: running eval_result for {total} directories")
+        else:
+            update_task_progress(task_id, message=f"{role}: no eval_result directories found", pct=eval_end)
+        for i, result_dir in enumerate(target_dirs):
+            pct = download_end + (i / total) * max(0.0, eval_end - download_end) if total else eval_end
+            message = f"{role}: eval_result {i + 1}/{total}: {result_dir}"
+            update_task_progress(task_id, message=message, pct=pct)
+            append_task_log(task_id, message)
+            status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=False)
+            statuses.append(status)
+            if status.get("status") == "failed":
+                append_task_log(
+                    task_id,
+                    f"WARNING: {role}: eval_result failed for {result_dir}: {status.get('detail', '')}",
+                )
+        if target_dirs:
+            update_task_progress(task_id, message=f"{role}: generating Summary.csv / Score.csv", pct=eval_end)
             csv_info = eval_summary.generate_summary_and_score_csv(str(output_path))
             result["eval"] = {
                 "directories_processed": len(target_dirs),
@@ -1147,7 +1166,7 @@ def _build_release_analysis_artifacts(
 
     if pkl_archive_to_parquet:
         try:
-            update_task_progress(task_id, message=f"{role}: generating parquet", pct=progress_end)
+            update_task_progress(task_id, message=f"{role}: generating parquet", pct=eval_end)
             result["parquet_path"] = pkl_archive_to_parquet(
                 str(output_path),
                 on_progress=None,
