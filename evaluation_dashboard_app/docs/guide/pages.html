@@ -23,6 +23,7 @@
       <a href="getting_started.html">How to Use</a>
       <a class="active" href="pages.html">Pages</a>
       <a href="data_reports.html">Data & Reports</a>
+      <a href="specsheet.html">Specsheet</a>
       <a href="deployment.html">Deployment</a>
       <a href="visual_systems.html">Diagrams</a>
     </div>
@@ -71,6 +72,7 @@
             <ul>
               <li><strong>Tabs:</strong> Download Results, Download Scenarios, View Downloads, Eval Results.</li>
               <li><strong>Outputs:</strong> downloaded archives, result JSON, scenario data, <code>Summary.csv</code>, <code>Score.csv</code>.</li>
+              <li><strong>Score.csv:</strong> contains scenario identity, optional dataset ID, criteria blocks, and Practical Pass Rate.</li>
               <li><strong>Queue behavior:</strong> with <code>USE_TASK_QUEUE=true</code>, heavy tasks run in workers and appear in Recent Tasks.</li>
             </ul>
           </div>
@@ -79,6 +81,7 @@
             <p><strong>Use when:</strong> you want a more guided operational flow for local runs, background tasks, fresh evaluator pipelines, and report reuse.</p>
             <ul>
               <li><strong>Good for:</strong> launching longer evaluator workflows without jumping between many manual steps.</li>
+              <li><strong>Outputs:</strong> downloaded artifacts, optional eval_result, <code>Summary.csv</code>, <code>Score.csv</code>, optional parquet, and report assets.</li>
               <li><strong>Depends on:</strong> evaluator API configuration, task queue for long-running jobs in production.</li>
             </ul>
           </div>
@@ -99,7 +102,7 @@
       <div class="shell">
         <div class="section-head">
           <div class="kicker">Metric Analysis Pages</div>
-          <h2>Turn CSV and parquet artifacts into engineering signals.</h2>
+          <h2>Turn CSV and parquet artifacts into review signals.</h2>
         </div>
         <table class="table">
           <thead><tr><th>Page</th><th>Prerequisite</th><th>Main Use</th><th>Compare Behavior</th></tr></thead>
@@ -107,14 +110,14 @@
             <tr>
               <td><strong>TP Summary</strong></td>
               <td><code>Summary.csv</code></td>
-              <td>TP, RMS/STD, velocity scatter, metric distribution, density, scenario delta ranking.</td>
+              <td>TP rate, RMS/STD, velocity scatter, metric distribution, density, scenario delta ranking.</td>
               <td>Shows candidate-vs-baseline deltas such as Delta TP and metric shifts.</td>
             </tr>
             <tr>
               <td><strong>Criteria Based Score</strong></td>
               <td><code>Score.csv</code></td>
-              <td>Criteria block selection, pass-rate distribution, group means, box plots, absolute gates.</td>
-              <td>Compares pass-rate changes, gate pass/fail status, and per-scenario deltas.</td>
+              <td>Criteria block selection, Practical Pass Rate distribution, group means, box plots, absolute gates.</td>
+              <td>Compares Practical Pass Rate changes, gate pass/fail status, and per-scenario deltas. Uses Scenario + Dataset when Dataset exists.</td>
             </tr>
             <tr>
               <td><strong>Detection Stats</strong></td>

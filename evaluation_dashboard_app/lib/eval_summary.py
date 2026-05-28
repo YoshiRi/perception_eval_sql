@@ -8,10 +8,33 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 
 from lib.perception_eval_result_summarizer import run_eval_result, generate_score_json
+
+
+def _write_text_atomic(path: str, content: str) -> None:
+    """Write text by replacing the target, so read-only existing files do not block writable dirs."""
+    target = Path(path)
+    tmp_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=os.fspath(target.parent),
+            delete=False,
+        ) as f:
+            tmp_name = f.name
+            f.write(content)
+        os.replace(tmp_name, target)
+    finally:
+        if tmp_name and os.path.exists(tmp_name):
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
 
 
 def find_eval_result_dirs(root_dir: str, recursive: bool = True) -> List[str]:
@@ -159,6 +182,43 @@ def generate_summary_and_score_csv(input_path: str) -> Dict[str, Any]:
                 return parts[0]
         return base
 
+    def _dataset_id_from_case_dir(case_dir: str) -> str:
+        """Resolve the real T4 dataset id for Score.csv; blank if unavailable."""
+        case_path = Path(case_dir)
+        metadata_path = case_path / "t4_metadata.json"
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                dataset_id = str(meta.get("t4_dataset_id") or "").strip()
+                if dataset_id:
+                    return dataset_id
+            except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+                pass
+
+        scenario_path = case_path / "scenario.yaml"
+        if scenario_path.exists():
+            try:
+                import yaml
+
+                with open(scenario_path, "r", encoding="utf-8") as f:
+                    scenario = yaml.safe_load(f) or {}
+                datasets = scenario.get("Evaluation", {}).get("Datasets", [])
+                if isinstance(datasets, list):
+                    for item in datasets:
+                        if isinstance(item, dict) and item:
+                            dataset_id = str(next(iter(item.keys())) or "").strip()
+                            if dataset_id:
+                                return dataset_id
+                elif isinstance(datasets, dict):
+                    dataset_id = str(next(iter(datasets.keys()), "") or "").strip()
+                    if dataset_id:
+                        return dataset_id
+            except (ImportError, OSError, TypeError, AttributeError):
+                pass
+
+        return ""
+
     result_folders = glob.glob(os.path.join(input_path, "*/"))
     result_folders.sort()
     result_entries: List[Dict[str, str]] = []
@@ -179,6 +239,14 @@ def generate_summary_and_score_csv(input_path: str) -> Dict[str, Any]:
 
     summary_lines: List[str] = []
     score_lines: List[str] = []
+
+    score_header = "Scenario, Dataset, Option, GT_OBJ,"
+    for _ in range(4):
+        score_header += (
+            "Distance, NM, TP/TN, ADD, AIL, UIL, PFN/PFP, UUID Num, "
+            "Practical Pass Rate, MAX_DIST_THRESH,OBJ_CNTS,"
+        )
+    score_header += "\n"
 
     for entry in result_entries:
         folder = entry["path"]
@@ -231,7 +299,11 @@ def generate_summary_and_score_csv(input_path: str) -> Dict[str, Any]:
         with open(score_json_path, "r", encoding="utf-8") as f:
             dic = json.load(f)
 
-        line = f"{Path(folder).name},"
+        folder_name = Path(folder).name
+        dataset_id = _dataset_id_from_case_dir(folder)
+
+        line = f"{folder_name},"
+        line += f"{dataset_id},"
         line += f"{dic.get('Option', '')},"
         line += f"{dic.get('criteria0', {}).get('GT_OBJ', '')},"
 
@@ -270,17 +342,14 @@ def generate_summary_and_score_csv(input_path: str) -> Dict[str, Any]:
 
             obj_cnts = v.get("OBJ_CNTS", {})
             if isinstance(obj_cnts, dict):
-                obj_parts = [f"{obj}:{cnt}" for obj, cnt in obj_cnts.items()]
-                line += ";".join(obj_parts)
-            if not is_last:
-                line += ","
+                obj_parts = [f"{obj}:{cnt};" for obj, cnt in obj_cnts.items()]
+                line += "".join(obj_parts)
+            line += ","
 
         score_lines.append(line + "\n")
 
-    with open(os.path.join(input_path, "Summary.csv"), mode="w", encoding="utf-8") as f:
-        f.writelines(summary_lines)
-    with open(os.path.join(input_path, "Score.csv"), mode="w", encoding="utf-8") as f:
-        f.writelines(score_lines)
+    _write_text_atomic(os.path.join(input_path, "Summary.csv"), "".join(summary_lines))
+    _write_text_atomic(os.path.join(input_path, "Score.csv"), score_header + "".join(score_lines))
 
     return {
         "summary_path": os.path.join(input_path, "Summary.csv"),

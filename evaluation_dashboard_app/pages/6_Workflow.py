@@ -2246,8 +2246,7 @@ def _render_workflow_launcher_section(
         use_container_width=False,
     )
 
-    if new_job_clicked and callable(getattr(st, "dialog", None)):
-        st.session_state["workflow_start_dialog_open"] = True
+    def _reset_start_workflow_state() -> None:
         fresh_target = str(get_config_value("target_name", "beta/v4.3.2") or "beta/v4.3.2")
         st.session_state["workflow_catalog_name"] = ""
         st.session_state["workflow_last_catalog_preset"] = ""
@@ -2263,109 +2262,131 @@ def _render_workflow_launcher_section(
         st.session_state["workflow_release_devops_job_id"] = ""
         st.session_state["workflow_output_path"] = _make_default_output_path(fresh_target)
 
-        @st.dialog("Start evaluator workflow", width="large")
-        def _workflow_start_dialog() -> None:
-            st.caption("This is the full launcher for creating a new evaluator job, downloading results, and optionally running eval/parquet.")
-            payload = _render_start_workflow_form(catalog_presets, catalogs_path, catalog_load_error)
-            submit_cols = st.columns([1.15, 1.15, 3.7])
-            close_clicked = submit_cols[0].button("Close", key="workflow_close_start_dialog", use_container_width=True)
-            start_clicked = submit_cols[1].button("Start workflow", key="workflow_start_btn_dialog", type="primary", use_container_width=True)
-            if close_clicked:
-                st.session_state["workflow_start_dialog_open"] = False
-                st.rerun()
-            if start_clicked:
-                dialog_payload = dict(payload.get("dialog_payload") or {})
-                errors = dialog_payload.get("errors", [])
-                if errors:
-                    for err in errors:
-                        st.error(f"Missing or invalid: {err}")
-                elif not is_task_queue_enabled():
-                    st.error("Task queue not enabled. Set `USE_TASK_QUEUE=true` and `REDIS_URL`.")
-                else:
-                    common_params = {
-                        "project_id": dialog_payload["project_id"],
-                        "suite_ids": None,
-                        "target_name": dialog_payload["target_name"],
-                        "environment": dialog_payload["environment"],
-                        "max_retries": 0,
-                        "clean_build": False,
-                        "debug": False,
-                        "release": False,
-                        "record_caret": False,
-                        "log_expiration_time_in_days": 14.0,
-                        "is_tag": dialog_payload["is_tag"],
-                        "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
-                        "phase": dialog_payload["phase"],
-                        "skip_large_file": bool(dialog_payload.get("skip_large_file", True)),
-                        "large_file_mb": 50.0,
-                        "keep_zip_files": False,
-                        "poll_interval": dialog_payload["poll_interval"],
-                        "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
-                        "run_eval": dialog_payload["run_eval"],
-                        "generate_parquet": dialog_payload["generate_parquet"],
-                        "eval_recursive": dialog_payload["eval_recursive"],
-                        "eval_overwrite": False,
-                    }
-                    if dialog_payload.get("release_mode"):
-                        base_description = dialog_payload["description"] or _make_auto_release_workflow_description(
-                            dialog_payload["target_name"]
-                        )
-                        trend_metadata = dict(dialog_payload.get("trend_metadata") or {})
-                        task_id = _enqueue_task(
-                            "run_release_specsheet_workflow",
-                            {
-                                "project_id": dialog_payload["project_id"],
-                                "target_name": dialog_payload["target_name"],
-                                "description": base_description,
-                                "output_path": dialog_payload["resolved_output"],
-                                "environment": dialog_payload["environment"],
-                                "is_tag": dialog_payload["is_tag"],
-                                "poll_interval": dialog_payload["poll_interval"],
-                                "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
-                                "trend_metadata": trend_metadata,
-                                "version": trend_metadata.get("pilot_auto_version", ""),
-                                "topic": trend_metadata.get("topic_name", "perception.object_recognition.objects"),
-                                "performance_catalog_id": _RELEASE_PERFORMANCE_CATALOG_ID,
-                                "performance_integration_id": _RELEASE_PERFORMANCE_INTEGRATION_ID,
-                                "performance_job_id": dialog_payload.get("performance_job_id", ""),
-                                "devops_catalog_id": _RELEASE_DEVOPS_CATALOG_ID,
-                                "devops_integration_id": _RELEASE_DEVOPS_INTEGRATION_ID,
-                                "devops_job_id": dialog_payload.get("devops_job_id", ""),
-                                "analysis_phase": "perception.object_recognition.tracking.objects",
-                                "overwrite": True,
-                            },
-                        )
-                        if task_id:
-                            st.session_state["workflow_start_dialog_open"] = False
-                            st.success(f"Release specsheet workflow queued. Task id: `{task_id}`")
-                            st.rerun()
-                        else:
-                            st.error("Failed to enqueue release specsheet workflow. Check worker logs.")
-                        return
-
+    def _render_start_workflow_controls(*, key_suffix: str = "dialog") -> None:
+        st.caption("This is the full launcher for creating a new evaluator job, downloading results, and optionally running eval/parquet.")
+        payload = _render_start_workflow_form(catalog_presets, catalogs_path, catalog_load_error)
+        submit_cols = st.columns([1.15, 1.15, 3.7])
+        close_clicked = submit_cols[0].button(
+            "Close",
+            key=f"workflow_close_start_{key_suffix}",
+            use_container_width=True,
+        )
+        start_clicked = submit_cols[1].button(
+            "Start workflow",
+            key=f"workflow_start_btn_{key_suffix}",
+            type="primary",
+            use_container_width=True,
+        )
+        if close_clicked:
+            st.session_state["workflow_start_dialog_open"] = False
+            st.rerun()
+        if start_clicked:
+            dialog_payload = dict(payload.get("dialog_payload") or {})
+            errors = dialog_payload.get("errors", [])
+            if errors:
+                for err in errors:
+                    st.error(f"Missing or invalid: {err}")
+            elif not is_task_queue_enabled():
+                st.error("Task queue not enabled. Set `USE_TASK_QUEUE=true` and `REDIS_URL`.")
+            else:
+                common_params = {
+                    "project_id": dialog_payload["project_id"],
+                    "suite_ids": None,
+                    "target_name": dialog_payload["target_name"],
+                    "environment": dialog_payload["environment"],
+                    "max_retries": 0,
+                    "clean_build": False,
+                    "debug": False,
+                    "release": False,
+                    "record_caret": False,
+                    "log_expiration_time_in_days": 14.0,
+                    "is_tag": dialog_payload["is_tag"],
+                    "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
+                    "phase": dialog_payload["phase"],
+                    "skip_large_file": bool(dialog_payload.get("skip_large_file", True)),
+                    "large_file_mb": 50.0,
+                    "keep_zip_files": False,
+                    "poll_interval": dialog_payload["poll_interval"],
+                    "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
+                    "run_eval": dialog_payload["run_eval"],
+                    "generate_parquet": dialog_payload["generate_parquet"],
+                    "eval_recursive": dialog_payload["eval_recursive"],
+                    "eval_overwrite": False,
+                }
+                if dialog_payload.get("release_mode"):
+                    base_description = dialog_payload["description"] or _make_auto_release_workflow_description(
+                        dialog_payload["target_name"]
+                    )
+                    trend_metadata = dict(dialog_payload.get("trend_metadata") or {})
                     task_id = _enqueue_task(
-                        "run_evaluator_and_process",
+                        "run_release_specsheet_workflow",
                         {
-                            **common_params,
-                            "catalog_id": dialog_payload["catalog_id"],
-                            "integration_id": dialog_payload["integration_id"],
-                            "catalog_preset_name": dialog_payload.get("catalog_preset_name", ""),
-                            "description": dialog_payload["description"] or _make_auto_workflow_description(
-                                dialog_payload["target_name"],
-                                dialog_payload.get("catalog_preset_name", ""),
-                                has_custom_catalog=bool(dialog_payload.get("has_custom_catalog", False)),
-                            ),
+                            "project_id": dialog_payload["project_id"],
+                            "target_name": dialog_payload["target_name"],
+                            "description": base_description,
                             "output_path": dialog_payload["resolved_output"],
+                            "environment": dialog_payload["environment"],
+                            "is_tag": dialog_payload["is_tag"],
+                            "poll_interval": dialog_payload["poll_interval"],
+                            "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
+                            "trend_metadata": trend_metadata,
+                            "version": trend_metadata.get("pilot_auto_version", ""),
+                            "topic": trend_metadata.get("topic_name", "perception.object_recognition.objects"),
+                            "performance_catalog_id": _RELEASE_PERFORMANCE_CATALOG_ID,
+                            "performance_integration_id": _RELEASE_PERFORMANCE_INTEGRATION_ID,
+                            "performance_job_id": dialog_payload.get("performance_job_id", ""),
+                            "devops_catalog_id": _RELEASE_DEVOPS_CATALOG_ID,
+                            "devops_integration_id": _RELEASE_DEVOPS_INTEGRATION_ID,
+                            "devops_job_id": dialog_payload.get("devops_job_id", ""),
+                            "analysis_phase": "perception.object_recognition.tracking.objects",
+                            "overwrite": True,
                         },
                     )
                     if task_id:
                         st.session_state["workflow_start_dialog_open"] = False
-                        st.success(f"Workflow queued. Task id: `{task_id}`")
+                        st.success(f"Release specsheet workflow queued. Task id: `{task_id}`")
                         st.rerun()
                     else:
-                        st.error("Failed to enqueue task. Check worker logs.")
+                        st.error("Failed to enqueue release specsheet workflow. Check worker logs.")
+                    return
 
-        _workflow_start_dialog()
+                task_id = _enqueue_task(
+                    "run_evaluator_and_process",
+                    {
+                        **common_params,
+                        "catalog_id": dialog_payload["catalog_id"],
+                        "integration_id": dialog_payload["integration_id"],
+                        "catalog_preset_name": dialog_payload.get("catalog_preset_name", ""),
+                        "description": dialog_payload["description"] or _make_auto_workflow_description(
+                            dialog_payload["target_name"],
+                            dialog_payload.get("catalog_preset_name", ""),
+                            has_custom_catalog=bool(dialog_payload.get("has_custom_catalog", False)),
+                        ),
+                        "output_path": dialog_payload["resolved_output"],
+                    },
+                )
+                if task_id:
+                    st.session_state["workflow_start_dialog_open"] = False
+                    st.success(f"Workflow queued. Task id: `{task_id}`")
+                    st.rerun()
+                else:
+                    st.error("Failed to enqueue task. Check worker logs.")
+
+    if new_job_clicked:
+        st.session_state["workflow_start_dialog_open"] = True
+        _reset_start_workflow_state()
+
+    if st.session_state.get("workflow_start_dialog_open"):
+        if callable(getattr(st, "dialog", None)):
+            @st.dialog("Start evaluator workflow", width="large")
+            def _workflow_start_dialog() -> None:
+                _render_start_workflow_controls(key_suffix="dialog")
+
+            _workflow_start_dialog()
+        else:
+            st.markdown("---")
+            st.subheader("Start evaluator workflow")
+            _render_start_workflow_controls(key_suffix="inline")
 
     return start_defaults
 

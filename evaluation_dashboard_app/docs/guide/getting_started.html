@@ -23,6 +23,7 @@
       <a class="active" href="getting_started.html">How to Use</a>
       <a href="pages.html">Pages</a>
       <a href="data_reports.html">Data & Reports</a>
+      <a href="specsheet.html">Specsheet</a>
       <a href="deployment.html">Deployment</a>
       <a href="visual_systems.html">Diagrams</a>
     </div>
@@ -40,7 +41,7 @@
           </p>
         </div>
         <div class="flow">
-          <div class="step"><strong>Open Download</strong><span>Use <code>pages/6_Download.py</code> from the sidebar.</span></div>
+          <div class="step"><strong>Open Workflow or Download</strong><span>Use <strong>Evaluator Workflow</strong> for the guided path, or <code>pages/6_Download.py</code> for manual tabs.</span></div>
           <div class="step"><strong>Select Download Results</strong><span>Enter Project ID, Job ID, and optional Suite ID.</span></div>
           <div class="step"><strong>Choose Output Path</strong><span>Recommended: <code>data/&lt;test_name&gt;</code>.</span></div>
           <div class="step"><strong>Pick Download Type</strong><span>Archives for full local analysis, Result JSON only for lightweight summary generation.</span></div>
@@ -54,8 +55,8 @@
           <div class="card">
             <h3>Decision: Archives or Result JSON only?</h3>
             <ul>
-              <li><strong>Archives (ZIP):</strong> best for complete local investigation. It downloads and extracts richer source data.</li>
-              <li><strong>Result JSON only:</strong> faster and lighter. Good when you mainly need summary and score generation.</li>
+              <li><strong>Archives (ZIP):</strong> best for complete local investigation, eval_result, parquet generation, and visual inspection.</li>
+              <li><strong>Result JSON only:</strong> faster and lighter. Good when you mainly need downloaded result JSON, not full local analysis.</li>
               <li><strong>Scenario downloads:</strong> use the Download Scenarios tab when TLR Analysis needs scenario data.</li>
             </ul>
           </div>
@@ -89,6 +90,11 @@
             <h3>Choose generation mode</h3>
             <p>If results already exist, generate only Summary/Score. If not, run full eval_result generation.</p>
           </div>
+        </div>
+        <div class="callout" style="margin-top:20px">
+          <strong>Score.csv identity:</strong> Criteria pages identify rows by scenario. When a
+          <code>Dataset</code> field is available, scenario and dataset are treated together so repeated
+          scenario names from different datasets stay separate.
         </div>
         <div class="split" style="margin-top:24px">
           <div class="media">
@@ -160,7 +166,7 @@
             <h3>Where compare mode is most useful</h3>
             <ul>
               <li><strong>TP Summary:</strong> TP and kinematic metric deltas.</li>
-              <li><strong>Criteria Score:</strong> pass-rate changes and absolute gate comparison.</li>
+              <li><strong>Criteria Score:</strong> Practical Pass Rate changes and absolute gate comparison.</li>
               <li><strong>Detection Stats:</strong> TP/FP distance-bin and status distribution differences.</li>
               <li><strong>Bounding Box Viewer:</strong> spatial inspection across runs.</li>
               <li><strong>Prediction Evaluation:</strong> ADE/FDE delta matrices and distance bins.</li>
@@ -184,7 +190,7 @@
           <thead><tr><th>Step</th><th>Page</th><th>What to look for</th></tr></thead>
           <tbody>
             <tr><td>1</td><td>Overview</td><td>High-level TP, error metrics, filters, and immediate A/B signal.</td></tr>
-            <tr><td>2</td><td>Criteria Score</td><td>Pass-rate distribution, failing scenarios, absolute gates, and scenario leaderboard.</td></tr>
+            <tr><td>2</td><td>Criteria Score</td><td>Practical Pass Rate distribution, failing scenarios, absolute gates, and scenario leaderboard.</td></tr>
             <tr><td>3</td><td>Detection Stats</td><td>Status distribution, TP/FP by distance, label/scenario concentration, and object-count shifts.</td></tr>
             <tr><td>4</td><td>Bounding Box Viewer</td><td>Frame-level spatial causes: missed objects, false positives, geometry, visibility, source/status.</td></tr>
             <tr><td>5</td><td>Prediction Evaluation</td><td>ADE/FDE behavior by label, horizon, distance bin, and polar region.</td></tr>

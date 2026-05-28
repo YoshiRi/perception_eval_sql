@@ -11,6 +11,8 @@ from typing import Any, Dict, Literal, Optional
 
 import pandas as pd
 
+from lib.score_schema import score_base_cols, score_identity_cols
+
 MetricOp = Literal["<=", ">="]
 
 MAX_CRITERIA_DEFAULT = 32
@@ -22,11 +24,11 @@ def infer_criteria_count(
     max_criteria: int = MAX_CRITERIA_DEFAULT,
 ) -> int:
     """
-    Number of criteria blocks in a raw Score dataframe (first 3 cols are base).
+    Number of criteria blocks in a raw Score dataframe.
     """
     if df_raw is None or df_raw.shape[1] < 3:
         return 1
-    n = (df_raw.shape[1] - 3) // block_size
+    n = (df_raw.shape[1] - len(score_base_cols(df_raw))) // block_size
     n = max(1, n)
     return int(min(n, max_criteria))
 
@@ -65,7 +67,7 @@ def evaluate_scenario_gates(
         raise ValueError(f"Metric column {metric_gate.column!r} not in df_view")
 
     empty_cols = [
-        "Scenario",
+        *score_identity_cols(df_view),
         "agg_pass_rate",
         "metric_agg",
         "scenario_pass",
@@ -82,7 +84,12 @@ def evaluate_scenario_gates(
         d[metric_gate.column] = pd.to_numeric(d[metric_gate.column], errors="coerce")
 
     rows: list[dict[str, Any]] = []
-    for scen, grp in d.groupby("Scenario", observed=True):
+    identity_cols = score_identity_cols(d)
+    for key, grp in d.groupby(identity_cols, observed=True):
+        if len(identity_cols) == 1:
+            identity_values = {"Scenario": key[0] if isinstance(key, tuple) else key}
+        else:
+            identity_values = dict(zip(identity_cols, key))
         rc = len(grp)
         pr = grp["pass_rate"]
         mean_pr = float(pr.mean())
@@ -113,7 +120,7 @@ def evaluate_scenario_gates(
 
         rows.append(
             {
-                "Scenario": scen,
+                **identity_values,
                 "row_count": rc,
                 "agg_pass_rate": mean_pr,
                 "metric_agg": m_agg,

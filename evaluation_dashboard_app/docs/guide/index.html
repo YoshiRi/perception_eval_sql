@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Evaluation Dashboard Engineer Guide</title>
+  <title>Evaluation Dashboard Guide</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="hero">
     <div class="shell hero-grid">
       <div>
-        <div class="eyebrow"><span class="signal"></span>Engineer Documentation</div>
-        <h1>Evaluation Dashboard<br>Engineer Guide</h1>
+        <div class="eyebrow"><span class="signal"></span>Dashboard Documentation</div>
+        <h1>Evaluation Dashboard<br>Guide</h1>
         <p class="lead">
-          This guide is the entry point for engineers who operate, debug, extend, and deploy the
+          This guide is the entry point for using, debugging, extending, and deploying the
           evaluation dashboard. The home page gives the system map; each substantial topic lives in
           its own focused chapter.
         </p>
@@ -40,12 +40,12 @@
   <nav>
     <div class="shell nav-inner">
       <a class="active" href="index.html">Home</a>
-      <a href="getting_started.html">Workflow</a>
+      <a href="getting_started.html">How to Use</a>
       <a href="pages.html">Pages</a>
       <a href="data_reports.html">Data & Reports</a>
+      <a href="specsheet.html">Specsheet</a>
       <a href="deployment.html">Deployment</a>
       <a href="visual_systems.html">Diagrams</a>
-      <a href="../specsheet_pipeline_explainer.html">Specsheet</a>
     </div>
   </nav>
 
@@ -54,7 +54,7 @@
       <div class="shell">
         <div class="section-head">
           <div class="kicker">System Role</div>
-          <h2>The dashboard turns evaluator outputs into explorable engineering evidence.</h2>
+          <h2>The dashboard turns evaluator outputs into explorable review evidence.</h2>
           <p>
             It reads run folders under the configured data root, generates dashboard artifacts when
             needed, shares selected run state across Streamlit pages, and provides local or production
@@ -74,7 +74,7 @@
       <div class="shell">
         <div class="section-head">
           <div class="kicker">Chapter Map</div>
-          <h2>Open the chapter that matches the engineering question.</h2>
+          <h2>Open the chapter that matches your question.</h2>
         </div>
         <div class="grid cols-3">
           <a class="card feature-card" href="getting_started.html" style="text-decoration:none">
@@ -97,7 +97,7 @@
             <h3>How does the system really flow?</h3>
             <p>Artifact maps, Download/Eval sequence, Compare state propagation, T4 camera rendering, T4 Three.js overlays, and report generation.</p>
           </a>
-          <a class="card feature-card advanced" href="../specsheet_pipeline_explainer.html" style="text-decoration:none">
+          <a class="card feature-card advanced" href="specsheet.html" style="text-decoration:none">
             <h3>How does specsheet work?</h3>
             <p>Focused deep dive for release specsheet generation, trend context, DevOps/pass-rate plots, and generated PDF sections.</p>
           </a>
@@ -133,7 +133,7 @@
 
   <footer class="footer">
     <div class="shell">
-      <strong>Evaluation Dashboard Engineer Guide</strong>
+      <strong>Evaluation Dashboard Guide</strong>
       <p>This home page routes to the detailed chapters instead of duplicating them.</p>
     </div>
   </footer>

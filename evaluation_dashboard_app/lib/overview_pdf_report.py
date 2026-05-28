@@ -11,7 +11,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from lib.criteria_absolute_gates import infer_criteria_count
+from lib.score_schema import (
+    SCORE_BLOCK_SIZE,
+    SCORE_NUM_COLS,
+    SCORE_VIEW_METRIC_COLS,
+    build_score_view,
+    infer_score_criteria_count,
+    score_identity_cols,
+)
 from lib.summary_compare import build_summary_delta
 
 PRODUCT_LABEL_JA_DEFAULT = {
@@ -41,33 +48,9 @@ PRODUCT_LABEL_JA_DEFAULT = {
 
 _COMPARE_RUN_COLORS = ["#312e81", "#0f766e", "#e86a33", "#6b8e23", "#9b59b6", "#1abc9c"]
 _OVERVIEW_COMPARE_COLORS = ["#31356E", "#008E9B", "#E86A33", "#6B8E23", "#9B59B6", "#1ABC9C"]
-_BASE_COLS = ["Scenario", "Option", "GT_OBJ"]
-_CRITERIA_COLS = [
-    "distance",
-    "nm",
-    "tp_tn",
-    "add",
-    "ail",
-    "uil",
-    "pfn_pfp",
-    "uuid_num",
-    "pass_rate",
-    "max_dist_thresh",
-    "obj_cnts",
-]
-_NUM_COLS = [
-    "distance",
-    "nm",
-    "tp_tn",
-    "add",
-    "ail",
-    "uil",
-    "pfn_pfp",
-    "uuid_num",
-    "pass_rate",
-    "max_dist_thresh",
-]
-_BLOCK_SIZE = len(_CRITERIA_COLS)
+_CRITERIA_COLS = SCORE_VIEW_METRIC_COLS
+_NUM_COLS = SCORE_NUM_COLS
+_BLOCK_SIZE = SCORE_BLOCK_SIZE
 _DEFAULT_MAX_EVAL_RANGE = 50
 _DISTANCE_BIN_CASE = """CASE
     WHEN dist_h < 10 THEN '[0,10)'
@@ -476,7 +459,7 @@ def _build_criteria_section(run_records: Sequence[dict], run_labels: Sequence[st
             "fallback_note": "Criteria section skipped because Score.csv is missing.",
         }
 
-    criteria_count = min(infer_criteria_count(rec["score"], _BLOCK_SIZE) for _, rec in score_runs)
+    criteria_count = min(infer_score_criteria_count(rec["score"]) for _, rec in score_runs)
     if criteria_count <= 0:
         return {
             "summary": "Score.csv was loaded, but no criteria blocks were detected.",
@@ -922,22 +905,26 @@ def _build_criteria_default_compare_figures(views: Sequence[Tuple[str, pd.DataFr
 
 
 def _build_criteria_single_table(df_view: pd.DataFrame) -> List[List[str]]:
-    scenario_metric = df_view.groupby("Scenario", as_index=False)["pass_rate"].mean().sort_values("pass_rate", ascending=False).head(20)
-    rows = [["Scenario", "Pass rate mean"]]
+    key_cols = score_identity_cols(df_view)
+    scenario_metric = df_view.groupby(key_cols, as_index=False)["pass_rate"].mean().sort_values("pass_rate", ascending=False).head(20)
+    rows = [key_cols + ["Pass rate mean"]]
     for _, row in scenario_metric.iterrows():
-        rows.append([_shorten_scenario_name(str(row["Scenario"])), _fmt_number(row["pass_rate"])])
-    return {"rows": rows, "col_width_weights": [0.72, 0.28]}
+        rows.append([_shorten_scenario_name(str(row[c])) for c in key_cols] + [_fmt_number(row["pass_rate"])])
+    first_w = 0.56 if len(key_cols) > 1 else 0.72
+    rest_w = (1.0 - first_w) / len(key_cols)
+    return {"rows": rows, "col_width_weights": [first_w] + [rest_w] * len(key_cols)}
 
 
 def _build_criteria_compare_table(views: Sequence[Tuple[str, pd.DataFrame]]) -> List[List[str]]:
     labels = [lbl for lbl, _ in views]
+    key_cols = score_identity_cols(views[0][1])
     merges = []
     for lbl, df in views:
-        g = df.groupby("Scenario", as_index=False)["pass_rate"].mean()
+        g = df.groupby(key_cols, as_index=False)["pass_rate"].mean()
         merges.append(g.rename(columns={"pass_rate": f"pr_{lbl}"}))
     per_scenario = merges[0]
     for g in merges[1:]:
-        per_scenario = per_scenario.merge(g, on="Scenario", how="inner")
+        per_scenario = per_scenario.merge(g, on=key_cols, how="inner")
     base = labels[0]
     delta_cols: List[str] = []
     for cand in labels[1:]:
@@ -946,17 +933,17 @@ def _build_criteria_compare_table(views: Sequence[Tuple[str, pd.DataFrame]]) -> 
         delta_cols.append(dcol)
     rank_key = per_scenario[delta_cols].abs().max(axis=1)
     per_scenario = per_scenario.reindex(rank_key.sort_values(ascending=False).index).head(20)
-    header: List[str] = ["Scenario", f"Pass rate ({base})"]
+    header: List[str] = key_cols + [f"Pass rate ({base})"]
     for cand in labels[1:]:
         header.extend([f"Pass rate ({cand})", f"Δ({cand} - {base})"])
     rows = [header]
     for _, row in per_scenario.iterrows():
-        cells: List[str] = [_shorten_scenario_name(str(row["Scenario"])), _fmt_number(row[f"pr_{base}"])]
+        cells: List[str] = [_shorten_scenario_name(str(row[c])) for c in key_cols] + [_fmt_number(row[f"pr_{base}"])]
         for cand in labels[1:]:
             cells.extend([_fmt_number(row[f"pr_{cand}"]), _fmt_number(row[f"delta_{cand}"])])
         rows.append(cells)
     ncols = len(header)
-    scen_w = 0.34 if ncols > 4 else 0.52
+    scen_w = 0.28 if ncols > 5 else 0.44
     rest_w = (1.0 - scen_w) / max(ncols - 1, 1)
     weights = [scen_w] + [rest_w] * (ncols - 1)
     return {"rows": rows, "col_width_weights": weights}
@@ -967,13 +954,14 @@ def _build_criteria_compare_delta_figure(views: Sequence[Tuple[str, pd.DataFrame
         return None
     labels = [lbl for lbl, _ in views]
     base = labels[0]
+    key_cols = score_identity_cols(views[0][1])
     merges = []
     for lbl, df in views:
-        g = df.groupby("Scenario", as_index=False)["pass_rate"].mean()
+        g = df.groupby(key_cols, as_index=False)["pass_rate"].mean()
         merges.append(g.rename(columns={"pass_rate": f"pr_{lbl}"}))
     per_scenario = merges[0]
     for g in merges[1:]:
-        per_scenario = per_scenario.merge(g, on="Scenario", how="inner")
+        per_scenario = per_scenario.merge(g, on=key_cols, how="inner")
     if per_scenario.empty:
         return None
     long_rows: List[dict] = []
@@ -984,9 +972,14 @@ def _build_criteria_compare_delta_figure(views: Sequence[Tuple[str, pd.DataFrame
         delta_cols.append(dcol)
     rank_key = per_scenario[delta_cols].abs().max(axis=1)
     vis = per_scenario.reindex(rank_key.sort_values(ascending=False).index).head(20)
-    scen_order = [_shorten_scenario_name(str(s)) for s in vis["Scenario"].tolist()]
+    if "Dataset" in key_cols:
+        scenario_labels = vis["Scenario"].astype(str) + " [" + vis["Dataset"].astype(str) + "]"
+    else:
+        scenario_labels = vis["Scenario"].astype(str)
+    scen_order = [_shorten_scenario_name(str(s)) for s in scenario_labels.tolist()]
     for _, row in vis.iterrows():
-        scen_disp = _shorten_scenario_name(str(row["Scenario"]))
+        scen_raw = f"{row['Scenario']} [{row['Dataset']}]" if "Dataset" in key_cols else row["Scenario"]
+        scen_disp = _shorten_scenario_name(str(scen_raw))
         for cand in labels[1:]:
             long_rows.append(
                 {
@@ -1890,16 +1883,7 @@ def _make_text_placeholder_figure(text: str) -> go.Figure:
 
 
 def _build_score_view(df_raw: pd.DataFrame, criteria_idx: int) -> pd.DataFrame:
-    start = 3 + criteria_idx * _BLOCK_SIZE
-    end = start + _BLOCK_SIZE
-    df_view = df_raw.iloc[:, :3].copy()
-    df_view.columns = _BASE_COLS
-    block = df_raw.iloc[:, start:end].copy()
-    block.columns = _CRITERIA_COLS
-    df_view = pd.concat([df_view, block], axis=1)
-    for column in _NUM_COLS:
-        df_view[column] = pd.to_numeric(df_view[column], errors="coerce")
-    return df_view
+    return build_score_view(df_raw, criteria_idx)
 
 
 def _create_eval_flat_view(con: duckdb.DuckDBPyConnection, parquet_path: str, view_name: str) -> None:

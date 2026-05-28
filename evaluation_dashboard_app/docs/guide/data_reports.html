@@ -22,6 +22,7 @@
       <a href="getting_started.html">How to Use</a>
       <a href="pages.html">Pages</a>
       <a class="active" href="data_reports.html">Data & Reports</a>
+      <a href="specsheet.html">Specsheet</a>
       <a href="deployment.html">Deployment</a>
       <a href="visual_systems.html">Diagrams</a>
     </div>
@@ -79,7 +80,7 @@
               <td><code>Score.csv</code></td>
               <td>Download -> Eval Results</td>
               <td>Criteria Based Score</td>
-              <td>Criteria block metrics including scenario, option, GT object, distance, NM, TP/TN, pass rate, thresholds, and counts.</td>
+              <td>Criteria block metrics including scenario, optional dataset ID, option, GT object, criteria label, NM, TP/TN, ADD, AIL, UIL, PFN/PFP, Practical Pass Rate, thresholds, and counts.</td>
             </tr>
             <tr>
               <td><code>.parquet</code></td>
@@ -95,6 +96,73 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Score.csv Structure</div>
+          <h2>Score.csv is the Criteria page source.</h2>
+          <p class="lead">
+            Each row describes one scenario result and then repeats the criteria metric block for each
+            available criteria range.
+          </p>
+        </div>
+        <table class="table">
+          <thead><tr><th>Part</th><th>Fields</th><th>How the dashboard uses it</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Row identity</td>
+              <td><code>Scenario</code>, optional <code>Dataset</code></td>
+              <td>Used for scenario filters, scenario leaderboards, compare joins, gates, and PDF tables.</td>
+            </tr>
+            <tr>
+              <td>Scenario context</td>
+              <td><code>Option</code>, <code>GT_OBJ</code></td>
+              <td>Used for grouping charts and understanding the matching policy/object class behind the row.</td>
+            </tr>
+            <tr>
+              <td>Criteria block</td>
+              <td><code>Distance</code>, <code>NM</code>, <code>TP/TN</code>, <code>ADD</code>, <code>AIL</code>, <code>UIL</code>, <code>PFN/PFP</code>, <code>UUID Num</code>, <code>Practical Pass Rate</code>, <code>MAX_DIST_THRESH</code>, <code>OBJ_CNTS</code></td>
+              <td>Used by Criteria Based Score for distributions, deltas, absolute gates, and scenario-level ranking.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout">
+          <strong>Tip:</strong> if two rows share a scenario name but have different dataset IDs, the app keeps
+          them separate in Criteria comparisons and gate summaries.
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Pass Metrics</div>
+          <h2>TP is not the same metric as Practical Pass Rate.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Dashboard label</th><th>Source</th><th>Calculation / meaning</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>TP</code>, TP mean</td>
+              <td><code>Summary.csv</code></td>
+              <td>Comes from <code>summarize_ratio()</code> as TP rate. AIL and ADD are not added to this metric.</td>
+              <td>Overview, TP Summary, dashboard PDF TP sections.</td>
+            </tr>
+            <tr>
+              <td><code>pass_rate</code>, Pass rate mean</td>
+              <td><code>Score.csv</code> <code>Practical Pass Rate</code></td>
+              <td><code>(TP/TN + ADD + AIL) / NM * 100</code>. AIL and ADD are pass-side outcomes for this practical score.</td>
+              <td>Criteria Based Score, absolute pass/fail gates, Criteria PDF sections.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout warn">
+          <strong>Important:</strong> when reviewing pass/fail gates, read “pass rate” as
+          <strong>Practical Pass Rate</strong>, not the traditional TP rate from <code>Summary.csv</code>.
+        </div>
       </div>
     </section>
 
@@ -142,7 +210,7 @@
           <div class="card">
             <h3>Release Specsheet PDF</h3>
             <p>Advanced release-oriented report generated through <code>perception_catalog_analyzer</code>. It can include trend pages when trend metadata is enabled.</p>
-            <div class="actions"><a class="button" href="../specsheet_pipeline_explainer.html">Open specsheet details</a></div>
+            <div class="actions"><a class="button" href="specsheet.html">Open specsheet details</a></div>
           </div>
           <div class="card">
             <h3>ZIP outputs</h3>

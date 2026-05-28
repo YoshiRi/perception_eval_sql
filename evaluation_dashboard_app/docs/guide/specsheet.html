@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Specsheet Details</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero compact">
+    <div class="shell">
+      <div class="eyebrow"><span class="signal"></span>Specsheet</div>
+      <h1>Specsheet Details</h1>
+      <p class="lead">
+        The specsheet export creates a release-oriented PDF from the selected run, optional trend metadata,
+        and the external <code>perception_catalog_analyzer</code> library.
+      </p>
+    </div>
+  </header>
+
+  <nav>
+    <div class="shell nav-inner">
+      <a href="index.html">Home</a>
+      <a href="getting_started.html">How to Use</a>
+      <a href="pages.html">Pages</a>
+      <a href="data_reports.html">Data & Reports</a>
+      <a class="active" href="specsheet.html">Specsheet</a>
+      <a href="deployment.html">Deployment</a>
+      <a href="visual_systems.html">Diagrams</a>
+    </div>
+  </nav>
+
+  <main>
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Overview</div>
+          <h2>What the specsheet export does.</h2>
+          <p class="lead">
+            The dashboard handles the UI, selected run path, metadata, progress, and local artifact setup.
+            The analyzer library handles the metric blocks, template rendering, plots, and PDF output.
+          </p>
+        </div>
+        <div class="flow">
+          <div class="step">
+            <strong>1. Select a run</strong>
+            <span><code>Overview.py</code> gathers project, version, topic, labels, and optional trend metadata.</span>
+          </div>
+          <div class="step">
+            <strong>2. Prepare files</strong>
+            <span><code>ensure_specsheet_csvs()</code> creates <code>current.csv</code> and <code>future.csv</code> when needed.</span>
+          </div>
+          <div class="step">
+            <strong>3. Build blocks</strong>
+            <span><code>SceneDataFrame.from_dir()</code> and <code>get_blocks()</code> produce abstract and detailed sections.</span>
+          </div>
+          <div class="step">
+            <strong>4. Add trend context</strong>
+            <span><code>metadata.yaml</code> and <code>summary.json</code> files are classified and converted into trend rows and plots.</span>
+          </div>
+          <div class="step">
+            <strong>5. Render PDF</strong>
+            <span><code>update_template()</code> creates HTML, then <code>specsheet()</code> writes <code>specsheet.pdf</code>.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">App and Library</div>
+          <h2>The integration boundary is mostly in <code>lib/specsheet_report.py</code>.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Layer</th><th>Key file/module</th><th>Responsibility</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Streamlit UI</td>
+              <td><code>Overview.py</code></td>
+              <td>Collects project identity, version, topic, labels, selected run, trend toggle, and user-facing progress.</td>
+            </tr>
+            <tr>
+              <td>Dashboard wrapper</td>
+              <td><code>lib/specsheet_report.py</code></td>
+              <td>Defines artifact paths, adapts analyzer signatures, discovers trend files, classifies summaries, and prepares plot paths.</td>
+            </tr>
+            <tr>
+              <td>Analyzer library</td>
+              <td><code>perception_catalog_analyzer</code></td>
+              <td>Loads scene data, generates specsheet metric blocks, renders template HTML, creates plots, and writes the final PDF.</td>
+            </tr>
+            <tr>
+              <td>Local artifacts</td>
+              <td><code>data/&lt;run&gt;/...</code></td>
+              <td>Stores run CSV/parquet files, trend metadata, summary files, generated PNGs, HTML, and <code>specsheet.pdf</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Files</div>
+          <h2>Specsheet input and output files live inside the run folder.</h2>
+          <p class="lead">
+            Trend files can come from a standalone dashboard run or from a grouped release folder. In both cases,
+            each trend item needs a <code>metadata.yaml</code> file next to its <code>summary.json</code>.
+          </p>
+        </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Standalone run shape</h3>
+            <div class="tree" aria-label="Standalone run file tree">
+              <div>data/my_run/</div>
+              <div>  current.csv</div>
+              <div>  future.csv</div>
+              <div>  resources/</div>
+              <div>    metadata.yaml</div>
+              <div>    summary.json</div>
+              <div>  specsheet/</div>
+              <div>    specsheet.html</div>
+              <div>    specsheet.pdf</div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Grouped release shape</h3>
+            <div class="tree" aria-label="Grouped release file tree">
+              <div>data/trend_release_full_usecase_devops/</div>
+              <div>  perception.object_recognition.objects/</div>
+              <div>    &lt;full_job_id&gt;/metadata.yaml + summary.json</div>
+              <div>    &lt;usecase_job_id&gt;/metadata.yaml + summary.json</div>
+              <div>    &lt;devops_job_id&gt;/metadata.yaml + summary.json</div>
+              <div>  specsheet/</div>
+              <div>    map_trend.png</div>
+              <div>    devops_trend.png</div>
+              <div>    specsheet.pdf</div>
+            </div>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>Note:</strong> <code>discover_trend_metadata_files()</code> scans the data root for
+          metadata/summary pairs, and <code>discover_trend_release_groups()</code> decides how those files
+          should be grouped for the release PDF.
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Trend Data</div>
+          <h2>Trend summaries are classified by JSON shape.</h2>
+          <p class="lead">
+            Metadata provides release identity. The summary payload decides whether the item is a full,
+            usecase, devops, or unknown trend source.
+          </p>
+        </div>
+        <table class="table">
+          <thead><tr><th>Role</th><th>How it is recognized</th><th>Specsheet use</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Full performance</td>
+              <td><code>summary.json</code> has <code>blocks</code> containing <code>全数データセット評価</code>.</td>
+              <td>Feeds mAP, precision, recall, error, and prediction trend sections.</td>
+            </tr>
+            <tr>
+              <td>Usecase</td>
+              <td><code>summary.json</code> has <code>blocks</code> containing <code>ユースケース評価</code>.</td>
+              <td>Participates in release grouping and inventory context.</td>
+            </tr>
+            <tr>
+              <td>DevOps pass-rate</td>
+              <td>Summary is a nested dictionary without <code>blocks</code>, with category results containing <code>passed</code> and <code>total</code>.</td>
+              <td>Feeds overall pass-rate trend and pass-rate detail plots.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">PDF Assembly</div>
+          <h2>The final PDF is assembled from analyzer HTML plus dashboard trend context.</h2>
+        </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3><code>get_blocks()</code></h3>
+            <p>
+              Creates abstract and detailed metric fragments for labels, metrics, and evaluation type.
+              These fragments become the main technical body of the PDF.
+            </p>
+          </div>
+          <div class="card">
+            <h3><code>update_template()</code></h3>
+            <p>
+              Receives project/version metadata and trend context, then renders the analyzer template body.
+              Generated PNG paths are included when trend plots exist.
+            </p>
+          </div>
+          <div class="card">
+            <h3><code>specsheet()</code></h3>
+            <p>
+              Combines body HTML, abstract HTML, and detailed HTML, then writes
+              <code>specsheet/specsheet.html</code> and <code>specsheet/specsheet.pdf</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Trend plots</h3>
+            <p>
+              Full performance trends can generate <code>map_trend.png</code> and
+              <code>prediction_trend.png</code>. DevOps summaries can generate
+              <code>devops_trend.png</code> and <code>devops_trend_detail.png</code>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">Debugging</div>
+          <h2>When a specsheet section is missing, check the data contract.</h2>
+        </div>
+        <table class="table">
+          <thead><tr><th>Symptom</th><th>What to check</th><th>Expected condition</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>No trend section</td>
+              <td>Trend metadata discovery</td>
+              <td>At least one <code>metadata.yaml</code> has a sibling <code>summary.json</code>.</td>
+            </tr>
+            <tr>
+              <td>Full trend is missing</td>
+              <td>Full summary role</td>
+              <td><code>summary.json</code> has full-performance blocks and generated full trend rows.</td>
+            </tr>
+            <tr>
+              <td>Pass Rate Trend is missing</td>
+              <td>DevOps summary and plot files</td>
+              <td>DevOps rows are non-empty and <code>devops_trend.png</code> exists in the specsheet output folder.</td>
+            </tr>
+            <tr>
+              <td>PDF says no data</td>
+              <td>Template context</td>
+              <td>The relevant trend list is non-empty before calling <code>update_template()</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="code">
+          <div class="code-title">quick local verification</div>
+          <pre>PYTHONPATH=. python - <<'PY'
+from pathlib import Path
+from lib.specsheet_report import _build_trend_context, discover_trend_metadata_files
+
+ctx = _build_trend_context(discover_trend_metadata_files(), Path("/tmp/specsheet-trend-check"))
+print(len(ctx["performance_trend_data"]), len(ctx["devops_trend_data"]))
+PY</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell"><a href="data_reports.html">Back to Data & Reports</a></div>
+  </footer>
+  <script src="guide.js"></script>
+</body>
+</html>

@@ -25,7 +25,15 @@ from lib.criteria_absolute_gates import (
     export_gate_result,
     failing_scenarios_table,
     gate_summary,
-    infer_criteria_count,
+)
+from lib.score_schema import (
+    SCORE_BLOCK_SIZE,
+    SCORE_NUM_COLS,
+    SCORE_VIEW_METRIC_COLS,
+    build_score_view,
+    infer_score_criteria_count,
+    score_base_cols,
+    score_identity_cols,
 )
 
 st.set_page_config(
@@ -112,7 +120,15 @@ def _filter_df_view_by_perception_labels(
     allowed = set(s["id"].unique())
     if not allowed:
         return df_view.iloc[0:0].copy()
-    return df_view.loc[df_view["Scenario"].astype(str).isin(allowed)].copy()
+
+    scenario_key = df_view["Scenario"].astype(str)
+    mask = scenario_key.isin(allowed)
+    if "Dataset" in df_view.columns:
+        # Older generated Score.csv files stored the final scenario suffix in Dataset,
+        # while Summary.csv kept the full id. Keep matching those files too.
+        composite_key = scenario_key + "_" + df_view["Dataset"].astype(str)
+        mask = mask | composite_key.isin(allowed)
+    return df_view.loc[mask].copy()
 
 
 def _filter_df_view_by_scenarios(df_view: pd.DataFrame, selected_scenarios: list) -> pd.DataFrame:
@@ -193,54 +209,14 @@ else:
 # Constants
 # =========================
 
-BASE_COLS = ["Scenario", "Option", "GT_OBJ"]
+BASE_COLS = score_base_cols(df_raw_A)
+CRITERIA_COLS = SCORE_VIEW_METRIC_COLS
+BLOCK_SIZE = SCORE_BLOCK_SIZE
+NUM_COLS = SCORE_NUM_COLS
 
-CRITERIA_COLS = [
-    "distance",
-    "nm",
-    "tp_tn",
-    "add",
-    "ail",
-    "uil",
-    "pfn_pfp",
-    "uuid_num",
-    "pass_rate",
-    "max_dist_thresh",
-    "obj_cnts",
-]
-
-BLOCK_COLS = [
-    "distance",
-    "nm",
-    "tp_tn",
-    "add",
-    "ail",
-    "uil",
-    "pfn_pfp",
-    "uuid_num",
-    "pass_rate",
-    "max_dist_thresh",
-    "obj_cnts",
-]
-
-BLOCK_SIZE = len(CRITERIA_COLS)
-
-NUM_COLS = [
-    "distance",
-    "nm",
-    "tp_tn",
-    "add",
-    "ail",
-    "uil",
-    "pfn_pfp",
-    "uuid_num",
-    "pass_rate",
-    "max_dist_thresh",
-]
-
-_criteria_n_a = infer_criteria_count(df_raw_A, BLOCK_SIZE)
+_criteria_n_a = infer_score_criteria_count(df_raw_A)
 if mode == "Compare Mode" and compare_runs:
-    CRITERIA_COUNT = min(infer_criteria_count(r["score"], BLOCK_SIZE) for r in compare_runs)
+    CRITERIA_COUNT = min(infer_score_criteria_count(r["score"]) for r in compare_runs)
 else:
     CRITERIA_COUNT = _criteria_n_a
 
@@ -255,19 +231,16 @@ show_debug = st.sidebar.checkbox("Show debug tables", value=False)
 
 
 def build_view(df_raw, criteria_idx):
-    start = 3 + criteria_idx * BLOCK_SIZE
-    end = start + BLOCK_SIZE
+    return build_score_view(df_raw, criteria_idx)
 
-    df_view = df_raw.iloc[:, :3].copy()
-    df_view.columns = BASE_COLS
 
-    block = df_raw.iloc[:, start:end].copy()
-    block.columns = BLOCK_COLS
-
-    df_view = pd.concat([df_view, block], axis=1)
-    for c in NUM_COLS:
-        df_view[c] = pd.to_numeric(df_view[c], errors="coerce")
-    return df_view
+def _add_scenario_display(df: pd.DataFrame) -> pd.DataFrame:
+    d = df.copy()
+    if "Dataset" in d.columns:
+        d["ScenarioDisplay"] = d["Scenario"].astype(str) + " [" + d["Dataset"].astype(str) + "]"
+    else:
+        d["ScenarioDisplay"] = d["Scenario"].astype(str)
+    return d
 
 
 st.sidebar.divider()
@@ -457,13 +430,14 @@ def _gate_compare_overlap_stats(result_a: pd.DataFrame, result_b: pd.DataFrame) 
     """Classify scenarios on inner join (same Scenario id in both gate tables)."""
     if result_a is None or result_b is None or result_a.empty or result_b.empty:
         return None
-    a = result_a[["Scenario", "scenario_pass"]].copy()
-    b = result_b[["Scenario", "scenario_pass"]].copy()
+    key_cols = [c for c in score_identity_cols(result_a) if c in result_b.columns]
+    a = result_a[key_cols + ["scenario_pass"]].copy()
+    b = result_b[key_cols + ["scenario_pass"]].copy()
     a["pass_a"] = a["scenario_pass"].map(bool)
     b["pass_b"] = b["scenario_pass"].map(bool)
     outer = a.drop(columns=["scenario_pass"]).merge(
         b.drop(columns=["scenario_pass"]),
-        on="Scenario",
+        on=key_cols,
         how="outer",
         indicator=True,
     )
@@ -504,7 +478,10 @@ def _overlap_scenario_lists(merged: pd.DataFrame) -> dict[str, list[str]]:
             "a_fail_b_pass": [],
             "a_pass_b_fail": [],
         }
-    scen = merged["Scenario"].astype(str)
+    if "Dataset" in merged.columns:
+        scen = merged["Scenario"].astype(str) + " [" + merged["Dataset"].astype(str) + "]"
+    else:
+        scen = merged["Scenario"].astype(str)
     pa = merged["pass_a"].map(bool)
     pb = merged["pass_b"].map(bool)
     return {
@@ -1089,14 +1066,16 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
             "Per-scenario pass rate",
             "Scenarios present in every run (inner join) — filter to focus on regressions or wins.",
         )
+        scenario_key_cols = score_identity_cols(df_views[0])
         merges = []
         for i, lbl in enumerate(cl):
-            g = df_views[i].groupby("Scenario", as_index=False)["pass_rate"].mean()
+            g = df_views[i].groupby(scenario_key_cols, as_index=False)["pass_rate"].mean()
             g = g.rename(columns={"pass_rate": f"pr_{lbl}"})
             merges.append(g)
         per_scenario = merges[0]
         for g in merges[1:]:
-            per_scenario = per_scenario.merge(g, on="Scenario", how="inner")
+            per_scenario = per_scenario.merge(g, on=scenario_key_cols, how="inner")
+        per_scenario = _add_scenario_display(per_scenario)
         pr_base = f"pr_{cl[0]}"
         delta_col = f"delta_{focus_cand}"
         for lbl in cand_only:
@@ -1138,7 +1117,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
         elif filter_method == "Custom contains string":
             search = st.text_input("Show scenarios with name containing (case-insensitive):", "")
             per_scenario_vis = (
-                per_scenario[per_scenario["Scenario"].str.contains(search, case=False, na=False)]
+                per_scenario[per_scenario["ScenarioDisplay"].str.contains(search, case=False, na=False)]
                 if search
                 else per_scenario
             )
@@ -1149,7 +1128,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
         col_to_run = {f"pr_{lbl}": run_names[i] for i, lbl in enumerate(cl)}
         per_scenario_vis_long = pd.melt(
             per_scenario_vis,
-            id_vars=["Scenario"],
+            id_vars=scenario_key_cols + ["ScenarioDisplay"],
             value_vars=pr_cols_melt,
             var_name="_k",
             value_name="pass_rate",
@@ -1159,7 +1138,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
 
         fig = px.bar(
             per_scenario_vis_long,
-            x="Scenario",
+            x="ScenarioDisplay",
             y="pass_rate",
             color="Run",
             color_discrete_map=_px_map,
@@ -1175,7 +1154,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
         )
         fig2 = px.bar(
             per_scenario_vis.reindex(per_scenario_vis[delta_col].abs().sort_values(ascending=False).index),
-            x="Scenario",
+            x="ScenarioDisplay",
             y=delta_col,
             color=delta_col,
             color_continuous_scale="RdYlGn",
@@ -1184,7 +1163,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
         _plotly_apply_theme(fig2, "Pass rate delta by scenario")
         st.plotly_chart(fig2, width="stretch")
 
-        table_cols = ["Scenario"] + pr_cols_melt + [f"delta_{lbl}" for lbl in cand_only]
+        table_cols = scenario_key_cols + pr_cols_melt + [f"delta_{lbl}" for lbl in cand_only]
         table_cols = [c for c in table_cols if c in per_scenario_vis.columns]
         with st.expander("Show Table: Per Scenario Pass Rates and Deltas"):
             st.dataframe(per_scenario_vis[table_cols], width="stretch")
@@ -1199,7 +1178,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
                 per_scenario_vis,
                 x=pr_base,
                 y=f"pr_{focus_cand}",
-                text="Scenario",
+                text="ScenarioDisplay",
                 labels={
                     pr_base: f"Baseline ({cl[0]}) Pass Rate",
                     f"pr_{focus_cand}": f"Candidate ({focus_cand}) Pass Rate",
@@ -1380,7 +1359,8 @@ else:
     st.plotly_chart(fig, width="stretch")
 
     section_header("Scenario leaderboard", "Mean pass rate per scenario — tune N and sort direction.")
-    scenario_metric = df_view.groupby("Scenario", as_index=False)["pass_rate"].mean()
+    scenario_key_cols = score_identity_cols(df_view)
+    scenario_metric = df_view.groupby(scenario_key_cols, as_index=False)["pass_rate"].mean()
     top_n = st.number_input("Top N scenarios", min_value=5, max_value=100, value=20, key="single_top_n")
     sort_order = st.radio("Order", ["Highest first", "Lowest first"], horizontal=True, key="single_scen_order")
     scenario_metric = scenario_metric.sort_values(

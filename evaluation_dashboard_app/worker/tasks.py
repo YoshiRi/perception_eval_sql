@@ -51,6 +51,26 @@ def _import_catalog_io():
         return None
 
 
+def _parquet_progress_callback(
+    task_id: str,
+    *,
+    prefix: str = "Parquet",
+    pct_start: float = 0.0,
+    pct_end: float = 100.0,
+):
+    """Return a pkl-file progress callback for pkl_archive_to_parquet."""
+
+    def _on_progress(done: int, total: int) -> None:
+        total_safe = max(1, int(total or 0))
+        done_safe = min(max(0, int(done or 0)), total_safe)
+        pct = pct_start + (done_safe / total_safe) * max(0.0, pct_end - pct_start)
+        message = f"{prefix}: processing pkl files {done_safe}/{total_safe}"
+        update_task_progress(task_id, message=message, pct=min(pct_end, pct))
+        append_task_log(task_id, message)
+
+    return _on_progress
+
+
 def _copy_task_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
     copied: Dict[str, Any] = {}
     for key, value in (parameters or {}).items():
@@ -349,15 +369,17 @@ def job_build_parquet(task_id: str, parameters: Dict[str, Any]) -> None:
             update_task_status(task_id, "failed", error_message="Missing pkl_dir")
             return
         append_task_log(task_id, f"Building parquet from {pkl_dir}")
+        update_task_progress(task_id, message=f"Parquet: scanning pkl files in {pkl_dir}", pct=0)
         project_id = parameters.get("project_id")
         job_id = parameters.get("job_id")
         parquet_path = pkl_archive_to_parquet(
             pkl_dir,
-            on_progress=None,
-            on_skip=None,
+            on_progress=_parquet_progress_callback(task_id, pct_start=5, pct_end=95),
+            on_skip=lambda path, reason: append_task_log(task_id, f"Parquet skipped {path}: {reason}"),
             project_id=project_id,
             job_id=job_id,
         )
+        update_task_progress(task_id, message="Parquet: writing output complete", pct=100)
         update_task_result_summary(task_id, {"job": "build_parquet", "output_path": parquet_path})
         _update_run_metadata(
             task_id,
@@ -1169,11 +1191,20 @@ def _build_release_analysis_artifacts(
             update_task_progress(task_id, message=f"{role}: generating parquet", pct=eval_end)
             result["parquet_path"] = pkl_archive_to_parquet(
                 str(output_path),
-                on_progress=None,
-                on_skip=None,
+                on_progress=_parquet_progress_callback(
+                    task_id,
+                    prefix=f"{role}: parquet",
+                    pct_start=eval_end,
+                    pct_end=99,
+                ),
+                on_skip=lambda path, reason: append_task_log(
+                    task_id,
+                    f"WARNING: {role}: parquet skipped {path}: {reason}",
+                ),
                 project_id=project_id,
                 job_id=job_id,
             ) or ""
+            update_task_progress(task_id, message=f"{role}: parquet generated", pct=99)
         except Exception as exc:
             warning = f"Parquet generation failed: {exc}"
             result["warnings"].append(warning)
@@ -2094,11 +2125,20 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             try:
                 parquet_path = pkl_archive_to_parquet(
                     output_path,
-                    on_progress=None,
-                    on_skip=None,
+                    on_progress=_parquet_progress_callback(
+                        task_id,
+                        prefix="Parquet",
+                        pct_start=90,
+                        pct_end=99,
+                    ),
+                    on_skip=lambda path, reason: append_task_log(
+                        task_id,
+                        f"Parquet skipped {path}: {reason}",
+                    ),
                     project_id=project_id,
                     job_id=job_id,
                 )
+                update_task_progress(task_id, message="Parquet generated", pct=99)
                 append_task_log(task_id, f"Parquet generated: {parquet_path}")
             except Exception as e:
                 append_task_log(task_id, f"Parquet generation failed: {e}")

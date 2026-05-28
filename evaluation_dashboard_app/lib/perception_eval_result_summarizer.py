@@ -498,86 +498,146 @@ def calc_score_single(df, result_directory):
         return {}
     found_gt, pos, prev_frame, uuid_list, obj_idx = False, [], -1, [], 0
     res, obj_group, criteria_max_dist = get_option_and_object_group(result_directory)
+
+    frame_data = {}
     for i in range(total_row_num):
-        if (
-            isnull(df.loc[(i, "ground_truth"), "timestamp"])
-            # or df.loc[(i, "ground_truth"), "frame"] == prev_frame
-        ):
-            continue
+        frame_num = df.loc[(i, "estimation"), "frame"]
+        if isnull(frame_num):
+            frame_num = df.loc[(i, "ground_truth"), "frame"]
 
-        if df.loc[(i, "ground_truth"), "frame"] == prev_frame:
-            obj_idx += 1
-        else:
-            obj_idx = 0
-
-        prev_frame = df.loc[(i, "ground_truth"), "frame"]
-        act_x = df.loc[(i, "ground_truth"), "x"]
-        act_y = df.loc[(i, "ground_truth"), "y"]
-        act_dist = math.sqrt(act_x**2 + act_y**2)
-        act_vx = df.loc[(i, "ground_truth"), "vx"]
-        act_vy = df.loc[(i, "ground_truth"), "vy"]
-        # act_vel = math.sqrt(act_vx**2 + act_vy**2)
-        point = {"x": -act_y, "y": act_x, "dist": act_dist, "vx": -act_vx, "vy": act_vy}
-
-        if act_dist < criteria_max_dist[0]:
-            key = "criteria0"
-            dist_err_torelance = 2
-        elif act_dist < criteria_max_dist[1]:
-            key = "criteria1"
-            dist_err_torelance = 3
-        elif act_dist < criteria_max_dist[2]:
-            key = "criteria2"
-            dist_err_torelance = 5
-        elif act_dist < criteria_max_dist[3]:
-            key = "criteria3"
-            dist_err_torelance = 5
-        else:
-            raise ValueError("act_dist is out of range")
-
-        act_label = df.loc[(i, "ground_truth"), "label"]
-        if not found_gt:
-            found_gt = True
-            res["criteria0"]["GT_OBJ"] = df.loc[(i, "ground_truth"), "label"]
-            res["criteria1"]["GT_OBJ"] = df.loc[(i, "ground_truth"), "label"]
-            res["criteria2"]["GT_OBJ"] = df.loc[(i, "ground_truth"), "label"]
+        if frame_num not in frame_data:
+            frame_data[frame_num] = {"ground_truth": [], "estimation": []}
 
         if not isnull(df.loc[(i, "estimation"), "timestamp"]):
-            est_label = df.loc[(i, "estimation"), "label"]
-            if act_label != "false_positive":
-                est_x = df.loc[(i, "estimation"), "x"]
-                est_y = df.loc[(i, "estimation"), "y"]
-                diff_dist = math.sqrt((act_x - est_x) ** 2 + (act_y - est_y) ** 2)
-                est_uuid = df.loc[(i, "estimation"), "uuid"]
-                if est_uuid not in uuid_list:
-                    uuid_list.append(est_uuid)
-                # print("param:", df.loc[(i, "estimation"), "timestamp"], act_x, act_y, act_label, est_x, est_y, est_label, diff_dist)
+            frame_data[frame_num]["estimation"].append(
+                {
+                    "index": i,
+                    "x": df.loc[(i, "estimation"), "x"],
+                    "y": df.loc[(i, "estimation"), "y"],
+                    "label": df.loc[(i, "estimation"), "label"],
+                    "uuid": df.loc[(i, "estimation"), "uuid"],
+                    "timestamp": df.loc[(i, "estimation"), "timestamp"],
+                }
+            )
 
-                if act_label == est_label:
-                    if diff_dist < dist_err_torelance:
-                        status = "TP/TN"
+        if not isnull(df.loc[(i, "ground_truth"), "timestamp"]):
+            frame_data[frame_num]["ground_truth"].append(
+                {
+                    "index": i,
+                    "x": df.loc[(i, "ground_truth"), "x"],
+                    "y": df.loc[(i, "ground_truth"), "y"],
+                    "label": df.loc[(i, "ground_truth"), "label"],
+                    "vx": df.loc[(i, "ground_truth"), "vx"],
+                    "vy": df.loc[(i, "ground_truth"), "vy"],
+                    "frame": df.loc[(i, "ground_truth"), "frame"],
+                }
+            )
+
+    for frame_num in sorted(frame_data.keys()):
+        frame_gt_list = frame_data[frame_num]["ground_truth"]
+        frame_est_list = frame_data[frame_num]["estimation"]
+
+        for gt_obj in frame_gt_list:
+            i = gt_obj["index"]
+            act_uuid = df.loc[(i, "ground_truth"), "uuid"]
+            est_uuid = ""
+            prev_frame = df.loc[(i, "ground_truth"), "frame"]
+
+            act_x = gt_obj["x"]
+            act_y = gt_obj["y"]
+            act_dist = math.sqrt(act_x**2 + act_y**2)
+            act_vx = gt_obj["vx"]
+            act_vy = gt_obj["vy"]
+            point = {"x": -act_y, "y": act_x, "dist": act_dist, "vx": -act_vx, "vy": act_vy}
+
+            if act_dist < criteria_max_dist[0]:
+                key = "criteria0"
+                dist_err_torelance = 2
+            elif act_dist < criteria_max_dist[1]:
+                key = "criteria1"
+                dist_err_torelance = 3
+            elif act_dist < criteria_max_dist[2]:
+                key = "criteria2"
+                dist_err_torelance = 5
+            elif act_dist < criteria_max_dist[3]:
+                key = "criteria3"
+                dist_err_torelance = 5
+            else:
+                raise ValueError("act_dist is out of range")
+
+            act_label = gt_obj["label"]
+            if not found_gt:
+                found_gt = True
+                res["criteria0"]["GT_OBJ"] = act_label
+                res["criteria1"]["GT_OBJ"] = act_label
+                res["criteria2"]["GT_OBJ"] = act_label
+
+            if not isnull(df.loc[(i, "estimation"), "timestamp"]):
+                est_label = df.loc[(i, "estimation"), "label"]
+                est_uuid = df.loc[(i, "estimation"), "uuid"]
+                if act_label != "false_positive":
+                    est_x = df.loc[(i, "estimation"), "x"]
+                    est_y = df.loc[(i, "estimation"), "y"]
+                    diff_dist = math.sqrt((act_x - est_x) ** 2 + (act_y - est_y) ** 2)
+
+                    if est_uuid not in uuid_list:
+                        uuid_list.append(est_uuid)
+
+                    if act_label == est_label:
+                        if diff_dist < dist_err_torelance:
+                            status = "TP/TN"
+                        else:
+                            status = "ADD"
+                    elif est_label in obj_group[act_label]:
+                        status = "AIL"
                     else:
-                        status = "ADD"
-                elif est_label in obj_group[act_label]:
-                    status = "AIL"
+                        status = "UIL"
                 else:
-                    status = "UIL"
+                    status = "PFN/PFP"
+                res[key]["OBJ_CNTS"].setdefault(est_label, 0)
+                res[key]["OBJ_CNTS"][est_label] += 1
             else:
-                status = "PFN/PFP"
-            res[key]["OBJ_CNTS"].setdefault(est_label, 0)
-            res[key]["OBJ_CNTS"][est_label] += 1
-        else:
-            if act_label != "false_positive":
-                status = "PFN/PFP"
-            else:
-                status = "TP/TN"
-        res[key][status] += 1
-        res[key]["NM"] += 1
-        res[key]["UUID_NUM"] = len(uuid_list)
-        point["status"] = status
-        point["uuid_num"] = len(uuid_list)
-        if obj_idx == len(pos):
-            pos.append([])
-        pos[obj_idx].append(point)
+                if act_label != "false_positive":
+                    closest_dist = float("inf")
+                    closest_est = None
+
+                    for est_obj in frame_est_list:
+                        diff_dist = math.sqrt((act_x - est_obj["x"]) ** 2 + (act_y - est_obj["y"]) ** 2)
+                        if diff_dist < closest_dist:
+                            closest_dist = diff_dist
+                            closest_est = est_obj
+
+                    if closest_est is not None and closest_dist < 1.0:
+                        est_label = closest_est["label"]
+                        est_uuid = closest_est["uuid"]
+
+                        if est_uuid is not None and est_uuid not in uuid_list:
+                            uuid_list.append(est_uuid)
+
+                        if act_label == est_label:
+                            if closest_dist < dist_err_torelance:
+                                status = "TP/TN"
+                            else:
+                                status = "ADD"
+                        elif est_label in obj_group[act_label]:
+                            status = "AIL"
+                        else:
+                            status = "UIL"
+
+                        res[key]["OBJ_CNTS"].setdefault(est_label, 0)
+                        res[key]["OBJ_CNTS"][est_label] += 1
+                    else:
+                        status = "PFN/PFP"
+                else:
+                    status = "TP/TN"
+
+            res[key][status] += 1
+            res[key]["NM"] += 1
+            res[key]["UUID_NUM"] = len(uuid_list)
+            point["status"] = status
+            point["act_uuid"] = act_uuid
+            point["est_uuid"] = est_uuid
+            pos.append(point)
 
     with open(result_directory + "score.json", "w") as file:
         file.write(json.dumps(res, indent=4))

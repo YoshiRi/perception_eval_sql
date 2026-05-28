@@ -667,12 +667,20 @@ def run_download_and_eval(
     if generate_parquet and result["download_success"] and pkl_archive_to_parquet:
         if on_progress:
             on_progress("Generating parquet...")
+
+        def _on_parquet_progress(done: int, total: int) -> None:
+            if on_progress:
+                on_progress(f"Parquet: Processing {done}/{total} pkl files")
+
+        def _on_parquet_skip(path: str, reason: str) -> None:
+            if on_warning:
+                on_warning(f"Parquet skipped {path}: {reason}")
         
         try:
             parquet_path = pkl_archive_to_parquet(
                 output_path,
-                on_progress=None,
-                on_skip=None,
+                on_progress=_on_parquet_progress,
+                on_skip=_on_parquet_skip,
                 project_id=project_id,
                 job_id=job_id,
             )
