@@ -111,6 +111,17 @@ if _bp_raw is not None and str(_bp_raw).strip():
 else:
     _BUILD_PARQUET_JOB_TIMEOUT_SEC = _RQ_DEFAULT_JOB_TIMEOUT_SEC
 
+_DEFAULT_EVAL_WORKERS = 4
+
+
+def _default_eval_workers() -> int:
+    try:
+        workers = int(os.environ.get("EVAL_WORKERS_DEFAULT", _DEFAULT_EVAL_WORKERS))
+    except (TypeError, ValueError):
+        workers = _DEFAULT_EVAL_WORKERS
+    return max(1, min(workers, 16))
+
+
 _APP_ROOT = Path(__file__).resolve().parents[1]
 _CATALOGS_FILENAME = "catalogs.json"
 _LEGACY_CATALOGS_PATH = Path("/home/leigu/EvaluatorRunnerUITest/catalogs.json")
@@ -2089,6 +2100,7 @@ def _render_recent_evaluator_job_run_dialog(
         "generate_parquet": generate_parquet,
         "eval_recursive": eval_recursive,
         "eval_overwrite": False,
+        "eval_workers": _default_eval_workers(),
     }
     task_id = _enqueue_task("download_and_eval", params)
     if not task_id:
@@ -2935,6 +2947,7 @@ with tab1:
                 "generate_parquet": combined_generate_parquet,
                 "eval_recursive": combined_eval_recursive,
                 "eval_overwrite": False,
+                "eval_workers": _default_eval_workers(),
             }
             task_id = _enqueue_task("download_and_eval", params)
             if task_id:
@@ -3281,7 +3294,7 @@ with tab4:
                         st.error(f"Failed to save: {e}")
                         st.exception(e)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         eval_recursive = st.checkbox(
             "Search subdirectories",
@@ -3294,28 +3307,10 @@ with tab4:
             value=get_config_value("eval_overwrite", False),
             help="If unchecked, directories with result.txt will be skipped",
         )
-    with col3:
-        eval_parallel = st.checkbox(
-            "Run in parallel",
-            value=get_config_value("eval_parallel", False),
-            help="Temporarily disabled. Parallel execution currently provides no measurable benefit.",    
-            disabled=True
-        )
-        if eval_parallel:
-            eval_workers = st.number_input(
-                "Eval worker threads",
-                min_value=1,
-                max_value=16,
-                value=get_config_value("eval_workers", 1),
-                help="Number of parallel threads used to run eval_result",
-            )   
-            set_config_value("eval_workers", eval_workers)
-        else:
-            eval_workers = 1
-            set_config_value("eval_workers", eval_workers)
+    eval_workers = _default_eval_workers()
+    set_config_value("eval_workers", eval_workers)
     set_config_value("eval_recursive", eval_recursive)
     set_config_value("eval_overwrite", eval_overwrite)
-    set_config_value("eval_parallel", eval_parallel)
 
     # New option: Only generate summary/score csv
     only_generate_summary = st.checkbox(
@@ -3413,6 +3408,7 @@ with tab4:
                         "eval_root": eval_path,
                         "recursive": eval_recursive,
                         "overwrite": eval_overwrite,
+                        "eval_workers": eval_workers,
                     })
                 if tid:
                     enqueued.append(f"{'generate_summary_csv' if only_generate_summary else 'run_eval_dirs'} ({tid[:8]}...)")
@@ -3574,30 +3570,23 @@ with tab4:
                 )
 
             try:
-                # sequential evaluation
-                if not eval_parallel:
-                    for i, result_dir in enumerate(target_dirs):
-                        _update_progress_status(i, total)
-                        results.append(run_eval_result_for_dir(result_dir, overwrite=eval_overwrite))
-                        _update_progress_status(i + 1, total)
-                else:
-                    max_workers = max(1, min(int(eval_workers), len(target_dirs)))
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        future_map = {
-                            executor.submit(_run_eval_result_worker, result_dir, eval_overwrite): result_dir
-                            for result_dir in target_dirs
-                        }
-                        completed = 0
-                        for future in as_completed(future_map):
-                            completed += 1
-                            _update_progress_status(completed, total)
-                            try:
-                                results.append(future.result())
-                            except Exception as e:
-                                result_dir = future_map.get(future, "unknown")
-                                results.append(
-                                    {"path": result_dir, "status": "failed", "detail": str(e)}
-                                )
+                max_workers = max(1, min(int(eval_workers), len(target_dirs)))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_map = {
+                        executor.submit(_run_eval_result_worker, result_dir, eval_overwrite): result_dir
+                        for result_dir in target_dirs
+                    }
+                    completed = 0
+                    for future in as_completed(future_map):
+                        completed += 1
+                        _update_progress_status(completed, total)
+                        try:
+                            results.append(future.result())
+                        except Exception as e:
+                            result_dir = future_map.get(future, "unknown")
+                            results.append(
+                                {"path": result_dir, "status": "failed", "detail": str(e)}
+                            )
 
                 _update_progress_status(total, total)
             finally:

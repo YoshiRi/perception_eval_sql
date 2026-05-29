@@ -47,6 +47,7 @@ date: 2025.11.7
 """
 _TREND_DATE_PATTERN = re.compile(r"^\d{4}\.\d{1,2}\.\d{1,2}$")
 _TREND_DATA_COUNT_PATTERN = re.compile(r"^\d[\d,]*\+?$")
+_PILOT_AUTO_PREFIX_PATTERN = re.compile(r"^Pilot\.Auto\s+", re.IGNORECASE)
 
 
 @dataclass
@@ -214,11 +215,19 @@ def parse_trend_metadata_text(text: str) -> dict[str, Any]:
         "description": description,
         "date": date,
     }
-    for optional_key in ("release_group", "topic_name"):
+    for optional_key in ("release_group", "topic_name", "version_abbr"):
         optional_value = str(raw.get(optional_key) or "").strip()
         if optional_value:
             parsed[optional_key] = optional_value
     return parsed
+
+
+def _trend_version_abbr(metadata: dict[str, Any]) -> str:
+    explicit = str(metadata.get("version_abbr") or "").strip()
+    if explicit:
+        return explicit
+    version = str(metadata.get("pilot_auto_version") or "").strip()
+    return _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version
 
 
 def write_trend_metadata(run_dir: str | Path, metadata: dict[str, Any]) -> Path:
@@ -592,6 +601,7 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
         trend_data_rows.append(
             {
                 "version": metadata.get("pilot_auto_version"),
+                "version_abbr": _trend_version_abbr(metadata),
                 "data_count": metadata.get("data_count"),
                 "description": metadata.get("description"),
                 "date": metadata.get("date"),
@@ -621,6 +631,7 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
         output.append(
             {
                 "version": row.get("version"),
+                "version_abbr": row.get("version_abbr"),
                 "data_count": row.get("data_count"),
                 "description": row.get("description"),
                 "date": row.get("date"),
@@ -657,6 +668,7 @@ def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]
         trend_data_rows.append(
             {
                 "version": metadata.get("pilot_auto_version"),
+                "version_abbr": _trend_version_abbr(metadata),
                 "data_count": metadata.get("data_count"),
                 "description": metadata.get("description"),
                 "date": metadata.get("date"),

@@ -442,12 +442,14 @@ def list_recent_tasks(
     offset: int = 0,
     session_id: Optional[str] = None,
     since_days: Optional[int] = None,
+    include_details: bool = False,
 ) -> List[Dict[str, Any]]:
     """Return recent tasks (newest first).
 
     If ``session_id`` is set, only that user's tasks.
     If ``since_days`` is set, only tasks with ``created_at`` within that many calendar days
     (from DB ``NOW()``). ``limit`` still caps row count.
+    ``include_details`` includes heavy log/result payloads; task list cards do not need them.
     """
     url = get_database_url()
     if not url:
@@ -461,7 +463,12 @@ def list_recent_tasks(
         conn = psycopg2.connect(url)
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cols = "id, type, status, parameters, result_path, error_message, progress_message, progress_pct, log_output, result_summary, rq_job_id, created_at, updated_at"
+                cols = (
+                    "id, type, status, parameters, result_path, error_message, "
+                    "progress_message, progress_pct, rq_job_id, created_at, updated_at"
+                )
+                if include_details:
+                    cols += ", log_output, result_summary"
                 conditions: List[str] = []
                 params: List[Any] = []
                 if session_id is not None:

@@ -9,6 +9,7 @@ import json
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -69,6 +70,114 @@ def _parquet_progress_callback(
         append_task_log(task_id, message)
 
     return _on_progress
+
+
+def _eval_worker_count(parameters: Dict[str, Any], total: int) -> int:
+    """Resolve bounded eval concurrency. Defaults to 4, capped by total dirs."""
+    if total <= 0:
+        return 1
+    raw = parameters.get("eval_workers", os.environ.get("EVAL_WORKERS_DEFAULT", 4))
+    try:
+        workers = int(raw)
+    except (TypeError, ValueError):
+        workers = 4
+    try:
+        max_workers = int(os.environ.get("EVAL_WORKERS_MAX", 16))
+    except ValueError:
+        max_workers = 16
+    return max(1, min(workers, max_workers, total))
+
+
+def _compact_eval_path(path: Any, *, parts: int = 2) -> str:
+    """Return a readable tail path for task logs without flooding the UI."""
+    text = str(path or "").strip()
+    if not text:
+        return "unknown"
+    try:
+        p = Path(text)
+        tail = p.parts[-parts:]
+        return "/".join(tail) if tail else text
+    except Exception:
+        return text
+
+
+def _run_eval_result_dirs(
+    *,
+    task_id: str,
+    eval_summary: Any,
+    target_dirs: list[str],
+    overwrite: bool,
+    eval_workers: int,
+    pct_start: float,
+    pct_end: float,
+    label: str = "Eval",
+) -> list[Dict[str, Any]]:
+    """Run eval_result across result dirs with bounded concurrency and calm progress."""
+    total = len(target_dirs)
+    if total <= 0:
+        update_task_progress(task_id, message=f"{label}: no result directories found", pct=pct_end)
+        return []
+
+    workers = max(1, min(int(eval_workers or 1), total))
+    span = max(0.0, pct_end - pct_start)
+    statuses: list[Dict[str, Any]] = []
+    counts = {"success": 0, "skipped": 0, "failed": 0}
+
+    def _record(status: Dict[str, Any]) -> str:
+        statuses.append(status)
+        state = str(status.get("status") or "failed")
+        if state not in counts:
+            state = "failed"
+        counts[state] += 1
+        if state == "failed":
+            append_task_log(
+                task_id,
+                f"{label}: eval failed for {status.get('path', '')}: {status.get('detail', '')}",
+            )
+        return state
+
+    def _progress(done: int, latest: str | None = None) -> None:
+        pct = pct_start + (done / total) * span
+        latest_text = f" latest: {latest}" if latest else ""
+        update_task_progress(
+            task_id,
+            message=(
+                f"{label}: completed {done}/{total} dirs "
+                f"(success {counts['success']}, skipped {counts['skipped']}, failed {counts['failed']})"
+                f"{latest_text}"
+            ),
+            pct=min(pct_end, pct),
+        )
+
+    append_task_log(task_id, f"{label}: running eval_result for {total} directories with {workers} worker(s)")
+    _progress(0)
+
+    if workers == 1:
+        for i, result_dir in enumerate(target_dirs, start=1):
+            append_task_log(task_id, f"{label}: starting {i}/{total}: {result_dir}")
+            status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=overwrite)
+            state = _record(status)
+            short_path = _compact_eval_path(status.get("path") or result_dir)
+            append_task_log(task_id, f"{label}: {i}/{total} {state}: {short_path}")
+            _progress(i, short_path)
+        return statuses
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(eval_summary.run_eval_result_for_dir, result_dir, overwrite=overwrite): result_dir
+            for result_dir in target_dirs
+        }
+        for done, future in enumerate(as_completed(future_map), start=1):
+            result_dir = future_map[future]
+            try:
+                status = future.result()
+            except Exception as exc:
+                status = {"path": result_dir, "status": "failed", "detail": str(exc)}
+            state = _record(status)
+            short_path = _compact_eval_path(status.get("path") or result_dir)
+            append_task_log(task_id, f"{label}: {done}/{total} {state}: {short_path}")
+            _progress(done, short_path)
+    return statuses
 
 
 def _copy_task_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -297,17 +406,19 @@ def job_run_eval_dirs(task_id: str, parameters: Dict[str, Any]) -> None:
             update_task_status(task_id, "failed", error_message="No result directories found")
             return
         total = len(target_dirs)
-        append_task_log(task_id, f"Processing {total} directories")
-        statuses = []
-        for i, result_dir in enumerate(target_dirs):
-            pct = 100.0 * (i + 1) / total if total else 0
-            update_task_progress(task_id, message=f"Processing {i+1}/{total}: {result_dir}", pct=pct)
-            append_task_log(task_id, f"Processing {i+1}/{total}: {result_dir}")
-            status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=overwrite)
-            statuses.append(status)
-            if status.get("status") == "failed":
-                append_task_log(task_id, f"Eval failed for {result_dir}: {status.get('detail', '')}")
+        eval_workers = _eval_worker_count(parameters, total)
+        statuses = _run_eval_result_dirs(
+            task_id=task_id,
+            eval_summary=eval_summary,
+            target_dirs=target_dirs,
+            overwrite=overwrite,
+            eval_workers=eval_workers,
+            pct_start=0.0,
+            pct_end=90.0,
+            label="Eval",
+        )
         append_task_log(task_id, "Generating summary CSV")
+        update_task_progress(task_id, message="Generating Summary.csv / Score.csv", pct=95)
         info = eval_summary.generate_summary_and_score_csv(eval_root)
         result_path = info.get("summary_path", eval_root)
         failed = [s for s in statuses if s.get("status") == "failed"]
@@ -341,6 +452,7 @@ def job_run_eval_dirs(task_id: str, parameters: Dict[str, Any]) -> None:
             },
         )
         append_task_log(task_id, f"Done. Output: {result_path}")
+        update_task_progress(task_id, message="Eval complete", pct=100)
         _mark_run_status(task_id, parameters, task_type="run_eval_dirs", status="completed", result_path=result_path)
         update_task_status(task_id, "completed", result_path=result_path)
     except Exception as e:
@@ -935,7 +1047,29 @@ def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
                 extra={"evaluator": evaluator_context},
             )
         
-        on_progress = lambda msg: _progress_callback(task_id, msg)
+        def on_progress(msg: str) -> None:
+            append_task_log(task_id, msg)
+            match = re.search(r"(\d+)\s*/\s*(\d+)", msg)
+            pct = None
+            if match:
+                n, m = int(match.group(1)), max(1, int(match.group(2)))
+                ratio = n / m
+                if msg.startswith("Eval:"):
+                    pct = 60.0 + ratio * 25.0
+                elif msg.startswith("Parquet:"):
+                    pct = 85.0 + ratio * 13.0
+                elif msg.startswith("Downloading"):
+                    pct = ratio * 60.0
+            if pct is None:
+                if msg.startswith("Download complete"):
+                    pct = 60.0
+                elif msg.startswith("Generating parquet"):
+                    pct = 85.0
+            if pct is None:
+                update_task_progress(task_id, message=msg)
+            else:
+                update_task_progress(task_id, message=msg, pct=pct)
+
         on_warning = lambda msg: append_task_log(task_id, msg)
         
         result = download_core.run_download_and_eval(
@@ -953,6 +1087,7 @@ def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
             generate_parquet=generate_parquet,
             eval_recursive=eval_recursive,
             eval_overwrite=eval_overwrite,
+            eval_workers=_eval_worker_count(parameters, 10_000),
             on_progress=on_progress,
             on_warning=on_warning,
         )
@@ -1148,24 +1283,21 @@ def _build_release_analysis_artifacts(
 
     if eval_summary:
         target_dirs = eval_summary.find_eval_result_dirs(str(output_path), recursive=True)
-        statuses = []
         total = len(target_dirs)
         if target_dirs:
-            append_task_log(task_id, f"{role}: running eval_result for {total} directories")
+            statuses = _run_eval_result_dirs(
+                task_id=task_id,
+                eval_summary=eval_summary,
+                target_dirs=target_dirs,
+                overwrite=False,
+                eval_workers=_eval_worker_count({}, total),
+                pct_start=download_end,
+                pct_end=eval_end,
+                label=f"{role}: eval_result",
+            )
         else:
             update_task_progress(task_id, message=f"{role}: no eval_result directories found", pct=eval_end)
-        for i, result_dir in enumerate(target_dirs):
-            pct = download_end + (i / total) * max(0.0, eval_end - download_end) if total else eval_end
-            message = f"{role}: eval_result {i + 1}/{total}: {result_dir}"
-            update_task_progress(task_id, message=message, pct=pct)
-            append_task_log(task_id, message)
-            status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=False)
-            statuses.append(status)
-            if status.get("status") == "failed":
-                append_task_log(
-                    task_id,
-                    f"WARNING: {role}: eval_result failed for {result_dir}: {status.get('detail', '')}",
-                )
+            statuses = []
         if target_dirs:
             update_task_progress(task_id, message=f"{role}: generating Summary.csv / Score.csv", pct=eval_end)
             csv_info = eval_summary.generate_summary_and_score_csv(str(output_path))
@@ -2068,16 +2200,19 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             target_dirs = eval_summary.find_eval_result_dirs(output_path, recursive=eval_recursive)
             if target_dirs:
                 total = len(target_dirs)
-                eval_statuses = []
-                for i, result_dir in enumerate(target_dirs):
-                    pct = 65 + (i / total) * 20
-                    update_task_progress(task_id, message=f"Evaluating {i+1}/{total}: {result_dir}", pct=pct)
-                    status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=eval_overwrite)
-                    eval_statuses.append(status)
-                    if status.get("status") == "failed":
-                        append_task_log(task_id, f"Eval failed for {result_dir}: {status.get('detail', '')}")
+                eval_statuses = _run_eval_result_dirs(
+                    task_id=task_id,
+                    eval_summary=eval_summary,
+                    target_dirs=target_dirs,
+                    overwrite=eval_overwrite,
+                    eval_workers=_eval_worker_count(parameters, total),
+                    pct_start=65.0,
+                    pct_end=85.0,
+                    label="Eval",
+                )
                 
                 # Generate summary CSVs
+                update_task_progress(task_id, message="Generating Summary.csv / Score.csv", pct=85)
                 csv_info = eval_summary.generate_summary_and_score_csv(output_path)
                 failed = [s for s in eval_statuses if s.get("status") == "failed"]
                 skipped = [s for s in eval_statuses if s.get("status") == "skipped"]

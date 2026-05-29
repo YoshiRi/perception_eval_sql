@@ -23,6 +23,15 @@ _CONFIG_SETTER: Callable[[str, Any], None] = lambda key, value: None
 _ENQUEUE_TASK: Callable[[str, Dict[str, Any]], Optional[str]] = lambda task_type, params: None
 CATALOG_IO_AVAILABLE = False
 ENVIRONMENT = "default"
+_DEFAULT_EVAL_WORKERS = 4
+
+
+def _default_eval_workers() -> int:
+    try:
+        workers = int(os.environ.get("EVAL_WORKERS_DEFAULT", _DEFAULT_EVAL_WORKERS))
+    except (TypeError, ValueError):
+        workers = _DEFAULT_EVAL_WORKERS
+    return max(1, min(workers, 16))
 
 
 def configure_recent_evaluator_jobs_ui(*, get_config_value: Callable[[str, Any], Any], set_config_value: Callable[[str, Any], None], enqueue_task: Callable[[str, Dict[str, Any]], Optional[str]], catalog_io_available: bool, environment: str = "default") -> None:
@@ -1403,6 +1412,7 @@ def _render_recent_evaluator_job_run_dialog(
         "generate_parquet": generate_parquet,
         "eval_recursive": eval_recursive,
         "eval_overwrite": False,
+        "eval_workers": _default_eval_workers(),
     }
     task_id = _enqueue_task("download_and_eval", params)
     if not task_id:
@@ -1612,6 +1622,7 @@ def _render_recent_evaluator_job_retest_dialog(
             "generate_parquet": generate_parquet,
             "eval_recursive": eval_recursive,
             "eval_overwrite": False,
+            "eval_workers": _default_eval_workers(),
         },
     )
     if not task_id:

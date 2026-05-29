@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional
@@ -22,6 +23,19 @@ logger = logging.getLogger(__name__)
 # Default environment for evaluator API
 DEFAULT_ENVIRONMENT = "default"
 API_BASE_URL = "https://evaluation.ci.web.auto/v3"
+
+
+def _compact_eval_path(path: Any, *, parts: int = 2) -> str:
+    """Return a readable tail path for progress/log messages."""
+    text = str(path or "").strip()
+    if not text:
+        return "unknown"
+    try:
+        p = Path(text)
+        tail = p.parts[-parts:]
+        return "/".join(tail) if tail else text
+    except Exception:
+        return text
 
 
 def _make_evaluator_session(environment: str = DEFAULT_ENVIRONMENT):
@@ -548,6 +562,7 @@ def run_download_and_eval(
     generate_parquet: bool = True,
     eval_recursive: bool = True,
     eval_overwrite: bool = False,
+    eval_workers: int = 4,
     on_progress: Optional[Callable[[str], None]] = None,
     on_warning: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
@@ -629,13 +644,46 @@ def run_download_and_eval(
             if target_dirs:
                 total = len(target_dirs)
                 eval_statuses: List[Dict[str, Any]] = []
-                for i, result_dir in enumerate(target_dirs):
-                    if on_progress:
-                        on_progress(f"Eval: Processing {i+1}/{total}: {result_dir}")
-                    status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=eval_overwrite)
+                try:
+                    requested_workers = int(eval_workers or 1)
+                except (TypeError, ValueError):
+                    requested_workers = 1
+                workers = max(1, min(requested_workers, total))
+                if on_progress:
+                    on_progress(f"Eval: completed 0/{total} dirs")
+
+                def _record_status(status: Dict[str, Any], done: int, fallback_path: str) -> None:
                     eval_statuses.append(status)
-                    if status.get("status") == "failed" and on_warning:
-                        on_warning(f"Eval failed for {result_dir}: {status.get('detail', '')}")
+                    state = str(status.get("status") or "failed")
+                    short_path = _compact_eval_path(status.get("path") or fallback_path)
+                    if on_progress:
+                        on_progress(f"Eval: completed {done}/{total} dirs - {state}: {short_path}")
+                    if state == "failed" and on_warning:
+                        on_warning(f"Eval failed for {status.get('path', '')}: {status.get('detail', '')}")
+
+                if workers == 1:
+                    for i, result_dir in enumerate(target_dirs):
+                        status = eval_summary.run_eval_result_for_dir(result_dir, overwrite=eval_overwrite)
+                        _record_status(status, i + 1, result_dir)
+                else:
+                    if on_progress:
+                        on_progress(f"Eval: running {total} dirs with {workers} worker(s)")
+                    with ThreadPoolExecutor(max_workers=workers) as executor:
+                        future_map = {
+                            executor.submit(
+                                eval_summary.run_eval_result_for_dir,
+                                result_dir,
+                                overwrite=eval_overwrite,
+                            ): result_dir
+                            for result_dir in target_dirs
+                        }
+                        for done, future in enumerate(as_completed(future_map), start=1):
+                            result_dir = future_map[future]
+                            try:
+                                status = future.result()
+                            except Exception as exc:
+                                status = {"path": result_dir, "status": "failed", "detail": str(exc)}
+                            _record_status(status, done, result_dir)
                 
                 # Generate summary CSVs
                 csv_info = eval_summary.generate_summary_and_score_csv(eval_root)

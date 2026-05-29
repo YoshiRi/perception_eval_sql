@@ -256,9 +256,7 @@ def render_task_list(tasks: List[Dict[str, Any]], current_user: Optional[str]) -
     if use_dialog and st.session_state.get("_task_detail_id"):
         task_id = st.session_state["_task_detail_id"]
         try:
-            detail_task = next((x for x in tasks if str(x.get("id")) == task_id), None)
-            if detail_task is None:
-                detail_task = get_task(task_id)
+            detail_task = get_task(task_id)
             if detail_task:
 
                 @st.dialog("Task details", width="large")
