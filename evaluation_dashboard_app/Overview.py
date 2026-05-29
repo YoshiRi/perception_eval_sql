@@ -17,12 +17,14 @@ from lib.specsheet_report import (
     DEFAULT_SPECSHEET_PROJECT_ID,
     DEFAULT_SPECSHEET_TOPIC,
     DEFAULT_TREND_METADATA_TEXT,
-    collect_candidate_specsheet_labels,
     generate_specsheet_pdf,
+    get_release_specsheet_context,
     get_specsheet_artifact_paths,
     is_specsheet_pdf_fresh,
     parse_trend_metadata_text,
     progress_fraction_from_message,
+    resolve_specsheet_generation_run_path,
+    write_trend_metadata,
 )
 from lib.page_chrome import (
     inject_app_page_styles,
@@ -652,25 +654,6 @@ _report_key = {
     "perception_labels": list(_report_filters["perception_labels"]),
     "product_labels": list(_report_filters["product_labels"]),
 }
-_specsheet_run_records = _report_runs
-_specsheet_run_labels = _report_labels
-_specsheet_run_options = {
-    f"{label} · {get_run_display_name(record['path'])}": record["path"]
-    for label, record in zip(_specsheet_run_labels, _specsheet_run_records)
-}
-_specsheet_run_option_keys = list(_specsheet_run_options.keys())
-_default_specsheet_run_selection = _specsheet_run_option_keys[:1]
-_default_specsheet_labels = list(DEFAULT_SPECSHEET_LABELS)
-_default_specsheet_project_id = st.session_state.get("specsheet_project_id", DEFAULT_SPECSHEET_PROJECT_ID)
-_default_specsheet_topic = st.session_state.get("specsheet_topic_name", DEFAULT_SPECSHEET_TOPIC)
-_detected_specsheet_labels = collect_candidate_specsheet_labels(
-    runA["path"],
-    preferred=_report_filters["perception_labels"],
-)
-_specsheet_label_options = list(dict.fromkeys(_default_specsheet_labels + _detected_specsheet_labels))
-_single_specsheet_run_path = _specsheet_run_records[0]["path"]
-_default_specsheet_version = st.session_state.get("specsheet_version", get_run_display_name(_single_specsheet_run_path))
-
 pdf_col1, pdf_col2 = st.columns([1.2, 2.8])
 with pdf_col1:
     if st.button("Generate Evaluation Dashboard Report", type="primary", use_container_width=True):
@@ -718,6 +701,34 @@ section_header(
     "Generate or reuse the release-oriented spec-sheet PDF. Missing current/future CSV files are auto-created from parquet before building.",
 )
 
+_specsheet_run_records = _report_runs
+_specsheet_run_labels = _report_labels
+_specsheet_run_options = {}
+for label, record in zip(_specsheet_run_labels, _specsheet_run_records):
+    source_path = record["path"]
+    target_path = resolve_specsheet_generation_run_path(source_path)
+    release_context = get_release_specsheet_context(source_path)
+    option_label = f"{label} · {get_run_display_name(source_path)}"
+    if release_context is not None and target_path != source_path:
+        option_label = (
+            f"{label} · {get_run_display_name(source_path)} "
+            f"(PDF body: {get_run_display_name(target_path)})"
+        )
+    _specsheet_run_options[option_label] = {
+        "source_path": source_path,
+        "target_path": target_path,
+        "release_context": release_context,
+    }
+_specsheet_run_option_keys = list(_specsheet_run_options.keys())
+_default_specsheet_run_selection = _specsheet_run_option_keys[:1]
+_default_specsheet_labels = list(DEFAULT_SPECSHEET_LABELS)
+_default_specsheet_project_id = st.session_state.get("specsheet_project_id", DEFAULT_SPECSHEET_PROJECT_ID)
+_default_specsheet_topic = st.session_state.get("specsheet_topic_name", DEFAULT_SPECSHEET_TOPIC)
+_filter_specsheet_labels = [str(v) for v in _report_filters["perception_labels"] if str(v).strip()]
+_specsheet_label_options = list(dict.fromkeys(_default_specsheet_labels + _filter_specsheet_labels))
+_single_specsheet_run_path = resolve_specsheet_generation_run_path(_specsheet_run_records[0]["path"])
+_default_specsheet_version = get_run_display_name(_single_specsheet_run_path)
+
 if mode == "Compare Mode":
     selected_specsheet_run_keys = st.multiselect(
         "Runs to generate spec-sheet for",
@@ -729,18 +740,102 @@ if mode == "Compare Mode":
 else:
     selected_specsheet_run_keys = _specsheet_run_option_keys[:1]
 
-selected_specsheet_run_paths = [
+_selected_specsheet_entries = [
     _specsheet_run_options[key]
     for key in selected_specsheet_run_keys
     if key in _specsheet_run_options
 ]
+selected_specsheet_run_paths = []
+_seen_specsheet_targets = set()
+for entry in _selected_specsheet_entries:
+    target_path = entry["target_path"]
+    target_key = str(target_path.resolve())
+    if target_key in _seen_specsheet_targets:
+        continue
+    selected_specsheet_run_paths.append(target_path)
+    _seen_specsheet_targets.add(target_key)
+selected_specsheet_release_contexts = []
+_seen_specsheet_releases = set()
+for entry in _selected_specsheet_entries:
+    release_context = entry["release_context"]
+    if release_context is None:
+        continue
+    release_dir = release_context.get("release_dir")
+    release_key = str(release_dir.resolve()) if isinstance(release_dir, Path) else str(release_dir)
+    if release_key in _seen_specsheet_releases:
+        continue
+    selected_specsheet_release_contexts.append(release_context)
+    _seen_specsheet_releases.add(release_key)
 _active_specsheet_paths = [get_specsheet_artifact_paths(path) for path in selected_specsheet_run_paths]
 _selected_trend_metadata_text = ""
-if len(_active_specsheet_paths) == 1 and _active_specsheet_paths[0]["trend_metadata"].exists():
+_selected_trend_metadata_path = None
+if len(selected_specsheet_release_contexts) == 1:
+    candidate_path = selected_specsheet_release_contexts[0].get("metadata")
+    if isinstance(candidate_path, Path) and candidate_path.exists():
+        _selected_trend_metadata_path = candidate_path
+if _selected_trend_metadata_path is None and len(_active_specsheet_paths) == 1 and _active_specsheet_paths[0]["trend_metadata"].exists():
+    _selected_trend_metadata_path = _active_specsheet_paths[0]["trend_metadata"]
+if _selected_trend_metadata_path is not None:
     try:
-        _selected_trend_metadata_text = _active_specsheet_paths[0]["trend_metadata"].read_text(encoding="utf-8")
+        _selected_trend_metadata_text = _selected_trend_metadata_path.read_text(encoding="utf-8")
     except Exception:
         _selected_trend_metadata_text = ""
+
+_selected_metadata_defaults = {}
+if _selected_trend_metadata_text:
+    try:
+        _selected_metadata_defaults = parse_trend_metadata_text(_selected_trend_metadata_text)
+    except Exception:
+        _selected_metadata_defaults = {}
+
+def _specsheet_title_version_from_metadata(metadata: dict) -> str:
+    explicit = str(metadata.get("version_abbr") or "").strip()
+    if explicit:
+        return explicit
+    version = str(metadata.get("pilot_auto_version") or "").strip()
+    if version.lower().startswith("pilot.auto "):
+        return version[len("Pilot.Auto "):].strip()
+    return version
+
+_metadata_default_version = _specsheet_title_version_from_metadata(_selected_metadata_defaults)
+if _metadata_default_version:
+    _default_specsheet_version = _metadata_default_version
+_metadata_trend_topic = str(_selected_metadata_defaults.get("topic_name") or "").strip()
+if (
+    _metadata_trend_topic
+    and _metadata_trend_topic != DEFAULT_SPECSHEET_TOPIC
+    and st.session_state.get("specsheet_topic_name") == _metadata_trend_topic
+):
+    st.session_state["specsheet_topic_name"] = DEFAULT_SPECSHEET_TOPIC
+    _default_specsheet_topic = DEFAULT_SPECSHEET_TOPIC
+
+_specsheet_defaults_source = str(_selected_trend_metadata_path or _single_specsheet_run_path)
+_previous_auto_version = st.session_state.get("specsheet_version_auto_value")
+_current_version = st.session_state.get("specsheet_version")
+if (
+    st.session_state.get("specsheet_version_auto_source") != _specsheet_defaults_source
+    and (
+        "specsheet_version" not in st.session_state
+        or _current_version == _previous_auto_version
+        or str(_current_version or "").endswith(("/performance", "/devops"))
+    )
+):
+    st.session_state["specsheet_version"] = _default_specsheet_version
+st.session_state["specsheet_version_auto_source"] = _specsheet_defaults_source
+st.session_state["specsheet_version_auto_value"] = _default_specsheet_version
+
+_previous_auto_topic = st.session_state.get("specsheet_topic_auto_value")
+_current_topic = st.session_state.get("specsheet_topic_name")
+if (
+    st.session_state.get("specsheet_topic_auto_source") != _specsheet_defaults_source
+    and (
+        "specsheet_topic_name" not in st.session_state
+        or _current_topic == _previous_auto_topic
+    )
+):
+    st.session_state["specsheet_topic_name"] = _default_specsheet_topic
+st.session_state["specsheet_topic_auto_source"] = _specsheet_defaults_source
+st.session_state["specsheet_topic_auto_value"] = _default_specsheet_topic
 
 specsheet_cfg_col1, specsheet_cfg_col2, specsheet_cfg_col3 = st.columns([1.4, 1.2, 1.4])
 with specsheet_cfg_col1:
@@ -774,6 +869,31 @@ if not specsheet_labels:
 if not selected_specsheet_run_paths:
     st.info("Pick at least one run to build the release spec-sheet.")
 
+if _selected_trend_metadata_text and "specsheet_include_trend" not in st.session_state:
+    st.session_state["specsheet_include_trend"] = True
+
+if selected_specsheet_release_contexts:
+    for release_context in selected_specsheet_release_contexts[:1]:
+        release_dir = release_context.get("release_dir")
+        roles = release_context.get("roles", {})
+        role_status = []
+        if isinstance(roles, dict):
+            for role_name in ("performance", "devops"):
+                role_info = roles.get(role_name)
+                if not isinstance(role_info, dict):
+                    continue
+                bits = []
+                bits.append("summary.json" if role_info.get("has_summary") else "no summary.json")
+                bits.append("metadata.yaml" if role_info.get("has_metadata") else "no metadata.yaml")
+                role_status.append(f"{role_name}: {', '.join(bits)}")
+        release_text = f"Release folder detected: `{path_display(release_dir)}`." if isinstance(release_dir, Path) else "Release folder detected."
+        if role_status:
+            release_text += " Trend generation will use " + "; ".join(role_status) + "."
+        st.info(release_text)
+
+if _selected_trend_metadata_path is not None and _selected_trend_metadata_text:
+    st.info(f"Existing trend metadata found at `{path_display(_selected_trend_metadata_path)}`. Review it below before generating.")
+
 specsheet_trend_enabled = st.toggle(
     "Include trend data",
     value=bool(st.session_state.get("specsheet_include_trend", bool(_selected_trend_metadata_text))),
@@ -782,20 +902,35 @@ specsheet_trend_enabled = st.toggle(
 )
 
 trend_metadata_payload = None
+trend_metadata_changed = False
+trend_metadata_change_confirmed = False
 if specsheet_trend_enabled:
     st.caption(
         "Select the full/performance run for the PDF body. Other full/usecase/devops trend runs are discovered from matching metadata under the data root."
     )
+    _trend_metadata_source_key = str(_selected_trend_metadata_path) if _selected_trend_metadata_path is not None else "__default__"
+    if (
+        st.session_state.get("specsheet_trend_metadata_source") != _trend_metadata_source_key
+        or "specsheet_trend_metadata_text" not in st.session_state
+    ):
+        st.session_state["specsheet_trend_metadata_text"] = _selected_trend_metadata_text or DEFAULT_TREND_METADATA_TEXT
+        st.session_state["specsheet_trend_metadata_source"] = _trend_metadata_source_key
+        st.session_state["specsheet_confirm_metadata_changes"] = False
     trend_metadata_text = st.text_area(
         "Trend metadata YAML",
-        value=st.session_state.get(
-            "specsheet_trend_metadata_text",
-            _selected_trend_metadata_text or DEFAULT_TREND_METADATA_TEXT,
-        ),
         key="specsheet_trend_metadata_text",
         height=180,
         help="Required keys: tags, pilot_auto_version, data_count, description, date.",
     )
+    trend_metadata_changed = bool(_selected_trend_metadata_text) and (
+        trend_metadata_text.strip() != _selected_trend_metadata_text.strip()
+    )
+    if trend_metadata_changed:
+        st.warning("The existing metadata.yaml has been edited. Confirm the change before generating so the saved release metadata is updated intentionally.")
+        trend_metadata_change_confirmed = st.checkbox(
+            "Confirm metadata.yaml changes",
+            key="specsheet_confirm_metadata_changes",
+        )
     try:
         trend_metadata_payload = parse_trend_metadata_text(trend_metadata_text)
         st.success("Trend metadata looks valid.")
@@ -826,6 +961,8 @@ with specsheet_action_col1:
                 raise ValueError("Trend-enabled release spec-sheet generation currently supports exactly one run.")
             if specsheet_trend_enabled and trend_metadata_payload is None:
                 raise ValueError("Valid trend metadata is required when trend mode is enabled.")
+            if specsheet_trend_enabled and trend_metadata_changed and not trend_metadata_change_confirmed:
+                raise ValueError("Confirm the metadata.yaml changes before generating.")
 
             stage_progress = {
                 "Using existing up-to-date spec-sheet PDF": 1.0,
@@ -859,6 +996,21 @@ with specsheet_action_col1:
             generated_pdfs: list[tuple[Path, bool]] = []
             for idx, run_path in enumerate(selected_specsheet_run_paths, start=1):
                 _update_specsheet_status(f"Run {idx}/{len(selected_specsheet_run_paths)}: {get_run_display_name(run_path)}")
+                if specsheet_trend_enabled and trend_metadata_payload is not None:
+                    if _selected_trend_metadata_path is not None and trend_metadata_changed:
+                        _selected_trend_metadata_path.write_text(
+                            yaml.safe_dump(trend_metadata_payload, allow_unicode=True, sort_keys=False),
+                            encoding="utf-8",
+                        )
+                    if len(selected_specsheet_release_contexts) == 1:
+                        roles = selected_specsheet_release_contexts[0].get("roles", {})
+                        if isinstance(roles, dict):
+                            for role_info in roles.values():
+                                if not isinstance(role_info, dict) or not role_info.get("has_summary"):
+                                    continue
+                                role_run_dir = role_info.get("run_dir")
+                                if isinstance(role_run_dir, Path):
+                                    write_trend_metadata(role_run_dir, trend_metadata_payload)
                 pdf_path, generated = generate_specsheet_pdf(
                     run_path,
                     project_id=specsheet_project_id,

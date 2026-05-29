@@ -4,17 +4,20 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import inspect
 import json
+import os
 import re
+import shutil
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 import pandas as pd
 import yaml
 
-from lib.perception_catalog_io import build_scene_dataframe_from_pkl_dir
 from lib.path_utils import get_data_root
 
 DEFAULT_SPECSHEET_TOPIC = "perception.object_recognition.tracking.objects"
+DEFAULT_TREND_TOPIC = "perception.object_recognition.objects"
 DEFAULT_SPECSHEET_PROJECT_ID = "x2_dev"
 DEFAULT_SPECSHEET_LABELS = ["car", "truck", "bus", "bicycle", "pedestrian", "motorcycle"]
 DEFAULT_SPECSHEET_METRICS = [
@@ -38,6 +41,8 @@ FUTURE_SPECSHEET_METRICS = [
 ]
 TREND_METADATA_FILENAME = "metadata.yaml"
 TREND_SUMMARY_FILENAME = "summary.json"
+SPECSHEET_RELEASE_ROLE_DIRS = ("performance", "devops")
+GENERATED_TREND_HISTORY_DIRNAME = "_app_trend_history"
 FULL_DATASET_EVALUATION_HEADER = "全数データセット評価"
 DEFAULT_TREND_METADATA_TEXT = """tags: [trend]
 pilot_auto_version: "Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)"
@@ -74,6 +79,64 @@ def get_specsheet_artifact_paths(run_dir: str | Path) -> dict[str, Path]:
         "specsheet_dir": run_path / "specsheet",
         "specsheet_pdf": run_path / "specsheet" / "specsheet.pdf",
     }
+
+
+def _looks_like_specsheet_release_container(path: Path) -> bool:
+    return (
+        (path / TREND_METADATA_FILENAME).exists()
+        and any((path / role).is_dir() for role in SPECSHEET_RELEASE_ROLE_DIRS)
+    )
+
+
+def get_release_specsheet_context(run_dir: str | Path) -> dict[str, Any] | None:
+    """Return release-folder context for specsheet workflow output, if present."""
+    run_path = Path(run_dir)
+    if _looks_like_specsheet_release_container(run_path):
+        release_dir = run_path
+    elif run_path.name in SPECSHEET_RELEASE_ROLE_DIRS and _looks_like_specsheet_release_container(run_path.parent):
+        release_dir = run_path.parent
+    else:
+        return None
+
+    roles: dict[str, dict[str, Path | bool]] = {}
+    for role in SPECSHEET_RELEASE_ROLE_DIRS:
+        role_dir = release_dir / role
+        if not role_dir.is_dir():
+            continue
+        role_paths = get_specsheet_artifact_paths(role_dir)
+        roles[role] = {
+            "run_dir": role_dir,
+            "metadata": role_paths["trend_metadata"],
+            "summary": role_paths["trend_summary"],
+            "has_metadata": role_paths["trend_metadata"].exists(),
+            "has_summary": role_paths["trend_summary"].exists(),
+        }
+
+    metadata_path = release_dir / TREND_METADATA_FILENAME
+    if not metadata_path.exists():
+        performance_metadata = roles.get("performance", {}).get("metadata")
+        if isinstance(performance_metadata, Path) and performance_metadata.exists():
+            metadata_path = performance_metadata
+
+    return {
+        "release_dir": release_dir,
+        "metadata": metadata_path,
+        "roles": roles,
+        "performance_dir": roles.get("performance", {}).get("run_dir"),
+        "devops_dir": roles.get("devops", {}).get("run_dir"),
+    }
+
+
+def resolve_specsheet_generation_run_path(run_dir: str | Path) -> Path:
+    """Use the performance child as the PDF body for release workflow folders."""
+    run_path = Path(run_dir)
+    context = get_release_specsheet_context(run_path)
+    if context is None:
+        return run_path
+    performance_dir = context.get("performance_dir")
+    if isinstance(performance_dir, Path):
+        return performance_dir
+    return run_path
 
 
 def list_specsheet_source_parquets(run_dir: str | Path) -> list[Path]:
@@ -230,6 +293,16 @@ def _trend_version_abbr(metadata: dict[str, Any]) -> str:
     return _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version
 
 
+def _infer_trend_topic(metadata: dict[str, Any], metadata_path: str | Path) -> str:
+    explicit = str(metadata.get("topic_name") or "").strip()
+    if explicit:
+        return explicit
+    for part in reversed(Path(metadata_path).parts):
+        if part.startswith("perception."):
+            return part
+    return DEFAULT_TREND_TOPIC
+
+
 def write_trend_metadata(run_dir: str | Path, metadata: dict[str, Any]) -> Path:
     paths = get_specsheet_artifact_paths(run_dir)
     resource_dir = paths["resource_dir"]
@@ -248,6 +321,8 @@ def discover_trend_metadata_files(root_dir: str | Path | None = None) -> list[Pa
     matches: list[Path] = []
     for metadata_path in base_dir.rglob(TREND_METADATA_FILENAME):
         if not metadata_path.is_file():
+            continue
+        if GENERATED_TREND_HISTORY_DIRNAME in metadata_path.parts:
             continue
         if not (metadata_path.parent / TREND_SUMMARY_FILENAME).exists():
             continue
@@ -427,7 +502,46 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
         newest = max(dates) if dates else ""
         return (newest, group.display_name)
 
-    return sorted(grouped.values(), key=_sort_key)
+    return sorted(_deduplicate_trend_release_groups(grouped.values()), key=_sort_key)
+
+
+def _trend_group_identity(group: TrendReleaseGroup) -> tuple[str, str, str, str, str, str, tuple[str, ...]]:
+    metadata = {}
+    for role in ("full", "usecase", "devops", "performance_blocks", "unknown"):
+        if role in group.jobs:
+            metadata = group.jobs[role].get("metadata", {})
+            break
+    return (
+        str(metadata.get("release_group") or ""),
+        str(group.topic_name or ""),
+        str(metadata.get("pilot_auto_version") or ""),
+        str(metadata.get("date") or ""),
+        str(metadata.get("description") or ""),
+        str(metadata.get("data_count") or ""),
+        tuple(sorted(group.jobs.keys())),
+    )
+
+
+def _trend_group_preference(group: TrendReleaseGroup) -> tuple[int, int, str]:
+    generated_history = any(
+        GENERATED_TREND_HISTORY_DIRNAME in Path(job.get("metadata_path", "")).parts
+        for job in group.jobs.values()
+    )
+    return (
+        0 if generated_history else 1,
+        len(group.jobs),
+        str(group.base_dir),
+    )
+
+
+def _deduplicate_trend_release_groups(groups: Iterable[TrendReleaseGroup]) -> list[TrendReleaseGroup]:
+    selected: dict[tuple[str, str, str, str, str, str, tuple[str, ...]], TrendReleaseGroup] = {}
+    for group in groups:
+        identity = _trend_group_identity(group)
+        current = selected.get(identity)
+        if current is None or _trend_group_preference(group) > _trend_group_preference(current):
+            selected[identity] = group
+    return list(selected.values())
 
 
 def _trend_version_sort_key(pilot_auto_version: str) -> tuple[tuple[int, int, int], str, tuple[int, int, int]]:
@@ -586,6 +700,56 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _normalize_devops_summary_structure(summary: dict[str, Any]) -> dict[str, dict[str, dict[str, dict[str, int]]]]:
+    normalized: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
+    for major_category, mid_categories in summary.items():
+        if not isinstance(mid_categories, dict):
+            continue
+        normalized_major = normalized.setdefault(str(major_category), {})
+        for mid_category, minor_or_cases in mid_categories.items():
+            if not isinstance(minor_or_cases, dict):
+                continue
+            normalized_mid = normalized_major.setdefault(str(mid_category), {})
+            if {"passed", "total"}.intersection(minor_or_cases.keys()):
+                normalized_mid[str(mid_category)] = {
+                    "passed": int(minor_or_cases.get("passed", 0) or 0),
+                    "total": int(minor_or_cases.get("total", 0) or 0),
+                }
+                continue
+            for case_name, result in minor_or_cases.items():
+                if not isinstance(result, dict):
+                    continue
+                normalized_mid[str(case_name)] = {
+                    "passed": int(result.get("passed", 0) or 0),
+                    "total": int(result.get("total", 0) or 0),
+                }
+    return normalized
+
+
+def _align_devops_trend_data_structures(trend_data_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    structure: dict[str, dict[str, set[str]]] = {}
+    for row in trend_data_rows:
+        devops_data = _normalize_devops_summary_structure(row.get("devops_data", {}))
+        row["devops_data"] = devops_data
+        for major_category, mid_categories in devops_data.items():
+            major_structure = structure.setdefault(major_category, {})
+            for mid_category, cases in mid_categories.items():
+                major_structure.setdefault(mid_category, set()).update(cases.keys())
+
+    for row in trend_data_rows:
+        devops_data = row.get("devops_data", {})
+        if not isinstance(devops_data, dict):
+            devops_data = {}
+            row["devops_data"] = devops_data
+        for major_category, mid_categories in structure.items():
+            row_major = devops_data.setdefault(major_category, {})
+            for mid_category, cases in mid_categories.items():
+                row_mid = row_major.setdefault(mid_category, {})
+                for case_name in cases:
+                    row_mid.setdefault(case_name, {"passed": 0, "total": 0})
+    return trend_data_rows
+
+
 def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, str | int | float]]:
     trend_data_rows: list[dict[str, Any]] = []
     for metadata_path in metadata_list:
@@ -605,6 +769,7 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
                 "data_count": metadata.get("data_count"),
                 "description": metadata.get("description"),
                 "date": metadata.get("date"),
+                "topic": _infer_trend_topic(metadata, metadata_path),
                 "summary": summary_list,
             }
         )
@@ -635,7 +800,10 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
                 "data_count": row.get("data_count"),
                 "description": row.get("description"),
                 "date": row.get("date"),
+                "topic": row.get("topic"),
                 "mAP": _avg("mAP"),
+                "precision": _avg("precision"),
+                "recall": _avg("recall"),
                 "minADE@1s": _avg("minADE@1s"),
                 "minFDE@1s": _avg("minFDE@1s"),
                 "minADE@3s": _avg("minADE@3s"),
@@ -663,6 +831,7 @@ def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]
         rows = extract_devops_case_rows(summary)
         if not rows:
             continue
+        normalized_summary = _normalize_devops_summary_structure(summary)
         overall_passed = sum(int(row["passed"]) for row in rows)
         overall_total = sum(int(row["total"]) for row in rows)
         trend_data_rows.append(
@@ -672,16 +841,17 @@ def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]
                 "data_count": metadata.get("data_count"),
                 "description": metadata.get("description"),
                 "date": metadata.get("date"),
+                "topic": _infer_trend_topic(metadata, metadata_path),
                 "overall_pass_rate": (overall_passed / overall_total * 100.0)
                 if overall_total > 0
                 else 0.0,
                 "scenario_count": overall_total,
-                "devops_data": summary,
+                "devops_data": normalized_summary,
             }
         )
 
     trend_data_rows.sort(key=lambda row: _trend_version_sort_key(str(row.get("version") or "")))
-    return trend_data_rows
+    return _align_devops_trend_data_structures(trend_data_rows)
 
 
 def _add_devops_detail_trend_rates(devops_trend_data: Sequence[dict[str, Any]]) -> list[str]:
@@ -714,6 +884,7 @@ def _add_devops_detail_trend_rates(devops_trend_data: Sequence[dict[str, Any]]) 
 def _build_trend_context(
     metadata_list: Sequence[Path],
     output_dir: Path,
+    current_devops_summary_path: Path | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     if not metadata_list:
@@ -721,6 +892,8 @@ def _build_trend_context(
             "performance_trend_data": [],
             "map_trend_plot_path": output_dir / "map_trend.png",
             "prediction_trend_plot_path": output_dir / "prediction_trend.png",
+            "devops_data": {},
+            "devops_plot_path": None,
             "devops_trend_data": [],
             "devops_trend_plot_path": output_dir / "devops_trend.png",
             "job_ids": [],
@@ -733,6 +906,7 @@ def _build_trend_context(
             generate_devops_trend_detail_plot,
             generate_devops_trend_plot,
         )
+        from perception_catalog_analyzer.plot.devops import generate_devops_plot
     except ImportError as exc:
         raise RuntimeError(
             "perception_catalog_analyzer trend support is unavailable. "
@@ -751,6 +925,16 @@ def _build_trend_context(
 
     devops_trend_data = load_devops_trend_data(list(metadata_list))
     devops_trend_plot_path = output_dir / "devops_trend.png"
+    devops_data = {}
+    devops_plot_path = None
+    if current_devops_summary_path is not None and current_devops_summary_path.exists():
+        current_devops_summary = load_trend_summary_file(current_devops_summary_path)
+        if classify_trend_summary(current_devops_summary) == "devops":
+            devops_data = _normalize_devops_summary_structure(current_devops_summary)
+            if devops_data:
+                _notify(progress_callback, "Rendering current pass-rate plot")
+                devops_plot_path = output_dir / "devops.png"
+                generate_devops_plot(devops_data, devops_plot_path)
     if devops_trend_data:
         _notify(progress_callback, "Rendering pass-rate trend plots")
         generate_devops_trend_plot(devops_trend_data, devops_trend_plot_path)
@@ -766,6 +950,8 @@ def _build_trend_context(
         "performance_trend_data": performance_trend_data,
         "map_trend_plot_path": map_trend_plot_path,
         "prediction_trend_plot_path": prediction_trend_plot_path,
+        "devops_data": devops_data,
+        "devops_plot_path": devops_plot_path,
         "devops_trend_data": devops_trend_data,
         "devops_trend_plot_path": devops_trend_plot_path,
         "job_ids": [],
@@ -788,12 +974,13 @@ def _update_template_compat(
         parameters = {}
 
     trend_context = trend_context or {}
+    path_manager = SimpleNamespace(specsheet_path=context_dir)
     semantic_kwargs = {
         "project_id": project_id,
         "pilot_auto_version": version,
         "version": version,
-        "devops_data": {},
-        "devops_plot_path": None,
+        "devops_data": trend_context.get("devops_data", {}),
+        "devops_plot_path": trend_context.get("devops_plot_path"),
         "performance_trend_data": trend_context.get("performance_trend_data", []),
         "map_trend_plot_path": trend_context.get("map_trend_plot_path", context_dir / "map_trend.png"),
         "prediction_trend_plot_path": trend_context.get(
@@ -807,6 +994,7 @@ def _update_template_compat(
         "template_name": "static_body.html",
         "extensions": ["html"],
         "template_dir": str(template_dir),
+        "path_manager": path_manager,
         "show_other_infos": bool(trend_context.get("performance_trend_data")),
     }
 
@@ -814,7 +1002,8 @@ def _update_template_compat(
         param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
     )
     if accepts_kwargs or not parameters:
-        return update_template_func(**semantic_kwargs)
+        with _patch_template_dataset_paths(update_template_func, context_dir):
+            return update_template_func(**semantic_kwargs)
 
     args: list[object] = []
     kwargs: dict[str, object] = {}
@@ -829,7 +1018,37 @@ def _update_template_compat(
             args.append(value)
         elif param.kind == inspect.Parameter.KEYWORD_ONLY:
             kwargs[name] = value
-    return update_template_func(*args, **kwargs)
+    with _patch_template_dataset_paths(update_template_func, context_dir):
+        return update_template_func(*args, **kwargs)
+
+
+@contextmanager
+def _patch_template_dataset_paths(
+    update_template_func: Callable[..., Sequence[str]],
+    context_dir: Path,
+):
+    """Redirect analyzer dataset-summary outputs away from read-only package config."""
+    globals_dict = getattr(update_template_func, "__globals__", {})
+    patch_keys = ("DATASET_SUMMARY_PATH", "DATASET_TRAIN_PATH", "DATASET_TEST_PATH")
+    originals = {key: globals_dict.get(key) for key in patch_keys if key in globals_dict}
+    if not originals:
+        yield
+        return
+
+    dataset_dir = context_dir / "dataset_assets"
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        for key, original_path in originals.items():
+            if not isinstance(original_path, Path) or not original_path.exists():
+                continue
+            target_path = dataset_dir / original_path.name
+            if not target_path.exists():
+                shutil.copy2(original_path, target_path)
+            globals_dict[key] = target_path
+        yield
+    finally:
+        for key, original_path in originals.items():
+            globals_dict[key] = original_path
 
 def _scene_dataframe_from_dir_compat(
     scene_dataframe_cls,
@@ -924,10 +1143,21 @@ def _get_blocks_compat(
     evaluation_type: str,
 ):
     """Call get_blocks across analyzer versions with different keyword support."""
+    parquet_compression = "snappy"
+    try:
+        from perception_catalog_analyzer.types import ParquetCompression
+
+        parquet_compression = ParquetCompression.SNAPPY
+    except Exception:
+        pass
+
     semantic_kwargs = {
         "df": df,
         "labels": list(labels),
         "metrics": list(metrics),
+        "resource_path": outdir,
+        "html_path": outdir.parent if outdir.name == "resources" else outdir,
+        "parquet_compression": parquet_compression,
         "topic_name": topic_name,
         "topic": topic_name,
         "path": outdir,
@@ -971,10 +1201,12 @@ def _specsheet_compat(
     report_name: str,
 ) -> None:
     """Call specsheet across analyzer versions with path/outdir differences."""
+    path_manager = SimpleNamespace(specsheet_path=outdir)
     semantic_kwargs = {
         "html": list(html),
         "abstract_html": list(abstract_html),
         "detailed_html": list(detailed_html),
+        "path_manager": path_manager,
         "path": outdir,
         "outdir": outdir,
         "report_name": report_name,
@@ -1028,6 +1260,8 @@ def ensure_specsheet_csvs(
             _copy_parquet_to_csv(fallback, current_csv)
         else:
             _notify(progress_callback, "No CSV found. Building CSV from pkl / pkl.z files")
+            from lib.perception_catalog_io import build_scene_dataframe_from_pkl_dir
+
             skip_counts: dict[str, int] = {}
 
             def _on_progress(done: int, total: int) -> None:
@@ -1097,6 +1331,10 @@ def generate_specsheet_pdf(
     resource_dir = run_path / "resources"
     resource_dir.mkdir(parents=True, exist_ok=True)
     specsheet_dir.mkdir(parents=True, exist_ok=True)
+    block_resource_dir = specsheet_dir / "resources"
+    block_resource_dir.mkdir(parents=True, exist_ok=True)
+    trend_asset_dir = specsheet_dir / "trend_assets"
+    trend_asset_dir.mkdir(parents=True, exist_ok=True)
 
     _notify(progress_callback, "Loading CSV files")
     df = _scene_dataframe_from_dir_compat(
@@ -1117,7 +1355,7 @@ def generate_specsheet_pdf(
             labels=list(labels),
             metrics=metrics,
             topic_name=topic_name,
-            outdir=resource_dir.resolve(),
+            outdir=block_resource_dir.resolve(),
             evaluation_type="full",
         )
 
@@ -1126,17 +1364,35 @@ def generate_specsheet_pdf(
         if trend_metadata is None:
             raise ValueError("Trend metadata is required when trend mode is enabled.")
         _notify(progress_callback, "Validating full trend summary")
-        ensure_full_trend_summary(paths["trend_summary"])
+        generated_trend_summary = block_resource_dir / TREND_SUMMARY_FILENAME
+        trend_summary_path = generated_trend_summary if generated_trend_summary.exists() else paths["trend_summary"]
+        ensure_full_trend_summary(trend_summary_path)
+        if generated_trend_summary.exists() and not paths["trend_summary"].exists():
+            shutil.copy2(generated_trend_summary, paths["trend_summary"])
         _notify(progress_callback, "Saving trend metadata")
         write_trend_metadata(run_path, trend_metadata)
         metadata_list = discover_trend_metadata_files()
+        release_context = get_release_specsheet_context(run_path)
+        current_devops_summary_path = None
+        if release_context is not None:
+            roles = release_context.get("roles", {})
+            if isinstance(roles, dict):
+                devops_info = roles.get("devops", {})
+                if isinstance(devops_info, dict):
+                    summary_path = devops_info.get("summary")
+                    if isinstance(summary_path, Path):
+                        current_devops_summary_path = summary_path
         trend_context = _build_trend_context(
             metadata_list,
-            specsheet_dir,
+            trend_asset_dir,
+            current_devops_summary_path=current_devops_summary_path,
             progress_callback=progress_callback,
         )
 
     _notify(progress_callback, "Rendering PDF")
+    for stale_output in (specsheet_dir / "specsheet.html", pdf_path):
+        if stale_output.exists() and not os.access(stale_output, os.W_OK):
+            stale_output.unlink()
     template_dir = Path(template_module.__file__).resolve().parent.parent / "template"
     html = _prefer_cjk_font_stack(
         _update_template_compat(
