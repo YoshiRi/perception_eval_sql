@@ -18,6 +18,10 @@ from lib.path_utils import get_data_root
 
 DEFAULT_SPECSHEET_TOPIC = "perception.object_recognition.tracking.objects"
 DEFAULT_TREND_TOPIC = "perception.object_recognition.objects"
+DETECTION_TREND_TOPIC_BY_MODEL = {
+    "bevfusion": "perception.object_recognition.detection.bevfusion.objects",
+    "centerpoint": "perception.object_recognition.detection.centerpoint.objects",
+}
 DEFAULT_SPECSHEET_PROJECT_ID = "x2_dev"
 DEFAULT_SPECSHEET_LABELS = ["car", "truck", "bus", "bicycle", "pedestrian", "motorcycle"]
 DEFAULT_SPECSHEET_METRICS = [
@@ -79,6 +83,81 @@ def get_specsheet_artifact_paths(run_dir: str | Path) -> dict[str, Path]:
         "specsheet_dir": run_path / "specsheet",
         "specsheet_pdf": run_path / "specsheet" / "specsheet.pdf",
     }
+
+
+def _topic_values_from_frame(frame: pd.DataFrame) -> list[str]:
+    for column in ("topic_name", "topic"):
+        if column not in frame.columns:
+            continue
+        values = [
+            str(value).strip()
+            for value in frame[column].dropna().unique().tolist()
+            if str(value).strip()
+        ]
+        if values:
+            return sorted(values)
+    return []
+
+
+def detect_specsheet_topic_names(run_dir: str | Path, *, csv_sample_rows: int = 50000) -> list[str]:
+    """Detect topic names already present in specsheet CSV/parquet artifacts."""
+    paths = get_specsheet_artifact_paths(run_dir)
+    detected: set[str] = set()
+
+    for parquet_path in (paths["current_parquet"], paths["future_parquet"]):
+        if not parquet_path.exists():
+            continue
+        try:
+            import pyarrow.parquet as pq
+
+            columns = set(pq.ParquetFile(parquet_path).schema_arrow.names)
+        except Exception:
+            try:
+                columns = set(pd.read_parquet(parquet_path, columns=[]).columns)
+            except Exception:
+                columns = set()
+        topic_columns = [column for column in ("topic_name", "topic") if column in columns]
+        for column in topic_columns:
+            try:
+                frame = pd.read_parquet(parquet_path, columns=[column])
+            except Exception:
+                continue
+            detected.update(_topic_values_from_frame(frame))
+
+    for csv_path in (paths["current_csv"], paths["future_csv"]):
+        if not csv_path.exists():
+            continue
+        try:
+            header = pd.read_csv(csv_path, nrows=0)
+        except Exception:
+            continue
+        topic_columns = [column for column in ("topic_name", "topic") if column in header.columns]
+        for column in topic_columns:
+            try:
+                frame = pd.read_csv(csv_path, usecols=[column], nrows=csv_sample_rows)
+            except Exception:
+                continue
+            detected.update(_topic_values_from_frame(frame))
+
+    return sorted(detected)
+
+
+def resolve_specsheet_topic_name(
+    run_dir: str | Path,
+    requested_topic: str | None,
+    *,
+    fallback_topic: str = DEFAULT_SPECSHEET_TOPIC,
+) -> tuple[str, list[str]]:
+    """Resolve the topic that should be used for specsheet generation."""
+    requested = str(requested_topic or "").strip()
+    detected = detect_specsheet_topic_names(run_dir)
+    if requested and requested in detected:
+        return requested, detected
+    if fallback_topic in detected:
+        return fallback_topic, detected
+    if len(detected) == 1:
+        return detected[0], detected
+    return requested or fallback_topic, detected
 
 
 def _looks_like_specsheet_release_container(path: Path) -> bool:
@@ -290,15 +369,26 @@ def _trend_version_abbr(metadata: dict[str, Any]) -> str:
     if explicit:
         return explicit
     version = str(metadata.get("pilot_auto_version") or "").strip()
-    return _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version
+    if not version:
+        return ""
+    try:
+        from perception_catalog_analyzer.trend import _abbreviate_version
+
+        abbreviated = str(_abbreviate_version(version) or "").strip()
+        if abbreviated:
+            return abbreviated
+    except Exception:
+        pass
+    shortened = _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version
+    return shortened[:16]
 
 
 def _infer_trend_topic(metadata: dict[str, Any], metadata_path: str | Path) -> str:
     explicit = str(metadata.get("topic_name") or "").strip()
-    if explicit:
+    if explicit and explicit != DEFAULT_SPECSHEET_TOPIC:
         return explicit
     for part in reversed(Path(metadata_path).parts):
-        if part.startswith("perception."):
+        if part.startswith("perception.") and part != DEFAULT_SPECSHEET_TOPIC:
             return part
     return DEFAULT_TREND_TOPIC
 
@@ -358,6 +448,13 @@ def classify_trend_summary(summary: dict[str, Any]) -> str:
     if isinstance(summary, dict) and summary:
         return "devops"
     return "unknown"
+
+
+def _unwrap_devops_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    devops = summary.get("DevOps") if isinstance(summary, dict) else None
+    if isinstance(devops, dict):
+        return devops
+    return summary
 
 
 def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[TrendReleaseGroup]:
@@ -662,6 +759,7 @@ def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[st
 
 def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten nested devops/pass-rate summary into case rows."""
+    summary = _unwrap_devops_summary(summary)
     rows: list[dict[str, Any]] = []
     for major_category, mid_categories in summary.items():
         if not isinstance(mid_categories, dict):
@@ -701,6 +799,7 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _normalize_devops_summary_structure(summary: dict[str, Any]) -> dict[str, dict[str, dict[str, dict[str, int]]]]:
+    summary = _unwrap_devops_summary(summary)
     normalized: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
     for major_category, mid_categories in summary.items():
         if not isinstance(mid_categories, dict):
@@ -881,6 +980,17 @@ def _add_devops_detail_trend_rates(devops_trend_data: Sequence[dict[str, Any]]) 
     return sorted(cases)
 
 
+def _devops_trend_rows_for_template(devops_trend_data: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in devops_trend_data:
+        display_row = dict(row)
+        version_abbr = str(display_row.get("version_abbr") or "").strip()
+        if version_abbr:
+            display_row["version"] = version_abbr
+        rows.append(display_row)
+    return rows
+
+
 def _build_trend_context(
     metadata_list: Sequence[Path],
     output_dir: Path,
@@ -952,7 +1062,7 @@ def _build_trend_context(
         "prediction_trend_plot_path": prediction_trend_plot_path,
         "devops_data": devops_data,
         "devops_plot_path": devops_plot_path,
-        "devops_trend_data": devops_trend_data,
+        "devops_trend_data": _devops_trend_rows_for_template(devops_trend_data),
         "devops_trend_plot_path": devops_trend_plot_path,
         "job_ids": [],
     }
@@ -1315,6 +1425,14 @@ def generate_specsheet_pdf(
         return pdf_path, False
 
     ensure_specsheet_csvs(run_dir, progress_callback=progress_callback)
+    resolved_topic, detected_topics = resolve_specsheet_topic_name(run_dir, topic_name)
+    if resolved_topic != topic_name:
+        detected_text = ", ".join(detected_topics) if detected_topics else "none"
+        _notify(
+            progress_callback,
+            f"Using detected topic {resolved_topic} instead of requested topic {topic_name} (detected: {detected_text})",
+        )
+        topic_name = resolved_topic
 
     try:
         from perception_catalog_analyzer.dataframe import SceneDataFrame

@@ -4,18 +4,23 @@ Deployment debug: environment (redacted), Postgres/Redis/RQ health, task counts,
 Must live as a top-level pages/*.py file so st.page_link can resolve it. Outside Docker, the default
 sidebar entry is hidden via CSS in lib/ui/styles_global.py; Overview shows a page_link only in Docker.
 """
+import json
 import os
 from datetime import datetime, timedelta
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
+from lib.db import TASK_STATUSES, TASK_TYPES
 from lib.deploy_debug import (
     EXEC_TIMEOUT_SEC,
     MAX_LOG_TAIL_LINES,
     compose_project_filter,
     container_exec_command,
     container_logs_tail,
+    database_recent_task_rows,
+    database_table_overview,
     docker_client_or_none,
     is_docker_debug_enabled,
     is_exec_enabled,
@@ -59,8 +64,8 @@ render_page_hero(
     mode="Single Run",
 )
 
-tab_env, tab_dep, tab_tasks, tab_docker = st.tabs(
-    ["Environment", "Dependencies", "Tasks", "Docker"]
+tab_env, tab_dep, tab_tasks, tab_db, tab_docker = st.tabs(
+    ["Environment", "Dependencies", "Tasks", "Database", "Docker"]
 )
 
 with tab_env:
@@ -106,6 +111,155 @@ with tab_tasks:
         st.success("No task rows yet (empty table).")
     else:
         st.error(msg_t)
+
+
+def _debug_json(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _task_rows_dataframe(rows: list) -> pd.DataFrame:
+    display_rows = []
+    for row in rows:
+        params = row.get("parameters") or {}
+        if not isinstance(params, dict):
+            params = {}
+        display_rows.append(
+            {
+                "created_at": row.get("created_at"),
+                "updated_at": row.get("updated_at"),
+                "status": row.get("status"),
+                "type": row.get("type"),
+                "session_id": row.get("session_id"),
+                "id": str(row.get("id") or ""),
+                "rq_job_id": row.get("rq_job_id"),
+                "job_id": params.get("job_id")
+                or params.get("performance_job_id")
+                or params.get("devops_job_id")
+                or params.get("source_job_id")
+                or "",
+                "output_path": params.get("output_path") or params.get("output_dir") or "",
+                "progress_pct": row.get("progress_pct"),
+                "progress_message": row.get("progress_message"),
+                "result_path": row.get("result_path"),
+                "error_message": row.get("error_message"),
+            }
+        )
+    return pd.DataFrame(display_rows)
+
+
+def _format_progress_metric(value: Any) -> str:
+    try:
+        return f"{float(value or 0):g}%"
+    except (TypeError, ValueError):
+        return "0%"
+
+
+with tab_db:
+    section_header(
+        "Database inspector",
+        "Read-only view into Postgres tables and recent evaluator/task job history.",
+    )
+
+    ok_tables, msg_tables, table_rows = database_table_overview()
+    if ok_tables and table_rows is not None:
+        overview_df = pd.DataFrame(table_rows)
+        if not overview_df.empty:
+            overview_df["total_mb"] = (overview_df["total_bytes"] / (1024 * 1024)).round(2)
+            st.dataframe(
+                overview_df[["table_name", "estimated_rows", "total_mb"]],
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.info("No public tables found.")
+    elif not ok_tables:
+        st.error(msg_tables)
+
+    section_header("Recent job history", "Raw `tasks` rows, newest first, across all sessions.")
+    filters = st.columns([1.2, 1.6, 1.2, 1.2])
+    with filters[0]:
+        status_filter = st.selectbox(
+            "Status",
+            ["All", *TASK_STATUSES],
+            key="deploy_db_status",
+        )
+    with filters[1]:
+        type_filter = st.selectbox(
+            "Task type",
+            ["All", *TASK_TYPES],
+            key="deploy_db_type",
+        )
+    with filters[2]:
+        row_limit = st.number_input(
+            "Rows",
+            min_value=10,
+            max_value=500,
+            value=50,
+            step=10,
+            key="deploy_db_limit",
+        )
+    with filters[3]:
+        page = st.number_input(
+            "Page",
+            min_value=1,
+            max_value=1000,
+            value=1,
+            step=1,
+            key="deploy_db_page",
+        )
+    search = st.text_input(
+        "Search",
+        key="deploy_db_search",
+        placeholder="Task id, job id, session, path, error text, parameters",
+    )
+
+    ok_rows, msg_rows, rows, total_rows = database_recent_task_rows(
+        limit=int(row_limit),
+        offset=(int(page) - 1) * int(row_limit),
+        status=None if status_filter == "All" else status_filter,
+        task_type=None if type_filter == "All" else type_filter,
+        search=search.strip() or None,
+    )
+    if not ok_rows:
+        st.error(msg_rows)
+    elif not rows:
+        st.info("No task rows matched the current filters.")
+    else:
+        st.caption(f"Showing **{len(rows)}** of **{total_rows}** matching task rows.")
+        task_df = _task_rows_dataframe(rows)
+        st.dataframe(task_df, width="stretch", hide_index=True)
+
+        id_options = [str(row.get("id") or "") for row in rows]
+        selected_id = st.selectbox("Inspect row", id_options, key="deploy_db_task_inspect")
+        selected = next((row for row in rows if str(row.get("id") or "") == selected_id), None)
+        if selected:
+            meta_cols = st.columns(4)
+            meta_cols[0].metric("Status", str(selected.get("status") or "—"))
+            meta_cols[1].metric("Type", str(selected.get("type") or "—"))
+            meta_cols[2].metric("Progress", _format_progress_metric(selected.get("progress_pct")))
+            meta_cols[3].metric("Session", str(selected.get("session_id") or "—")[:32])
+
+            detail_tabs = st.tabs(["Parameters", "Result summary", "Log", "Raw row"])
+            with detail_tabs[0]:
+                st.code(_debug_json(selected.get("parameters") or {}), language="json")
+            with detail_tabs[1]:
+                raw_summary = selected.get("result_summary")
+                if raw_summary:
+                    try:
+                        parsed = json.loads(raw_summary) if isinstance(raw_summary, str) else raw_summary
+                        st.code(_debug_json(parsed), language="json")
+                    except (TypeError, ValueError):
+                        st.code(str(raw_summary), language=None)
+                else:
+                    st.info("No result summary stored for this row.")
+            with detail_tabs[2]:
+                log_text = (selected.get("log_output") or "").strip()
+                st.code(log_text or "(empty)", language=None)
+            with detail_tabs[3]:
+                st.code(_debug_json(selected), language="json")
 
 
 def _render_docker_disabled(reason: str) -> None:

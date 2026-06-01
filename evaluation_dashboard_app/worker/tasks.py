@@ -38,6 +38,7 @@ _RELEASE_PERFORMANCE_CATALOG_ID = "e36d75b9-6c3a-4970-9b9b-5cd13f7a9da3"
 _RELEASE_PERFORMANCE_INTEGRATION_ID = "96ad8fba-0228-4c2b-9166-07d4de1a0760"
 _RELEASE_DEVOPS_CATALOG_ID = "ab0f8498-cc1b-4726-836f-e18e8bcb3200"
 _RELEASE_DEVOPS_INTEGRATION_ID = "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
+_RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
 
 # Optional imports for tasks that need them
 def _import_eval_summary():
@@ -188,6 +189,38 @@ def _copy_task_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
         else:
             copied[key] = str(value)
     return copied
+
+
+def _resolve_active_integration_id(api: Any, project_id: str, catalog_id: str) -> str:
+    """Resolve latest active integration for a catalog when the UI only provided a catalog id."""
+    url = f"{api.api_base_url}/projects/{project_id}/integrations"
+    response = api.request(url, {"catalog_id": catalog_id, "size": 100}, method="GET")
+    if response is None:
+        raise RuntimeError(f"No response returned while loading integrations for catalog {catalog_id}.")
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Failed to load integrations for catalog {catalog_id}: status={response.status_code}"
+        )
+    payload = json.loads(response.content)
+    integrations = payload.get("integrations", []) or []
+    active = [
+        item for item in integrations
+        if isinstance(item, dict)
+        and str(item.get("catalog_id") or "").strip() == catalog_id
+        and not bool(item.get("deleted"))
+    ]
+    if not active:
+        raise RuntimeError(f"No active integration found for catalog {catalog_id}.")
+
+    def _sort_key(item: Dict[str, object]) -> tuple:
+        return (
+            str(item.get("updated_at") or ""),
+            int(item.get("version_id") or 0),
+            str(item.get("id") or ""),
+        )
+
+    active.sort(key=_sort_key, reverse=True)
+    return str(active[0].get("id") or "").strip()
 
 
 def _task_row_payload(task_id: str) -> Dict[str, Any]:
@@ -1182,7 +1215,7 @@ def _write_release_metadata_file(path: Path, metadata: Dict[str, Any]) -> Path:
 
 
 def _build_devops_trend_summary_from_suites(rows: list[dict[str, Any]]) -> Dict[str, Any]:
-    summary_payload: Dict[str, Any] = {"DevOps": {"Suite pass rate": {}}}
+    suite_results: dict[str, dict[str, int]] = {}
     for row in rows or []:
         suite_name = str(row.get("name") or row.get("suite_name") or row.get("simulation") or "suite").strip()
         total = int(row.get("all", 0) or row.get("total", 0) or 0)
@@ -1193,21 +1226,108 @@ def _build_devops_trend_summary_from_suites(rows: list[dict[str, Any]]) -> Dict[
             total = passed + failed + canceled
         if total <= 0:
             continue
-        summary_payload["DevOps"]["Suite pass rate"][suite_name] = {
-            "passed": passed,
-            "total": total,
-        }
-    return summary_payload
+        suite_results[suite_name] = {"passed": passed, "total": total}
+    if not suite_results:
+        return {"DevOps": {}}
+
+    try:
+        from perception_catalog_analyzer.path import DEVOPS_MAPPING_PATH
+
+        with Path(DEVOPS_MAPPING_PATH).open("r", encoding="utf-8") as fh:
+            category_mapping = yaml.safe_load(fh) or {}
+    except Exception:
+        category_mapping = {}
+
+    if not isinstance(category_mapping, dict) or not category_mapping:
+        return {"DevOps": {"Suite pass rate": suite_results}}
+
+    mapped: Dict[str, Any] = {}
+    matched_suites: set[str] = set()
+    for major_category, mid_categories in category_mapping.items():
+        if not isinstance(mid_categories, dict):
+            continue
+        major_payload: Dict[str, Any] = {}
+        for mid_category, sub_categories in mid_categories.items():
+            if not isinstance(sub_categories, dict):
+                continue
+            mid_payload: Dict[str, Any] = {}
+            for sub_category, suite_names in sub_categories.items():
+                if not isinstance(suite_names, list):
+                    continue
+                passed = 0
+                total = 0
+                for suite_name in suite_names:
+                    result = suite_results.get(str(suite_name))
+                    if not result:
+                        continue
+                    matched_suites.add(str(suite_name))
+                    passed += int(result.get("passed", 0) or 0)
+                    total += int(result.get("total", 0) or 0)
+                mid_payload[str(sub_category)] = {"passed": passed, "total": total}
+            if mid_payload:
+                major_payload[str(mid_category)] = mid_payload
+        if major_payload:
+            mapped[str(major_category)] = major_payload
+
+    unmatched = {
+        suite_name: result
+        for suite_name, result in suite_results.items()
+        if suite_name not in matched_suites
+    }
+    if unmatched:
+        mapped.setdefault("その他", {})["未分類"] = unmatched
+
+    return {"DevOps": mapped}
 
 
 def _write_devops_trend_summary(path: Path, rows: list[dict[str, Any]]) -> Path | None:
     summary_payload = _build_devops_trend_summary_from_suites(rows)
-    if not summary_payload["DevOps"]["Suite pass rate"]:
+    if not summary_payload.get("DevOps"):
         return None
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         json.dump(summary_payload, fh, ensure_ascii=False, indent=2)
     return path
+
+
+def _suite_rows_from_existing_devops_summary(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    devops = payload.get("DevOps") if isinstance(payload, dict) else {}
+    if not isinstance(devops, dict):
+        return []
+    suite_pass_rate = devops.get("Suite pass rate")
+    if not isinstance(suite_pass_rate, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for suite_name, result in suite_pass_rate.items():
+        if not isinstance(result, dict):
+            continue
+        rows.append(
+            {
+                "suite_name": str(suite_name),
+                "success": int(result.get("passed", 0) or 0),
+                "total": int(result.get("total", 0) or 0),
+            }
+        )
+    return rows
+
+
+def _has_release_download_artifacts(path: Path) -> bool:
+    return any(path.rglob("scene_result.pkl")) or any(path.rglob("*.pkl.z"))
+
+
+def _find_release_parquet(path: Path) -> Path | None:
+    current = path / "current.parquet"
+    if current.exists():
+        return current
+    for parquet in sorted(path.glob("*.parquet"), key=lambda p: p.name.lower()):
+        return parquet
+    return None
 
 
 def _build_release_analysis_artifacts(
@@ -1218,6 +1338,7 @@ def _build_release_analysis_artifacts(
     role: str,
     output_path: Path,
     phase: str,
+    run_eval: bool = False,
     progress_start: float = 48.0,
     progress_end: float = 78.0,
 ) -> Dict[str, Any]:
@@ -1238,6 +1359,7 @@ def _build_release_analysis_artifacts(
     progress_span = max(0.0, progress_end - progress_start)
     download_end = progress_start + progress_span * 0.55
     eval_end = progress_start + progress_span * 0.90
+    existing_parquet = _find_release_parquet(output_path)
 
     def _on_progress(msg: str) -> None:
         append_task_log(task_id, f"{role}: {msg}")
@@ -1256,35 +1378,60 @@ def _build_release_analysis_artifacts(
         result["warnings"].append(msg)
         append_task_log(task_id, f"WARNING: {role}: {msg}")
 
-    update_task_progress(task_id, message=f"{role}: finding downloadable case logs", pct=progress_start)
-    failure_count, total_attempted, rows = download_core.run_download_results(
-        project_id=project_id,
-        job_id=job_id,
-        suite_id=None,
-        output_path=str(output_path),
-        download_type="archives",
-        phase=phase,
-        skip_large_file=False,
-        large_file_mb=50.0,
-        keep_zip_files=False,
-        suite_ids=None,
-        on_progress=_on_progress,
-        on_warning=_on_warning,
-    )
-    success_count = total_attempted - failure_count
+    if existing_parquet or _has_release_download_artifacts(output_path):
+        append_task_log(task_id, f"{role}: using existing downloaded artifacts in {output_path}")
+        update_task_progress(task_id, message=f"{role}: using existing downloaded artifacts", pct=download_end)
+        failure_count = 0
+        total_attempted = 0
+        success_count = 0
+        rows: list[dict[str, Any]] = []
+    else:
+        if not job_id:
+            raise RuntimeError(f"{role}: no local artifacts found and no evaluator job id is available for download.")
+        update_task_progress(task_id, message=f"{role}: finding downloadable case logs", pct=progress_start)
+        failure_count, total_attempted, rows = download_core.run_download_results(
+            project_id=project_id,
+            job_id=job_id,
+            suite_id=None,
+            output_path=str(output_path),
+            download_type="archives",
+            phase=phase,
+            skip_large_file=False,
+            large_file_mb=50.0,
+            keep_zip_files=False,
+            suite_ids=None,
+            on_progress=_on_progress,
+            on_warning=_on_warning,
+        )
+        success_count = total_attempted - failure_count
+        if success_count <= 0:
+            raise RuntimeError(f"{role}: download produced no successful case artifacts.")
     result["download"] = {
         "total": total_attempted,
         "success": success_count,
         "failed": failure_count,
         "rows": rows[:100],
     }
-    if success_count <= 0:
-        raise RuntimeError(f"{role}: download produced no successful case artifacts.")
 
-    if eval_summary:
+    if run_eval and eval_summary and not existing_parquet:
         target_dirs = eval_summary.find_eval_result_dirs(str(output_path), recursive=True)
         total = len(target_dirs)
-        if target_dirs:
+        summary_csv = output_path / "Summary.csv"
+        score_csv = output_path / "Score.csv"
+        if target_dirs and summary_csv.exists() and score_csv.exists():
+            append_task_log(task_id, f"{role}: Summary.csv / Score.csv already exist; skipping eval")
+            update_task_progress(task_id, message=f"{role}: existing Summary.csv / Score.csv found", pct=eval_end)
+            statuses = []
+            result["eval"] = {
+                "directories_processed": total,
+                "success": 0,
+                "failed": 0,
+                "skipped": total,
+                "summary_path": str(summary_csv),
+                "summary_rows": 0,
+                "score_rows": 0,
+            }
+        elif target_dirs:
             statuses = _run_eval_result_dirs(
                 task_id=task_id,
                 eval_summary=eval_summary,
@@ -1298,7 +1445,7 @@ def _build_release_analysis_artifacts(
         else:
             update_task_progress(task_id, message=f"{role}: no eval_result directories found", pct=eval_end)
             statuses = []
-        if target_dirs:
+        if target_dirs and not result["eval"]:
             update_task_progress(task_id, message=f"{role}: generating Summary.csv / Score.csv", pct=eval_end)
             csv_info = eval_summary.generate_summary_and_score_csv(str(output_path))
             result["eval"] = {
@@ -1310,15 +1457,26 @@ def _build_release_analysis_artifacts(
                 "summary_rows": csv_info.get("summary_rows", 0),
                 "score_rows": csv_info.get("score_rows", 0),
             }
-        else:
+        elif not result["eval"]:
             result["eval"] = {
                 "directories_processed": 0,
                 "success": 0,
                 "failed": 0,
                 "skipped": 0,
             }
+    elif not run_eval:
+        append_task_log(task_id, f"{role}: skipping eval; parquet is sufficient for release PDF generation")
+        result["eval"] = {"enabled": False, "reason": "release_pdf_uses_parquet"}
+    elif existing_parquet:
+        append_task_log(task_id, f"{role}: skipping eval because parquet already exists")
+        result["eval"] = {"enabled": False, "reason": "existing_parquet"}
 
-    if pkl_archive_to_parquet:
+    existing_parquet = _find_release_parquet(output_path)
+    if existing_parquet:
+        append_task_log(task_id, f"{role}: existing parquet found: {existing_parquet}")
+        result["parquet_path"] = str(existing_parquet)
+        update_task_progress(task_id, message=f"{role}: existing parquet found", pct=progress_end)
+    elif pkl_archive_to_parquet:
         try:
             update_task_progress(task_id, message=f"{role}: generating parquet", pct=eval_end)
             result["parquet_path"] = pkl_archive_to_parquet(
@@ -1369,6 +1527,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             DEFAULT_SPECSHEET_LABELS,
             DEFAULT_SPECSHEET_TOPIC,
             generate_specsheet_pdf,
+            resolve_specsheet_topic_name,
         )
 
         project_id = str(parameters.get("project_id") or "").strip()
@@ -1399,13 +1558,25 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
         release_root = Path(output_path)
         release_root.mkdir(parents=True, exist_ok=True)
         _write_release_metadata_file(release_root / "metadata.yaml", metadata)
-        release_specsheet_dir = release_root / "specsheet"
         performance_path = release_root / "performance"
         devops_path = release_root / "devops"
+        role_paths = {
+            "performance": performance_path,
+            "devops": devops_path,
+            "planning_test": release_root / "planning_test",
+        }
         os.environ["AUTH_PROFILE"] = environment
         os.environ["EVALUATOR_ENVIRONMENT"] = environment
 
         api = evaluator_api.EvaluationRunAPI()
+        optional_catalog_enabled = bool(parameters.get("optional_catalog_enabled", False))
+        optional_catalog_id = str(
+            parameters.get("optional_catalog_id") or _RELEASE_OPTIONAL_CATALOG_ID
+        ).strip()
+        optional_integration_id = str(parameters.get("optional_integration_id") or "").strip()
+        if optional_catalog_enabled and optional_catalog_id and not optional_integration_id:
+            append_task_log(task_id, f"Resolving Planning Test catalog integration: {optional_catalog_id}")
+            optional_integration_id = _resolve_active_integration_id(api, project_id, optional_catalog_id)
         jobs = [
             {
                 "role": "performance",
@@ -1422,6 +1593,16 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 "job_id": str(parameters.get("devops_job_id") or "").strip(),
             },
         ]
+        if optional_catalog_enabled:
+            jobs.append(
+                {
+                    "role": "planning_test",
+                    "label": "Planning Test",
+                    "catalog_id": optional_catalog_id,
+                    "integration_id": optional_integration_id,
+                    "job_id": str(parameters.get("optional_job_id") or "").strip(),
+                }
+            )
         summary: Dict[str, Any] = {
             "job": "run_release_specsheet_workflow",
             "release_root": str(release_root),
@@ -1437,10 +1618,17 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
         for item in jobs:
             schedule_description = f"{description} | {item['label']}"
             item["description"] = schedule_description
+            role = str(item["role"])
+            local_path = role_paths[role]
+            local_ready = _find_release_parquet(local_path) is not None or _has_release_download_artifacts(local_path)
+            item["local_artifacts_ready"] = local_ready
             job_id = str(item.get("job_id") or "").strip()
             if job_id:
                 append_task_log(task_id, f"Using existing {item['label']}: {job_id}")
                 status = "existing"
+            elif local_ready:
+                append_task_log(task_id, f"Using existing local artifacts for {item['label']}: {local_path}")
+                status = "local_artifacts"
             else:
                 append_task_log(task_id, f"Scheduling {item['label']}: catalog={item['catalog_id']}")
                 result = api.schedule_job(
@@ -1463,7 +1651,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                     raise RuntimeError(f"No job_id returned for {item['label']}.")
                 item["job_id"] = job_id
                 status = "scheduled"
-            report_url = evaluator_api.get_job_report_url(project_id, job_id)
+            report_url = evaluator_api.get_job_report_url(project_id, job_id) if job_id else ""
             summary["evaluator_jobs"][item["role"]] = {
                 "job_id": job_id,
                 "report_url": report_url,
@@ -1476,13 +1664,20 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 append_task_log(task_id, f"Scheduled {item['label']}: {job_id}")
             update_task_result_summary(task_id, summary)
 
+        wait_span = 40.0 / max(1, len(jobs))
         for idx, item in enumerate(jobs, start=1):
             job_id = str(item["job_id"])
             label = str(item["label"])
-            base_pct = 5 + (idx - 1) * 20
+            base_pct = 5 + (idx - 1) * wait_span
+            if not job_id and item.get("local_artifacts_ready"):
+                append_task_log(task_id, f"Skipping evaluator wait for {label}; local artifacts already exist.")
+                summary["evaluator_jobs"][item["role"]]["status"] = "local_artifacts"
+                update_task_progress(task_id, message=f"{label}: using local artifacts", pct=base_pct + wait_span - 2.0)
+                update_task_result_summary(task_id, summary)
+                continue
 
             def _on_check(status: str, elapsed: float, *, role: str = str(item["role"]), pct_base: float = base_pct) -> None:
-                pct = min(pct_base + (elapsed / max_wait_seconds) * 18, pct_base + 18)
+                pct = min(pct_base + (elapsed / max_wait_seconds) * max(2.0, wait_span - 2.0), pct_base + wait_span - 2.0)
                 summary["evaluator_jobs"][role]["status"] = status
                 update_task_progress(
                     task_id,
@@ -1512,7 +1707,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             update_task_result_summary(task_id, summary)
 
         update_task_progress(task_id, message="Building normal CSV/parquet analysis artifacts", pct=48)
-        role_paths = {"performance": performance_path, "devops": devops_path}
+        artifact_span = 30.0 / max(1, len(jobs))
         for artifact_idx, item in enumerate(jobs):
             role = str(item["role"])
             analysis_path = role_paths[role]
@@ -1523,8 +1718,9 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 role=role,
                 output_path=analysis_path,
                 phase=analysis_phase,
-                progress_start=48 + (20 * artifact_idx),
-                progress_end=64 + (14 * artifact_idx),
+                run_eval=bool(parameters.get("run_eval", False)),
+                progress_start=48 + (artifact_span * artifact_idx),
+                progress_end=48 + (artifact_span * (artifact_idx + 1)),
             )
             summary["analysis_artifacts"][role] = artifact_summary
             update_task_result_summary(task_id, summary)
@@ -1537,9 +1733,9 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 "job_id": item["job_id"],
                 "download_type": "archives",
                 "phase": analysis_phase,
-                "run_eval": True,
+                "run_eval": bool(parameters.get("run_eval", False)),
                 "generate_parquet": True,
-                "eval_recursive": True,
+                "eval_recursive": bool(parameters.get("run_eval", False)),
             }
             _mark_run_status(
                 task_id,
@@ -1572,8 +1768,8 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                     },
                     "evaluation": {
                         **artifact_summary.get("eval", {}),
-                        "enabled": True,
-                        "recursive": True,
+                        "enabled": bool(parameters.get("run_eval", False)),
+                        "recursive": bool(parameters.get("run_eval", False)),
                     },
                     "parquet": {
                         "enabled": True,
@@ -1582,13 +1778,38 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 },
             )
 
+        detected_topic, detected_topics = resolve_specsheet_topic_name(
+            performance_path,
+            topic,
+            fallback_topic=DEFAULT_SPECSHEET_TOPIC,
+        )
+        if detected_topic != topic:
+            append_task_log(
+                task_id,
+                (
+                    f"Using detected specsheet topic {detected_topic} instead of requested topic {topic} "
+                    f"(detected: {', '.join(detected_topics) if detected_topics else 'none'})"
+                ),
+            )
+            topic = detected_topic
+            summary["topic"] = topic
+            summary["detected_topics"] = detected_topics
+            update_task_result_summary(task_id, summary)
+
         update_task_progress(task_id, message="Writing release trend summaries", pct=78)
         write_trend_metadata(devops_path, metadata)
         devops_job = next(item for item in jobs if item["role"] == "devops")
-        devops_summary_path = _write_devops_trend_summary(
-            devops_path / "resources" / "summary.json",
-            list(devops_job.get("suite_rows") or []),
-        )
+        devops_summary_target = devops_path / "resources" / "summary.json"
+        devops_suite_rows = list(devops_job.get("suite_rows") or [])
+        if not devops_suite_rows:
+            existing_suite_rows = _suite_rows_from_existing_devops_summary(devops_summary_target)
+            if existing_suite_rows:
+                append_task_log(task_id, "Rebuilding DevOps trend summary from existing suite pass-rate rows.")
+                devops_suite_rows = existing_suite_rows
+        devops_summary_path = _write_devops_trend_summary(devops_summary_target, devops_suite_rows)
+        if devops_summary_path is None and devops_summary_target.exists():
+            devops_summary_path = devops_summary_target
+            append_task_log(task_id, f"Using existing DevOps trend summary: {devops_summary_path}")
         if devops_summary_path is None:
             append_task_log(task_id, "WARNING: DevOps trend summary had no suite pass-rate rows.")
         else:
@@ -1606,15 +1827,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             force=bool(parameters.get("overwrite", True)),
             progress_callback=lambda msg: append_task_log(task_id, f"specsheet: {msg}"),
         )
-        release_specsheet_dir.mkdir(parents=True, exist_ok=True)
-        release_pdf = release_specsheet_dir / "specsheet.pdf"
-        shutil.copy2(specsheet_pdf, release_pdf)
-        for asset in ("map_trend.png", "prediction_trend.png", "devops_trend.png"):
-            asset_path = specsheet_pdf.parent / asset
-            if asset_path.exists():
-                shutil.copy2(asset_path, release_specsheet_dir / asset)
-        summary["specsheet_pdf"] = str(release_pdf)
-        summary["performance_specsheet_pdf"] = str(specsheet_pdf)
+        summary["specsheet_pdf"] = str(specsheet_pdf)
         summary["specsheet_generated"] = bool(generated)
 
         update_task_progress(task_id, message="Release specsheet ready", pct=100)
@@ -1624,20 +1837,19 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             parameters,
             task_type="run_release_specsheet_workflow",
             status="completed",
-            result_path=str(release_pdf),
+            result_path=str(specsheet_pdf),
             extra={
                 "release_specsheet": {
                     "root": str(release_root),
-                    "specsheet_pdf": str(release_pdf),
-                    "performance_specsheet_pdf": str(specsheet_pdf),
+                    "specsheet_pdf": str(specsheet_pdf),
                     "evaluator_jobs": summary["evaluator_jobs"],
                     "analysis_artifacts": summary["analysis_artifacts"],
                     "metadata": metadata,
                 }
             },
         )
-        append_task_log(task_id, f"Release specsheet PDF ready: {release_pdf}")
-        update_task_status(task_id, "completed", result_path=str(release_pdf))
+        append_task_log(task_id, f"Release specsheet PDF ready: {specsheet_pdf}")
+        update_task_status(task_id, "completed", result_path=str(specsheet_pdf))
     except Exception as e:
         append_task_log(task_id, f"Failed: {e}")
         _mark_run_status(

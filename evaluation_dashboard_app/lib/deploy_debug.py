@@ -157,6 +157,109 @@ def task_counts_by_status() -> Tuple[bool, str, Optional[Dict[str, int]]]:
             return False, str(e), None
 
 
+def database_table_overview() -> Tuple[bool, str, Optional[List[Dict[str, Any]]]]:
+    """Return public table names with approximate row counts for DB debugging."""
+    if not get_database_url():
+        return False, "DATABASE_URL is not set", None
+    with get_connection() as conn:
+        if conn is None:
+            return False, "No database connection", None
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        t.table_name,
+                        COALESCE(c.reltuples::bigint, 0) AS estimated_rows,
+                        CASE WHEN c.oid IS NULL THEN 0 ELSE pg_total_relation_size(c.oid) END AS total_bytes
+                    FROM information_schema.tables t
+                    LEFT JOIN pg_namespace n ON n.nspname = t.table_schema
+                    LEFT JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid
+                    WHERE t.table_schema = 'public'
+                      AND t.table_type = 'BASE TABLE'
+                    ORDER BY t.table_name
+                    """
+                )
+                rows = [
+                    {
+                        "table_name": str(r[0]),
+                        "estimated_rows": int(r[1] or 0),
+                        "total_bytes": int(r[2] or 0),
+                    }
+                    for r in cur.fetchall()
+                ]
+            return True, "OK", rows
+        except Exception as e:
+            return False, str(e), None
+
+
+def database_recent_task_rows(
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    status: Optional[str] = None,
+    task_type: Optional[str] = None,
+    search: Optional[str] = None,
+) -> Tuple[bool, str, List[Dict[str, Any]], int]:
+    """Read recent rows from the task table for the deployment debug DB tab."""
+    if not get_database_url():
+        return False, "DATABASE_URL is not set", [], 0
+    with get_connection() as conn:
+        if conn is None:
+            return False, "No database connection", [], 0
+        try:
+            from psycopg2.extras import RealDictCursor
+        except ImportError:
+            return False, "psycopg2 not installed", [], 0
+
+        where_parts: List[str] = []
+        params: List[Any] = []
+        if status:
+            where_parts.append("status = %s")
+            params.append(status)
+        if task_type:
+            where_parts.append("type = %s")
+            params.append(task_type)
+        if search:
+            needle = f"%{search.strip()}%"
+            where_parts.append(
+                """
+                (
+                    id::text ILIKE %s OR type ILIKE %s OR status ILIKE %s OR
+                    COALESCE(session_id, '') ILIKE %s OR COALESCE(rq_job_id, '') ILIKE %s OR
+                    COALESCE(result_path, '') ILIKE %s OR COALESCE(error_message, '') ILIKE %s OR
+                    COALESCE(parameters::text, '') ILIKE %s OR COALESCE(result_summary, '') ILIKE %s
+                )
+                """
+            )
+            params.extend([needle] * 9)
+
+        where_sql = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        capped_limit = max(1, min(int(limit), 500))
+        safe_offset = max(0, int(offset))
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT COUNT(*) FROM tasks{where_sql}", params)
+                total_row = cur.fetchone()
+                total = int(total_row["count"] if total_row else 0)
+                cur.execute(
+                    f"""
+                    SELECT
+                        id, type, status, session_id, rq_job_id,
+                        created_at, updated_at, progress_pct, progress_message,
+                        result_path, error_message, parameters, result_summary, log_output
+                    FROM tasks{where_sql}
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, capped_limit, safe_offset],
+                )
+                rows = [dict(row) for row in cur.fetchall()]
+            return True, "OK", rows, total
+        except Exception as e:
+            return False, str(e), [], 0
+
+
 def docker_unix_socket_for_check() -> Optional[str]:
     """Path to Unix socket for existence check, or None if DOCKER_HOST is non-Unix (e.g. tcp)."""
     host = os.environ.get("DOCKER_HOST", "").strip()

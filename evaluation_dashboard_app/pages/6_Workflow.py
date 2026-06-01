@@ -42,6 +42,11 @@ from lib.run_metadata import (
     read_run_metadata,
     upsert_run_metadata,
 )
+from lib.specsheet_report import (
+    DEFAULT_TREND_TOPIC,
+    DETECTION_TREND_TOPIC_BY_MODEL,
+    parse_trend_metadata_text,
+)
 from lib.ui.recent_evaluator_jobs import (
     _fetch_evaluator_job_detail,
     _format_source_ref_html,
@@ -68,6 +73,13 @@ _RELEASE_PERFORMANCE_CATALOG_ID = "e36d75b9-6c3a-4970-9b9b-5cd13f7a9da3"
 _RELEASE_PERFORMANCE_INTEGRATION_ID = "96ad8fba-0228-4c2b-9166-07d4de1a0760"
 _RELEASE_DEVOPS_CATALOG_ID = "ab0f8498-cc1b-4726-836f-e18e8bcb3200"
 _RELEASE_DEVOPS_INTEGRATION_ID = "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
+_RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
+_RELEASE_TREND_TOPIC_OPTIONS = {
+    "Prediction / object recognition": DEFAULT_TREND_TOPIC,
+    "ML model / CenterPoint": DETECTION_TREND_TOPIC_BY_MODEL["centerpoint"],
+    "ML model / BEVFusion": DETECTION_TREND_TOPIC_BY_MODEL["bevfusion"],
+    "Custom": "",
+}
 _TASK_HISTORY_RANGE_OPTIONS = {
     "7 days": 7,
     "30 days": 30,
@@ -307,6 +319,42 @@ def _make_default_release_pilot_auto_version(target_name: str) -> str:
     if match:
         return f"Pilot.Auto v{match.group(1)}"
     return f"Pilot.Auto {target}" if target else "Pilot.Auto release"
+
+
+def _make_default_release_metadata_text(target_name: str) -> str:
+    release_group = _safe_output_part(target_name, "release")
+    pilot_auto_version = _make_default_release_pilot_auto_version(target_name)
+    description = f"{target_name} release data update" if target_name else "Release data update"
+    date = datetime.now(_JST).strftime("%Y.%m.%d")
+    return (
+        "tags: [trend]\n"
+        f"release_group: {release_group}\n"
+        f'pilot_auto_version: "{pilot_auto_version}"\n'
+        f"version_abbr: {_safe_output_part(pilot_auto_version.replace('Pilot.Auto', '').strip(), 'release')[:16]}\n"
+        "data_count: 99,776+\n"
+        f"description: {description}\n"
+        f"date: {date}\n"
+        f"topic_name: {DEFAULT_TREND_TOPIC}\n"
+    )
+
+
+def _extract_release_metadata_topic(text: str) -> str:
+    try:
+        metadata = parse_trend_metadata_text(text)
+        return str(metadata.get("topic_name") or DEFAULT_TREND_TOPIC).strip()
+    except Exception:
+        match = re.search(r"(?m)^topic_name\s*:\s*['\"]?([^'\"\n#]+)", text or "")
+        return match.group(1).strip() if match else DEFAULT_TREND_TOPIC
+
+
+def _replace_release_metadata_topic(text: str, topic: str) -> str:
+    topic = str(topic or "").strip()
+    if not topic:
+        return text
+    line = f"topic_name: {topic}"
+    if re.search(r"(?m)^topic_name\s*:", text or ""):
+        return re.sub(r"(?m)^topic_name\s*:.*$", line, text)
+    return (text.rstrip() + "\n" + line + "\n") if text else line + "\n"
 
 
 def _format_run_mtime(mtime: float) -> str:
@@ -1971,67 +2019,87 @@ def _render_start_workflow_form(
 
     trend_metadata: Dict[str, object] = {}
     if release_mode:
-        release_version_default = _make_default_release_pilot_auto_version(target_name)
-        release_description_default = f"{target_name} release data update" if target_name else "Release data update"
-        release_data_count_default = "99,776+"
-        if not st.session_state.get("workflow_release_pilot_auto_version"):
-            st.session_state["workflow_release_pilot_auto_version"] = release_version_default
-        if not st.session_state.get("workflow_release_description"):
-            st.session_state["workflow_release_description"] = release_description_default
-        if not st.session_state.get("workflow_release_data_count"):
-            st.session_state["workflow_release_data_count"] = release_data_count_default
+        metadata_default_key = "workflow_release_metadata_default_target"
+        metadata_text_key = "workflow_release_metadata_text"
+        if (
+            st.session_state.get(metadata_default_key) != target_name
+            or metadata_text_key not in st.session_state
+        ):
+            st.session_state[metadata_text_key] = _make_default_release_metadata_text(target_name)
+            st.session_state[metadata_default_key] = target_name
 
-        release_cols = st.columns([1.15, 1.1, 0.8])
-        with release_cols[0]:
-            release_group = st.text_input(
-                "Release group",
-                value=st.session_state.get("workflow_release_group", _safe_output_part(target_name, "release")),
-                key="workflow_release_group",
-                help="Stable key used to group this release with older app-generated trend history.",
+        current_metadata_text = str(st.session_state.get(metadata_text_key) or "")
+        trend_topic_from_metadata = _extract_release_metadata_topic(current_metadata_text)
+        option_values = list(_RELEASE_TREND_TOPIC_OPTIONS.values())
+        topic_labels = list(_RELEASE_TREND_TOPIC_OPTIONS.keys())
+        if trend_topic_from_metadata in option_values:
+            topic_index = option_values.index(trend_topic_from_metadata)
+        else:
+            topic_index = topic_labels.index("Custom")
+            st.session_state.setdefault("workflow_release_custom_trend_topic", trend_topic_from_metadata)
+
+        topic_label_key = "workflow_release_trend_topic_label"
+        topic_yaml_key = "workflow_release_trend_topic_yaml_value"
+        if st.session_state.get(topic_yaml_key) != trend_topic_from_metadata:
+            st.session_state[topic_label_key] = topic_labels[topic_index]
+            st.session_state[topic_yaml_key] = trend_topic_from_metadata
+            if topic_labels[topic_index] == "Custom":
+                st.session_state["workflow_release_custom_trend_topic"] = trend_topic_from_metadata
+
+        trend_topic_label = st.selectbox(
+            "Trend topic",
+            options=topic_labels,
+            key=topic_label_key,
+            help="Used only for trend graphs. The specsheet data topic is detected from parquet/csv separately.",
+        )
+        if trend_topic_label == "Custom":
+            trend_topic = st.text_input(
+                "Custom trend topic",
+                value=st.session_state.get("workflow_release_custom_trend_topic", trend_topic_from_metadata),
+                key="workflow_release_custom_trend_topic",
+                placeholder="perception.object_recognition.objects",
             ).strip()
-        with release_cols[1]:
-            pilot_auto_version = st.text_input(
-                "Pilot.Auto version",
-                value=st.session_state.get("workflow_release_pilot_auto_version", release_version_default),
-                key="workflow_release_pilot_auto_version",
-                placeholder='Pilot.Auto v4.4.0 (bevfusion x2/2.5.1)',
-            ).strip()
-        with release_cols[2]:
-            release_date = st.text_input(
-                "Release date",
-                value=st.session_state.get("workflow_release_date", datetime.now(_JST).strftime("%Y.%m.%d")),
-                key="workflow_release_date",
-                placeholder="2026.5.22",
-            ).strip()
-        release_meta_cols = st.columns([0.8, 1.1, 1.1])
-        with release_meta_cols[0]:
-            data_count = st.text_input(
-                "Data count",
-                value=st.session_state.get("workflow_release_data_count", release_data_count_default),
-                key="workflow_release_data_count",
-                placeholder="123,708+",
-            ).strip()
-        with release_meta_cols[1]:
-            release_description = st.text_input(
-                "Release description",
-                value=st.session_state.get("workflow_release_description", release_description_default),
-                key="workflow_release_description",
-            ).strip()
-        with release_meta_cols[2]:
-            release_topic_name = st.text_input(
-                "Trend topic",
-                value=st.session_state.get("workflow_release_topic_name", "perception.object_recognition.objects"),
-                key="workflow_release_topic_name",
-            ).strip()
-        trend_metadata = {
-            "tags": ["trend"],
-            "release_group": release_group,
-            "pilot_auto_version": pilot_auto_version,
-            "data_count": data_count,
-            "description": release_description,
-            "date": release_date,
-            "topic_name": release_topic_name,
-        }
+        else:
+            trend_topic = _RELEASE_TREND_TOPIC_OPTIONS[trend_topic_label]
+        if trend_topic and trend_topic != trend_topic_from_metadata:
+            st.session_state[metadata_text_key] = _replace_release_metadata_topic(
+                current_metadata_text,
+                trend_topic,
+            )
+            st.session_state[topic_yaml_key] = trend_topic
+
+        metadata_text = st.text_area(
+            "Release metadata YAML",
+            key=metadata_text_key,
+            height=150,
+            help=(
+                "Required: tags: [trend], release_group, pilot_auto_version, data_count, description, date. "
+                "date must look like 2026.5.22."
+            ),
+        )
+        metadata_error = ""
+        try:
+            trend_metadata = parse_trend_metadata_text(metadata_text)
+            if not str(trend_metadata.get("release_group") or "").strip():
+                raise ValueError("Release metadata requires non-empty `release_group`.")
+        except Exception as exc:
+            metadata_error = str(exc)
+            trend_metadata = {}
+            st.error(f"Release metadata error: {metadata_error}")
+
+        trend_topic_from_metadata = str(trend_metadata.get("topic_name") or "").strip()
+        if release_mode and trend_metadata and not trend_topic_from_metadata:
+            metadata_error = metadata_error or "Trend topic is required."
+            st.error("Trend topic is required.")
+        elif trend_metadata:
+            st.success("Release metadata looks valid.")
+
+        optional_catalog_enabled = st.checkbox(
+            "Also run Planning Test catalog",
+            value=bool(st.session_state.get("workflow_release_optional_catalog_enabled", False)),
+            key="workflow_release_optional_catalog_enabled",
+            help="Schedules the Planning Test catalog in addition to Performance and DevOps.",
+        )
         existing_job_cols = st.columns(2)
         with existing_job_cols[0]:
             performance_job_id = st.text_input(
@@ -2049,14 +2117,28 @@ def _render_start_workflow_form(
                 placeholder="Leave empty to schedule a new DevOps job",
                 help="Use this when the release DevOps evaluator job is already scheduled or finished.",
             ).strip()
+        if optional_catalog_enabled:
+            optional_job_id = st.text_input(
+                "Existing Planning Test job ID",
+                value=st.session_state.get("workflow_release_optional_job_id", ""),
+                key="workflow_release_optional_job_id",
+                placeholder="Leave empty to schedule the Planning Test catalog",
+                help="Use this when the Planning Test evaluator job is already scheduled or finished.",
+            ).strip()
+        else:
+            optional_job_id = ""
+        output_dirs = "`performance/`, `devops/`, and `planning_test/`" if optional_catalog_enabled else "`performance/` and `devops/`"
         st.caption(
-            "Normal detailed-analysis outputs are generated automatically under `performance/` and `devops/`; existing job IDs are waited on if still running and downloaded if already finished."
+            f"Normal detailed-analysis outputs are generated automatically under {output_dirs}; existing job IDs are waited on if still running and downloaded if already finished."
         )
     else:
         performance_job_id = ""
         devops_job_id = ""
+        optional_catalog_enabled = False
+        optional_job_id = ""
+        metadata_error = ""
 
-    confirm_cols = st.columns([1.0, 1.0])
+    confirm_cols = st.columns([1.0, 1.0, 1.0] if release_mode and optional_catalog_enabled else [1.0, 1.0])
     with confirm_cols[0]:
         if release_mode:
             st.caption(f"Performance catalog: `{_RELEASE_PERFORMANCE_CATALOG_ID}`")
@@ -2067,6 +2149,9 @@ def _render_start_workflow_form(
             st.caption(f"DevOps catalog: `{_RELEASE_DEVOPS_CATALOG_ID}`")
         elif integration_id:
             st.caption(f"Integration ID: `{integration_id}`")
+    if release_mode and optional_catalog_enabled:
+        with confirm_cols[2]:
+            st.caption(f"Planning Test catalog: `{_RELEASE_OPTIONAL_CATALOG_ID}`")
     if st.session_state.get("workflow_catalog_resolution_error"):
         st.warning(f"Could not resolve integration automatically: {st.session_state['workflow_catalog_resolution_error']}")
 
@@ -2089,7 +2174,7 @@ def _render_start_workflow_form(
                 key="workflow_download_type",
                 disabled=release_mode,
                 help=(
-                    "Release mode always downloads archives so Summary.csv, Score.csv, and parquet can be generated."
+                    "Release mode uses archives, but reuses existing downloaded artifacts when the output folders already contain them."
                     if release_mode
                     else None
                 ),
@@ -2127,7 +2212,7 @@ def _render_start_workflow_form(
                 value=False if release_mode else True,
                 key="workflow_run_eval",
                 disabled=release_mode,
-                help="Release mode runs evaluation automatically for both release jobs.",
+                help="Release PDF generation uses parquet; eval/CSV detail checks can be run separately when needed.",
             )
         with option_cols[1]:
             generate_parquet = st.checkbox(
@@ -2135,7 +2220,7 @@ def _render_start_workflow_form(
                 value=False if release_mode else CATALOG_IO_AVAILABLE,
                 disabled=release_mode or not CATALOG_IO_AVAILABLE,
                 key="workflow_generate_parquet",
-                help="Release mode generates detailed-analysis CSV/parquet automatically under performance/ and devops/.",
+                help="Release mode generates parquet when missing; existing parquet is enough for PDF generation.",
             )
         with option_cols[2]:
             skip_large_file = st.checkbox(
@@ -2183,6 +2268,8 @@ def _render_start_workflow_form(
             errors.append("Data count")
         if not trend_metadata.get("date"):
             errors.append("Release date")
+        if metadata_error:
+            errors.append(metadata_error)
 
     resolved_output = None
     path_error = ""
@@ -2226,6 +2313,9 @@ def _render_start_workflow_form(
             "trend_metadata": trend_metadata if release_mode else {},
             "performance_job_id": performance_job_id if release_mode else "",
             "devops_job_id": devops_job_id if release_mode else "",
+            "optional_catalog_enabled": bool(optional_catalog_enabled) if release_mode else False,
+            "optional_catalog_id": _RELEASE_OPTIONAL_CATALOG_ID if release_mode and optional_catalog_enabled else "",
+            "optional_job_id": optional_job_id if release_mode and optional_catalog_enabled else "",
         },
     }
 
@@ -2260,6 +2350,8 @@ def _render_workflow_launcher_section(
         st.session_state["workflow_last_catalog_selection"] = ""
         st.session_state["workflow_release_performance_job_id"] = ""
         st.session_state["workflow_release_devops_job_id"] = ""
+        st.session_state["workflow_release_trend_topic_label"] = "Prediction / object recognition"
+        st.session_state["workflow_release_custom_trend_topic"] = ""
         st.session_state["workflow_output_path"] = _make_default_output_path(fresh_target)
 
     def _render_start_workflow_controls(*, key_suffix: str = "dialog") -> None:
@@ -2331,14 +2423,18 @@ def _render_workflow_launcher_section(
                             "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
                             "trend_metadata": trend_metadata,
                             "version": trend_metadata.get("pilot_auto_version", ""),
-                            "topic": trend_metadata.get("topic_name", "perception.object_recognition.objects"),
+                            "topic": trend_metadata.get("topic_name", ""),
                             "performance_catalog_id": _RELEASE_PERFORMANCE_CATALOG_ID,
                             "performance_integration_id": _RELEASE_PERFORMANCE_INTEGRATION_ID,
                             "performance_job_id": dialog_payload.get("performance_job_id", ""),
                             "devops_catalog_id": _RELEASE_DEVOPS_CATALOG_ID,
                             "devops_integration_id": _RELEASE_DEVOPS_INTEGRATION_ID,
                             "devops_job_id": dialog_payload.get("devops_job_id", ""),
+                            "optional_catalog_enabled": bool(dialog_payload.get("optional_catalog_enabled", False)),
+                            "optional_catalog_id": dialog_payload.get("optional_catalog_id", ""),
+                            "optional_job_id": dialog_payload.get("optional_job_id", ""),
                             "analysis_phase": "perception.object_recognition.tracking.objects",
+                            "run_eval": bool(dialog_payload.get("run_eval", False)),
                             "overwrite": True,
                         },
                     )
