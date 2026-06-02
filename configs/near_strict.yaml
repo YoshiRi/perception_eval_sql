@@ -1,0 +1,38 @@
+# Near-range strict evaluation
+# - 0-60 m only (highest collision risk zone)
+# - Exclude NONE and PARTIAL visibility (only clearly visible objects)
+# - Tighter matching thresholds (0.5 and 1.0 m only)
+# - Pedestrian upweighted as most safety-critical
+
+label: near_strict_0_60m
+
+csv_path: data/output/pdf/e2fb9ecc-decf-513f-b54f-2a493b2877ad_8e477a87-8e2f-5b15-9618-4597431a85eb_b2fd4c93-1ba3-5c8f-be8f-984e65827bfa/perception.object_recognition.objects/e2fb9ecc-decf-513f-b54f-2a493b2877ad/current.csv
+output_dir: data/output/safety_metrics/near_strict
+
+classes:
+  - car
+  - truck
+  - bus
+  - pedestrian
+
+dist_max_m: 60
+
+visibility_exclude:
+  - NONE
+  - PARTIAL
+
+match_thresholds_m: [0.5, 1.0]
+
+speed_error_clip_mps: 50.0
+
+ate_norm_m: 1.0   # tighter: 1m is "good enough" for collision avoidance
+aoe_norm_rad: 1.5707963267948966  # pi/2
+ave_norm_mps: 5.0
+map_weight_in_nds: 5
+
+# Pedestrian safety is more critical than large vehicles
+class_weights:
+  car: 1.0
+  truck: 1.0
+  bus: 1.0
+  pedestrian: 2.0

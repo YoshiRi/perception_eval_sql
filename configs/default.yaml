@@ -1,0 +1,32 @@
+# Standard safety evaluation
+# - 4 safety-critical classes
+# - 0-100 m range
+# - Exclude fully-occluded (NONE) objects from GT denominator
+# - nuScenes 4-threshold mAP
+
+label: default_0_100m
+
+csv_path: data/output/pdf/e2fb9ecc-decf-513f-b54f-2a493b2877ad_8e477a87-8e2f-5b15-9618-4597431a85eb_b2fd4c93-1ba3-5c8f-be8f-984e65827bfa/perception.object_recognition.objects/e2fb9ecc-decf-513f-b54f-2a493b2877ad/current.csv
+output_dir: data/output/safety_metrics/default
+
+classes:
+  - car
+  - truck
+  - bus
+  - pedestrian
+
+dist_max_m: 100
+
+visibility_exclude:
+  - NONE
+
+match_thresholds_m: [0.5, 1.0, 2.0, 4.0]
+
+speed_error_clip_mps: 50.0
+
+ate_norm_m: 2.0
+aoe_norm_rad: 3.141592653589793
+ave_norm_mps: 10.0
+map_weight_in_nds: 5
+
+class_weights: null
