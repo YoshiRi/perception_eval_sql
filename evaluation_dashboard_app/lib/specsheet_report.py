@@ -15,6 +15,7 @@ import pandas as pd
 import yaml
 
 from lib.path_utils import get_data_root
+from lib.run_metadata import read_run_metadata
 
 DEFAULT_SPECSHEET_TOPIC = "perception.object_recognition.tracking.objects"
 DEFAULT_TREND_TOPIC = "perception.object_recognition.objects"
@@ -45,7 +46,7 @@ FUTURE_SPECSHEET_METRICS = [
 ]
 TREND_METADATA_FILENAME = "metadata.yaml"
 TREND_SUMMARY_FILENAME = "summary.json"
-SPECSHEET_RELEASE_ROLE_DIRS = ("performance", "devops")
+SPECSHEET_RELEASE_ROLE_DIRS = ("performance", "usecase", "devops")
 GENERATED_TREND_HISTORY_DIRNAME = "_app_trend_history"
 FULL_DATASET_EVALUATION_HEADER = "全数データセット評価"
 DEFAULT_TREND_METADATA_TEXT = """tags: [trend]
@@ -414,6 +415,8 @@ def discover_trend_metadata_files(root_dir: str | Path | None = None) -> list[Pa
             continue
         if GENERATED_TREND_HISTORY_DIRNAME in metadata_path.parts:
             continue
+        if any(part.startswith("release_spec_") for part in metadata_path.parts):
+            continue
         if not (metadata_path.parent / TREND_SUMMARY_FILENAME).exists():
             continue
         matches.append(metadata_path)
@@ -457,6 +460,89 @@ def _unwrap_devops_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _release_role_key_for_metadata(role: str) -> str:
+    if role in {"full", "performance_blocks"}:
+        return "performance"
+    return role
+
+
+def _job_id_from_run_metadata(run_dir: Path, role: str) -> str:
+    role_key = _release_role_key_for_metadata(role)
+    candidates = [run_dir]
+    if run_dir.parent != run_dir:
+        candidates.append(run_dir.parent)
+
+    for candidate in candidates:
+        metadata = read_run_metadata(candidate)
+        release_specsheet = metadata.get("release_specsheet") if isinstance(metadata.get("release_specsheet"), dict) else {}
+        evaluator_jobs = release_specsheet.get("evaluator_jobs") if isinstance(release_specsheet.get("evaluator_jobs"), dict) else {}
+        role_meta = evaluator_jobs.get(role_key) if isinstance(evaluator_jobs.get(role_key), dict) else {}
+        job_id = str(role_meta.get("job_id") or "").strip()
+        if job_id:
+            return job_id
+
+        evaluator_meta = metadata.get("evaluator") if isinstance(metadata.get("evaluator"), dict) else {}
+        job_id = str(evaluator_meta.get("job_id") or "").strip()
+        if job_id:
+            return job_id
+
+        request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+        parameter_meta = request_meta.get("parameters") if isinstance(request_meta.get("parameters"), dict) else {}
+        for key in (f"{role_key}_job_id", "job_id"):
+            job_id = str(parameter_meta.get(key) or request_meta.get(key) or "").strip()
+            if job_id:
+                return job_id
+    return ""
+
+
+def _release_metadata_match(candidate: dict[str, Any], target: dict[str, Any]) -> bool:
+    for key in ("release_group", "pilot_auto_version", "topic_name", "description", "data_count"):
+        target_value = str(target.get(key) or "").strip()
+        if target_value and str(candidate.get(key) or "").strip() != target_value:
+            return False
+    return True
+
+
+def _job_id_from_matching_release_run_metadata(root_dir: str | Path | None, target_metadata: dict[str, Any], role: str) -> str:
+    root = Path(root_dir) if root_dir is not None else get_data_root()
+    if not root.exists() or not root.is_dir():
+        return ""
+    role_key = _release_role_key_for_metadata(role)
+    candidates = sorted(
+        [path for path in root.iterdir() if path.is_dir()],
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+    for candidate in candidates:
+        metadata = read_run_metadata(candidate)
+        request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
+        parameter_meta = request_meta.get("parameters") if isinstance(request_meta.get("parameters"), dict) else {}
+        trend_metadata = (
+            parameter_meta.get("trend_metadata")
+            if isinstance(parameter_meta.get("trend_metadata"), dict)
+            else {}
+        )
+        release_specsheet = metadata.get("release_specsheet") if isinstance(metadata.get("release_specsheet"), dict) else {}
+        release_metadata = (
+            release_specsheet.get("metadata")
+            if isinstance(release_specsheet.get("metadata"), dict)
+            else trend_metadata
+        )
+        if not _release_metadata_match(release_metadata, target_metadata):
+            continue
+
+        evaluator_jobs = release_specsheet.get("evaluator_jobs") if isinstance(release_specsheet.get("evaluator_jobs"), dict) else {}
+        role_meta = evaluator_jobs.get(role_key) if isinstance(evaluator_jobs.get(role_key), dict) else {}
+        job_id = str(role_meta.get("job_id") or "").strip()
+        if job_id:
+            return job_id
+
+        job_id = str(parameter_meta.get(f"{role_key}_job_id") or request_meta.get(f"{role_key}_job_id") or "").strip()
+        if job_id:
+            return job_id
+    return ""
+
+
 def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[TrendReleaseGroup]:
     metadata_files = discover_trend_metadata_files(root_dir)
     grouped: dict[str, TrendReleaseGroup] = {}
@@ -483,7 +569,12 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
                     "group_kind": group_kind,
                     "base_dir": base_dir,
                     "role": role,
-                    "job_id": run_dir.name,
+                    "job_id": str(
+                        metadata.get("job_id")
+                        or _job_id_from_run_metadata(run_dir, role)
+                        or _job_id_from_matching_release_run_metadata(root_dir, metadata, role)
+                        or ""
+                    ),
                     "metadata_path": metadata_path,
                     "summary_path": summary_path,
                     "metadata": metadata,
@@ -512,7 +603,12 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
             )
         grouped[group_key].jobs[role] = {
             "role": role,
-            "job_id": metadata_path.parent.name if metadata_path.parent.name != "resources" else run_dir.name,
+            "job_id": str(
+                metadata.get("job_id")
+                or _job_id_from_run_metadata(metadata_path.parent, role)
+                or _job_id_from_matching_release_run_metadata(root_dir, metadata, role)
+                or (metadata_path.parent.name if metadata_path.parent.name != "resources" else run_dir.name)
+            ),
             "metadata_path": metadata_path.resolve(),
             "summary_path": summary_path.resolve(),
             "metadata": metadata,

@@ -76,7 +76,7 @@ def render_loaded_data_section(entries: Sequence[Tuple[str, str]]) -> None:
             f"""
             <div style="border-radius:14px;border-left:5px solid #1d4ed8;background:linear-gradient(90deg,#eff6ff 0%,#fff 100%);padding:0.95rem 1.1rem;">
               <div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;font-weight:700;">{la}</div>
-              <div style="margin-top:0.35rem;font-family:ui-monospace,monospace;font-size:0.82rem;color:#0f172a;word-break:break-all;line-height:1.4;">{pa}</div>
+              <div style="margin-top:0.35rem;font-size:0.86rem;color:#0f172a;word-break:break-word;line-height:1.4;font-weight:650;">{pa}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -95,7 +95,7 @@ def render_loaded_data_section(entries: Sequence[Tuple[str, str]]) -> None:
                 f"""
                 <div style="border-radius:14px;border-left:5px solid {acc};background:linear-gradient(90deg,#f8fafc 0%,#fff 100%);padding:0.95rem 1.1rem;min-height:4.5rem;">
                   <div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;font-weight:700;">{la}</div>
-                  <div style="margin-top:0.35rem;font-family:ui-monospace,monospace;font-size:0.82rem;color:#0f172a;word-break:break-all;line-height:1.4;">{pa}</div>
+                  <div style="margin-top:0.35rem;font-size:0.86rem;color:#0f172a;word-break:break-word;line-height:1.4;font-weight:650;">{pa}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -10,9 +11,11 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
 from lib.path_utils import get_data_root, path_display, resolve_under_data_root
+from lib.release_specsheet_library import discover_release_specsheet_inventory
 from lib.specsheet_report import (
     DEFAULT_TREND_METADATA_TEXT,
     TREND_METADATA_FILENAME,
@@ -124,10 +127,6 @@ def _assemble_trend_release_group(
 def _render_release_trend_builder() -> None:
     section_header("Build Release Trend Group")
     with st.expander("Assemble full/usecase/devops summaries into one release", expanded=False):
-        st.caption(
-            "Use this after the three evaluator jobs have analyzer-compatible summary.json files. "
-            "Each source can be a job folder, a run folder containing resources/summary.json, or the summary.json file itself."
-        )
         with st.form("release_trend_builder_form"):
             form_col1, form_col2 = st.columns([1.1, 1.2])
             with form_col1:
@@ -200,6 +199,816 @@ def _update_version_axis(fig: go.Figure, versions: list[str]) -> None:
     fig.update_xaxes(categoryorder="array", categoryarray=versions)
 
 
+def _role_overview_url(release_row: dict[str, Any], role: str) -> str:
+    role_info = release_row.get("roles", {}).get(role, {})
+    return str(role_info.get("overview_url") or "")
+
+
+def _role_debug_path(release_row: dict[str, Any], role: str) -> str:
+    role_info = release_row.get("roles", {}).get(role, {})
+    return str(role_info.get("absolute_path") or "")
+
+
+def _role_evaluator_url(release_row: dict[str, Any], role: str) -> str:
+    role_info = release_row.get("roles", {}).get(role, {})
+    return str(role_info.get("evaluator_report_url") or "")
+
+
+def _topic_family(topic_name: Any) -> str:
+    topic = str(topic_name or "")
+    if topic == "perception.object_recognition.objects":
+        return "Perception Performance"
+    if topic.startswith("perception.object_recognition.detection."):
+        return "ML Model Performance"
+    return "Other"
+
+
+def _date_sort_value(value: Any) -> float:
+    parsed = pd.to_datetime(value, format="%Y.%m.%d", errors="coerce")
+    if pd.isna(parsed):
+        return -1.0
+    return float(parsed.timestamp())
+
+
+def _html_link(url: str, label: str, variant: str = "action") -> str:
+    if not url:
+        return '<span class="muted-cell">-</span>'
+    return (
+        f'<a class="link-chip link-chip-{escape(variant, quote=True)}" '
+        f'href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{escape(label)}</a>'
+    )
+
+
+def _pdf_links_for_prefix(release: dict[str, Any], prefix: str) -> str:
+    links = []
+    for pdf in release.get("pdfs", []):
+        topic = str(pdf.get("topic") or "")
+        if topic == prefix or topic.startswith(prefix):
+            label = "Prediction"
+            if topic.startswith("perception.object_recognition.detection."):
+                label = topic.replace("perception.object_recognition.detection.", "").replace(".objects", "")
+                label = label.replace("bevfusion", "BEVFusion").replace("centerpoint", "CenterPoint")
+            links.append(_html_link(str(pdf.get("static_url") or ""), label, "pdf"))
+    return "<br>".join(links) if links else '<span class="muted-cell">-</span>'
+
+
+def _has_pdf_for_prefix(release: dict[str, Any], prefix: str) -> bool:
+    for pdf in release.get("pdfs", []):
+        topic = str(pdf.get("topic") or "")
+        if topic == prefix or topic.startswith(prefix):
+            return True
+    return False
+
+
+def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
+    group_headers = [
+        ("Release", 4),
+        ("Overview", 3),
+        ("Specsheet PDF", 2),
+        ("Evaluator Job", 3),
+    ]
+    col_widths = [250, 82, 180, 76, 88, 88, 88, 110, 110, 88, 88, 88]
+    headers = [
+        "Version",
+        "Date",
+        "Description",
+        "Data",
+        "Performance",
+        "Usecase",
+        "DevOps",
+        "Prediction",
+        "Detection",
+        "Performance",
+        "Usecase",
+        "DevOps",
+    ]
+    sort_types = ["text", "date", "text", "number", "text", "text", "text", "text", "text", "text", "text", "text"]
+    sortable_columns = {0, 1, 2, 3}
+    rows_html = []
+    for release in releases:
+        sort_values = [
+            str(release.get("version") or ""),
+            str(_date_sort_value(release.get("date"))),
+            str(release.get("description") or ""),
+            str(_parse_data_count(release.get("data_count")) or -1),
+            "open" if _role_overview_url(release, "performance") else "",
+            "open" if _role_overview_url(release, "usecase") else "",
+            "open" if _role_overview_url(release, "devops") else "",
+            "prediction" if _has_pdf_for_prefix(release, "perception.object_recognition.objects") else "",
+            "detection" if _has_pdf_for_prefix(release, "perception.object_recognition.detection.") else "",
+            "report" if _role_evaluator_url(release, "performance") else "",
+            "report" if _role_evaluator_url(release, "usecase") else "",
+            "report" if _role_evaluator_url(release, "devops") else "",
+        ]
+        cells = [
+            escape(str(release.get("version") or "")),
+            escape(str(release.get("date") or "")),
+            escape(str(release.get("description") or "")),
+            escape(str(release.get("data_count") or "")),
+            _html_link(_role_overview_url(release, "performance"), "Open", "overview"),
+            _html_link(_role_overview_url(release, "usecase"), "Open", "overview"),
+            _html_link(_role_overview_url(release, "devops"), "Open", "overview"),
+            _pdf_links_for_prefix(release, "perception.object_recognition.objects"),
+            _pdf_links_for_prefix(release, "perception.object_recognition.detection."),
+            _html_link(_role_evaluator_url(release, "performance"), "Report", "job"),
+            _html_link(_role_evaluator_url(release, "usecase"), "Report", "job"),
+            _html_link(_role_evaluator_url(release, "devops"), "Report", "job"),
+        ]
+        rows_html.append(
+            "<tr>"
+            + "".join(
+                f'<td data-sort-value="{escape(sort_value, quote=True)}">{cell}</td>'
+                for cell, sort_value in zip(cells, sort_values)
+            )
+            + "</tr>"
+        )
+    table_html = f"""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* {{
+  box-sizing: border-box;
+}}
+body {{
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #0f172a;
+  font-family: "Source Sans Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}}
+.release-library-shell {{
+  background: transparent;
+}}
+.release-library-table-wrapper {{
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+}}
+.release-library-table {{
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  min-width: 1320px;
+  width: 100%;
+  font-size: 0.88rem;
+}}
+.release-library-table th,
+.release-library-table td {{
+  border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+  padding: 0.34rem 0.5rem;
+  text-align: left;
+  vertical-align: middle;
+  line-height: 1.22;
+}}
+.release-library-table th {{
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 700;
+  white-space: nowrap;
+}}
+.release-library-table .group-header th {{
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #eef2ff;
+  color: #3730a3;
+  text-align: center;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-right: 1px solid rgba(129, 140, 248, 0.22);
+}}
+.release-library-table .column-header th {{
+  position: sticky;
+  top: 29px;
+  z-index: 3;
+  background: #f8fafc;
+  font-size: 0.82rem;
+  text-align: center;
+  padding: 0;
+}}
+.sort-button {{
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 30px;
+  padding: 0.26rem 0.38rem;
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}}
+.sort-button:hover {{
+  background: rgba(248, 250, 252, 0.92);
+  color: #334155;
+}}
+.plain-header {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0.26rem 0.38rem;
+  font-weight: 750;
+}}
+.release-library-table tbody tr:hover td {{
+  background: rgba(248, 250, 252, 0.82);
+}}
+.release-library-table td:nth-child(1) {{
+  font-weight: 650;
+  color: #0f172a;
+}}
+.release-library-table td:nth-child(3) {{
+  color: #475569;
+}}
+.release-library-table td:nth-child(2),
+.release-library-table td:nth-child(4) {{
+  white-space: nowrap;
+  color: #475569;
+}}
+.release-library-table td:nth-child(n+5) {{
+  text-align: center;
+}}
+.release-library-table td:nth-child(5),
+.release-library-table td:nth-child(6),
+.release-library-table td:nth-child(7),
+.release-library-table td:nth-child(10),
+.release-library-table td:nth-child(11),
+.release-library-table td:nth-child(12) {{
+  white-space: nowrap;
+}}
+.release-library-table td:nth-child(8),
+.release-library-table td:nth-child(9) {{
+  white-space: nowrap;
+}}
+.link-chip {{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  min-height: 22px;
+  padding: 0.08rem 0.46rem;
+  margin: 0.03rem 0;
+  border-radius: 999px;
+  font-weight: 650;
+  font-size: 0.8rem;
+  text-decoration: none;
+  border: 1px solid transparent;
+}}
+.link-chip-overview {{
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}}
+.link-chip-pdf {{
+  color: #9f1239;
+  background: #fff1f2;
+  border-color: #fecdd3;
+}}
+.link-chip-job {{
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}}
+.link-chip:hover {{
+  text-decoration: underline;
+  filter: brightness(0.98);
+}}
+.muted-cell {{
+  color: #94a3b8;
+}}
+</style>
+</head>
+<body>
+<div class="release-library-shell">
+  <div class="release-library-table-wrapper">
+    <table id="releaseLibraryTable" class="release-library-table">
+      <colgroup>{''.join(f'<col style="width:{width}px">' for width in col_widths)}</colgroup>
+      <thead>
+        <tr class="group-header">{''.join(f'<th colspan="{span}">{escape(header)}</th>' for header, span in group_headers)}</tr>
+        <tr class="column-header">{''.join(f'<th><button class="sort-button" type="button" data-index="{idx}" data-type="{sort_types[idx]}">{escape(header)}</button></th>' if idx in sortable_columns else f'<th><span class="plain-header">{escape(header)}</span></th>' for idx, header in enumerate(headers))}</tr>
+      </thead>
+      <tbody>{''.join(rows_html)}</tbody>
+    </table>
+  </div>
+</div>
+<script>
+(function () {{
+  const table = document.getElementById("releaseLibraryTable");
+  const tbody = table.querySelector("tbody");
+  const buttons = Array.from(table.querySelectorAll(".sort-button"));
+  let activeSort = {{ index: 1, dir: "desc", type: "date" }};
+
+  function allRows() {{
+    return Array.from(tbody.querySelectorAll("tr"));
+  }}
+
+  function cellValue(row, index, type) {{
+    const cell = row.children[index];
+    const raw = (cell && (cell.dataset.sortValue || cell.innerText) || "").trim();
+    if (type === "number" || type === "date") {{
+      const value = Number(raw.replace(/,/g, ""));
+      return Number.isFinite(value) ? value : -Infinity;
+    }}
+    return raw.toLowerCase();
+  }}
+
+  function compareRows(a, b, sort) {{
+    const av = cellValue(a, sort.index, sort.type);
+    const bv = cellValue(b, sort.index, sort.type);
+    if (av < bv) return sort.dir === "asc" ? -1 : 1;
+    if (av > bv) return sort.dir === "asc" ? 1 : -1;
+    return 0;
+  }}
+
+  function applySort() {{
+    const rows = allRows();
+    rows.sort((a, b) => compareRows(a, b, activeSort));
+    rows.forEach((row) => tbody.appendChild(row));
+    buttons.forEach((button) => {{
+      const isActive = Number(button.dataset.index) === activeSort.index;
+      button.dataset.dir = isActive ? activeSort.dir : "";
+    }});
+  }}
+
+  buttons.forEach((button) => {{
+    button.addEventListener("click", () => {{
+      const nextIndex = Number(button.dataset.index);
+      const nextType = button.dataset.type || "text";
+      const nextDir = activeSort.index === nextIndex && activeSort.dir === "asc" ? "desc" : "asc";
+      activeSort = {{ index: nextIndex, dir: nextDir, type: nextType }};
+      applySort();
+    }});
+  }});
+
+  applySort();
+}})();
+</script>
+</body>
+</html>
+"""
+    component_height = 76 + max(1, len(releases)) * 34
+    components.html(table_html, height=component_height, scrolling=False)
+
+
+def _release_inventory_debug_rows(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for release in releases:
+        rows.append(
+            {
+                "version": release["version"],
+                "date": release["date"],
+                "release": release["release"],
+                "release_dir": release["release_dir_absolute"],
+                "performance_dir": _role_debug_path(release, "performance"),
+                "usecase_dir": _role_debug_path(release, "usecase"),
+                "devops_dir": _role_debug_path(release, "devops"),
+                "performance_job_url": _role_evaluator_url(release, "performance"),
+                "usecase_job_url": _role_evaluator_url(release, "usecase"),
+                "devops_job_url": _role_evaluator_url(release, "devops"),
+                "pdf_paths": "\n".join(pdf["absolute_path"] for pdf in release.get("pdfs", [])),
+            }
+        )
+    return rows
+
+
+def _release_metric_bar_ranges(frame: pd.DataFrame) -> dict[str, tuple[float, float]]:
+    ranges: dict[str, tuple[float, float]] = {}
+    metric_columns = ("mAP", "precision", "recall", "overall_pass_rate", "FNR", "x_error", "y_error", "yaw_error")
+    for column in metric_columns:
+        if column not in frame.columns:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if not values.notna().any():
+            continue
+        min_value = float(values.min(skipna=True))
+        max_value = float(values.max(skipna=True))
+        if abs(max_value - min_value) < 1e-12:
+            if column == "overall_pass_rate":
+                min_value, max_value = 0.0, 100.0
+            elif column in {"mAP", "precision", "recall"}:
+                min_value, max_value = 0.0, 1.0
+            else:
+                min_value, max_value = 0.0, max(max_value, 1.0)
+        ranges[column] = (min_value, max_value)
+    return ranges
+
+
+def _release_performance_cell_html(value: Any, column: str, ranges: dict[str, tuple[float, float]]) -> str:
+    metric_columns = {"mAP", "precision", "recall", "overall_pass_rate", "FNR", "x_error", "y_error", "yaw_error"}
+    if column not in metric_columns:
+        return escape(str(value or ""))
+
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return '<span class="perf-muted">-</span>'
+
+    min_value, max_value = ranges.get(column, (0.0, 1.0))
+    span = max(max_value - min_value, 1e-12)
+    normalized = max(0.0, min(1.0, (float(numeric) - min_value) / span))
+    pct = 8.0 + normalized * 92.0
+    if column == "overall_pass_rate":
+        label = f"{float(numeric):.1f}%"
+    else:
+        label = f"{float(numeric):.3f}"
+
+    # Calm app-aligned palette: soft rose for weak/concerning values, soft teal for strong/healthy values.
+    teal = (45, 212, 191)
+    rose = (251, 113, 133)
+    if column in {"mAP", "precision", "recall", "overall_pass_rate"}:
+        color_ratio = normalized
+    else:
+        color_ratio = 1.0 - normalized
+    red = round(rose[0] + (teal[0] - rose[0]) * color_ratio)
+    green = round(rose[1] + (teal[1] - rose[1]) * color_ratio)
+    blue = round(rose[2] + (teal[2] - rose[2]) * color_ratio)
+
+    return (
+        f'<div class="perf-bar-cell" '
+        f'style="--bar-width:{pct:.1f}%; --bar-r:{red}; --bar-g:{green}; --bar-b:{blue};">'
+        f'<span>{escape(label)}</span>'
+        "</div>"
+    )
+
+
+def _release_performance_column_group(column: str) -> str:
+    if column in {"version", "date", "description", "data_count"}:
+        return "Release"
+    if column in {"mAP", "precision", "recall"}:
+        return "Score"
+    if column in {"FNR", "x_error", "y_error", "yaw_error"}:
+        return "Error"
+    if column == "overall_pass_rate":
+        return "Pass Rate"
+    return "Jobs / Metadata"
+
+
+def _render_release_performance_html_table(frame: pd.DataFrame) -> None:
+    ranges = _release_metric_bar_ranges(frame)
+    numeric_columns = {"mAP", "precision", "recall", "overall_pass_rate", "FNR", "x_error", "y_error", "yaw_error", "data_count"}
+    group_spans: list[tuple[str, int]] = []
+    for column in frame.columns:
+        group = _release_performance_column_group(str(column))
+        if group_spans and group_spans[-1][0] == group:
+            group_spans[-1] = (group, group_spans[-1][1] + 1)
+        else:
+            group_spans.append((group, 1))
+    group_header_html = "".join(
+        f'<th class="perf-group-header" colspan="{span}">{escape(group)}</th>'
+        for group, span in group_spans
+    )
+    header_html = "".join(
+        (
+            f'<th><button class="perf-sort-button" type="button" data-index="{idx}" '
+            f'data-type="{"number" if column in numeric_columns else "text"}">{escape(str(column))}</button></th>'
+        )
+        for idx, column in enumerate(frame.columns)
+    )
+    row_html = []
+    for _, row in frame.iterrows():
+        cells = []
+        for column in frame.columns:
+            value = row.get(column)
+            if column == "data_count":
+                parsed_count = _parse_data_count(value)
+                sort_value = "" if parsed_count is None else str(parsed_count)
+            elif column in numeric_columns:
+                numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+                sort_value = "" if pd.isna(numeric) else f"{float(numeric):.12g}"
+            else:
+                sort_value = str(value or "")
+            cells.append(
+                f'<td class="perf-selectable-td {"perf-metric-td" if column in ranges else ""}" '
+                f'data-row="{len(row_html)}" data-col="{len(cells)}" '
+                f'data-sort-value="{escape(sort_value, quote=True)}">'
+                f"{_release_performance_cell_html(value, column, ranges)}</td>"
+            )
+        row_html.append(f"<tr>{''.join(cells)}</tr>")
+
+    table_html = f"""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* {{
+  box-sizing: border-box;
+}}
+body {{
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #0f172a;
+  font-family: "Source Sans Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}}
+.release-perf-table-wrap {{
+  overflow-x: auto;
+  overflow-y: visible;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+}}
+.release-perf-table {{
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 1280px;
+  width: 100%;
+  font-size: 0.86rem;
+  user-select: none;
+}}
+.release-perf-table th,
+.release-perf-table td {{
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+  padding: 0.34rem 0.48rem;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}}
+.release-perf-table th {{
+  position: sticky;
+  z-index: 2;
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 750;
+  padding: 0;
+}}
+.release-perf-table .perf-group-header {{
+  top: 0;
+  z-index: 3;
+  padding: 0.3rem 0.48rem;
+  text-align: center;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-right: 1px solid rgba(129, 140, 248, 0.20);
+}}
+.release-perf-table .perf-column-header th {{
+  top: 30px;
+}}
+.perf-sort-button {{
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 32px;
+  padding: 0.34rem 0.48rem;
+  border: 0;
+  background: transparent;
+  color: #334155;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}}
+.perf-sort-button:hover {{
+  background: rgba(219, 234, 254, 0.62);
+}}
+.perf-sort-button[data-dir="asc"]::after {{
+  content: "▲";
+  margin-left: 0.35rem;
+  color: #2563eb;
+  font-size: 0.64rem;
+}}
+.perf-sort-button[data-dir="desc"]::after {{
+  content: "▼";
+  margin-left: 0.35rem;
+  color: #2563eb;
+  font-size: 0.64rem;
+}}
+.release-perf-table tbody tr:hover td {{
+  background: rgba(248, 250, 252, 0.82);
+}}
+.release-perf-table td.perf-selected-cell {{
+  outline: 1.5px solid #2563eb;
+  outline-offset: -2px;
+  background: rgba(219, 234, 254, 0.58) !important;
+}}
+.release-perf-table td.perf-selected-cell .perf-bar-cell {{
+  box-shadow: inset 0 0 0 999px rgba(219, 234, 254, 0.34);
+}}
+.release-perf-table td.perf-selection-anchor {{
+  outline: 2px solid #1d4ed8;
+  outline-offset: -2px;
+}}
+.release-perf-table .perf-metric-td {{
+  padding: 0;
+  min-width: 86px;
+  text-align: right;
+}}
+.perf-bar-cell {{
+  position: relative;
+  min-height: 32px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0.5rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+}}
+.perf-bar-cell::before {{
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--bar-width);
+  z-index: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--bar-r), var(--bar-g), var(--bar-b), 0.34),
+    rgba(var(--bar-r), var(--bar-g), var(--bar-b), 0.15)
+  );
+}}
+.perf-bar-cell span {{
+  position: relative;
+  z-index: 1;
+}}
+.perf-muted {{
+  color: #94a3b8;
+  display: block;
+  padding: 0.34rem 0.5rem;
+}}
+</style>
+</head>
+<body>
+<div class="release-perf-table-wrap">
+  <table id="releasePerfTable" class="release-perf-table">
+    <thead>
+      <tr>{group_header_html}</tr>
+      <tr class="perf-column-header">{header_html}</tr>
+    </thead>
+    <tbody>{''.join(row_html)}</tbody>
+  </table>
+</div>
+<script>
+(function () {{
+  const table = document.getElementById("releasePerfTable");
+  const tbody = table.querySelector("tbody");
+  const buttons = Array.from(table.querySelectorAll(".perf-sort-button"));
+  const cells = Array.from(table.querySelectorAll("td.perf-selectable-td"));
+  let activeSort = null;
+  let isSelecting = false;
+  let selectionAnchor = null;
+
+  function rows() {{
+    return Array.from(tbody.querySelectorAll("tr"));
+  }}
+
+  function cellValue(row, index, type) {{
+    const cell = row.children[index];
+    const raw = (cell && (cell.dataset.sortValue || cell.innerText) || "").trim();
+    if (type === "number") {{
+      const value = Number(raw.replace(/,/g, ""));
+      return Number.isFinite(value) ? value : -Infinity;
+    }}
+    return raw.toLowerCase();
+  }}
+
+  function applySort() {{
+    if (!activeSort) return;
+    clearSelection();
+    const sortedRows = rows().sort((a, b) => {{
+      const av = cellValue(a, activeSort.index, activeSort.type);
+      const bv = cellValue(b, activeSort.index, activeSort.type);
+      if (av < bv) return activeSort.dir === "asc" ? -1 : 1;
+      if (av > bv) return activeSort.dir === "asc" ? 1 : -1;
+      return 0;
+    }});
+    sortedRows.forEach((row) => tbody.appendChild(row));
+    buttons.forEach((button) => {{
+      const isActive = Number(button.dataset.index) === activeSort.index;
+      button.dataset.dir = isActive ? activeSort.dir : "";
+    }});
+  }}
+
+  buttons.forEach((button) => {{
+    button.addEventListener("click", () => {{
+      const nextIndex = Number(button.dataset.index);
+      const nextType = button.dataset.type || "text";
+      const nextDir = activeSort && activeSort.index === nextIndex && activeSort.dir === "asc" ? "desc" : "asc";
+      activeSort = {{ index: nextIndex, type: nextType, dir: nextDir }};
+      applySort();
+    }});
+  }});
+
+  function clearSelection() {{
+    cells.forEach((cell) => {{
+      cell.classList.remove("perf-selected-cell");
+      cell.classList.remove("perf-selection-anchor");
+    }});
+  }}
+
+  function cellPosition(cell) {{
+    return {{
+      row: rows().indexOf(cell.parentElement),
+      col: cell.cellIndex,
+    }};
+  }}
+
+  function selectRange(anchorCell, targetCell, additive) {{
+    if (!anchorCell || !targetCell) return;
+    if (!additive) clearSelection();
+    const anchor = cellPosition(anchorCell);
+    const target = cellPosition(targetCell);
+    const rowMin = Math.min(anchor.row, target.row);
+    const rowMax = Math.max(anchor.row, target.row);
+    const colMin = Math.min(anchor.col, target.col);
+    const colMax = Math.max(anchor.col, target.col);
+    rows().forEach((row, rowIndex) => {{
+      if (rowIndex < rowMin || rowIndex > rowMax) return;
+      Array.from(row.children).forEach((cell, colIndex) => {{
+        if (colIndex >= colMin && colIndex <= colMax) {{
+          cell.classList.add("perf-selected-cell");
+        }}
+      }});
+    }});
+    anchorCell.classList.add("perf-selection-anchor");
+  }}
+
+  cells.forEach((cell) => {{
+    cell.addEventListener("mousedown", (event) => {{
+      isSelecting = true;
+      selectionAnchor = cell;
+      selectRange(selectionAnchor, cell, event.ctrlKey || event.metaKey);
+      event.preventDefault();
+    }});
+    cell.addEventListener("mouseenter", () => {{
+      if (isSelecting) {{
+        selectRange(selectionAnchor, cell, false);
+      }}
+    }});
+  }});
+
+  document.addEventListener("mouseup", () => {{
+    isSelecting = false;
+    selectionAnchor = null;
+  }});
+}})();
+</script>
+</body>
+</html>
+"""
+    component_height = 76 + max(1, len(frame)) * 34
+    components.html(table_html, height=component_height, scrolling=False)
+
+
+def _release_performance_table(
+    frame: pd.DataFrame,
+    *,
+    family: str,
+    empty_message: str,
+    table_mode: str,
+) -> None:
+    if frame.empty:
+        st.info(empty_message)
+        return
+    view = frame[frame["topic_family"] == family].copy()
+    if view.empty:
+        st.info(empty_message)
+        return
+    columns = [
+        "version",
+        "date",
+        "description",
+        "data_count",
+        "mAP",
+        "precision",
+        "recall",
+        "FNR",
+        "x_error",
+        "y_error",
+        "yaw_error",
+        "roles",
+        "full_job_id",
+        "usecase_job_id",
+        "devops_job_id",
+        "topic_name",
+    ]
+    if family == "Perception Performance":
+        columns.insert(columns.index("roles"), "overall_pass_rate")
+    visible = [column for column in columns if column in view.columns]
+    display_frame = view.sort_values(["date_sort", "version", "release_name"], ascending=[False, False, False])[visible]
+    if table_mode == "Colored bars":
+        _render_release_performance_html_table(display_frame)
+    else:
+        dataframe_height = 38 + max(1, len(display_frame)) * 35
+        st.dataframe(
+            display_frame,
+            width="stretch",
+            hide_index=True,
+            height=dataframe_height,
+        )
+
+
 def _build_pass_combo_chart(
     frame: pd.DataFrame,
     *,
@@ -230,6 +1039,9 @@ def _build_pass_combo_chart(
 
     hover_cols = hover_cols or ["date", "release_name", "passed", "total"]
     plot_df = frame.copy()
+    version_order = {version: idx for idx, version in enumerate(versions)}
+    plot_df["__version_order"] = plot_df["version"].map(version_order).fillna(len(version_order))
+    plot_df = plot_df.sort_values(["__version_order", "version", "date", "release_name"])
     if series_col is None:
         fig.add_trace(
             go.Scatter(
@@ -246,7 +1058,9 @@ def _build_pass_combo_chart(
     else:
         palette = px.colors.qualitative.Bold + px.colors.qualitative.Safe + px.colors.qualitative.Set2
         for idx, series_name in enumerate(plot_df[series_col].dropna().astype(str).unique().tolist()):
-            series_df = plot_df[plot_df[series_col].astype(str) == series_name]
+            series_df = plot_df[plot_df[series_col].astype(str) == series_name].sort_values(
+                ["__version_order", "version", "date", "release_name"]
+            )
             color = palette[idx % len(palette)]
             fig.add_trace(
                 go.Scatter(
@@ -396,8 +1210,12 @@ def _build_metric_label_lines(
     title: str,
     ordered_axes: list[str],
 ) -> go.Figure:
+    plot_df = frame.dropna(subset=["value"]).copy()
+    axis_order = {axis: idx for idx, axis in enumerate(ordered_axes)}
+    plot_df["__axis_order"] = plot_df["release_axis"].map(axis_order).fillna(len(axis_order))
+    plot_df = plot_df.sort_values(["label_name", "__axis_order", "release_axis"])
     fig = px.line(
-        frame,
+        plot_df,
         x="release_axis",
         y="value",
         color="label_name",
@@ -407,6 +1225,7 @@ def _build_metric_label_lines(
     )
     fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Label")
     fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes, tickangle=-30, automargin=True)
+    fig.update_traces(connectgaps=True)
     return fig
 
 
@@ -446,7 +1265,10 @@ def _build_prediction_label_profile(
     profile_df = frame[
         (frame["metric_name"].isin(metric_names))
         & (frame["label_name"] == selected_label)
-    ].copy()
+    ].dropna(subset=["value"]).copy()
+    axis_order = {axis: idx for idx, axis in enumerate(ordered_axes)}
+    profile_df["__axis_order"] = profile_df["release_axis"].map(axis_order).fillna(len(axis_order))
+    profile_df = profile_df.sort_values(["metric_name", "__axis_order", "release_axis"])
     fig = px.line(
         profile_df,
         x="release_axis",
@@ -458,6 +1280,7 @@ def _build_prediction_label_profile(
     )
     fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Horizon")
     fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes, tickangle=-30, automargin=True)
+    fig.update_traces(connectgaps=True)
     return fig
 
 
@@ -623,16 +1446,13 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
 render_page_hero(
     kicker="Release Analytics",
     title="Trend Insights",
-    description="Release-level trends across grouped full, usecase, and devops runs.",
+    description="Release history and performance trends.",
 )
-
-_render_release_trend_builder()
-
-section_header("Release Inventory")
 
 groups = discover_trend_release_groups()
 if not groups:
-    st.info("No saved trend metadata was found yet. Use the release trend builder above after the three job summaries are available.")
+    st.info("No saved trend metadata was found yet. Use the release trend builder below after the three job summaries are available.")
+    _render_release_trend_builder()
     st.stop()
 
 try:
@@ -641,36 +1461,66 @@ except Exception as exc:
     st.error(f"Could not build trend insights: {exc}")
     st.stop()
 
+if not release_df.empty:
+    release_df["topic_family"] = release_df["topic_name"].map(_topic_family)
+
+section_header("Release History")
+release_specsheets = discover_release_specsheet_inventory(get_data_root())
+if release_specsheets:
+    release_specsheets = sorted(
+        release_specsheets,
+        key=lambda row: (
+            pd.to_datetime(row.get("date"), format="%Y.%m.%d", errors="coerce").timestamp()
+            if pd.notna(pd.to_datetime(row.get("date"), format="%Y.%m.%d", errors="coerce"))
+            else -1.0,
+            str(row.get("version") or ""),
+            str(row.get("release") or ""),
+        ),
+        reverse=True,
+    )
+    _render_release_library_table(release_specsheets)
+
+    with st.expander("Debug release inventory paths", expanded=False):
+        st.dataframe(
+            pd.DataFrame(_release_inventory_debug_rows(release_specsheets)),
+            width="stretch",
+            hide_index=True,
+        )
+else:
+    st.info("No imported release library was found. Run `python scripts/import_catalog_analyzer_releases.py --force` to import analyzer output.")
+
+section_header("Release Performance")
 top1, top2, top3, top4, top5 = st.columns(5)
-top1.metric("Release Groups", f"{len(release_df):,}")
+top1.metric("Performance Groups", f"{len(release_df):,}")
 top2.metric("Unique Versions", f"{release_df['version'].nunique():,}" if not release_df.empty else "0")
-top3.metric("Groups with Full", f"{int(release_df['full_job_id'].notna().sum()):,}" if not release_df.empty else "0")
-top4.metric("Groups with DevOps", f"{int(release_df['devops_job_id'].notna().sum()):,}" if not release_df.empty else "0")
+top3.metric("Perception Performance", f"{int((release_df['topic_family'] == 'Perception Performance').sum()):,}" if not release_df.empty else "0")
+top4.metric("ML Model Performance", f"{int((release_df['topic_family'] == 'ML Model Performance').sum()):,}" if not release_df.empty else "0")
 top5.metric("Latest Date", release_df.sort_values("date_sort")["date"].iloc[-1] if not release_df.empty else "n/a")
 
-inventory_cols = [
-    "version",
-    "date",
-    "description",
-    "data_count",
-    "mAP",
-    "precision",
-    "recall",
-    "overall_pass_rate",
-    "roles",
-    "full_job_id",
-    "usecase_job_id",
-    "devops_job_id",
-    "topic_name",
-    "group_kind",
-]
-st.dataframe(
-    release_df.sort_values(["date_sort", "version", "release_name"], ascending=[False, False, False])[inventory_cols],
-    use_container_width=True,
-    hide_index=True,
+performance_table_mode = st.segmented_control(
+    "Table view",
+    options=["Dataframe", "Colored bars"],
+    default="Dataframe",
+    key="release_performance_table_mode",
 )
 
-section_header("Major Metrics Trend")
+st.markdown("#### Perception Performance")
+_release_performance_table(
+    release_df,
+    family="Perception Performance",
+    empty_message="No Perception Performance release rows are available.",
+    table_mode=performance_table_mode,
+)
+
+st.markdown("#### ML Model Performance")
+_release_performance_table(
+    release_df,
+    family="ML Model Performance",
+    empty_message="No ML Model Performance release rows are available.",
+    table_mode=performance_table_mode,
+)
+
+section_header("Major Performance Scores")
 
 perf_entries = release_df[release_df["full_job_id"].notna()].sort_values(
     ["date_sort", "version", "release_name"],
@@ -686,61 +1536,100 @@ prediction_cols = [
     "minFDE@5s",
 ]
 if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any():
-    latest_major_row = perf_entries.dropna(subset=major_metric_cols, how="all").iloc[-1]
+    latest_major_rows = (
+        perf_entries.dropna(subset=major_metric_cols, how="all")
+        .sort_values(["date_sort", "version", "release_name"])
+        .groupby("topic_family", dropna=False)
+        .tail(1)
+    )
     metric_card_cols = st.columns(4)
-    for metric_col, card_col in zip(major_metric_cols, metric_card_cols[:3]):
-        metric_series = perf_entries.dropna(subset=[metric_col])
-        latest_metric_value = metric_series[metric_col].iloc[-1] if not metric_series.empty else pd.NA
+    for family, card_col in zip(("Perception Performance", "ML Model Performance"), metric_card_cols[:2]):
+        family_row = latest_major_rows[latest_major_rows["topic_family"] == family]
+        if family_row.empty:
+            card_col.metric(f"{family} mAP", "n/a")
+            continue
         card_col.metric(
-            f"Latest {metric_col}",
-            f"{latest_metric_value:.3f}" if pd.notna(latest_metric_value) else "n/a",
+            f"{family} mAP",
+            f"{family_row['mAP'].iloc[-1]:.3f}" if pd.notna(family_row["mAP"].iloc[-1]) else "n/a",
         )
+    latest_perception_row = latest_major_rows[latest_major_rows["topic_family"] == "Perception Performance"]
+    latest_model_row = latest_major_rows[latest_major_rows["topic_family"] == "ML Model Performance"]
+    metric_card_cols[2].metric(
+        "Perception Recall",
+        f"{latest_perception_row['recall'].iloc[-1]:.3f}"
+        if not latest_perception_row.empty and pd.notna(latest_perception_row["recall"].iloc[-1])
+        else "n/a",
+    )
     metric_card_cols[3].metric(
-        "Latest Data Count",
-        f"{int(latest_major_row['data_count_num']):,}" if pd.notna(latest_major_row["data_count_num"]) else "n/a",
+        "ML Model Recall",
+        f"{latest_model_row['recall'].iloc[-1]:.3f}"
+        if not latest_model_row.empty and pd.notna(latest_model_row["recall"].iloc[-1])
+        else "n/a",
     )
     fig = go.Figure()
+    scenario_totals = (
+        perf_entries[perf_entries["topic_family"] == "Perception Performance"]
+        .groupby("version", dropna=False)["data_count_num"]
+        .max()
+        .reindex(perf_entries["version"].drop_duplicates().tolist())
+    )
     fig.add_bar(
-        x=perf_entries["version"],
-        y=perf_entries["data_count_num"],
+        x=scenario_totals.index.tolist(),
+        y=scenario_totals.tolist(),
         name="Data Count",
         marker_color="#f4a7a7",
-        opacity=0.5,
+        opacity=0.28,
         yaxis="y2",
+        hovertemplate="<b>%{x}</b><br>Data Count: %{y:,}<extra></extra>",
     )
     metric_styles = {
-        "mAP": {"color": "#0f766e", "dash": "solid"},
-        "precision": {"color": "#1d4ed8", "dash": "solid"},
-        "recall": {"color": "#be123c", "dash": "dot"},
+        "mAP": "#0f766e",
+        "precision": "#1d4ed8",
+        "recall": "#be123c",
     }
-    for metric_col in major_metric_cols:
-        fig.add_trace(
-            go.Scatter(
-                x=perf_entries["version"],
-                y=perf_entries[metric_col],
-                name=metric_col,
-                mode="lines+markers",
-                line=dict(
-                    color=metric_styles[metric_col]["color"],
-                    width=3,
-                    dash=metric_styles[metric_col]["dash"],
-                ),
-                customdata=perf_entries[["release_name", "date", "data_count"]].to_numpy(),
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    + metric_col
-                    + ": %{y:.3f}<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<br>Data Count: %{customdata[2]}<extra></extra>"
-                ),
+    family_dashes = {
+        "Perception Performance": "solid",
+        "ML Model Performance": "dot",
+    }
+    for family in ("Perception Performance", "ML Model Performance"):
+        family_df = perf_entries[perf_entries["topic_family"] == family].copy()
+        if family_df.empty:
+            continue
+        for metric_col in major_metric_cols:
+            metric_df_for_line = family_df.dropna(subset=[metric_col])
+            if metric_df_for_line.empty:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=metric_df_for_line["version"],
+                    y=metric_df_for_line[metric_col],
+                    name=metric_col,
+                    legendgroup=family,
+                    legendgrouptitle_text=family,
+                    mode="lines+markers",
+                    line=dict(
+                        color=metric_styles[metric_col],
+                        width=3,
+                        dash=family_dashes.get(family, "solid"),
+                    ),
+                    marker=dict(size=7),
+                    customdata=metric_df_for_line[["release_name", "date", "data_count", "topic_name"]].to_numpy(),
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        + f"{family} {metric_col}"
+                        + ": %{y:.3f}<br>Release: %{customdata[0]}<br>Date: %{customdata[1]}<br>Data Count: %{customdata[2]}<br>Topic: %{customdata[3]}<extra></extra>"
+                    ),
+                )
             )
-        )
     fig.update_layout(
-        title="Major Detection Metrics Trend",
+        title="Major Performance Scores",
         xaxis_title="Pilot.Auto Version",
         yaxis_title="Score",
         yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
-        height=460,
-        legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
-        margin=dict(l=20, r=20, t=90, b=20),
+        height=520,
+        legend=dict(orientation="h", yanchor="top", y=-0.18, x=0, xanchor="left"),
+        legend_tracegroupgap=18,
+        margin=dict(l=20, r=20, t=80, b=125),
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
@@ -748,9 +1637,12 @@ else:
 
 section_header("Prediction Trend")
 
-if not perf_entries.empty and perf_entries[prediction_cols].notna().any().any():
+prediction_entries = perf_entries[perf_entries["topic_family"] == "Perception Performance"].copy()
+prediction_entries = prediction_entries.sort_values(["date_sort", "version", "release_name"], ascending=[True, True, True])
+
+if not prediction_entries.empty and prediction_entries[prediction_cols].notna().any().any():
     pred_card_col1, pred_card_col2, pred_card_col3 = st.columns(3)
-    latest_pred_row = perf_entries.dropna(subset=prediction_cols, how="all").iloc[-1]
+    latest_pred_row = prediction_entries.dropna(subset=prediction_cols, how="all").iloc[-1]
     latest_minade_mean = pd.to_numeric(latest_pred_row[["minADE@1s", "minADE@3s", "minADE@5s"]], errors="coerce").mean()
     latest_minfde_mean = pd.to_numeric(latest_pred_row[["minFDE@1s", "minFDE@3s", "minFDE@5s"]], errors="coerce").mean()
     pred_card_col1.metric(
@@ -765,7 +1657,9 @@ if not perf_entries.empty and perf_entries[prediction_cols].notna().any().any():
         "Latest Data Count",
         f"{int(latest_pred_row['data_count_num']):,}" if pd.notna(latest_pred_row["data_count_num"]) else "n/a",
     )
-    pred_story = perf_entries[["version", "date", "description", "release_name", "data_count", "data_count_num"] + prediction_cols].copy()
+    pred_story = prediction_entries[
+        ["version", "date", "description", "release_name", "data_count", "data_count_num"] + prediction_cols
+    ].copy()
     pred_fig = go.Figure()
     pred_fig.add_bar(
         x=pred_story["version"],
@@ -785,15 +1679,18 @@ if not perf_entries.empty and perf_entries[prediction_cols].notna().any().any():
         ("minFDE@5s", "#bfdbfe", "dot"),
     ]
     for metric_name, color, dash in series_specs:
+        metric_story = pred_story.dropna(subset=[metric_name])
+        if metric_story.empty:
+            continue
         pred_fig.add_trace(
             go.Scatter(
-                x=pred_story["version"],
-                y=pred_story[metric_name],
+                x=metric_story["version"],
+                y=metric_story[metric_name],
                 name=metric_name,
                 mode="lines+markers",
                 line=dict(color=color, width=3 if metric_name.endswith("@3s") else 2, dash=dash),
                 marker=dict(size=8),
-                customdata=pred_story[["date", "release_name", "data_count"]].to_numpy(),
+                customdata=metric_story[["date", "release_name", "data_count"]].to_numpy(),
                 hovertemplate=(
                     "<b>%{x}</b><br>"
                     + metric_name
@@ -807,8 +1704,8 @@ if not perf_entries.empty and perf_entries[prediction_cols].notna().any().any():
         yaxis_title="Prediction Error (m)",
         yaxis2=dict(title="Data Count", overlaying="y", side="right", showgrid=False),
         height=480,
-        legend=dict(orientation="h", yanchor="bottom", y=0.94, x=0, xanchor="left"),
-        margin=dict(l=20, r=20, t=100, b=20),
+        legend=dict(orientation="h", yanchor="top", y=-0.18, x=0, xanchor="left"),
+        margin=dict(l=20, r=20, t=80, b=105),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
     )
@@ -839,31 +1736,39 @@ pass_entries = release_df[release_df["devops_job_id"].notna()].sort_values(
     ["date_sort", "version", "release_name"],
     ascending=[True, True, True],
 )
-ordered_versions = pass_entries["version"].drop_duplicates().tolist()
+if not pass_entries.empty:
+    pass_entries = pass_entries.copy()
+    pass_entries["pass_axis"] = pass_entries["version"].astype(str) + " | " + pass_entries["date"].astype(str)
+ordered_versions = pass_entries["pass_axis"].drop_duplicates().tolist() if not pass_entries.empty else []
 overall_plot_df = pd.DataFrame()
 major_summary = pd.DataFrame()
 mid_summary = pd.DataFrame()
 
 if not pass_entries.empty and pass_entries["overall_pass_rate"].notna().any():
     overall_plot_df = pass_entries[
-        ["version", "date", "release_name", "overall_pass_rate", "scenario_count"]
+        ["pass_axis", "date", "release_name", "overall_pass_rate", "scenario_count"]
     ].rename(columns={"overall_pass_rate": "pass_rate", "scenario_count": "total"}).copy()
+    overall_plot_df = overall_plot_df.rename(columns={"pass_axis": "version"})
 
 if not case_df.empty:
+    case_for_pass = case_df.copy()
+    case_for_pass["pass_axis"] = case_for_pass["version"].astype(str) + " | " + case_for_pass["date"].astype(str)
     major_summary = (
-        case_df.groupby(["version", "date", "release_name", "major_category"], dropna=False)[["passed", "total"]]
+        case_for_pass.groupby(["pass_axis", "date", "release_name", "major_category"], dropna=False)[["passed", "total"]]
         .sum()
         .reset_index()
+        .rename(columns={"pass_axis": "version"})
     )
     major_summary = _with_pass_rate(major_summary)
 
     mid_summary = (
-        case_df.groupby(
-            ["version", "date", "release_name", "major_category", "mid_category"],
+        case_for_pass.groupby(
+            ["pass_axis", "date", "release_name", "major_category", "mid_category"],
             dropna=False,
         )[["passed", "total"]]
         .sum()
         .reset_index()
+        .rename(columns={"pass_axis": "version"})
     )
     mid_summary = _with_pass_rate(mid_summary)
 
@@ -1207,3 +2112,5 @@ with st.expander("Grouped Raw Browser", expanded=False):
             json.dumps(selected_group.jobs[role_choice]["summary"], ensure_ascii=False, indent=2)[:30000],
             language="json",
         )
+
+_render_release_trend_builder()

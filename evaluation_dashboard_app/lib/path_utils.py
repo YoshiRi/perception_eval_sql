@@ -9,8 +9,11 @@ resolved against EVAL_DASHBOARD_DATA_ROOT so that:
 """
 
 import os
+import re
 from pathlib import Path
 from typing import Optional, List, Tuple
+
+import yaml
 
 # Root for all evaluation data. Set EVAL_DASHBOARD_DATA_ROOT to override (e.g. /var/eval_dashboard/data).
 _DATA_ROOT: Optional[Path] = None
@@ -122,16 +125,79 @@ def _looks_like_analysis_run(path: Path) -> bool:
     )
 
 
+RELEASE_ROLE_DIRS = ("performance", "usecase", "devops")
+RELEASE_ROLE_LABELS = {
+    "performance": "Performance",
+    "usecase": "Usecase",
+    "devops": "DevOps",
+}
+_PILOT_AUTO_PREFIX_PATTERN = re.compile(r"^\s*Pilot\.Auto\s*", re.IGNORECASE)
+
+
 def _looks_like_release_container(path: Path) -> bool:
     return (
         (path / "metadata.yaml").exists()
-        and any((path / name).is_dir() for name in ("performance", "devops"))
+        and any((path / name).is_dir() for name in RELEASE_ROLE_DIRS)
         and not _looks_like_analysis_run(path)
     )
 
 
+def _load_yaml_metadata(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _compact_release_version(metadata: dict, fallback: str) -> str:
+    version = str(metadata.get("version_abbr") or metadata.get("pilot_auto_version") or "").strip()
+    if not version:
+        return fallback
+    version = _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version
+    version = version.replace("/", "-")
+    return version
+
+
+def _release_run_display_name(run_path: Path) -> Optional[str]:
+    role_label = ""
+    release_dir = run_path
+    if run_path.name in RELEASE_ROLE_LABELS and _looks_like_release_container(run_path.parent):
+        release_dir = run_path.parent
+        role_label = RELEASE_ROLE_LABELS[run_path.name]
+    elif _looks_like_release_container(run_path):
+        role_label = "Release"
+    else:
+        return None
+
+    metadata = _load_yaml_metadata(run_path / "metadata.yaml") or _load_yaml_metadata(release_dir / "metadata.yaml")
+    version = _compact_release_version(metadata, release_dir.name.replace("release_spec_", ""))
+    date = str(metadata.get("date") or "").strip()
+    parts = [f"[REL] {version}"]
+    if role_label:
+        parts.append(role_label)
+    if date:
+        parts.append(date)
+    return " | ".join(parts)
+
+
 def get_run_display_name(run_path: Path) -> str:
-    """Return a stable run selector name relative to the data root."""
+    """Return a stable user-facing run selector name."""
+    release_name = _release_run_display_name(run_path)
+    if release_name:
+        return release_name
+    root = get_data_root()
+    try:
+        return run_path.resolve().relative_to(root).as_posix()
+    except Exception:
+        return run_path.name
+
+
+def get_run_storage_name(run_path: Path) -> str:
+    """Return the raw path-like run name relative to the data root."""
     root = get_data_root()
     try:
         return run_path.resolve().relative_to(root).as_posix()
@@ -151,7 +217,7 @@ def list_run_directories() -> List[Path]:
         if resolved not in seen and not _looks_like_release_container(child):
             runs.append(child)
             seen.add(resolved)
-        for release_child_name in ("performance", "devops"):
+        for release_child_name in RELEASE_ROLE_DIRS:
             release_child = child / release_child_name
             if release_child.is_dir() and _looks_like_analysis_run(release_child):
                 release_resolved = release_child.resolve()
@@ -235,6 +301,10 @@ def resolve_run_subdirectory(run_name: str) -> Tuple[Optional[Path], str]:
         return None, "Invalid run name."
     if "\x00" in run_name or "\\" in run_name:
         return None, "Invalid run name."
+    display_matches = [path for path in list_run_directories() if get_run_display_name(path) == run_name]
+    if display_matches:
+        return display_matches[0], ""
+
     run_path = (root / run_name).resolve()
     try:
         run_path.relative_to(root)

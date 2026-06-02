@@ -53,6 +53,7 @@ x-streamlit-app: &streamlit-app
     - ./configs:/app/docker_config
     # Mount app source so code changes apply without rebuild (Streamlit auto-reloads)
     - ../Overview.py:/app/Overview.py
+    - ../docker-entrypoint.sh:/app/docker-entrypoint.sh
     - ../catalogs.json:/app/catalogs.json
     - ../pages:/app/pages
     - ../Readme.md:/app/Readme.md
@@ -60,6 +61,7 @@ x-streamlit-app: &streamlit-app
     - ../lib:/app/lib
     - ../worker:/app/worker
     - ../configs:/app/configs
+    - ../static:/app/static
     - ../.streamlit:/app/.streamlit
     - /var/run/docker.sock:/var/run/docker.sock
   extra_hosts:
