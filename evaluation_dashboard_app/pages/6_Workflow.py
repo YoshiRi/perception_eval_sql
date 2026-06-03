@@ -74,6 +74,8 @@ _RELEASE_PERFORMANCE_INTEGRATION_ID = "96ad8fba-0228-4c2b-9166-07d4de1a0760"
 _RELEASE_DEVOPS_CATALOG_ID = "ab0f8498-cc1b-4726-836f-e18e8bcb3200"
 _RELEASE_DEVOPS_INTEGRATION_ID = "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
 _RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
+_RELEASE_SKIP_LARGE_FILE = True
+_RELEASE_LARGE_FILE_MB = 50.0
 _RELEASE_TREND_TOPIC_OPTIONS = {
     "Prediction / object recognition": DEFAULT_TREND_TOPIC,
     "ML model / CenterPoint": DETECTION_TREND_TOPIC_BY_MODEL["centerpoint"],
@@ -2225,10 +2227,14 @@ def _render_start_workflow_form(
         with option_cols[2]:
             skip_large_file = st.checkbox(
                 "Skip large files",
-                value=False if release_mode else default_skip_large_file,
+                value=_RELEASE_SKIP_LARGE_FILE if release_mode else default_skip_large_file,
                 key="workflow_skip_large_file",
                 disabled=release_mode,
-                help="Release mode keeps the standard release artifacts needed for analysis.",
+                help=(
+                    f"Release mode always skips archives at or above {_RELEASE_LARGE_FILE_MB:g} MB."
+                    if release_mode
+                    else "Skip unusually large archives during download."
+                ),
             )
         with option_cols[3]:
             eval_recursive = st.checkbox(
@@ -2307,7 +2313,7 @@ def _render_start_workflow_form(
             "max_wait_hours": int(max_wait_hours),
             "run_eval": False if release_mode else bool(run_eval),
             "generate_parquet": False if release_mode else bool(generate_parquet),
-            "skip_large_file": False if release_mode else bool(skip_large_file),
+            "skip_large_file": _RELEASE_SKIP_LARGE_FILE if release_mode else bool(skip_large_file),
             "eval_recursive": False if release_mode else bool(eval_recursive),
             "release_mode": bool(release_mode),
             "trend_metadata": trend_metadata if release_mode else {},
@@ -2434,6 +2440,8 @@ def _render_workflow_launcher_section(
                             "optional_catalog_id": dialog_payload.get("optional_catalog_id", ""),
                             "optional_job_id": dialog_payload.get("optional_job_id", ""),
                             "analysis_phase": "perception.object_recognition.tracking.objects",
+                            "skip_large_file": _RELEASE_SKIP_LARGE_FILE,
+                            "large_file_mb": _RELEASE_LARGE_FILE_MB,
                             "run_eval": bool(dialog_payload.get("run_eval", False)),
                             "overwrite": True,
                         },
