@@ -267,7 +267,7 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
         ("Specsheet PDF", 2),
         ("Evaluator Job", 3),
     ]
-    col_widths = [250, 82, 180, 76, 88, 88, 88, 110, 110, 88, 88, 88]
+    col_widths = [360, 96, 240, 92, 96, 96, 96, 128, 168, 96, 96, 96]
     headers = [
         "Version",
         "Date",
@@ -352,7 +352,7 @@ body {{
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
-  min-width: 1320px;
+  min-width: 1660px;
   width: 100%;
   font-size: 0.88rem;
 }}
@@ -363,6 +363,7 @@ body {{
   text-align: left;
   vertical-align: middle;
   line-height: 1.22;
+  white-space: nowrap;
 }}
 .release-library-table th {{
   background: #f8fafc;
@@ -427,10 +428,11 @@ body {{
 }}
 .release-library-table td:nth-child(3) {{
   color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }}
 .release-library-table td:nth-child(2),
 .release-library-table td:nth-child(4) {{
-  white-space: nowrap;
   color: #475569;
 }}
 .release-library-table td:nth-child(n+5) {{
@@ -442,11 +444,9 @@ body {{
 .release-library-table td:nth-child(10),
 .release-library-table td:nth-child(11),
 .release-library-table td:nth-child(12) {{
-  white-space: nowrap;
 }}
 .release-library-table td:nth-child(8),
 .release-library-table td:nth-child(9) {{
-  white-space: nowrap;
 }}
 .link-chip {{
   display: inline-flex;
@@ -561,7 +561,7 @@ body {{
 </body>
 </html>
 """
-    component_height = 96 + max(1, len(releases)) * 39
+    component_height = 78 + max(1, len(releases)) * 32
     components.html(table_html, height=component_height, scrolling=False)
 
 
@@ -1007,12 +1007,21 @@ def _release_performance_table(
     if table_mode == "Colored bars":
         _render_release_performance_html_table(display_frame)
     else:
-        dataframe_height = 38 + max(1, len(display_frame)) * 35
+        dataframe_height = 52 + max(1, len(display_frame)) * 36
+        dataframe_column_config = {
+            "version": st.column_config.TextColumn("version", width="large"),
+            "description": st.column_config.TextColumn("description", width="medium"),
+            "full_job_id": st.column_config.TextColumn("full_job_id", width="large"),
+            "usecase_job_id": st.column_config.TextColumn("usecase_job_id", width="large"),
+            "devops_job_id": st.column_config.TextColumn("devops_job_id", width="large"),
+            "topic_name": st.column_config.TextColumn("topic_name", width="large"),
+        }
         st.dataframe(
             display_frame,
             width="stretch",
             hide_index=True,
             height=dataframe_height,
+            column_config={key: value for key, value in dataframe_column_config.items() if key in display_frame.columns},
         )
 
 
@@ -1486,13 +1495,6 @@ if release_specsheets:
         reverse=True,
     )
     _render_release_library_table(release_specsheets)
-
-    with st.expander("Debug release inventory paths", expanded=False):
-        st.dataframe(
-            pd.DataFrame(_release_inventory_debug_rows(release_specsheets)),
-            width="stretch",
-            hide_index=True,
-        )
 else:
     st.info("No imported release library was found. Run `python scripts/import_catalog_analyzer_releases.py --force` to import analyzer output.")
 
@@ -2121,3 +2123,11 @@ with st.expander("Grouped Raw Browser", expanded=False):
         )
 
 _render_release_trend_builder()
+
+if release_specsheets:
+    with st.expander("Debug release inventory paths", expanded=False):
+        st.dataframe(
+            pd.DataFrame(_release_inventory_debug_rows(release_specsheets)),
+            width="stretch",
+            hide_index=True,
+        )
