@@ -84,6 +84,13 @@ Production/server usage when source data should not remain mounted:
 After import, make sure the app serves static PDFs from static/. In this app's
 Docker setup, static/ is mounted into /app/static and Streamlit static serving
 is enabled.
+
+If the app directory is read-only on a server, either:
+
+    - pass --static-root /writable/path/release_specs and mount that path as
+      /app/static/release_specs, or
+    - pass --skip-static-publish to import data only. PDF files are still copied
+      into data/release_spec_*/specsheet and data/trend_release_*/specsheet.
 """
 
 from __future__ import annotations
@@ -92,6 +99,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -324,16 +332,28 @@ def import_releases(
     analyzer_root: Path,
     data_root: Path,
     *,
+    static_root: Path | None,
     copy_large_artifacts: bool,
     force: bool,
 ) -> ImportStats:
     export_root = analyzer_root / "export"
     pdf_root = analyzer_root / "pdf"
-    static_root = Path.cwd() / "static" / "release_specs"
     stats = ImportStats()
 
     if not export_root.is_dir() or not pdf_root.is_dir():
         raise FileNotFoundError(f"Expected export/ and pdf/ under {analyzer_root}")
+
+    if static_root is not None:
+        try:
+            static_root.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            print(
+                f"Warning: cannot write static PDF directory {static_root}: {exc}. "
+                "Continuing without static PDF publishing. Use --static-root with a writable path, "
+                "fix directory ownership, or pass --skip-static-publish.",
+                file=sys.stderr,
+            )
+            static_root = None
 
     for pdf_group_dir in sorted(path for path in pdf_root.iterdir() if path.is_dir()):
         group_name = pdf_group_dir.name
@@ -351,11 +371,6 @@ def import_releases(
 
             specsheet_pdf = topic_dir / "specsheet" / "specsheet.pdf"
             if specsheet_pdf.exists():
-                static_pdf_path = (
-                    static_root
-                    / _safe_path_part(group_name, "release")
-                    / f"{_safe_path_part(topic_name, 'topic')}.pdf"
-                )
                 action = _copy_or_link(
                     specsheet_pdf,
                     release_dir / "specsheet" / topic_safe / "specsheet.pdf",
@@ -378,8 +393,14 @@ def import_releases(
                         force=force,
                     )
                     stats = _artifact_stat(stats, action)
-                action = _publish_static_pdf(specsheet_pdf, static_pdf_path, force=force)
-                stats = _artifact_stat(stats, action)
+                if static_root is not None:
+                    static_pdf_path = (
+                        static_root
+                        / _safe_path_part(group_name, "release")
+                        / f"{_safe_path_part(topic_name, 'topic')}.pdf"
+                    )
+                    action = _publish_static_pdf(specsheet_pdf, static_pdf_path, force=force)
+                    stats = _artifact_stat(stats, action)
 
             for job_dir in sorted(path for path in topic_dir.iterdir() if path.is_dir()):
                 if job_dir.name in {"trend", "specsheet"}:
@@ -482,13 +503,31 @@ def main() -> int:
             "when the original analyzer output will not stay mounted."
         ),
     )
+    parser.add_argument(
+        "--static-root",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for static PDF copies. Defaults to ./static/release_specs. "
+            "Use a writable path on servers and mount it as /app/static/release_specs."
+        ),
+    )
+    parser.add_argument(
+        "--skip-static-publish",
+        action="store_true",
+        help="Do not write static/release_specs PDF copies. Data/specsheet PDFs are still imported.",
+    )
     parser.add_argument("--force", action="store_true", help="Replace existing imported files and links.")
     args = parser.parse_args()
 
     data_root = args.data_root.resolve() if args.data_root is not None else _data_root()
+    static_root = None
+    if not args.skip_static_publish:
+        static_root = (args.static_root if args.static_root is not None else Path.cwd() / "static" / "release_specs").resolve()
     stats = import_releases(
         args.source.resolve(),
         data_root,
+        static_root=static_root,
         copy_large_artifacts=args.copy_large_artifacts,
         force=args.force,
     )

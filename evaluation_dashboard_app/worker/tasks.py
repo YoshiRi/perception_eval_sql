@@ -39,6 +39,8 @@ _RELEASE_PERFORMANCE_INTEGRATION_ID = "96ad8fba-0228-4c2b-9166-07d4de1a0760"
 _RELEASE_DEVOPS_CATALOG_ID = "ab0f8498-cc1b-4726-836f-e18e8bcb3200"
 _RELEASE_DEVOPS_INTEGRATION_ID = "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
 _RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
+_RELEASE_SKIP_LARGE_FILE = True
+_RELEASE_LARGE_FILE_MB = 50.0
 
 # Optional imports for tasks that need them
 def _import_eval_summary():
@@ -1339,6 +1341,8 @@ def _build_release_analysis_artifacts(
     output_path: Path,
     phase: str,
     run_eval: bool = False,
+    skip_large_file: bool = _RELEASE_SKIP_LARGE_FILE,
+    large_file_mb: float = _RELEASE_LARGE_FILE_MB,
     progress_start: float = 48.0,
     progress_end: float = 78.0,
 ) -> Dict[str, Any]:
@@ -1355,6 +1359,8 @@ def _build_release_analysis_artifacts(
         "parquet_path": "",
         "warnings": [],
     }
+    effective_skip_large_file = _RELEASE_SKIP_LARGE_FILE or bool(skip_large_file)
+    effective_large_file_mb = float(large_file_mb or _RELEASE_LARGE_FILE_MB)
 
     progress_span = max(0.0, progress_end - progress_start)
     download_end = progress_start + progress_span * 0.55
@@ -1396,8 +1402,8 @@ def _build_release_analysis_artifacts(
             output_path=str(output_path),
             download_type="archives",
             phase=phase,
-            skip_large_file=False,
-            large_file_mb=50.0,
+            skip_large_file=effective_skip_large_file,
+            large_file_mb=effective_large_file_mb,
             keep_zip_files=False,
             suite_ids=None,
             on_progress=_on_progress,
@@ -1410,6 +1416,8 @@ def _build_release_analysis_artifacts(
         "total": total_attempted,
         "success": success_count,
         "failed": failure_count,
+        "skip_large_file": effective_skip_large_file,
+        "large_file_mb": effective_large_file_mb,
         "rows": rows[:100],
     }
 
@@ -1545,6 +1553,8 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             parameters.get("analysis_phase")
             or "perception.object_recognition.tracking.objects"
         ).strip()
+        skip_large_file = _RELEASE_SKIP_LARGE_FILE
+        large_file_mb = float(parameters.get("large_file_mb") or _RELEASE_LARGE_FILE_MB)
         labels = parameters.get("labels") or DEFAULT_SPECSHEET_LABELS
         labels = [str(label).strip() for label in labels if str(label).strip()]
         if not labels:
@@ -1719,6 +1729,8 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 output_path=analysis_path,
                 phase=analysis_phase,
                 run_eval=bool(parameters.get("run_eval", False)),
+                skip_large_file=skip_large_file,
+                large_file_mb=large_file_mb,
                 progress_start=48 + (artifact_span * artifact_idx),
                 progress_end=48 + (artifact_span * (artifact_idx + 1)),
             )
@@ -1733,6 +1745,8 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 "job_id": item["job_id"],
                 "download_type": "archives",
                 "phase": analysis_phase,
+                "skip_large_file": skip_large_file,
+                "large_file_mb": large_file_mb,
                 "run_eval": bool(parameters.get("run_eval", False)),
                 "generate_parquet": True,
                 "eval_recursive": bool(parameters.get("run_eval", False)),

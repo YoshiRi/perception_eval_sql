@@ -249,7 +249,7 @@ def _pdf_links_for_prefix(release: dict[str, Any], prefix: str) -> str:
                 label = topic.replace("perception.object_recognition.detection.", "").replace(".objects", "")
                 label = label.replace("bevfusion", "BEVFusion").replace("centerpoint", "CenterPoint")
             links.append(_html_link(str(pdf.get("static_url") or ""), label, "pdf"))
-    return "<br>".join(links) if links else '<span class="muted-cell">-</span>'
+    return '<span class="link-chip-row">' + "".join(links) + "</span>" if links else '<span class="muted-cell">-</span>'
 
 
 def _has_pdf_for_prefix(release: dict[str, Any], prefix: str) -> bool:
@@ -333,7 +333,7 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
 }}
 body {{
   margin: 0;
-  padding: 0;
+  padding: 0 0 10px 0;
   background: transparent;
   color: #0f172a;
   font-family: "Source Sans Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -462,6 +462,13 @@ body {{
   text-decoration: none;
   border: 1px solid transparent;
 }}
+.link-chip-row {{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.22rem;
+  flex-wrap: nowrap;
+}}
 .link-chip-overview {{
   color: #1d4ed8;
   background: #eff6ff;
@@ -554,7 +561,7 @@ body {{
 </body>
 </html>
 """
-    component_height = 76 + max(1, len(releases)) * 34
+    component_height = 96 + max(1, len(releases)) * 39
     components.html(table_html, height=component_height, scrolling=False)
 
 
