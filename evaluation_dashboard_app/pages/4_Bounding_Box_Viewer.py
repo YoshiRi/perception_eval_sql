@@ -24,6 +24,7 @@ from lib.t4_visualizer_client import (
     TargetObjectIn,
     T4VisualizerClient,
     T4VisualizerError,
+    browser_base_url,
     target_object_from_gt_row,
 )
 
@@ -336,7 +337,7 @@ with st.sidebar:
     st.text_input(
         "T4 server base URL",
         key="bbox_t4_base_url",
-        help=f"Default from env `{ENV_BASE_URL}`; needs **GET /render/html** (iframe) and **POST /render** (PNG mode).",
+        help=f"Server-side API URL. Default from env `{ENV_BASE_URL}`. Browser iframes use `T4_VISUALIZER_BROWSER_BASE_URL` when set.",
     )
     _t4_mode = st.radio(
         "T4 preview",
@@ -522,6 +523,7 @@ def _bbox_t4_request_key(
 _t4_preview_mode = st.session_state.get("bbox_t4_preview_mode", "html_iframe")
 
 base_url_t4 = (st.session_state.get("bbox_t4_base_url") or "").strip() or DEFAULT_BASE_URL
+browser_url_t4 = browser_base_url(base_url_t4)
 
 _ds_t4 = resolve_t4_dataset_id(df_frame)
 if not _ds_t4 and selected_t4dataset is not None:
@@ -606,7 +608,7 @@ else:
                 )
     else:
         _q_three = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
-        _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
+        _viewer_three_url = f"{browser_url_t4.rstrip('/')}/viewer/three?{_q_three}"
         st.caption("**3D viewer** (Three.js, GT / pred / matched layers) lives on a dedicated page.")
         c3d_a, c3d_b = st.columns([1, 2])
         with c3d_a:
@@ -618,7 +620,7 @@ else:
         pass
     elif _t4_preview_mode == "html_iframe":
         _q = t4_share_query_params(_ds_t4, _sc_t4, int(frame))
-        _render_html_url = f"{base_url_t4.rstrip('/')}/render/html?{_q}"
+        _render_html_url = f"{browser_url_t4.rstrip('/')}/render/html?{_q}"
         st.markdown(f"[Open in new tab]({_render_html_url})")
         _iframe_h = 900
         # Iframe shell: neutral gray while the document loads (avoid #141418 — reads as a black box for ~2s until

@@ -19,6 +19,7 @@ from lib.score_schema import (
     infer_score_criteria_count,
     score_identity_cols,
 )
+from lib.parquet_schema import is_detection_stats_parquet
 from lib.summary_compare import build_summary_delta
 
 PRODUCT_LABEL_JA_DEFAULT = {
@@ -518,21 +519,22 @@ def _build_criteria_section(run_records: Sequence[dict], run_labels: Sequence[st
 
 
 def _build_detection_section(run_records: Sequence[dict], run_labels: Sequence[str]) -> dict:
+    con = duckdb.connect()
     parquet_paths: List[Tuple[str, str]] = []
     for rec, lbl in zip(run_records, run_labels):
-        files = sorted(Path(rec["path"]).glob("*.parquet"))
-        if files:
-            parquet_paths.append((lbl, str(files[0])))
+        for file in sorted(Path(rec["path"]).glob("*.parquet")):
+            if is_detection_stats_parquet(con, str(file)):
+                parquet_paths.append((lbl, str(file)))
+                break
 
     if not parquet_paths:
         return {
-            "summary": "No parquet files were found in the selected run set.",
+            "summary": "No object-level detection parquet files were found in the selected run set.",
             "figures": [],
             "tables": [],
-            "fallback_note": "Detection Stats skipped because parquet data is missing.",
+            "fallback_note": "Detection Stats skipped because compatible parquet data is missing.",
         }
 
-    con = duckdb.connect()
     views: List[Tuple[str, str]] = []
     try:
         for idx, (lbl, pq) in enumerate(parquet_paths):

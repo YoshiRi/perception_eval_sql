@@ -8,6 +8,17 @@ from typing import List, Set, Optional
 import duckdb
 
 
+DETECTION_STATS_REQUIRED_COLUMNS = {
+    "x",
+    "y",
+    "source",
+    "status",
+    "label",
+    "topic_name",
+    "t4dataset_id",
+}
+
+
 def get_parquet_columns(con: duckdb.DuckDBPyConnection, path: str) -> List[str]:
     """
     Return list of column names for the parquet file.
@@ -38,6 +49,17 @@ def has_columns(con: duckdb.DuckDBPyConnection, path: str, columns: List[str]) -
         return True
     available = get_parquet_columns_set(con, path)
     return all(c in available for c in columns)
+
+
+def missing_detection_stats_columns(con: duckdb.DuckDBPyConnection, path: str) -> List[str]:
+    """Return object-level columns missing for Detection Stats SQL."""
+    available = get_parquet_columns_set(con, path)
+    return sorted(DETECTION_STATS_REQUIRED_COLUMNS - available)
+
+
+def is_detection_stats_parquet(con: duckdb.DuckDBPyConnection, path: str) -> bool:
+    """Return True when a parquet has the object-level schema expected by Detection Stats."""
+    return not missing_detection_stats_columns(con, path)
 
 
 def schema_flags(con: duckdb.DuckDBPyConnection, path: str) -> dict:

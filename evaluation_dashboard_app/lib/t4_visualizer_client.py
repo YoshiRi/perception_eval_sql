@@ -13,11 +13,13 @@ import base64
 import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
-DEFAULT_BASE_URL = "http://10.0.6.148:8000"
+DEFAULT_BASE_URL = "http://localhost:8000"
 ENV_BASE_URL = "T4_VISUALIZER_BASE_URL"
+ENV_BROWSER_BASE_URL = "T4_VISUALIZER_BROWSER_BASE_URL"
 
 
 class T4VisualizerError(Exception):
@@ -124,6 +126,28 @@ def render_response_json_for_debug(
 
 def _default_base_url() -> str:
     return os.environ.get(ENV_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
+
+
+def browser_base_url(api_base_url: str | None = None) -> str:
+    """Return the T4 URL that the user's browser should open.
+
+    `T4_VISUALIZER_BASE_URL` is used by Python running inside Streamlit. In Docker,
+    that often needs to be `http://host.docker.internal:8000`, but browsers on the
+    host cannot resolve that Docker-only hostname. Use
+    `T4_VISUALIZER_BROWSER_BASE_URL` for iframe/link URLs; if unset, translate the
+    common Docker hostname back to localhost.
+    """
+    explicit = os.environ.get(ENV_BROWSER_BASE_URL, "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    raw = (api_base_url or _default_base_url()).strip() or DEFAULT_BASE_URL
+    parsed = urlparse(raw)
+    if parsed.hostname == "host.docker.internal":
+        netloc = "localhost"
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        return urlunparse(parsed._replace(netloc=netloc)).rstrip("/")
+    return raw.rstrip("/")
 
 
 def _serialize_target_object(o: TargetObjectIn) -> dict:

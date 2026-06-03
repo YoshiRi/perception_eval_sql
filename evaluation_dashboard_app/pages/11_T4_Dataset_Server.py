@@ -26,6 +26,7 @@ from lib.t4_visualizer_client import (
     T4VisualizerClient,
     T4VisualizerError,
     TargetObjectIn,
+    browser_base_url,
     render_request_to_json_body,
     render_response_json_for_debug,
     target_object_from_gt_row,
@@ -111,7 +112,7 @@ _hydrate_t4_from_url()
 base_url = st.sidebar.text_input(
     "Server base URL",
     key="t4_test_base_url",
-    help=f"Override env {ENV_BASE_URL} for this session.",
+    help=f"Server-side API URL. Browser links use `T4_VISUALIZER_BROWSER_BASE_URL` when set.",
 )
 timeout_s = st.sidebar.number_input("HTTP timeout (s)", min_value=5.0, max_value=600.0, value=120.0, step=5.0)
 
@@ -421,7 +422,7 @@ with tab_render:
         crop_cameras=bool(st.session_state.get("t4_render_crop", False)),
         version=emb_ver if emb_ver else None,
     )
-    viz_base = (base_url or "").strip().rstrip("/") or DEFAULT_BASE_URL
+    viz_base = browser_base_url((base_url or "").strip() or DEFAULT_BASE_URL)
     q = t4_share_query_params(emb_ds, emb_scen, frame_index=emb_frame)
     render_get_url = f"{viz_base}/render?{q}"
 

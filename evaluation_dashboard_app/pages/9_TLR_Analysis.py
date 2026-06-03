@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 from lib.tlr_eval_analyzer import TLREvaluationAnalyzer
 from lib.path_utils import get_data_root, path_display, list_tlr_result_directories
-from lib.t4_visualizer_client import DEFAULT_BASE_URL, ENV_BASE_URL
+from lib.t4_visualizer_client import DEFAULT_BASE_URL, ENV_BASE_URL, browser_base_url
 from lib.page_chrome import (
     inject_app_page_styles,
     render_loaded_data_section,
@@ -213,8 +213,9 @@ def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, ke
     base_url = st.text_input(
         "T4 server base URL",
         key=f"{key_prefix}_base_url",
-        help=f"Default from env `{ENV_BASE_URL}`. The viewer URL is `/viewer/tlr?t4dataset_id=...&frame_index=...`.",
+        help=f"Server-side API URL. Default from env `{ENV_BASE_URL}`. Browser iframes use `T4_VISUALIZER_BROWSER_BASE_URL` when set.",
     )
+    browser_url = browser_base_url(base_url)
 
     available_labels = [label for label, df in detail_sources.items() if df is not None and not df.empty]
     if not available_labels:
@@ -253,7 +254,7 @@ def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, ke
     selected_frame = int(selected_row["frame_index"])
     payload = _build_tlr_eval_payload_by_frame(dataset_rows)
 
-    viewer_url = f"{base_url.rstrip('/')}/viewer/tlr?t4dataset_id={quote(selected_dataset, safe='')}&frame_index={selected_frame}"
+    viewer_url = f"{browser_url.rstrip('/')}/viewer/tlr?t4dataset_id={quote(selected_dataset, safe='')}&frame_index={selected_frame}"
     st.markdown(f"[Open `/viewer/tlr` in new tab]({viewer_url})")
     st.caption(
         f"Using the first available frame for this dataset: `frame_index={selected_frame}` from `{selected_row['scenario']}`."

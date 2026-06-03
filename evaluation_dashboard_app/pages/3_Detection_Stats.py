@@ -22,7 +22,7 @@ from lib.detection_stats_debug import (
     ds_dtimer,
 )
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
-from lib.parquet_schema import schema_flags
+from lib.parquet_schema import get_parquet_columns, missing_detection_stats_columns, schema_flags
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
 from lib.ui.detection_stats import (
     detection_stats_page_loading_banner_markup,
@@ -383,6 +383,27 @@ def validate_parquet_file(con, path: str) -> Tuple[bool, str]:
             )
         return False, err
 
+
+def validate_detection_stats_parquet(con, path: str) -> Tuple[bool, str]:
+    """Validate that a readable parquet has object-level columns used by Detection Stats."""
+    ok, msg = validate_parquet_file(con, path)
+    if not ok:
+        return ok, msg
+
+    missing = missing_detection_stats_columns(con, path)
+    if not missing:
+        return True, ""
+
+    columns = get_parquet_columns(con, path)
+    return False, (
+        "This parquet is readable, but it is not object-level detection data for Detection Stats. "
+        f"Missing required columns: {', '.join(missing)}. "
+        f"Detected columns: {', '.join(columns[:12])}{'...' if len(columns) > 12 else ''}. "
+        "For release spec data, load/select the performance parquet such as performance/current.parquet "
+        "or performance/future.parquet. The devops/devops.parquet file is a suite summary "
+        "(Catalog Name, Suite Name, Success, Fail, Total, Pass Rate)."
+    )
+
 def list_values(con, pq: str, expr: str, where: Optional[str] = None) -> List:
     """Get distinct values from parquet file."""
     q = f"SELECT DISTINCT {expr} FROM parquet_scan('{pq}')"
@@ -697,9 +718,9 @@ ds_debug_log_memory("before_duckdb_validate_views")
 with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
     if not cache_hit:
         for i, (path, lbl) in enumerate(zip(target_files, run_labels_list)):
-            ok, msg = validate_parquet_file(con, path)
+            ok, msg = validate_detection_stats_parquet(con, path)
             if not ok:
-                st.sidebar.error(f"**Run ({lbl}) file** cannot be read: {msg}")
+                st.sidebar.error(f"**Run ({lbl}) file** cannot be used here: {msg}")
                 st.stop()
 
         # Automatically materialize eval_flat cache parquet(s) under each run.

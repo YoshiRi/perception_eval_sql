@@ -13,6 +13,7 @@ from lib.path_utils import path_display
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
 from lib.t4_dataset_embed import t4_share_query_params
 from lib.t4_three_layers import (
+    EXTERNAL_BBOX_ALIGNMENT_VERSION,
     build_three_layer_payload_all_frames,
     infer_external_bbox_alignment_query_params,
     render_t4_three_js_embed,
@@ -24,6 +25,7 @@ from lib.t4_visualizer_client import (
     ENV_BASE_URL,
     T4VisualizerClient,
     T4VisualizerError,
+    browser_base_url,
 )
 
 st.set_page_config(
@@ -292,7 +294,7 @@ with st.sidebar:
     st.text_input(
         "T4 server base URL",
         key="bbox_t4_base_url",
-        help=f"Default from env `{ENV_BASE_URL}`. Embeds `/viewer/three` and posts GT / pred / matched bbox layers.",
+        help=f"Server-side API URL. Default from env `{ENV_BASE_URL}`. Browser iframes use `T4_VISUALIZER_BROWSER_BASE_URL` when set.",
     )
 
 # ----------------------------
@@ -402,6 +404,7 @@ if df_frame.empty and not df.empty:
 # T4 Three.js embed
 # ----------------------------
 base_url_t4 = (st.session_state.get("bbox_t4_base_url") or "").strip() or DEFAULT_BASE_URL
+browser_url_t4 = browser_base_url(base_url_t4)
 
 _ds_t4 = resolve_t4_dataset_id(df_frame)
 if not _ds_t4 and selected_t4dataset is not None:
@@ -485,10 +488,26 @@ else:
         _iframe_entry_frame = int(df["frame_index"].min())
         _q_three = t4_share_query_params(_ds_t4, _sc_t4, _iframe_entry_frame)
         _q_three = f"{_q_three}&{infer_external_bbox_alignment_query_params(df)}"
-        _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
+        _viewer_three_url = f"{browser_url_t4.rstrip('/')}/viewer/three?{_q_three}"
         _layer_payload = build_three_layer_payload_all_frames(df)
 
         _viewer_three_h = 1400
         render_t4_three_js_embed(_viewer_three_url, _layer_payload, height=_viewer_three_h)
+        with st.expander("T4 bbox alignment debug", expanded=False):
+            first_frame_key = next(iter(sorted((_layer_payload.get("frames") or {}).keys(), key=lambda v: int(v))), "")
+            first_frame_payload = (_layer_payload.get("frames") or {}).get(first_frame_key, {})
+            first_gt = (first_frame_payload.get("gt") or [{}])[0]
+            st.code(_viewer_three_url, language="text")
+            st.json(
+                {
+                    "alignment_version": EXTERNAL_BBOX_ALIGNMENT_VERSION,
+                    "frame": first_frame_key,
+                    "first_gt": {
+                        key: first_gt.get(key)
+                        for key in ("uuid", "label", "status", "length", "width", "height", "yaw", "force_wireframe")
+                    },
+                    "has_corners": "corners" in first_gt,
+                }
+            )
 
 st.page_link("pages/4_Bounding_Box_Viewer.py", label="Back to Bounding Box & BEV viewer", icon="🖼️")
