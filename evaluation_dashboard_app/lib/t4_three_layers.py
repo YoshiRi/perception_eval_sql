@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import math
+from urllib.parse import urlencode
 from typing import TYPE_CHECKING
 
 import streamlit.components.v1 as components
@@ -48,6 +49,9 @@ _OPTIONAL_TEXT_FIELDS = (
     "source",
 )
 
+_VEHICLE_LABELS = {"car", "truck", "bus", "trailer"}
+_LEGACY_EXTERNAL_BBOX_YAW_OFFSET = math.pi / 2
+
 
 def _is_missing(value: object) -> bool:
     if value is None:
@@ -74,6 +78,45 @@ def resolve_t4_scenario(dff: "pd.DataFrame", scenario_from_sidebar: str | None) 
     if dff is not None and not dff.empty and "scenario_name" in dff.columns and dff["scenario_name"].notna().any():
         return str(dff["scenario_name"].dropna().iloc[0])
     return ""
+
+
+def infer_external_bbox_alignment_query_params(df: "pd.DataFrame") -> str:
+    """Return `/viewer/three` query params for eval bbox dimension/yaw convention.
+
+    Older eval parquet exports often store vehicle dimensions as width-forward
+    (`length < width`) and rely on the T4 viewer's legacy `+pi/2` external bbox
+    yaw offset. Newer app/analyzer exports store body-x as `length` and body-y as
+    `width`; those must pass `external_bbox_yaw_offset=0` or the viewer rotates
+    them by 90 degrees.
+    """
+    if df is None or df.empty or not {"length", "width"}.issubset(df.columns):
+        yaw_offset = _LEGACY_EXTERNAL_BBOX_YAW_OFFSET
+    else:
+        sample = df
+        if "label" in sample.columns:
+            labels = sample["label"].astype(str).str.lower()
+            vehicle_sample = sample[labels.isin(_VEHICLE_LABELS)]
+            if not vehicle_sample.empty:
+                sample = vehicle_sample
+        if "source" in sample.columns:
+            gt_sample = sample[sample["source"].astype(str) == "GT"]
+            if not gt_sample.empty:
+                sample = gt_sample
+
+        dims = sample[["length", "width"]].apply(lambda s: s.astype(float), axis=0)
+        dims = dims[(dims["length"] > 0) & (dims["width"] > 0)]
+        if dims.empty:
+            yaw_offset = _LEGACY_EXTERNAL_BBOX_YAW_OFFSET
+        else:
+            length_forward_ratio = float((dims["length"] >= dims["width"]).mean())
+            yaw_offset = 0.0 if length_forward_ratio >= 0.8 else _LEGACY_EXTERNAL_BBOX_YAW_OFFSET
+
+    return urlencode(
+        {
+            "external_bbox_yaw_offset": f"{yaw_offset:.12g}",
+            "external_bbox_swap_lw": "false",
+        }
+    )
 
 
 def _single_frame_layer_dict(df_frame: "pd.DataFrame") -> dict:

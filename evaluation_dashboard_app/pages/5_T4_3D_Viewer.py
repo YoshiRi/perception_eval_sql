@@ -14,6 +14,7 @@ from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, 
 from lib.t4_dataset_embed import t4_share_query_params
 from lib.t4_three_layers import (
     build_three_layer_payload_all_frames,
+    infer_external_bbox_alignment_query_params,
     render_t4_three_js_embed,
     resolve_t4_dataset_id,
     resolve_t4_scenario,
@@ -483,6 +484,7 @@ else:
         # Fixed entry frame so Streamlit slider does not reload the iframe; eval layers use bbox_layers_by_frame.
         _iframe_entry_frame = int(df["frame_index"].min())
         _q_three = t4_share_query_params(_ds_t4, _sc_t4, _iframe_entry_frame)
+        _q_three = f"{_q_three}&{infer_external_bbox_alignment_query_params(df)}"
         _viewer_three_url = f"{base_url_t4.rstrip('/')}/viewer/three?{_q_three}"
         _layer_payload = build_three_layer_payload_all_frames(df)
 

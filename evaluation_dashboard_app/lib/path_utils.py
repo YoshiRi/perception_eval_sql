@@ -125,6 +125,10 @@ def _looks_like_analysis_run(path: Path) -> bool:
     )
 
 
+def _is_internal_trend_release_dir(path: Path) -> bool:
+    return path.name.startswith("trend_release_")
+
+
 RELEASE_ROLE_DIRS = ("performance", "usecase", "devops")
 RELEASE_ROLE_LABELS = {
     "performance": "Performance",
@@ -213,6 +217,8 @@ def list_run_directories() -> List[Path]:
     runs: List[Path] = []
     seen = set()
     for child in sorted([p for p in root.iterdir() if p.is_dir()]):
+        if _is_internal_trend_release_dir(child):
+            continue
         resolved = child.resolve()
         if resolved not in seen and not _looks_like_release_container(child):
             runs.append(child)
