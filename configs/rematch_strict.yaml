@@ -1,0 +1,29 @@
+# Strict re-matching (nuScenes-aligned)
+# - Tight per-class thresholds reflecting physical object size
+# - Exclude fully-occluded GT from matching pool
+# - High-confidence detections only (≥0.5)
+
+label: rematch_strict
+
+csv_path: data/output/pdf/e2fb9ecc-decf-513f-b54f-2a493b2877ad_8e477a87-8e2f-5b15-9618-4597431a85eb_b2fd4c93-1ba3-5c8f-be8f-984e65827bfa/perception.object_recognition.objects/e2fb9ecc-decf-513f-b54f-2a493b2877ad/current.csv
+output_dir: data/output/rematch/strict
+
+# Per-class thresholds based on typical object footprint
+distance_thresholds_m:
+  car:        2.0
+  truck:      4.0   # larger → allow larger center offset
+  bus:        4.0
+  pedestrian: 0.5   # small → require precise localisation
+  bicycle:    1.0
+  motorbike:  1.0
+  unknown:    2.0
+  __default__: 2.0
+
+label_match: strict
+label_groups: null
+
+confidence_min: 0.5
+visibility_exclude_from_gt:
+  - NONE
+
+algorithm: hungarian

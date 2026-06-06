@@ -1,0 +1,20 @@
+# Standard re-matching
+# - Threshold 2.0m for all classes (matches approximate upper bound of original matching)
+# - Strict label matching (car↔car only)
+# - No visibility or confidence filter
+
+label: rematch_default
+
+csv_path: data/output/pdf/e2fb9ecc-decf-513f-b54f-2a493b2877ad_8e477a87-8e2f-5b15-9618-4597431a85eb_b2fd4c93-1ba3-5c8f-be8f-984e65827bfa/perception.object_recognition.objects/e2fb9ecc-decf-513f-b54f-2a493b2877ad/current.csv
+output_dir: data/output/rematch/default
+
+distance_thresholds_m:
+  __default__: 2.0
+
+label_match: strict
+label_groups: null
+
+confidence_min: 0.0
+visibility_exclude_from_gt: []
+
+algorithm: hungarian
