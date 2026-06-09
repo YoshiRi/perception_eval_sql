@@ -1415,7 +1415,10 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
                             )
 
         if "devops" in group.jobs:
-            flattened = extract_devops_case_rows(group.jobs["devops"]["summary"])
+            devops_job = group.jobs["devops"]
+            flattened = extract_devops_case_rows(
+                devops_job.get("devops_summary") or devops_job["summary"]
+            )
             if flattened:
                 total_passed = sum(int(row["passed"]) for row in flattened)
                 total_count = sum(int(row["total"]) for row in flattened)

@@ -400,7 +400,7 @@ def validate_detection_stats_parquet(con, path: str) -> Tuple[bool, str]:
         f"Missing required columns: {', '.join(missing)}. "
         f"Detected columns: {', '.join(columns[:12])}{'...' if len(columns) > 12 else ''}. "
         "For release spec data, load/select the performance parquet such as performance/current.parquet "
-        "or performance/future.parquet. The devops/devops.parquet file is a suite summary "
+        "or performance/future.parquet. The devops/usecase_devops.parquet file is a suite summary "
         "(Catalog Name, Suite Name, Success, Fail, Total, Pass Rate)."
     )
 

@@ -12,7 +12,7 @@ Expected source layout:
           metadata.yaml
           current.parquet
           future.parquet
-          devops.parquet
+          usecase_devops.parquet
           detection.yaml
       pdf/
         <group_name>/
@@ -44,7 +44,7 @@ Generated dashboard layout:
         devops/
           metadata.yaml
           resources/summary.json
-          current.parquet
+          usecase_devops.parquet
         specsheet/
           specsheet.pdf
           <topic_name>/specsheet.pdf
@@ -119,7 +119,20 @@ ROLE_DIR_BY_SUMMARY_ROLE = {
 DEFAULT_PROJECT_ID = "x2_dev"
 SUMMARY_FULL_HEADER = "全数データセット評価"
 SUMMARY_USECASE_HEADER = "ユースケース評価"
+SUMMARY_USECASE_DEVOPS_HEADER = "ユースケース(過去課題)評価"
 LARGE_SUFFIXES = {".parquet", ".html", ".png"}
+
+
+def _usecase_devops_parquet_names() -> tuple[str, ...]:
+    names: list[str] = []
+    try:
+        from perception_catalog_analyzer.constants import USECASE_DEVOPS_RESULT_FILENAME
+
+        names.append(str(USECASE_DEVOPS_RESULT_FILENAME))
+    except Exception:
+        pass
+    names.extend(["usecase_devops.parquet", "devops.parquet"])
+    return tuple(dict.fromkeys(name for name in names if name))
 
 
 @dataclass(frozen=True)
@@ -171,10 +184,19 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def _classify_summary(summary: dict[str, Any]) -> str:
     blocks = summary.get("blocks")
     if isinstance(blocks, list):
-        headers = [str(block.get("header") or "") for block in blocks if isinstance(block, dict)]
-        if SUMMARY_FULL_HEADER in headers:
+        block_items = [block for block in blocks if isinstance(block, dict)]
+        headers = [str(block.get("header") or "") for block in block_items]
+        evaluation_types = [str(block.get("evaluation_type") or "") for block in block_items]
+        if "full" in evaluation_types or SUMMARY_FULL_HEADER in headers:
             return "full"
-        if SUMMARY_USECASE_HEADER in headers:
+        if "usecase_devops" in evaluation_types or SUMMARY_USECASE_DEVOPS_HEADER in headers:
+            return "devops"
+        if (
+            "usecase" in evaluation_types
+            or "usecase_planning" in evaluation_types
+            or SUMMARY_USECASE_HEADER in headers
+            or "ユースケース(Planning)評価" in headers
+        ):
             return "usecase"
         return "performance_blocks"
     if summary:
@@ -291,7 +313,7 @@ def _copy_export_job(
     _write_yaml(target_dir / "metadata.yaml", metadata)
     stats = stats.add(copied=1)
 
-    for file_name in ("current.parquet", "future.parquet", "devops.parquet", "detection.yaml"):
+    for file_name in ("current.parquet", "future.parquet", *_usecase_devops_parquet_names(), "detection.yaml"):
         src = source_dir / file_name
         if not src.exists():
             continue
@@ -431,6 +453,17 @@ def import_releases(
                     else:
                         action = _copy_or_link(src, trend_job_dir / src_name, copy_large_artifacts=True, force=force)
                         stats = _artifact_stat(stats, action)
+                for parquet_name in _usecase_devops_parquet_names():
+                    src = job_dir / parquet_name
+                    if not src.exists():
+                        continue
+                    action = _copy_or_link(
+                        src,
+                        trend_job_dir / parquet_name,
+                        copy_large_artifacts=copy_large_artifacts,
+                        force=force,
+                    )
+                    stats = _artifact_stat(stats, action)
                 stats = stats.add(trend_jobs=1)
 
                 if topic_name != MAIN_TOPIC:

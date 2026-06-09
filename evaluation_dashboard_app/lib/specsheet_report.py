@@ -49,6 +49,8 @@ TREND_SUMMARY_FILENAME = "summary.json"
 SPECSHEET_RELEASE_ROLE_DIRS = ("performance", "usecase", "devops")
 GENERATED_TREND_HISTORY_DIRNAME = "_app_trend_history"
 FULL_DATASET_EVALUATION_HEADER = "全数データセット評価"
+USECASE_PLANNING_EVALUATION_HEADERS = {"ユースケース評価", "ユースケース(Planning)評価"}
+USECASE_DEVOPS_EVALUATION_HEADER = "ユースケース(過去課題)評価"
 DEFAULT_TREND_METADATA_TEXT = """tags: [trend]
 pilot_auto_version: "Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)"
 data_count: 99,776+
@@ -234,6 +236,18 @@ def list_specsheet_source_parquets(run_dir: str | Path) -> list[Path]:
             ordered.append(path)
             seen.add(path)
     return ordered
+
+
+def _usecase_devops_parquet_names() -> tuple[str, ...]:
+    names: list[str] = []
+    try:
+        from perception_catalog_analyzer.constants import USECASE_DEVOPS_RESULT_FILENAME
+
+        names.append(str(USECASE_DEVOPS_RESULT_FILENAME))
+    except Exception:
+        pass
+    names.extend(["usecase_devops.parquet", "devops.parquet"])
+    return tuple(dict.fromkeys(name for name in names if name))
 
 
 def get_latest_source_mtime(run_dir: str | Path) -> float | None:
@@ -442,10 +456,18 @@ def load_trend_summary_file(summary_path: str | Path) -> dict[str, Any]:
 def classify_trend_summary(summary: dict[str, Any]) -> str:
     blocks = summary.get("blocks")
     if isinstance(blocks, list):
-        headers = [str(block.get("header") or "") for block in blocks]
-        if "全数データセット評価" in headers:
+        block_items = [block for block in blocks if isinstance(block, dict)]
+        headers = [str(block.get("header") or "") for block in block_items]
+        evaluation_types = [str(block.get("evaluation_type") or "") for block in block_items]
+        if "full" in evaluation_types or FULL_DATASET_EVALUATION_HEADER in headers:
             return "full"
-        if "ユースケース評価" in headers:
+        if "usecase_devops" in evaluation_types or USECASE_DEVOPS_EVALUATION_HEADER in headers:
+            return "devops"
+        if (
+            "usecase" in evaluation_types
+            or "usecase_planning" in evaluation_types
+            or any(header in USECASE_PLANNING_EVALUATION_HEADERS for header in headers)
+        ):
             return "usecase"
         return "performance_blocks"
     if isinstance(summary, dict) and summary:
@@ -457,6 +479,61 @@ def _unwrap_devops_summary(summary: dict[str, Any]) -> dict[str, Any]:
     devops = summary.get("DevOps") if isinstance(summary, dict) else None
     if isinstance(devops, dict):
         return devops
+    return summary
+
+
+def _find_usecase_devops_parquet_near(path: str | Path) -> Path | None:
+    base = Path(path)
+    candidates = [base if base.is_dir() else base.parent]
+    if candidates[0].name == "resources" and candidates[0].parent != candidates[0]:
+        candidates.append(candidates[0].parent)
+    for directory in candidates:
+        for file_name in _usecase_devops_parquet_names():
+            parquet_path = directory / file_name
+            if parquet_path.exists():
+                return parquet_path
+    return None
+
+
+def _load_usecase_devops_data_from_parquet(parquet_path: str | Path | None) -> dict[str, Any]:
+    if parquet_path is None:
+        return {}
+    try:
+        from perception_catalog_analyzer.file_io import load_usecase_devops
+
+        data = load_usecase_devops(Path(parquet_path))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+
+    try:
+        frame = pd.read_parquet(parquet_path)
+    except Exception:
+        return {}
+    if frame.empty or "Suite Name" not in frame.columns:
+        return {}
+    success_col = "Success" if "Success" in frame.columns else "success"
+    total_col = "Total" if "Total" in frame.columns else "total"
+    if success_col not in frame.columns or total_col not in frame.columns:
+        return {}
+
+    suite_pass_rate: dict[str, dict[str, int]] = {}
+    for _, row in frame.iterrows():
+        suite_name = str(row.get("Suite Name") or row.get("suite_name") or "").strip()
+        if not suite_name:
+            continue
+        suite_pass_rate[suite_name] = {
+            "passed": int(row.get(success_col, 0) or 0),
+            "total": int(row.get(total_col, 0) or 0),
+        }
+    return {"Suite pass rate": suite_pass_rate} if suite_pass_rate else {}
+
+
+def _devops_summary_for_metadata(metadata_path: str | Path, summary: dict[str, Any]) -> dict[str, Any]:
+    parquet_path = _find_usecase_devops_parquet_near(metadata_path)
+    parquet_summary = _load_usecase_devops_data_from_parquet(parquet_path)
+    if parquet_summary:
+        return parquet_summary
     return summary
 
 
@@ -553,6 +630,7 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
         summary = load_trend_summary_file(summary_path)
         role = classify_trend_summary(summary)
         metadata = load_trend_metadata_file(metadata_path)
+        devops_summary = _devops_summary_for_metadata(metadata_path, summary) if role == "devops" else {}
 
         if metadata_path.parent.name == "resources":
             run_dir = metadata_path.parent.parent
@@ -579,6 +657,7 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
                     "summary_path": summary_path,
                     "metadata": metadata,
                     "summary": summary,
+                    "devops_summary": devops_summary,
                 }
             )
             continue
@@ -613,6 +692,7 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
             "summary_path": summary_path.resolve(),
             "metadata": metadata,
             "summary": summary,
+            "devops_summary": devops_summary,
         }
 
     standalone_by_release: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = {}
@@ -663,6 +743,7 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
                     "summary_path": record["summary_path"].resolve(),
                     "metadata": record["metadata"],
                     "summary": record["summary"],
+                    "devops_summary": record.get("devops_summary", {}),
                 }
             continue
 
@@ -682,6 +763,7 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
                         "summary_path": record["summary_path"].resolve(),
                         "metadata": record["metadata"],
                         "summary": record["summary"],
+                        "devops_summary": record.get("devops_summary", {}),
                     }
                 },
             )
@@ -853,6 +935,52 @@ def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[st
     }
 
 
+def _with_unique_trend_version_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    identities_by_label: dict[str, list[tuple[str, str, str]]] = {}
+    for row in rows:
+        label = str(row.get("version_abbr") or "")
+        identity = (
+            str(row.get("release_group") or ""),
+            str(row.get("date") or ""),
+            str(row.get("description") or ""),
+        )
+        identities = identities_by_label.setdefault(label, [])
+        if identity not in identities:
+            identities.append(identity)
+
+    suffix_by_identity: dict[tuple[str, tuple[str, str, str]], int] = {}
+    for label, identities in identities_by_label.items():
+        if len(identities) <= 1:
+            continue
+        for idx, identity in enumerate(identities, start=1):
+            suffix_by_identity[(label, identity)] = idx
+
+    labeled: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for row in rows:
+        updated = dict(row)
+        label = str(updated.get("version_abbr") or "")
+        identity = (
+            str(updated.get("release_group") or ""),
+            str(updated.get("date") or ""),
+            str(updated.get("description") or ""),
+        )
+        suffix = suffix_by_identity.get((label, identity))
+        if suffix is not None:
+            updated["version_abbr"] = f"{label} #{suffix}"
+
+        dedupe_key = (
+            str(updated.get("version_abbr") or ""),
+            str(updated.get("topic") or ""),
+            str(updated.get("evaluation_type") or ""),
+        )
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        labeled.append(updated)
+    return labeled
+
+
 def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten nested devops/pass-rate summary into case rows."""
     summary = _unwrap_devops_summary(summary)
@@ -862,6 +990,21 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         for mid_category, minor_or_cases in mid_categories.items():
             if not isinstance(minor_or_cases, dict):
+                continue
+            if {"passed", "total"}.intersection(minor_or_cases.keys()):
+                passed = int(minor_or_cases.get("passed", 0) or 0)
+                total = int(minor_or_cases.get("total", 0) or 0)
+                rows.append(
+                    {
+                        "major_category": major_category,
+                        "mid_category": major_category,
+                        "minor_category": mid_category,
+                        "case_name": mid_category,
+                        "passed": passed,
+                        "total": total,
+                        "pass_rate": (passed / total * 100.0) if total > 0 else None,
+                    }
+                )
                 continue
             for minor_or_case_name, result_or_cases in minor_or_cases.items():
                 if not isinstance(result_or_cases, dict):
@@ -961,6 +1104,7 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
             {
                 "version": metadata.get("pilot_auto_version"),
                 "version_abbr": _trend_version_abbr(metadata),
+                "release_group": metadata.get("release_group"),
                 "data_count": metadata.get("data_count"),
                 "description": metadata.get("description"),
                 "date": metadata.get("date"),
@@ -992,10 +1136,12 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
             {
                 "version": row.get("version"),
                 "version_abbr": row.get("version_abbr"),
+                "release_group": row.get("release_group"),
                 "data_count": row.get("data_count"),
                 "description": row.get("description"),
                 "date": row.get("date"),
                 "topic": row.get("topic"),
+                "evaluation_type": "full",
                 "mAP": _avg("mAP"),
                 "precision": _avg("precision"),
                 "recall": _avg("recall"),
@@ -1007,7 +1153,7 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
                 "minFDE@5s": _avg("minFDE@5s"),
             }
         )
-    return output
+    return _with_unique_trend_version_labels(output)
 
 
 def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]]:
@@ -1023,10 +1169,11 @@ def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]
         if classify_trend_summary(summary) != "devops":
             continue
 
-        rows = extract_devops_case_rows(summary)
+        devops_summary = _devops_summary_for_metadata(metadata_path, summary)
+        rows = extract_devops_case_rows(devops_summary)
         if not rows:
             continue
-        normalized_summary = _normalize_devops_summary_structure(summary)
+        normalized_summary = _normalize_devops_summary_structure(devops_summary)
         overall_passed = sum(int(row["passed"]) for row in rows)
         overall_total = sum(int(row["total"]) for row in rows)
         trend_data_rows.append(
@@ -1042,6 +1189,7 @@ def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]
                 else 0.0,
                 "scenario_count": overall_total,
                 "devops_data": normalized_summary,
+                "usecase_devops_data": normalized_summary,
             }
         )
 
@@ -1100,19 +1248,32 @@ def _build_trend_context(
             "prediction_trend_plot_path": output_dir / "prediction_trend.png",
             "devops_data": {},
             "devops_plot_path": None,
+            "usecase_devops_data": {},
+            "usecase_devops_plot_path": None,
             "devops_trend_data": [],
-            "devops_trend_plot_path": output_dir / "devops_trend.png",
+            "devops_trend_plot_path": output_dir / "usecase_devops_trend.png",
+            "usecase_devops_trend_data": [],
+            "usecase_devops_trend_plot_path": output_dir / "usecase_devops_trend.png",
             "job_ids": [],
         }
 
     try:
         from perception_catalog_analyzer.plot.map_trend import generate_map_trend_plot
         from perception_catalog_analyzer.plot.prediction_trend import generate_prediction_trend_plot
-        from perception_catalog_analyzer.plot.devops_trend import (
-            generate_devops_trend_detail_plot,
-            generate_devops_trend_plot,
-        )
-        from perception_catalog_analyzer.plot.devops import generate_devops_plot
+        try:
+            from perception_catalog_analyzer.plot.usecase_devops_trend import (
+                generate_usecase_devops_trend_detail_plot as generate_devops_trend_detail_plot,
+                generate_usecase_devops_trend_plot as generate_devops_trend_plot,
+            )
+            from perception_catalog_analyzer.plot.usecase_devops import (
+                generate_usecase_devops_plot as generate_devops_plot,
+            )
+        except ImportError:
+            from perception_catalog_analyzer.plot.devops_trend import (
+                generate_devops_trend_detail_plot,
+                generate_devops_trend_plot,
+            )
+            from perception_catalog_analyzer.plot.devops import generate_devops_plot
     except ImportError as exc:
         raise RuntimeError(
             "perception_catalog_analyzer trend support is unavailable. "
@@ -1130,16 +1291,25 @@ def _build_trend_context(
         generate_prediction_trend_plot(performance_trend_data, prediction_trend_plot_path)
 
     devops_trend_data = load_devops_trend_data(list(metadata_list))
-    devops_trend_plot_path = output_dir / "devops_trend.png"
+    recall_by_version = {
+        str(row.get("version") or ""): row.get("recall")
+        for row in performance_trend_data
+        if str(row.get("version") or "")
+    }
+    for row in devops_trend_data:
+        row.setdefault("recall", recall_by_version.get(str(row.get("version") or ""), float("nan")))
+
+    devops_trend_plot_path = output_dir / "usecase_devops_trend.png"
     devops_data = {}
     devops_plot_path = None
     if current_devops_summary_path is not None and current_devops_summary_path.exists():
         current_devops_summary = load_trend_summary_file(current_devops_summary_path)
         if classify_trend_summary(current_devops_summary) == "devops":
-            devops_data = _normalize_devops_summary_structure(current_devops_summary)
+            devops_summary = _devops_summary_for_metadata(current_devops_summary_path, current_devops_summary)
+            devops_data = _normalize_devops_summary_structure(devops_summary)
             if devops_data:
                 _notify(progress_callback, "Rendering current pass-rate plot")
-                devops_plot_path = output_dir / "devops.png"
+                devops_plot_path = output_dir / "usecase_devops.png"
                 generate_devops_plot(devops_data, devops_plot_path)
     if devops_trend_data:
         _notify(progress_callback, "Rendering pass-rate trend plots")
@@ -1158,8 +1328,12 @@ def _build_trend_context(
         "prediction_trend_plot_path": prediction_trend_plot_path,
         "devops_data": devops_data,
         "devops_plot_path": devops_plot_path,
+        "usecase_devops_data": devops_data,
+        "usecase_devops_plot_path": devops_plot_path,
         "devops_trend_data": _devops_trend_rows_for_template(devops_trend_data),
         "devops_trend_plot_path": devops_trend_plot_path,
+        "usecase_devops_trend_data": _devops_trend_rows_for_template(devops_trend_data),
+        "usecase_devops_trend_plot_path": devops_trend_plot_path,
         "job_ids": [],
     }
 
@@ -1187,6 +1361,13 @@ def _update_template_compat(
         "version": version,
         "devops_data": trend_context.get("devops_data", {}),
         "devops_plot_path": trend_context.get("devops_plot_path"),
+        "usecase_devops_data": trend_context.get(
+            "usecase_devops_data", trend_context.get("devops_data", {})
+        ),
+        "usecase_devops_plot_path": trend_context.get(
+            "usecase_devops_plot_path", trend_context.get("devops_plot_path")
+        ),
+        "trend_data": trend_context.get("performance_trend_data", []),
         "performance_trend_data": trend_context.get("performance_trend_data", []),
         "map_trend_plot_path": trend_context.get("map_trend_plot_path", context_dir / "map_trend.png"),
         "prediction_trend_plot_path": trend_context.get(
@@ -1194,7 +1375,14 @@ def _update_template_compat(
         ),
         "devops_trend_data": trend_context.get("devops_trend_data", []),
         "devops_trend_plot_path": trend_context.get(
-            "devops_trend_plot_path", context_dir / "devops_trend.png"
+            "devops_trend_plot_path", context_dir / "usecase_devops_trend.png"
+        ),
+        "usecase_devops_trend_data": trend_context.get(
+            "usecase_devops_trend_data", trend_context.get("devops_trend_data", [])
+        ),
+        "usecase_devops_trend_plot_path": trend_context.get(
+            "usecase_devops_trend_plot_path",
+            trend_context.get("devops_trend_plot_path", context_dir / "usecase_devops_trend.png"),
         ),
         "job_ids": trend_context.get("job_ids", []),
         "template_name": "static_body.html",
