@@ -79,17 +79,24 @@ def add_weights(df: pd.DataFrame, cfg: WeightedMapConfig) -> pd.DataFrame:
     out.loc[active_gt, "gt_weight"] = out.loc[active_gt, "distance_weight"]
 
     # ── FP weight (for EST FP rows) ───────────────────────────────────────
+    # Only in-scope FP (in_fov + r_val <= max_distance_m) are penalised.
+    # Out-of-scope FP stay at 0: mirroring the PoC spec region_weight=0 logic
+    # and preventing out-of-range detections from inflating the FP count.
     est_mask = out["source"] == "EST"
     out["fp_weight"] = 0.0
 
+    fp_active = (
+        est_mask
+        & (out["status"] == "FP")
+        & out["label"].isin(cfg.classes)
+        & out["in_fov"]
+        & (out["r_val"] <= cfg.max_distance_m)
+    )
     if cfg.fp_weighting == "est_distance":
-        fp_mask = est_mask & (out["status"] == "FP") & out["label"].isin(cfg.classes)
-        fp_active = fp_mask & out["in_fov"] & (out["r_val"] <= cfg.max_distance_m)
-        out.loc[fp_mask, "fp_weight"] = 1.0        # out-of-scope FP: weight=1 flat
         out.loc[fp_active, "fp_weight"] = out.loc[fp_active, "distance_weight"]
     else:
-        # uniform
-        out.loc[est_mask & (out["status"] == "FP"), "fp_weight"] = 1.0
+        # uniform: in-scope FP each contribute 1.0
+        out.loc[fp_active, "fp_weight"] = 1.0
 
     # ── TP weight: join EST TP → GT TP via (unix_time, label, x_error, y_error)
     # This is the correct approach: tp_weight must inherit gt_weight from the
@@ -145,10 +152,10 @@ def _weighted_ap(
     if mode == "normal":
         if n_gt_active == 0:
             return 0.0
-        # is_tp_active: TP whose matched GT is within scope (gt_weight > 0)
+        # is_tp: TP whose matched GT is within scope (tp_weight > 0)
         is_tp = (est_cls["tp_weight"] > 0).values.astype(float)
-        # is_fp_active: FP within scope OR out-of-scope (contribute to FP)
-        is_fp = (est_cls["status"] == "FP").values.astype(float)
+        # is_fp: only in-scope FP (fp_weight > 0); out-of-scope FP are ignored
+        is_fp = (est_cls["fp_weight"] > 0).values.astype(float)
         cum_tp = np.cumsum(is_tp)
         cum_fp = np.cumsum(is_fp)
         n_gt = float(n_gt_active)
