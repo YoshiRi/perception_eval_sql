@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import numpy as np
 import os
 from pathlib import Path
@@ -342,6 +343,31 @@ def list_parquets_in_run(run_path) -> List[str]:
         return []
     return sorted([str(f.resolve()) for f in p.glob("*.parquet")])
 
+
+def default_parquet_index(paths: List[str]) -> int:
+    """Prefer current.parquet for each run's file picker."""
+    for idx, path in enumerate(paths):
+        if os.path.basename(path) == "current.parquet":
+            return idx
+    return 0
+
+
+def migrate_old_run_index_parquet_default(widget_key: str, paths: List[str], run_index: int) -> None:
+    """Move old run-index defaults (Run B -> second file) to current.parquet once per session."""
+    preferred_idx = default_parquet_index(paths)
+    old_idx = min(run_index, len(paths) - 1)
+    if preferred_idx == old_idx:
+        return
+
+    migration_key = f"{widget_key}__current_default_migrated"
+    if st.session_state.get(migration_key):
+        return
+
+    old_default = paths[old_idx]
+    if st.session_state.get(widget_key) in (None, old_default):
+        st.session_state[widget_key] = paths[preferred_idx]
+    st.session_state[migration_key] = True
+
 # =============================
 # DuckDB Connection (one in-memory DB per Streamlit browser session)
 # =============================
@@ -592,6 +618,30 @@ def sql_distance_bin_rates_from_eval_flat(
     raise ValueError(f"metrics must be 'both', 'tpr', or 'fpr', got {metrics!r}")
 
 
+def sql_distance_bin_label_rates_from_eval_flat(
+    source_eval_flat: str,
+    filter_clause: str,
+) -> str:
+    """TPR/FPR by label and distance bin from ``view_eval_flat`` rows."""
+    return f"""
+    WITH stats AS (
+        {_TPR_FPR_STATS_SELECT}
+        FROM {source_eval_flat}
+        WHERE ({filter_clause})
+        GROUP BY
+            {_TPR_FPR_STATS_GROUP_BY}
+    )
+    SELECT
+        distance_bin,
+        label,
+        CASE WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total) ELSE 0 END AS tpr,
+        CASE WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total) ELSE 0 END AS fpr
+    FROM stats
+    GROUP BY distance_bin, label
+    ORDER BY MIN(bin_idx), label
+    """
+
+
 def build_filter_clause(filters: dict,*, enable_dist_h: bool = True) -> str:
     """Build WHERE clause from filters.
 
@@ -690,12 +740,14 @@ with st.sidebar:
         if len(pl) == 1:
             target_files.append(pl[0])
         else:
+            file_key = f"target_file_{lbl}"
+            migrate_old_run_index_parquet_default(file_key, pl, i)
             tf = st.selectbox(
                 f"Run ({lbl}) File",
                 pl,
                 format_func=lambda p: os.path.basename(p),
-                index=min(i, len(pl) - 1),
-                key=f"target_file_{lbl}"
+                index=default_parquet_index(pl),
+                key=file_key
             )
             target_files.append(tf)
 
@@ -1393,7 +1445,7 @@ try:
                     )
                     apply_chart_theme(fig, height=420)
                     fig.update_layout(
-                        title=f"TP & FP rate by distance (within {max_eval_range} m)",
+                        title="TP & FP rate by distance bin",
                         xaxis_title="Distance bin",
                         yaxis_title="Rate",
                         yaxis_range=[0, 1],
@@ -1429,7 +1481,7 @@ try:
                     )
                     apply_chart_theme(fig, height=420)
                     fig.update_layout(
-                        title=f"TP & FP rate by distance (within {max_eval_range} m)",
+                        title="TP & FP rate by distance bin",
                         xaxis_title="Distance bin",
                         yaxis_title="Rate",
                         yaxis_range=[0, 1],
@@ -1443,6 +1495,71 @@ try:
                     )
                     fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
                     st.plotly_chart(fig, width='stretch')
+
+                query_label_rates = sql_distance_bin_label_rates_from_eval_flat(
+                    "view_eval_flat", filter_clause_base
+                )
+                ds_dlog("distance: executing query_label_rates (single_mode TPR/FPR by label and bin)")
+                df_label_rates = con.execute(query_label_rates).df()
+                ds_dlog(
+                    "distance: query_label_rates done rows=%s cols=%s",
+                    len(df_label_rates),
+                    list(df_label_rates.columns),
+                )
+                if not df_label_rates.empty:
+                    df_label_rates["bin_order"], df_label_rates["bin_label"] = zip(
+                        *df_label_rates["distance_bin"].map(_distance_bin_order_and_label)
+                    )
+                    df_label_rates = df_label_rates.sort_values(["bin_order", "label"])
+                    label_order = sorted(df_label_rates["label"].dropna().astype(str).unique().tolist())
+                    for metric_col, metric_name in [
+                        ("tpr", "TP rate"),
+                        ("fpr", "FP rate"),
+                    ]:
+                        fig_label = go.Figure()
+                        for j, lab in enumerate(label_order):
+                            d = df_label_rates[df_label_rates["label"].astype(str) == lab].sort_values("bin_order")
+                            c = RUN_COLORS[j % len(RUN_COLORS)]
+                            if use_line_chart:
+                                r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+                                fig_label.add_trace(
+                                    go.Scatter(
+                                        x=d["bin_label"],
+                                        y=d[metric_col],
+                                        name=lab,
+                                        mode="lines",
+                                        line=dict(color=c, width=2.2, shape="spline"),
+                                        fill="tozeroy",
+                                        fillcolor=f"rgba({r},{g},{b},0.12)",
+                                        hovertemplate=f"{lab}<br>%{{x}}<br>{metric_name}: %{{y:.2%}}<extra></extra>",
+                                    )
+                                )
+                            else:
+                                fig_label.add_trace(
+                                    go.Bar(
+                                        x=d["bin_label"],
+                                        y=d[metric_col],
+                                        name=lab,
+                                        marker_color=c,
+                                        hovertemplate=f"{lab}<br>%{{x}}<br>{metric_name}: %{{y:.2%}}<extra></extra>",
+                                    )
+                                )
+                        apply_chart_theme(fig_label, height=420)
+                        fig_label.update_layout(
+                            title=f"{metric_name} by label and distance bin",
+                            xaxis_title="Distance bin",
+                            yaxis_title=metric_name,
+                            yaxis_range=[0, 1],
+                            xaxis=dict(
+                                tickangle=-35,
+                                categoryorder="array",
+                                categoryarray=x_labels,
+                            ),
+                            hovermode="x unified",
+                            **({"barmode": "group"} if not use_line_chart else {}),
+                        )
+                        fig_label.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                        st.plotly_chart(fig_label, width='stretch')
             else:
                 st.info("No distance-bin data available.")
         else:
@@ -1508,7 +1625,7 @@ try:
                         )
                     apply_chart_theme(fig_tpr, height=420)
                     fig_tpr.update_layout(
-                        title=f"TP rate by distance",
+                        title="TP rate by distance",
                         xaxis_title="Distance bin",
                         yaxis_title="TP rate",
                         yaxis_range=[0, 1],
@@ -1540,7 +1657,7 @@ try:
                         )
                     apply_chart_theme(fig_fpr, height=420)
                     fig_fpr.update_layout(
-                        title=f"FP rate by distance",
+                        title="FP rate by distance",
                         xaxis_title="Distance bin",
                         yaxis_title="FP rate",
                         yaxis_range=[0, 1],
@@ -1568,7 +1685,7 @@ try:
                         )
                     apply_chart_theme(fig_tpr, height=420)
                     fig_tpr.update_layout(
-                        title=f"TP rate by distance",
+                        title="TP rate by distance",
                         xaxis_title="Distance bin",
                         yaxis_title="TP rate",
                         yaxis_range=[0, 1],
@@ -1596,7 +1713,7 @@ try:
                         )
                     apply_chart_theme(fig_fpr, height=420)
                     fig_fpr.update_layout(
-                        title=f"FP rate by distance",
+                        title="FP rate by distance",
                         xaxis_title="Distance bin",
                         yaxis_title="FP rate",
                         yaxis_range=[0, 1],
@@ -1608,6 +1725,254 @@ try:
                     st.plotly_chart(fig_fpr, width='stretch')
                 else:
                     st.info("No FP rate by distance data.")
+
+            dfs_label_rates = []
+            for i in range(len(runs)):
+                fc = build_filter_clause(filters_list[i], enable_dist_h=False)
+                q = sql_distance_bin_label_rates_from_eval_flat(_flat_view(i), fc)
+                ds_dlog("distance: compare run %s/%s TPR/FPR by label and bin query", i + 1, len(runs))
+                df_i = con.execute(q).df()
+                ds_dlog("distance: compare label rate query run %s rows=%s", i, len(df_i))
+                if not df_i.empty:
+                    df_i["run"] = run_labels_list[i]
+                    df_i["bin_order"], df_i["bin_label"] = zip(
+                        *df_i["distance_bin"].map(_distance_bin_order_and_label)
+                    )
+                    dfs_label_rates.append(df_i)
+
+            if dfs_label_rates:
+                df_label_dist = pd.concat(dfs_label_rates, ignore_index=True)
+                df_label_dist["label_str"] = df_label_dist["label"].astype(str)
+                selected_label_order = [str(l) for l in (selected_labels if selected_labels else labels)]
+                present_labels = set(df_label_dist["label_str"].dropna().tolist())
+                label_order = [lab for lab in selected_label_order if lab in present_labels]
+                label_order.extend(sorted(present_labels.difference(label_order)))
+
+                if label_order:
+                    label_compare_views = [
+                        "Change matrices",
+                        "Trend grid",
+                        "Bar grid",
+                    ]
+                    if st.session_state.get("distance_label_compare_view") not in (None, *label_compare_views):
+                        st.session_state["distance_label_compare_view"] = label_compare_views[0]
+                    label_compare_view = st.radio(
+                        "Label distance compare view",
+                        options=label_compare_views,
+                        index=0,
+                        horizontal=True,
+                        key="distance_label_compare_view",
+                    )
+
+                    def _render_distance_delta_matrix(
+                        metric_col: str,
+                        title: str,
+                        color_label: str,
+                        *,
+                        fp_better_lower: bool = False,
+                        delta_label: str = "Change",
+                    ):
+                        if len(run_labels_list) < 2:
+                            st.info("Delta matrix requires at least two runs.")
+                            return
+                        base_run = run_labels_list[0]
+                        compare_run = run_labels_list[1]
+                        pivot = df_label_dist.pivot_table(
+                            index="label_str",
+                            columns=["bin_label", "run"],
+                            values=metric_col,
+                            aggfunc="first",
+                        )
+                        matrix_rows = []
+                        hover_rows = []
+                        sort_scores = {}
+                        for lab in label_order:
+                            row_vals = []
+                            hover_vals = []
+                            deltas_for_sort = []
+                            for bin_label in rate_bin_labels_order or []:
+                                base_val = np.nan
+                                compare_val = np.nan
+                                if (bin_label, base_run) in pivot.columns and lab in pivot.index:
+                                    base_val = pivot.loc[lab, (bin_label, base_run)]
+                                if (bin_label, compare_run) in pivot.columns and lab in pivot.index:
+                                    compare_val = pivot.loc[lab, (bin_label, compare_run)]
+                                display_delta = compare_val - base_val
+                                row_vals.append(display_delta)
+                                if pd.notna(display_delta):
+                                    deltas_for_sort.append(-display_delta if fp_better_lower else display_delta)
+                                if pd.isna(base_val) or pd.isna(compare_val):
+                                    hover_vals.append(f"{lab}<br>{bin_label}<br>No paired data")
+                                else:
+                                    hover_vals.append(
+                                        f"{lab}<br>{bin_label}<br>"
+                                        f"{base_run}: {base_val:.1%}<br>"
+                                        f"{compare_run}: {compare_val:.1%}<br>"
+                                        f"{delta_label}: {display_delta:+.1%}"
+                                    )
+                            matrix_rows.append(row_vals)
+                            sort_scores[lab] = min(deltas_for_sort) if deltas_for_sort else 0.0
+                            hover_rows.append(hover_vals)
+
+                        sorted_labels = sorted(label_order, key=lambda lab: sort_scores.get(lab, 0.0))
+                        sort_index = [label_order.index(lab) for lab in sorted_labels]
+                        matrix_sorted = [matrix_rows[i] for i in sort_index]
+                        hover_sorted = [hover_rows[i] for i in sort_index]
+                        max_abs_delta = max(
+                            [
+                                abs(float(v))
+                                for row in matrix_sorted
+                                for v in row
+                                if pd.notna(v)
+                            ]
+                            or [0.01]
+                        )
+                        max_abs_delta = max(max_abs_delta, 0.01)
+                        fig_matrix = px.imshow(
+                            matrix_sorted,
+                            x=rate_bin_labels_order,
+                            y=sorted_labels,
+                            labels=dict(x="Distance bin", y="Label", color=color_label),
+                            color_continuous_scale=[
+                                [0.0, IMPROVED_COLOR if fp_better_lower else DEGRADED_COLOR],
+                                [0.5, "#f8fafc"],
+                                [1.0, DEGRADED_COLOR if fp_better_lower else IMPROVED_COLOR],
+                            ],
+                            zmin=-max_abs_delta,
+                            zmax=max_abs_delta,
+                            aspect="auto",
+                        )
+                        fig_matrix.update_traces(
+                            customdata=hover_sorted,
+                            hovertemplate="%{customdata}<extra></extra>",
+                        )
+                        apply_chart_theme(fig_matrix, height=max(360, 92 + 24 * len(sorted_labels)))
+                        fig_matrix.update_layout(
+                            title=title,
+                            xaxis_side="top",
+                            coloraxis_colorbar=dict(tickformat="+.0%"),
+                        )
+                        fig_matrix.update_xaxes(tickangle=-35)
+                        st.plotly_chart(fig_matrix, width='stretch')
+
+                    def _render_distance_grid(*, use_bars: bool = False):
+                        small_multiple_cols = min(3, max(1, len(label_order)))
+                        small_multiple_rows = int(np.ceil(len(label_order) / small_multiple_cols))
+
+                        for metric_col, metric_name in [("tpr", "TP rate"), ("fpr", "FP rate")]:
+                            vertical_spacing = 0.105 if small_multiple_rows <= 1 else min(0.105, 0.9 / (small_multiple_rows - 1))
+                            fig_sm = make_subplots(
+                                rows=small_multiple_rows,
+                                cols=small_multiple_cols,
+                                subplot_titles=label_order,
+                                shared_yaxes=True,
+                                horizontal_spacing=0.055,
+                                vertical_spacing=vertical_spacing,
+                            )
+                            legend_shown = set()
+                            for lab_idx, lab in enumerate(label_order):
+                                row = lab_idx // small_multiple_cols + 1
+                                col = lab_idx % small_multiple_cols + 1
+                                for run_idx, run_lbl in enumerate(run_labels_list):
+                                    d = df_label_dist[
+                                        (df_label_dist["label_str"] == lab)
+                                        & (df_label_dist["run"] == run_lbl)
+                                    ].sort_values("bin_order")
+                                    if d.empty:
+                                        continue
+                                    c = RUN_COLORS[run_idx % len(RUN_COLORS)]
+                                    show_legend = run_lbl not in legend_shown
+                                    legend_shown.add(run_lbl)
+                                    if use_bars:
+                                        fig_sm.add_trace(
+                                            go.Bar(
+                                                x=d["bin_label"],
+                                                y=d[metric_col],
+                                                name=str(run_lbl),
+                                                marker_color=c,
+                                                showlegend=show_legend,
+                                                hovertemplate=(
+                                                    f"{run_lbl}<br>{lab}<br>%{{x}}<br>"
+                                                    f"{metric_name}: %{{y:.2%}}<extra></extra>"
+                                                ),
+                                            ),
+                                            row=row,
+                                            col=col,
+                                        )
+                                    else:
+                                        fig_sm.add_trace(
+                                            go.Scatter(
+                                                x=d["bin_label"],
+                                                y=d[metric_col],
+                                                name=str(run_lbl),
+                                                mode="lines+markers",
+                                                line=dict(color=c, width=2.2),
+                                                marker=dict(size=4.5, color=c, line=dict(width=0.8, color="white")),
+                                                showlegend=show_legend,
+                                                hovertemplate=(
+                                                    f"{run_lbl}<br>{lab}<br>%{{x}}<br>"
+                                                    f"{metric_name}: %{{y:.2%}}<extra></extra>"
+                                                ),
+                                            ),
+                                            row=row,
+                                            col=col,
+                                        )
+
+                            fig_sm_height = max(420, 235 * small_multiple_rows)
+                            apply_chart_theme(
+                                fig_sm,
+                                height=fig_sm_height,
+                                margin=dict(t=72, b=46, l=52, r=24),
+                            )
+                            fig_sm.update_layout(
+                                title=f"{metric_name} by label and distance bin",
+                                yaxis_range=[0, 1],
+                                hovermode="closest",
+                                **({"barmode": "group"} if use_bars else {}),
+                            )
+                            for r_idx in range(1, small_multiple_rows + 1):
+                                for c_idx in range(1, small_multiple_cols + 1):
+                                    fig_sm.update_yaxes(
+                                        range=[0, 1],
+                                        tickformat=".0%",
+                                        showticklabels=c_idx == 1,
+                                        gridcolor="rgba(0,0,0,0.06)",
+                                        zeroline=False,
+                                        row=r_idx,
+                                        col=c_idx,
+                                    )
+                                    fig_sm.update_xaxes(
+                                        tickangle=-35,
+                                        categoryorder="array",
+                                        categoryarray=rate_bin_labels_order,
+                                        showticklabels=r_idx == small_multiple_rows,
+                                        gridcolor="rgba(0,0,0,0.04)",
+                                        zeroline=False,
+                                        row=r_idx,
+                                        col=c_idx,
+                                    )
+                            st.plotly_chart(fig_sm, width='stretch')
+
+                    if label_compare_view == "Change matrices":
+                        _render_distance_delta_matrix(
+                            "tpr",
+                            f"TP diff by label and distance ({run_labels_list[1]} - {run_labels_list[0]})",
+                            "TP diff",
+                            delta_label="Diff",
+                        )
+                        _render_distance_delta_matrix(
+                            "fpr",
+                            f"FP diff by label and distance ({run_labels_list[1]} - {run_labels_list[0]})",
+                            "FP diff",
+                            fp_better_lower=True,
+                            delta_label="Diff",
+                        )
+                    elif label_compare_view == "Bar grid":
+                        _render_distance_grid(use_bars=True)
+                    else:
+                        _render_distance_grid()
+            else:
+                st.info("No label-level TP/FP rate data by distance bin.")
     
         # Object count by same distance bins as TP/FP; same line vs bar style; aligned x-axis
     
@@ -1690,7 +2055,7 @@ try:
                             )
                     apply_chart_theme(fig_oc, height=420)
                     fig_oc.update_layout(
-                        title=f"Object count by distance bin (within {max_eval_range} m)",
+                        title="Object count by distance bin",
                         xaxis_title="Distance bin",
                         yaxis_title="Count",
                         xaxis=xaxis_oc,
@@ -1736,7 +2101,7 @@ try:
                             )
                     apply_chart_theme(fig_oc, height=420)
                     fig_oc.update_layout(
-                        title=f"Object count by distance bin",
+                        title="Object count by distance bin",
                         xaxis_title="Distance bin",
                         yaxis_title="Count",
                         xaxis=xaxis_oc,
