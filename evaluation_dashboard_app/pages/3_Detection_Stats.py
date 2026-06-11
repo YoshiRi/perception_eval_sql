@@ -1329,7 +1329,7 @@ try:
     rate_by_dist_style = st.radio(
         "Chart style",
         options=["Line chart (trend)", "Bar chart (histogram)"],
-        index=0,
+        index=1,
         horizontal=True,
         key="tp_fp_rate_by_dist_style",
     )

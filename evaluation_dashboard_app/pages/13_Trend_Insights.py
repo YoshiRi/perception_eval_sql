@@ -333,7 +333,7 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
 }}
 body {{
   margin: 0;
-  padding: 0 0 10px 0;
+  padding: 0 0 26px 0;
   background: transparent;
   color: #0f172a;
   font-family: "Source Sans Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -347,6 +347,8 @@ body {{
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 10px;
+  padding-bottom: 2px;
+  scrollbar-gutter: stable;
 }}
 .release-library-table {{
   border-collapse: separate;
@@ -561,7 +563,7 @@ body {{
 </body>
 </html>
 """
-    component_height = 78 + max(1, len(releases)) * 32
+    component_height = 124 + max(1, len(releases)) * 32
     components.html(table_html, height=component_height, scrolling=False)
 
 
