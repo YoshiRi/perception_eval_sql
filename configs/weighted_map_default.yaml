@@ -1,0 +1,23 @@
+# Standard Distance-To-Vehicle weighted mAP
+# - lambda=0.01: 100m objects get 37% of near-distance weight
+# - 240° FOV, exclude objects > 100m
+# - FP weighted by EST distance
+
+label: weighted_map_default
+
+csv_path: data/output/pdf/e2fb9ecc-decf-513f-b54f-2a493b2877ad_8e477a87-8e2f-5b15-9618-4597431a85eb_b2fd4c93-1ba3-5c8f-be8f-984e65827bfa/perception.object_recognition.objects/e2fb9ecc-decf-513f-b54f-2a493b2877ad/current.csv
+output_dir: data/output/weighted_map/default
+
+classes:
+  - car
+  - truck
+  - bus
+  - pedestrian
+
+max_distance_m: 100.0
+distance_weight_lambda: 0.01
+forward_fov_deg: 240.0
+fp_weighting: est_distance
+visibility_exclude:
+  - NONE
+ap_method: stepwise

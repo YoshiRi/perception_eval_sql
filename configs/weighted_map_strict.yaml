@@ -1,0 +1,23 @@
+# Near-distance emphasis: lambda=0.03 (steeper decay)
+# - 100m objects get only 5% of near-distance weight
+# - Also excludes PARTIAL visibility GT (only clearly visible objects)
+
+label: weighted_map_strict
+
+csv_path: data/output/pdf/e2fb9ecc-decf-513f-b54f-2a493b2877ad_8e477a87-8e2f-5b15-9618-4597431a85eb_b2fd4c93-1ba3-5c8f-be8f-984e65827bfa/perception.object_recognition.objects/e2fb9ecc-decf-513f-b54f-2a493b2877ad/current.csv
+output_dir: data/output/weighted_map/strict
+
+classes:
+  - car
+  - truck
+  - bus
+  - pedestrian
+
+max_distance_m: 100.0
+distance_weight_lambda: 0.03
+forward_fov_deg: 240.0
+fp_weighting: est_distance
+visibility_exclude:
+  - NONE
+  - PARTIAL
+ap_method: stepwise
