@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
 
@@ -40,6 +40,7 @@ def _task_type_label(task_type: str) -> str:
         "download_and_eval": "Download + Eval",
         "run_evaluator_and_process": "Run Evaluator + Process",
         "run_release_specsheet_workflow": "Release Specsheet",
+        "prepare_pr_test_branch": "Prepare PR Test Branch",
     }
     return labels.get(task_type, task_type or "Task")
 
@@ -73,6 +74,11 @@ def _task_summary(t: Dict[str, Any]) -> str:
         target = params.get("target_name", "")
         target_type = "tag" if params.get("is_tag", False) else "branch"
         return f"{target_type}={target} → {params.get('output_path', '')}"
+    if task_type == "prepare_pr_test_branch":
+        sub_repo = params.get("sub_repo", "universe")
+        source = params.get("sub_repo_branch") or (f"PR #{params.get('pr_number')}" if params.get("pr_number") else "")
+        base = params.get("pilot_base_branch", "")
+        return f"{sub_repo}: {source} on pilot {base}"
     return ""
 
 
@@ -176,6 +182,7 @@ def _render_one_task_row(
     use_dialog: bool,
     *,
     mode: TaskCardMode,
+    on_delete: Optional[Callable[[], None]] = None,
 ) -> None:
     task_id = t.get("id", "")
     status = t.get("status", "")
@@ -213,6 +220,8 @@ def _render_one_task_row(
                 else "Remove this row from the task list."
             )
             if st.button(stop_lbl, key=f"del_{sid}", type="secondary", help=stop_help):
+                if on_delete:
+                    on_delete()
                 delete_task(sid, session_id=current_user)
                 st.rerun()
     else:
@@ -225,6 +234,8 @@ def _render_one_task_row(
                 else "Remove this row from the task list."
             )
             if st.button(stop_lbl, key=f"del_{sid}", type="secondary", help=stop_help):
+                if on_delete:
+                    on_delete()
                 delete_task(sid, session_id=current_user)
                 st.rerun()
 
@@ -233,7 +244,12 @@ def _render_one_task_row(
             render_task_detail_content(t)
 
 
-def render_task_list(tasks: List[Dict[str, Any]], current_user: Optional[str]) -> bool:
+def render_task_list(
+    tasks: List[Dict[str, Any]],
+    current_user: Optional[str],
+    *,
+    on_delete: Optional[Callable[[], None]] = None,
+) -> bool:
     """Render the shared active/history task list. Returns True if any active tasks exist."""
     if current_user:
         st.caption(f"Logged in as **{current_user}** · your recent tasks only")
@@ -246,12 +262,12 @@ def render_task_list(tasks: List[Dict[str, Any]], current_user: Optional[str]) -
     use_dialog = callable(getattr(st, "dialog", None))
 
     for t in active:
-        _render_one_task_row(t, current_user, use_dialog, mode="active_compact")
+        _render_one_task_row(t, current_user, use_dialog, mode="active_compact", on_delete=on_delete)
 
     if history:
         with st.expander(f"Task history ({len(history)})", expanded=False):
             for t in history:
-                _render_one_task_row(t, current_user, use_dialog, mode="history")
+                _render_one_task_row(t, current_user, use_dialog, mode="history", on_delete=on_delete)
 
     if use_dialog and st.session_state.get("_task_detail_id"):
         task_id = st.session_state["_task_detail_id"]

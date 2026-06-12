@@ -42,6 +42,16 @@ _RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
 _RELEASE_SKIP_LARGE_FILE = True
 _RELEASE_LARGE_FILE_MB = 50.0
 
+
+def _make_default_evaluator_description(parameters: Dict[str, Any]) -> str:
+    stamp = time.strftime("%m-%d %H:%M")
+    source_job_id = str(parameters.get("source_job_id") or "").strip()
+    if source_job_id:
+        return f"♻️ evaluator artifact retest [{source_job_id}] [{stamp}] 📦"
+    target_name = str(parameters.get("target_name") or "").strip() or "default"
+    return f"🚀 evaluator workflow [{target_name}] [{stamp}] 📦"
+
+
 # Optional imports for tasks that need them
 def _import_eval_summary():
     from lib import eval_summary
@@ -1914,7 +1924,11 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         source_job_id = parameters.get("source_job_id")
         suite_ids = parameters.get("suite_ids")
         target_name = parameters.get("target_name")  # branch name or tag
-        description = parameters.get("description", "no description")
+        description = str(parameters.get("description") or "").strip()
+        if not description:
+            description = _make_default_evaluator_description(parameters)
+            parameters["description"] = description
+            append_task_log(task_id, f"Using automatic evaluator description: {description}")
         output_path = parameters.get("output_path")
         trend_metadata = parameters.get("trend_metadata") if isinstance(parameters.get("trend_metadata"), dict) else None
         trend_role = str(parameters.get("trend_role") or "").strip()
@@ -2541,6 +2555,28 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         raise
 
 
+def job_prepare_pr_test_branch(task_id: str, parameters: Dict[str, Any]) -> None:
+    append_task_log(task_id, "Starting PR test branch preparation")
+    update_task_progress(task_id, message="Starting PR test branch preparation", pct=0)
+    try:
+        from lib.pr_test_branch_workflow import run_prepare_pr_test_branch
+
+        summary = run_prepare_pr_test_branch(
+            task_id=task_id,
+            parameters=parameters,
+            append_log=append_task_log,
+            update_progress=update_task_progress,
+            update_summary=update_task_result_summary,
+        )
+        result_path = str(summary.get("pilot_checkout") or summary.get("work_dir") or "")
+        update_task_result_summary(task_id, summary)
+        update_task_status(task_id, "completed", result_path=result_path)
+    except Exception as e:
+        append_task_log(task_id, f"Failed: {e}")
+        update_task_status(task_id, "failed", error_message=str(e))
+        raise
+
+
 # Map task_type (from Postgres) to job function
 TASK_JOB_MAP = {
     "generate_summary_csv": job_generate_summary_csv,
@@ -2551,6 +2587,7 @@ TASK_JOB_MAP = {
     "download_and_eval": job_download_and_eval,
     "run_release_specsheet_workflow": job_run_release_specsheet_workflow,
     "run_evaluator_and_process": job_run_evaluator_and_process,
+    "prepare_pr_test_branch": job_prepare_pr_test_branch,
 }
 
 

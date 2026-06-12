@@ -218,5 +218,52 @@ def render_task_result_summary(summary: Dict[str, Any]) -> None:
         specsheet_pdf = summary.get("specsheet_pdf", "")
         if specsheet_pdf:
             st.write(f"✅ **Specsheet PDF:** `{specsheet_pdf}`")
+    elif job == "prepare_pr_test_branch":
+        st.subheader("PR Test Branch Summary")
+        st.write(f"- Pilot checkout: `{summary.get('pilot_checkout', '')}`")
+        st.write(f"- Base pilot branch: `{summary.get('pilot_base_branch', '')}` @ `{summary.get('pilot_base_sha', '')}`")
+        st.write(f"- Sub repo: `{summary.get('sub_repo', '')}` at `{summary.get('sub_repo_path', '')}`")
+        selected_sub_base = summary.get("selected_sub_base", {})
+        if isinstance(selected_sub_base, dict) and selected_sub_base:
+            st.write(
+                "- Selected sub repo base: "
+                f"`{selected_sub_base.get('ref', '')}` @ `{selected_sub_base.get('sha', '')}` "
+                f"({selected_sub_base.get('kind', '')})"
+            )
+        st.write(f"- Test sub repo branch: `{summary.get('sub_branch', '')}` @ `{summary.get('sub_new_sha', '')}`")
+        st.write(f"- Test pilot branch: `{summary.get('pilot_branch', '')}` @ `{summary.get('pilot_new_sha', '')}`")
+        branch_urls = summary.get("branch_urls", {})
+        if isinstance(branch_urls, dict):
+            pilot_url = str(branch_urls.get("pilot") or "")
+            sub_repo_url = str(branch_urls.get("sub_repo") or "")
+            if pilot_url:
+                st.markdown(f"- Pilot branch link: [Open pilot branch]({pilot_url})")
+            if sub_repo_url:
+                st.markdown(f"- Sub repo branch link: [Open sub repo branch]({sub_repo_url})")
+        diff_urls = summary.get("diff_urls", {})
+        if isinstance(diff_urls, dict):
+            pilot_diff_url = str(diff_urls.get("pilot") or "")
+            sub_repo_diff_url = str(diff_urls.get("sub_repo") or "")
+            if pilot_diff_url:
+                st.markdown(f"- Pilot diff: [View pilot diff]({pilot_diff_url})")
+            if sub_repo_diff_url:
+                st.markdown(f"- Sub repo diff: [View sub repo diff]({sub_repo_diff_url})")
+        st.write(f"- Restore status: **{summary.get('restore_status', 'pending')}**")
+        changed_files = summary.get("changed_files", [])
+        if changed_files:
+            st.caption("Changed files staged from the source diff")
+            st.dataframe(pd.DataFrame({"file": changed_files}), width="stretch", hide_index=True)
+        push_commands = summary.get("push_commands", [])
+        if push_commands and summary.get("push_status") != "completed":
+            st.caption("Push commands")
+            st.code("\n".join(str(cmd) for cmd in push_commands), language="bash")
+        repos_diff = str(summary.get("repos_diff") or "").strip()
+        if repos_diff:
+            st.caption("autoware.repos diff")
+            st.code(repos_diff, language="diff")
+        steps = summary.get("steps", [])
+        if steps:
+            st.caption("Recorded steps")
+            st.dataframe(pd.DataFrame(steps), width="stretch", hide_index=True)
     else:
         st.json(summary)

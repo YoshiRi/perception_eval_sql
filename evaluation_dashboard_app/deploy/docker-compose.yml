@@ -11,6 +11,7 @@
 #   - ../data -> evaluation runs (Summary.csv, parquet, downloads); same as app default
 #   - ./postgres_data -> Postgres database files (tasks table, etc.)
 #   - ${HOME}/.webauto -> Download/Scenario API credentials (streamlit + worker)
+#   - secrets.ssh -> Git SSH key for private repository access (streamlit + worker)
 #
 # App source is mounted so you can edit Python code without rebuilding the image.
 # Streamlit will reload on file changes. Restart workers: docker compose restart worker
@@ -42,6 +43,9 @@ x-streamlit-app: &streamlit-app
     - DATABASE_URL=${DATABASE_URL}
     - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     - RQ_QUEUE=${RQ_QUEUE:-default}
+    - PR_TEST_BRANCH_WORKDIR=${PR_TEST_BRANCH_WORKDIR:-/app/git_workspaces}
+    - PR_TEST_BRANCH_PILOT_REPO_URL=${PR_TEST_BRANCH_PILOT_REPO_URL:-git@github.com:tier4/pilot-auto.x2.git}
+    - GIT_SSH_COMMAND=ssh -i /run/secrets/ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/eval_dashboard_known_hosts
     - EVAL_DEPLOYMENT_DEBUG_DOCKER=1
     - EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT=${EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT:-}
     # One-shot shell in selected container (docker exec). Default off; set to 1 in .env only when needed.
@@ -49,6 +53,7 @@ x-streamlit-app: &streamlit-app
   volumes:
     - ../data:/app/data
     - ${HOME}/.webauto:/root/.webauto
+    - pr_git_workspaces:/app/git_workspaces
     # Docker-only config (separate from your local configs)
     - ./configs:/app/docker_config
     # Mount app source so code changes apply without rebuild (Streamlit auto-reloads)
@@ -68,6 +73,8 @@ x-streamlit-app: &streamlit-app
     - "host.docker.internal:host-gateway"
   env_file:
     - .env
+  secrets:
+    - ssh
   depends_on:
     redis:
       condition: service_started
@@ -125,9 +132,13 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RQ_QUEUE=${RQ_QUEUE:-default}
+      - PR_TEST_BRANCH_WORKDIR=${PR_TEST_BRANCH_WORKDIR:-/app/git_workspaces}
+      - PR_TEST_BRANCH_PILOT_REPO_URL=${PR_TEST_BRANCH_PILOT_REPO_URL:-git@github.com:tier4/pilot-auto.x2.git}
+      - GIT_SSH_COMMAND=ssh -i /run/secrets/ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/eval_dashboard_known_hosts
     volumes:
       - ../data:/app/data
       - ${HOME}/.webauto:/root/.webauto
+      - pr_git_workspaces:/app/git_workspaces
       # Docker-only config (separate from your local configs)
       - ./configs:/app/docker_config
       # Mount app source so code changes apply without rebuild (restart worker to pick up: docker compose restart worker)
@@ -143,6 +154,8 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
+    secrets:
+      - ssh
     depends_on:
       redis:
         condition: service_started
@@ -183,3 +196,6 @@ services:
 secrets:
   ssh:
     file: ${HOME}/.ssh/id_rsa
+
+volumes:
+  pr_git_workspaces:

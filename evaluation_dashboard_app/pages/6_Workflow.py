@@ -37,6 +37,12 @@ from lib.path_utils import (
     resolve_run_subdirectory,
     resolve_under_data_root,
 )
+from lib.pr_test_branch_workflow import (
+    DEFAULT_BRANCH_PREFIX,
+    DEFAULT_PILOT_CHECKOUT,
+    DEFAULT_PILOT_REPO_URL,
+    DEFAULT_WORK_DIR,
+)
 from lib.run_metadata import (
     build_run_search_blob,
     read_run_metadata,
@@ -88,6 +94,8 @@ _TASK_HISTORY_RANGE_OPTIONS = {
     "90 days": 90,
     "All": None,
 }
+_WORKFLOW_START_DIALOG_KEY = "workflow_start_dialog_open"
+_WORKFLOW_PR_BRANCH_DIALOG_KEY = "workflow_pr_branch_dialog_open"
 
 
 st.set_page_config(
@@ -108,6 +116,20 @@ def get_config_value(key: str, default=None):
 
 def set_config_value(key: str, value) -> None:
     _user_config.set(key, value)
+
+
+def _open_exclusive_workflow_dialog(dialog_key: str) -> None:
+    for key in (_WORKFLOW_START_DIALOG_KEY, _WORKFLOW_PR_BRANCH_DIALOG_KEY):
+        st.session_state[key] = key == dialog_key
+
+
+def _close_workflow_dialog(dialog_key: str) -> None:
+    st.session_state[dialog_key] = False
+
+
+def _close_workflow_dialogs() -> None:
+    _close_workflow_dialog(_WORKFLOW_START_DIALOG_KEY)
+    _close_workflow_dialog(_WORKFLOW_PR_BRANCH_DIALOG_KEY)
 
 
 def _to_jst(dt):
@@ -1794,7 +1816,7 @@ def _render_current_tasks_section() -> None:
                     session_id=current_user,
                     since_days=since_days,
                 )
-                render_task_list(current_tasks, current_user)
+                render_task_list(current_tasks, current_user, on_delete=_close_workflow_dialogs)
 
             _task_list_poll()
             return
@@ -1807,7 +1829,7 @@ def _render_current_tasks_section() -> None:
         session_id=current_user,
         since_days=since_days,
     )
-    has_active = render_task_list(tasks, current_user)
+    has_active = render_task_list(tasks, current_user, on_delete=_close_workflow_dialogs)
     if st.button("Refresh tasks", key="workflow_refresh_tasks"):
         st.rerun()
     if has_active:
@@ -2333,8 +2355,8 @@ def _render_workflow_launcher_section(
 ) -> Dict[str, object]:
     section_header("Run Evaluator Workflow", "")
     start_defaults = _get_start_workflow_defaults()
-    if "workflow_start_dialog_open" not in st.session_state:
-        st.session_state["workflow_start_dialog_open"] = False
+    if _WORKFLOW_START_DIALOG_KEY not in st.session_state:
+        st.session_state[_WORKFLOW_START_DIALOG_KEY] = False
     new_job_clicked = st.button(
         "Start new workflow",
         key="workflow_open_start_dialog",
@@ -2376,7 +2398,7 @@ def _render_workflow_launcher_section(
             use_container_width=True,
         )
         if close_clicked:
-            st.session_state["workflow_start_dialog_open"] = False
+            _close_workflow_dialog(_WORKFLOW_START_DIALOG_KEY)
             st.rerun()
         if start_clicked:
             dialog_payload = dict(payload.get("dialog_payload") or {})
@@ -2447,7 +2469,7 @@ def _render_workflow_launcher_section(
                         },
                     )
                     if task_id:
-                        st.session_state["workflow_start_dialog_open"] = False
+                        _close_workflow_dialog(_WORKFLOW_START_DIALOG_KEY)
                         st.success(f"Release specsheet workflow queued. Task id: `{task_id}`")
                         st.rerun()
                     else:
@@ -2470,17 +2492,18 @@ def _render_workflow_launcher_section(
                     },
                 )
                 if task_id:
-                    st.session_state["workflow_start_dialog_open"] = False
+                    _close_workflow_dialog(_WORKFLOW_START_DIALOG_KEY)
                     st.success(f"Workflow queued. Task id: `{task_id}`")
                     st.rerun()
                 else:
                     st.error("Failed to enqueue task. Check worker logs.")
 
     if new_job_clicked:
-        st.session_state["workflow_start_dialog_open"] = True
+        _open_exclusive_workflow_dialog(_WORKFLOW_START_DIALOG_KEY)
         _reset_start_workflow_state()
 
-    if st.session_state.get("workflow_start_dialog_open"):
+    if st.session_state.get(_WORKFLOW_START_DIALOG_KEY):
+        _close_workflow_dialog(_WORKFLOW_PR_BRANCH_DIALOG_KEY)
         if callable(getattr(st, "dialog", None)):
             @st.dialog("Start evaluator workflow", width="large")
             def _workflow_start_dialog() -> None:
@@ -2493,6 +2516,141 @@ def _render_workflow_launcher_section(
             _render_start_workflow_controls(key_suffix="inline")
 
     return start_defaults
+
+
+def _render_pr_test_branch_launcher_section() -> None:
+    section_header("Prepare Git Test Branch", "")
+    if _WORKFLOW_PR_BRANCH_DIALOG_KEY not in st.session_state:
+        st.session_state[_WORKFLOW_PR_BRANCH_DIALOG_KEY] = False
+    if st.button(
+        "Prepare PR test branch",
+        key="workflow_open_pr_branch_dialog",
+        use_container_width=False,
+        help="Create local test branches in a reusable pilot-auto checkout and restore the checkout afterwards.",
+    ):
+        _open_exclusive_workflow_dialog(_WORKFLOW_PR_BRANCH_DIALOG_KEY)
+
+    def _render_pr_branch_controls(*, key_suffix: str = "dialog") -> None:
+        st.caption("Prepare a local pilot branch from a sub-repo PR, then restore the reusable checkout.")
+        default_base_branch = str(get_config_value("pr_test_pilot_base_branch", "main"))
+        default_sub_repo = str(get_config_value("pr_test_sub_repo", "universe"))
+        sub_repo_options = ["universe", "launcher"]
+        sub_repo_index = sub_repo_options.index(default_sub_repo) if default_sub_repo in sub_repo_options else 0
+
+        top_cols = st.columns([1.0, 1.0, 1.35])
+        with top_cols[0]:
+            sub_repo = st.selectbox(
+                "Sub repo",
+                options=sub_repo_options,
+                index=sub_repo_index,
+                key=f"workflow_pr_sub_repo_{key_suffix}",
+            )
+        with top_cols[1]:
+            pr_number = st.text_input(
+                "PR number",
+                value=str(get_config_value("pr_test_pr_number", "")),
+                key=f"workflow_pr_number_{key_suffix}",
+            ).strip()
+        with top_cols[2]:
+            pilot_base_branch = st.text_input(
+                "Base pilot branch",
+                value=default_base_branch,
+                placeholder="main or beta/v4.x",
+                key=f"workflow_pr_pilot_base_{key_suffix}",
+            ).strip()
+
+        work_dir = str(get_config_value("pr_test_work_dir", str(DEFAULT_WORK_DIR)) or str(DEFAULT_WORK_DIR))
+        pilot_checkout = str(get_config_value("pr_test_pilot_checkout", DEFAULT_PILOT_CHECKOUT) or "")
+        pilot_repo_url = str(get_config_value("pr_test_pilot_repo_url", DEFAULT_PILOT_REPO_URL) or DEFAULT_PILOT_REPO_URL)
+        pilot_remote = "origin"
+        sub_remote = "origin"
+        branch_prefix = DEFAULT_BRANCH_PREFIX
+        run_vcs_update = False
+        reset_cache = True
+        restore_after = True
+        prepare_only = False
+
+        errors = []
+        if not pilot_base_branch:
+            errors.append("Base pilot branch")
+        if not pr_number:
+            errors.append("PR number")
+        if not pilot_checkout and not pilot_repo_url:
+            errors.append("Set PR_TEST_BRANCH_PILOT_REPO_URL")
+        if pr_number and not pr_number.isdigit():
+            errors.append("PR number must be numeric")
+
+        if errors:
+            st.warning("Missing or invalid: " + ", ".join(errors))
+        else:
+            st.caption(
+                f"Uses `{work_dir}/pilot-auto` as the app cache, syncs only the selected repo from `autoware.repos`, "
+                "pushes the prepared branches, and restores the checkout afterwards."
+            )
+
+        action_cols = st.columns([1.05, 1.35, 3.6])
+        close_clicked = action_cols[0].button("Close", key=f"workflow_pr_close_{key_suffix}", use_container_width=True)
+        start_clicked = action_cols[1].button(
+            "Start git task",
+            key=f"workflow_pr_start_{key_suffix}",
+            type="primary",
+            use_container_width=True,
+        )
+        if close_clicked:
+            _close_workflow_dialog(_WORKFLOW_PR_BRANCH_DIALOG_KEY)
+            st.rerun()
+        if start_clicked:
+            if errors:
+                for err in errors:
+                    st.error(f"Missing or invalid: {err}")
+                return
+            if not is_task_queue_enabled():
+                st.error("Task queue not enabled. Set `USE_TASK_QUEUE=true`, `DATABASE_URL`, and `REDIS_URL`.")
+                return
+            for key, value in {
+                "pr_test_work_dir": work_dir,
+                "pr_test_pilot_checkout": pilot_checkout,
+                "pr_test_pilot_repo_url": pilot_repo_url,
+                "pr_test_pilot_base_branch": pilot_base_branch,
+                "pr_test_sub_repo": sub_repo,
+                "pr_test_pr_number": pr_number,
+            }.items():
+                set_config_value(key, value)
+            params = {
+                "work_dir": work_dir,
+                "pilot_checkout": pilot_checkout,
+                "pilot_repo_url": pilot_repo_url,
+                "pilot_base_branch": pilot_base_branch,
+                "pilot_remote": pilot_remote or "origin",
+                "sub_repo": sub_repo,
+                "sub_remote": sub_remote or "origin",
+                "sub_repo_branch": "",
+                "pr_number": pr_number,
+                "branch_prefix": branch_prefix or DEFAULT_BRANCH_PREFIX,
+                "run_vcs_update": run_vcs_update,
+                "reset_cache": reset_cache,
+                "restore_after": restore_after,
+                "prepare_only": prepare_only,
+            }
+            task_id = _enqueue_task("prepare_pr_test_branch", params)
+            if task_id:
+                _close_workflow_dialog(_WORKFLOW_PR_BRANCH_DIALOG_KEY)
+                st.success(f"Git branch preparation queued. Task id: `{task_id}`")
+                st.rerun()
+            else:
+                st.error("Failed to enqueue git branch preparation. Check worker logs.")
+
+    if st.session_state.get(_WORKFLOW_PR_BRANCH_DIALOG_KEY) and not st.session_state.get(_WORKFLOW_START_DIALOG_KEY):
+        if callable(getattr(st, "dialog", None)):
+            @st.dialog("Prepare PR test branch", width="large")
+            def _workflow_pr_branch_dialog() -> None:
+                _render_pr_branch_controls(key_suffix="dialog")
+
+            _workflow_pr_branch_dialog()
+        else:
+            st.markdown("---")
+            st.subheader("Prepare PR test branch")
+            _render_pr_branch_controls(key_suffix="inline")
 
 
 _inject_workflow_page_styles()
@@ -2509,6 +2667,7 @@ tab_tasks, tab_local = st.tabs(["Run Tasks", "Local Runs"])
 with tab_tasks:
     _render_current_tasks_section()
     start_defaults = _render_workflow_launcher_section(catalog_presets, catalogs_path, catalog_load_error)
+    _render_pr_test_branch_launcher_section()
 
     configure_recent_evaluator_jobs_ui(
         get_config_value=get_config_value,

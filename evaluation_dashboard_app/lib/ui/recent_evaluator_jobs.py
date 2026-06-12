@@ -1519,9 +1519,16 @@ def _render_recent_evaluator_job_retest_dialog(
         help="Defaults to empty. Leave it empty to let the evaluator use its default suite selection, or choose specific suites to rerun.",
         disabled=not suite_labels,
     )
+    auto_description = _make_retest_description(
+        str(detail.get("target") or job_id),
+        selected_preset_name,
+        has_custom_catalog=bool(str(catalog_id or "").strip() and not selected_preset_name),
+    )
     description = st.text_input(
         "Description",
         value="",
+        key=f"recent_eval_retest_description_{job_id}",
+        placeholder=auto_description,
         help="Leave empty to use an automatic evaluator artifact-retest name.",
     ).strip()
     retest_output_path = st.text_input(

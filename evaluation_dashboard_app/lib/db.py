@@ -32,6 +32,7 @@ TASK_TYPES = (
     "download_and_eval",
     "run_evaluator_and_process",
     "run_release_specsheet_workflow",
+    "prepare_pr_test_branch",
 )
 TASK_STATUSES = ("pending", "running", "completed", "failed")
 
