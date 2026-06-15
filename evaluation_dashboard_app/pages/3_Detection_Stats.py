@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 import numpy as np
 import os
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple
 
 from lib.path_utils import path_display
 from lib.detection_stats_debug import (
@@ -642,6 +642,1462 @@ def sql_distance_bin_label_rates_from_eval_flat(
     """
 
 
+def _report_int(v: Any) -> str:
+    if v is None or pd.isna(v):
+        return "n/a"
+    return f"{int(round(float(v))):,}"
+
+
+def _report_pct(v: Any) -> str:
+    if v is None or pd.isna(v):
+        return "n/a"
+    return f"{float(v) * 100:.1f}%"
+
+
+def _report_ratio(v: Any) -> str:
+    if v is None or pd.isna(v):
+        return "n/a"
+    return f"{float(v):.3f}"
+
+
+def _report_pp_delta(v: Any, *, lower_is_better: bool = False) -> str:
+    if v is None or pd.isna(v):
+        return "n/a"
+    val = float(v) * 100.0
+    sign = "+" if val > 0 else ""
+    if abs(val) < 0.05:
+        return "flat"
+    direction_good = (val > 0 and not lower_is_better) or (val < 0 and lower_is_better)
+    suffix = "good" if direction_good else "risk"
+    return f"{sign}{val:.1f} pp ({suffix})"
+
+
+def _report_num_delta(v: Any, *, lower_is_better: bool = False) -> str:
+    if v is None or pd.isna(v):
+        return "n/a"
+    val = int(round(float(v)))
+    sign = "+" if val > 0 else ""
+    if val == 0:
+        return "flat"
+    direction_good = (val > 0 and not lower_is_better) or (val < 0 and lower_is_better)
+    suffix = "good" if direction_good else "risk"
+    return f"{sign}{val:,} ({suffix})"
+
+
+def _report_nonempty_text(v: Any, fallback: str = "(not named)") -> str:
+    if v is None or pd.isna(v):
+        return fallback
+    s = str(v).strip()
+    return s if s else fallback
+
+
+def _report_error_name(col_name: str) -> str:
+    clean = col_name.replace("_delta", "").replace("mean_abs_", "").replace("_", " ").strip()
+    if clean == "x error":
+        return "mean |x error|"
+    if clean == "y error":
+        return "mean |y error|"
+    if clean == "yaw error":
+        return "mean |yaw error|"
+    return clean or col_name
+
+
+def _report_join_phrases(items: List[str], limit: int = 3) -> str:
+    clean = [i for i in items if i]
+    if not clean:
+        return "none identified"
+    clean = clean[:limit]
+    if len(clean) == 1:
+        return clean[0]
+    return ", ".join(clean[:-1]) + f", and {clean[-1]}"
+
+
+def _report_escape(v: Any) -> str:
+    return html.escape("" if v is None else str(v), quote=True)
+
+
+def _report_html_list(items: List[str], *, empty: str = "このsliceでは明確なhotspotは検出されませんでした。") -> str:
+    clean = [i for i in items if i]
+    if not clean:
+        return f"<p class=\"ds-report-muted\">{_report_escape(empty)}</p>"
+    return "<ul>" + "".join(f"<li>{_report_escape(item)}</li>" for item in clean[:4]) + "</ul>"
+
+
+def _report_metric_card(label: str, value: str, note: str = "", tone: str = "neutral") -> str:
+    return (
+        f"<div class=\"ds-report-metric ds-report-tone-{tone}\">"
+        f"<span>{_report_escape(label)}</span>"
+        f"<strong>{_report_escape(value)}</strong>"
+        f"<em>{_report_escape(note)}</em>"
+        "</div>"
+    )
+
+
+def _report_badge(text: str, tone: str) -> str:
+    return f"<span class=\"ds-report-badge ds-report-badge-{tone}\">{_report_escape(text)}</span>"
+
+
+def _report_html_panel(title: str, body: str, inner_html: str) -> str:
+    return (
+        "<div class=\"ds-report-panel ds-report-panel-wide\">"
+        f"<h4>{_report_escape(title)}</h4>"
+        f"<p>{_report_escape(body)}</p>"
+        f"{inner_html}"
+        "</div>"
+    )
+
+
+def _report_delta_tone(v: Any, *, lower_is_better: bool = False) -> str:
+    if v is None or pd.isna(v) or abs(float(v)) < 1e-9:
+        return "neutral"
+    val = float(v)
+    good = (val > 0 and not lower_is_better) or (val < 0 and lower_is_better)
+    return "good" if good else "risk"
+
+
+def _report_signpost(title: str, body: str, items: Optional[List[str]] = None) -> str:
+    list_html = _report_html_list(items or [], empty="active filter上で特に支配的な項目は検出されませんでした。")
+    return (
+        "<div class=\"ds-report-panel\">"
+        f"<h4>{_report_escape(title)}</h4>"
+        f"<p>{_report_escape(body)}</p>"
+        f"{list_html}"
+        "</div>"
+    )
+
+
+def _report_shell(
+    *,
+    title: str,
+    subtitle: str,
+    badge: str,
+    badge_tone: str,
+    lead: str,
+    metric_cards: List[str],
+    sections: List[str],
+    footnote: str,
+) -> str:
+    return f"""
+<style>
+.ds-report-shell {{
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+  margin: 0.6rem 0 1.2rem 0;
+}}
+.ds-report-head {{
+  padding: 1.35rem 1.55rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef6f3 52%, #f7f2ea 100%);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+}}
+.ds-report-kicker {{
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}}
+.ds-report-title {{
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.55rem;
+  line-height: 1.2;
+  letter-spacing: 0;
+}}
+.ds-report-subtitle {{
+  margin: 0.35rem 0 0 0;
+  color: #475569;
+  font-size: 0.93rem;
+  line-height: 1.45;
+}}
+.ds-report-lead {{
+  margin: 0;
+  padding: 1.15rem 1.55rem 0 1.55rem;
+  color: #1f2937;
+  font-size: 1.02rem;
+  line-height: 1.55;
+}}
+.ds-report-badge {{
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.24rem 0.62rem;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}}
+.ds-report-badge-good {{ background: #dcfce7; color: #166534; }}
+.ds-report-badge-risk {{ background: #fee2e2; color: #991b1b; }}
+.ds-report-badge-mixed {{ background: #fef3c7; color: #92400e; }}
+.ds-report-badge-neutral {{ background: #e2e8f0; color: #334155; }}
+.ds-report-metrics {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+  padding: 1.1rem 1.55rem 0.25rem 1.55rem;
+}}
+.ds-report-metric {{
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+  padding: 0.85rem 0.95rem;
+  background: #f8fafc;
+  min-height: 102px;
+}}
+.ds-report-metric span {{
+  display: block;
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}}
+.ds-report-metric strong {{
+  display: block;
+  margin-top: 0.25rem;
+  color: #0f172a;
+  font-size: 1.35rem;
+  line-height: 1.15;
+}}
+.ds-report-metric em {{
+  display: block;
+  margin-top: 0.35rem;
+  color: #475569;
+  font-size: 0.82rem;
+  font-style: normal;
+  line-height: 1.35;
+}}
+.ds-report-tone-good {{ background: #f0fdf4; border-color: rgba(22, 101, 52, 0.22); }}
+.ds-report-tone-risk {{ background: #fff7ed; border-color: rgba(194, 65, 12, 0.24); }}
+.ds-report-tone-neutral {{ background: #f8fafc; }}
+.ds-report-body {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.9rem;
+  padding: 1rem 1.55rem 1.4rem 1.55rem;
+}}
+.ds-report-panel {{
+  border-top: 3px solid #0d9488;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 0.95rem 1rem;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}}
+.ds-report-panel-wide {{
+  grid-column: 1 / -1;
+}}
+.ds-report-table-wrap {{
+  overflow-x: auto;
+}}
+.ds-report-table {{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}}
+.ds-report-table th {{
+  text-align: left;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}}
+.ds-report-table th, .ds-report-table td {{
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  white-space: nowrap;
+}}
+.ds-report-table td {{
+  color: #1f2937;
+  font-variant-numeric: tabular-nums;
+}}
+.ds-report-panel h4 {{
+  margin: 0 0 0.45rem 0;
+  font-size: 0.98rem;
+  line-height: 1.25;
+  color: #0f172a;
+  letter-spacing: 0;
+}}
+.ds-report-panel p, .ds-report-footnote {{
+  color: #334155;
+  font-size: 0.9rem;
+  line-height: 1.48;
+}}
+.ds-report-panel p {{ margin: 0 0 0.55rem 0; }}
+.ds-report-panel ul {{
+  margin: 0;
+  padding-left: 1.05rem;
+}}
+.ds-report-panel li {{
+  margin: 0.28rem 0;
+  color: #1f2937;
+  font-size: 0.88rem;
+  line-height: 1.42;
+}}
+.ds-report-muted {{ color: #64748b !important; font-style: italic; }}
+.ds-report-footnote {{
+  margin: 0;
+  padding: 0.85rem 1.55rem 1.1rem 1.55rem;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fafafa;
+}}
+</style>
+<article class="ds-report-shell">
+  <header class="ds-report-head">
+    <div class="ds-report-kicker">{_report_badge(badge, badge_tone)}</div>
+    <h3 class="ds-report-title">{_report_escape(title)}</h3>
+    <p class="ds-report-subtitle">{_report_escape(subtitle)}</p>
+  </header>
+  <p class="ds-report-lead">{_report_escape(lead)}</p>
+  <section class="ds-report-metrics">{''.join(metric_cards)}</section>
+  <section class="ds-report-body">{''.join(sections)}</section>
+  <p class="ds-report-footnote">{_report_escape(footnote)}</p>
+</article>
+"""
+
+
+def _report_label_metrics(con, view: str, filter_clause: str) -> pd.DataFrame:
+    q = f"""
+    WITH stats AS (
+        SELECT
+            COALESCE(CAST(label AS VARCHAR), '') AS label,
+            COUNT(*) FILTER (WHERE source = 'GT' AND status IN ('TP', 'FN')) AS gt_total,
+            COUNT(*) FILTER (WHERE source = 'GT' AND status = 'TP') AS tp,
+            COUNT(*) FILTER (WHERE source = 'GT' AND status = 'FN') AS fn,
+            COUNT(*) FILTER (WHERE source = 'EST' AND status IN ('TP', 'FP')) AS est_total,
+            COUNT(*) FILTER (WHERE source = 'EST' AND status = 'TP') AS tp_est,
+            COUNT(*) FILTER (WHERE source = 'EST' AND status = 'FP') AS fp
+        FROM {view}
+        WHERE {filter_clause}
+        GROUP BY 1
+    )
+    SELECT
+        label,
+        gt_total,
+        tp,
+        fn,
+        est_total,
+        tp_est,
+        fp,
+        CASE WHEN gt_total > 0 THEN CAST(tp AS DOUBLE) / gt_total ELSE NULL END AS tpr,
+        CASE WHEN est_total > 0 THEN CAST(fp AS DOUBLE) / est_total ELSE NULL END AS fpr,
+        CASE WHEN est_total > 0 THEN CAST(tp_est AS DOUBLE) / est_total ELSE NULL END AS precision,
+        CASE
+            WHEN gt_total > 0 AND est_total > 0 AND (CAST(tp AS DOUBLE) / gt_total + CAST(tp_est AS DOUBLE) / est_total) > 0
+            THEN 2 * (CAST(tp AS DOUBLE) / gt_total) * (CAST(tp_est AS DOUBLE) / est_total)
+                 / ((CAST(tp AS DOUBLE) / gt_total) + (CAST(tp_est AS DOUBLE) / est_total))
+            ELSE NULL
+        END AS f1
+    FROM stats
+    ORDER BY label
+    """
+    return con.execute(q).df()
+
+
+def _report_scene_metrics(con, view: str, filter_clause: str) -> pd.DataFrame:
+    q = f"""
+    WITH stats AS (
+        SELECT
+            COALESCE(CAST(scenario_name AS VARCHAR), '') AS scenario_name,
+            COALESCE(CAST(t4dataset_name AS VARCHAR), '') AS t4dataset_name,
+            COALESCE(CAST(suite_name AS VARCHAR), '') AS suite_name,
+            COALESCE(CAST(t4dataset_id AS VARCHAR), '') AS t4dataset_id,
+            COUNT(*) FILTER (WHERE source = 'GT' AND status IN ('TP', 'FN')) AS gt_total,
+            COUNT(*) FILTER (WHERE source = 'GT' AND status = 'TP') AS tp,
+            COUNT(*) FILTER (WHERE source = 'GT' AND status = 'FN') AS fn,
+            COUNT(*) FILTER (WHERE source = 'EST' AND status IN ('TP', 'FP')) AS est_total,
+            COUNT(*) FILTER (WHERE source = 'EST' AND status = 'FP') AS fp
+        FROM {view}
+        WHERE {filter_clause}
+        GROUP BY 1, 2, 3, 4
+    )
+    SELECT
+        *,
+        CASE WHEN gt_total > 0 THEN CAST(tp AS DOUBLE) / gt_total ELSE NULL END AS tpr,
+        CASE WHEN gt_total > 0 THEN CAST(fn AS DOUBLE) / gt_total ELSE NULL END AS fn_rate,
+        CASE WHEN est_total > 0 THEN CAST(fp AS DOUBLE) / est_total ELSE NULL END AS fpr
+    FROM stats
+    ORDER BY fn DESC, fn_rate DESC, fp DESC
+    """
+    return con.execute(q).df()
+
+
+def _report_fn_frames(con, view: str, filter_clause: str) -> pd.DataFrame:
+    q = f"""
+    SELECT
+        COALESCE(CAST(t4dataset_id AS VARCHAR), '') AS t4dataset_id,
+        CAST(frame_index AS VARCHAR) AS frame_index,
+        COALESCE(MAX(CAST(scenario_name AS VARCHAR)), '') AS scenario_name,
+        COALESCE(MAX(CAST(t4dataset_name AS VARCHAR)), '') AS t4dataset_name,
+        COALESCE(MAX(CAST(suite_name AS VARCHAR)), '') AS suite_name,
+        COUNT(*) AS fn
+    FROM {view}
+    WHERE source = 'GT' AND status = 'FN' AND frame_index IS NOT NULL AND {filter_clause}
+    GROUP BY 1, 2
+    ORDER BY fn DESC
+    LIMIT 20
+    """
+    return con.execute(q).df()
+
+
+def _report_error_metrics(con, view: str, filter_clause: str) -> pd.DataFrame:
+    try:
+        sample_df = con.execute(f"SELECT * FROM {view} LIMIT 1").df()
+    except Exception:
+        return pd.DataFrame()
+    if not all(c in sample_df.columns for c in ["x_error", "y_error", "yaw_error"]):
+        return pd.DataFrame()
+    q = f"""
+    SELECT
+        COALESCE(CAST(label AS VARCHAR), '') AS label,
+        AVG(ABS(CAST(x_error AS DOUBLE))) FILTER (WHERE status = 'TP' AND x_error IS NOT NULL) AS mean_abs_x_error,
+        AVG(ABS(CAST(y_error AS DOUBLE))) FILTER (WHERE status = 'TP' AND y_error IS NOT NULL) AS mean_abs_y_error,
+        AVG(ABS(CAST(yaw_error AS DOUBLE))) FILTER (WHERE status = 'TP' AND yaw_error IS NOT NULL) AS mean_abs_yaw_error
+    FROM {view}
+    WHERE {filter_clause}
+    GROUP BY 1
+    ORDER BY label
+    """
+    return con.execute(q).df()
+
+
+def _report_diff_by_label(
+    con,
+    base_view: str,
+    comp_view: str,
+    base_filter: str,
+    comp_filter: str,
+) -> pd.DataFrame:
+    q = f"""
+    WITH base_gt AS (
+        SELECT
+            t4dataset_id,
+            frame_index,
+            uuid AS gt_uuid,
+            COALESCE(MAX(CAST(label AS VARCHAR)), '') AS label,
+            COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base
+        FROM {base_view}
+        WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND {base_filter}
+        GROUP BY 1, 2, 3
+    ),
+    comp_gt AS (
+        SELECT
+            t4dataset_id,
+            frame_index,
+            uuid AS gt_uuid,
+            COALESCE(MAX(CAST(label AS VARCHAR)), '') AS label,
+            COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp
+        FROM {comp_view}
+        WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND {comp_filter}
+        GROUP BY 1, 2, 3
+    ),
+    joined AS (
+        SELECT
+            COALESCE(b.label, c.label, '') AS label,
+            COALESCE(b.tp_base, FALSE) AS tp_base,
+            COALESCE(c.tp_comp, FALSE) AS tp_comp
+        FROM base_gt b
+        FULL OUTER JOIN comp_gt c
+            ON b.t4dataset_id = c.t4dataset_id
+           AND b.frame_index = c.frame_index
+           AND b.gt_uuid = c.gt_uuid
+    )
+    SELECT
+        label,
+        COUNT(*) AS total_gt,
+        COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp) AS improved_cnt,
+        COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp) AS degraded_cnt,
+        COUNT(*) FILTER (WHERE tp_base AND tp_comp) AS both_tp_cnt,
+        COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp) AS both_fn_cnt,
+        SUM((CASE WHEN tp_comp THEN 1 ELSE 0 END) - (CASE WHEN tp_base THEN 1 ELSE 0 END)) AS net_tp_delta
+    FROM joined
+    GROUP BY 1
+    ORDER BY net_tp_delta DESC
+    """
+    return con.execute(q).df()
+
+
+def _report_diff_by_scene_or_frame(
+    con,
+    base_view: str,
+    comp_view: str,
+    base_filter: str,
+    comp_filter: str,
+    *,
+    by_frame: bool,
+) -> pd.DataFrame:
+    frame_select = "COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index," if by_frame else ""
+    frame_group = ", frame_index" if by_frame else ""
+    q = f"""
+    WITH base_gt AS (
+        SELECT
+            t4dataset_id,
+            frame_index,
+            uuid AS gt_uuid,
+            COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base,
+            COALESCE(MAX(CAST(suite_name AS VARCHAR)), '') AS suite_name,
+            COALESCE(MAX(CAST(scenario_name AS VARCHAR)), '') AS scenario_name,
+            COALESCE(MAX(CAST(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+        FROM {base_view}
+        WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND {base_filter}
+        GROUP BY 1, 2, 3
+    ),
+    comp_gt AS (
+        SELECT
+            t4dataset_id,
+            frame_index,
+            uuid AS gt_uuid,
+            COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp,
+            COALESCE(MAX(CAST(suite_name AS VARCHAR)), '') AS suite_name,
+            COALESCE(MAX(CAST(scenario_name AS VARCHAR)), '') AS scenario_name,
+            COALESCE(MAX(CAST(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+        FROM {comp_view}
+        WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND {comp_filter}
+        GROUP BY 1, 2, 3
+    ),
+    joined AS (
+        SELECT
+            COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR), '') AS t4dataset_id,
+            {frame_select}
+            COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+            COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+            COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name,
+            COALESCE(b.tp_base, FALSE) AS tp_base,
+            COALESCE(c.tp_comp, FALSE) AS tp_comp
+        FROM base_gt b
+        FULL OUTER JOIN comp_gt c
+            ON b.t4dataset_id = c.t4dataset_id
+           AND b.frame_index = c.frame_index
+           AND b.gt_uuid = c.gt_uuid
+    )
+    SELECT
+        t4dataset_id,
+        {('frame_index,' if by_frame else '')}
+        suite_name,
+        scenario_name,
+        t4dataset_name,
+        COUNT(*) AS total_gt,
+        COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp) AS improved_cnt,
+        COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp) AS degraded_cnt,
+        COUNT(*) FILTER (WHERE tp_base AND tp_comp) AS both_tp_cnt,
+        COUNT(*) FILTER (WHERE NOT tp_base AND NOT tp_comp) AS both_fn_cnt,
+        SUM((CASE WHEN tp_comp THEN 1 ELSE 0 END) - (CASE WHEN tp_base THEN 1 ELSE 0 END)) AS net_tp_delta
+    FROM joined
+    GROUP BY t4dataset_id, suite_name, scenario_name, t4dataset_name{frame_group}
+    ORDER BY degraded_cnt DESC, improved_cnt ASC, net_tp_delta ASC
+    LIMIT 50
+    """
+    return con.execute(q).df()
+
+
+def _report_frame_ref(row: pd.Series) -> str:
+    scen = _report_nonempty_text(row.get("scenario_name"))
+    t4 = _report_nonempty_text(row.get("t4dataset_name"), "")
+    fid = _report_nonempty_text(row.get("frame_index"), "?")
+    if t4 and t4 != scen:
+        return f"{scen} / {t4}, frame {fid}"
+    return f"{scen}, frame {fid}"
+
+
+def _report_scene_ref(row: pd.Series) -> str:
+    scen = _report_nonempty_text(row.get("scenario_name"))
+    t4 = _report_nonempty_text(row.get("t4dataset_name"), "")
+    if t4 and t4 != scen:
+        return f"{scen} / {t4}"
+    return scen
+
+
+def _report_top_labels(df: pd.DataFrame, metric: str, count_col: str, ascending: bool = False) -> List[str]:
+    if df.empty or metric not in df.columns:
+        return []
+    d = df.copy()
+    if count_col in d.columns:
+        d = d[d[count_col].fillna(0) > 0]
+    if d.empty:
+        return []
+    d = d.sort_values([metric, count_col], ascending=[ascending, False]).head(3)
+    out = []
+    for _, r in d.iterrows():
+        if metric in ("tpr", "fpr", "precision", "f1"):
+            out.append(f"{_report_nonempty_text(r['label'], '(no label)')} ({metric.upper()} {_report_pct(r[metric])}, n={_report_int(r.get(count_col))})")
+        else:
+            out.append(f"{_report_nonempty_text(r['label'], '(no label)')} ({metric} {_report_int(r[metric])})")
+    return out
+
+
+def _report_distance_phrases(df_dist: pd.DataFrame, *, compare_base: Optional[pd.DataFrame] = None) -> List[str]:
+    if df_dist.empty:
+        return []
+    d = df_dist.copy()
+    phrases: List[str] = []
+    if compare_base is not None and not compare_base.empty:
+        merged = compare_base.merge(df_dist, on="distance_bin", suffixes=("_base", "_candidate"))
+        if not merged.empty:
+            merged["tpr_delta"] = merged["tpr_candidate"] - merged["tpr_base"]
+            merged["fpr_delta"] = merged["fpr_candidate"] - merged["fpr_base"]
+            worst_tpr = merged.sort_values("tpr_delta", ascending=True).head(1)
+            best_tpr = merged.sort_values("tpr_delta", ascending=False).head(1)
+            worst_fpr = merged.sort_values("fpr_delta", ascending=False).head(1)
+            if not worst_tpr.empty:
+                r = worst_tpr.iloc[0]
+                phrases.append(f"largest TP-rate regression at {r['distance_bin']} ({_report_pp_delta(r['tpr_delta'])})")
+            if not best_tpr.empty:
+                r = best_tpr.iloc[0]
+                phrases.append(f"largest TP-rate gain at {r['distance_bin']} ({_report_pp_delta(r['tpr_delta'])})")
+            if not worst_fpr.empty:
+                r = worst_fpr.iloc[0]
+                phrases.append(f"largest FP-rate increase at {r['distance_bin']} ({_report_pp_delta(r['fpr_delta'], lower_is_better=True)})")
+        return phrases
+    if "tpr" in d.columns:
+        worst = d.sort_values("tpr", ascending=True).head(1)
+        if not worst.empty:
+            r = worst.iloc[0]
+            phrases.append(f"weakest TP rate at {r['distance_bin']} ({_report_pct(r['tpr'])})")
+    if "fpr" in d.columns:
+        worst_fp = d.sort_values("fpr", ascending=False).head(1)
+        if not worst_fp.empty:
+            r = worst_fp.iloc[0]
+            phrases.append(f"highest FP pressure at {r['distance_bin']} ({_report_pct(r['fpr'])})")
+    return phrases
+
+
+def _report_kpi_compare_table(base_kpi: Optional[Dict[str, Any]], candidate_kpi: Optional[Dict[str, Any]]) -> str:
+    base = base_kpi or {}
+    cand = candidate_kpi or {}
+    rows = [
+        ("TP", _report_int(base.get("tp")), _report_int(cand.get("tp")), _report_num_delta(cand.get("tp", 0) - base.get("tp", 0))),
+        ("FP", _report_int(base.get("fp")), _report_int(cand.get("fp")), _report_num_delta(cand.get("fp", 0) - base.get("fp", 0), lower_is_better=True)),
+        ("FN", _report_int(base.get("fn")), _report_int(cand.get("fn")), _report_num_delta(cand.get("fn", 0) - base.get("fn", 0), lower_is_better=True)),
+        (
+            "Precision",
+            _report_pct(base.get("precision")),
+            _report_pct(cand.get("precision")),
+            _report_pp_delta(cand.get("precision") - base.get("precision")) if base.get("precision") is not None and cand.get("precision") is not None else "n/a",
+        ),
+        (
+            "Recall",
+            _report_pct(base.get("recall", base.get("tpr"))),
+            _report_pct(cand.get("recall", cand.get("tpr"))),
+            _report_pp_delta(cand.get("tpr") - base.get("tpr")) if base.get("tpr") is not None and cand.get("tpr") is not None else "n/a",
+        ),
+        (
+            "F1",
+            _report_ratio(base.get("f1")),
+            _report_ratio(cand.get("f1")),
+            f"{(cand.get('f1') - base.get('f1')):+.3f}" if base.get("f1") is not None and cand.get("f1") is not None else "n/a",
+        ),
+    ]
+    body = "".join(
+        "<tr>"
+        f"<td>{_report_escape(metric)}</td>"
+        f"<td>{_report_escape(base_v)}</td>"
+        f"<td>{_report_escape(cand_v)}</td>"
+        f"<td>{_report_escape(diff)}</td>"
+        "</tr>"
+        for metric, base_v, cand_v, diff in rows
+    )
+    return (
+        "<div class=\"ds-report-table-wrap\"><table class=\"ds-report-table\">"
+        "<thead><tr><th>Metric</th><th>Baseline A</th><th>Candidate</th><th>Diff</th></tr></thead>"
+        f"<tbody>{body}</tbody></table></div>"
+    )
+
+
+def _report_meta_table(rows: List[Tuple[str, str]]) -> str:
+    body = "".join(
+        "<tr>"
+        f"<td>{_report_escape(k)}</td>"
+        f"<td>{_report_escape(v)}</td>"
+        "</tr>"
+        for k, v in rows
+    )
+    return (
+        "<div class=\"ds-report-table-wrap\"><table class=\"ds-report-table\">"
+        "<thead><tr><th>項目</th><th>内容</th></tr></thead>"
+        f"<tbody>{body}</tbody></table></div>"
+    )
+
+
+def _report_label_distance_compare(
+    con,
+    base_view: str,
+    candidate_view: str,
+    base_filter: str,
+    candidate_filter: str,
+) -> pd.DataFrame:
+    base = con.execute(sql_distance_bin_label_rates_from_eval_flat(base_view, base_filter)).df()
+    cand = con.execute(sql_distance_bin_label_rates_from_eval_flat(candidate_view, candidate_filter)).df()
+    if base.empty or cand.empty:
+        return pd.DataFrame()
+    merged = base.merge(cand, on=["label", "distance_bin"], suffixes=("_base", "_candidate"))
+    if merged.empty:
+        return merged
+    merged["tpr_delta"] = merged["tpr_candidate"] - merged["tpr_base"]
+    merged["fpr_delta"] = merged["fpr_candidate"] - merged["fpr_base"]
+    return merged
+
+
+def _report_label_distance_phrases(df_label_dist_delta: pd.DataFrame) -> List[str]:
+    if df_label_dist_delta.empty:
+        return []
+    out: List[str] = []
+    tpr_gain = df_label_dist_delta[df_label_dist_delta["tpr_delta"] > 0.0005].sort_values("tpr_delta", ascending=False).head(1)
+    tpr_loss = df_label_dist_delta[df_label_dist_delta["tpr_delta"] < -0.0005].sort_values("tpr_delta", ascending=True).head(1)
+    fp_rise = df_label_dist_delta[df_label_dist_delta["fpr_delta"] > 0.0005].sort_values("fpr_delta", ascending=False).head(1)
+    if not tpr_gain.empty:
+        r = tpr_gain.iloc[0]
+        out.append(f"{_report_nonempty_text(r['label'], '(no label)')} @ {r['distance_bin']} TP rate improved {_report_pp_delta(r['tpr_delta'])}")
+    if not tpr_loss.empty:
+        r = tpr_loss.iloc[0]
+        out.append(f"{_report_nonempty_text(r['label'], '(no label)')} @ {r['distance_bin']} TP rate regressed {_report_pp_delta(r['tpr_delta'])}")
+    if not fp_rise.empty:
+        r = fp_rise.iloc[0]
+        out.append(f"{_report_nonempty_text(r['label'], '(no label)')} @ {r['distance_bin']} FP rate increased {_report_pp_delta(r['fpr_delta'], lower_is_better=True)}")
+    return out
+
+
+def _report_frame_concentration_phrase(df_diff_frame: pd.DataFrame, total_degraded: Optional[int]) -> str:
+    if df_diff_frame.empty or not total_degraded:
+        return "フレーム集中度は現在のデータでは判定できません。"
+    degraded = df_diff_frame[df_diff_frame["degraded_cnt"] > 0].copy()
+    if degraded.empty:
+        return "デグレが集中しているフレームhotspotは検出されませんでした。"
+    top10 = float(degraded.head(10)["degraded_cnt"].sum())
+    share = top10 / max(float(total_degraded), 1.0)
+    if share >= 0.35:
+        return f"デグレは集中傾向です。上位10フレームだけでデグレobjectの{_report_pct(share)}を説明しており、少数sceneが主因の可能性があります。"
+    if share <= 0.10 and len(degraded) >= 30:
+        return f"デグレは分散傾向です。上位10フレームの寄与は{_report_pct(share)}に留まり、局所caseではなくsystematicな挙動変化の可能性があります。"
+    return f"デグレは中程度に集中しています。上位10フレームがデグレobjectの{_report_pct(share)}を説明しています。"
+
+
+def _report_safety_perspective(df_diff_label: pd.DataFrame) -> List[str]:
+    if df_diff_label.empty:
+        return []
+    priority_keywords = ("car", "pedestrian", "truck", "bus", "bicycle", "bike", "cyclist", "motorcycle")
+    d = df_diff_label.copy()
+    d["label_norm"] = d["label"].astype(str).str.lower()
+    priority = d[d["label_norm"].apply(lambda s: any(k in s for k in priority_keywords))]
+    if priority.empty:
+        return ["一般的な安全重要class名は検出されませんでした。安全観点の結論にはclass命名の確認が必要です。"]
+    out = []
+    gains = priority[priority["net_tp_delta"] > 0].sort_values("net_tp_delta", ascending=False).head(2)
+    losses = priority[priority["net_tp_delta"] < 0].sort_values("net_tp_delta", ascending=True).head(2)
+    if not gains.empty:
+        out.append("安全重要classの改善: " + _report_join_phrases([
+            f"{_report_nonempty_text(r['label'], '(no label)')} net {_report_num_delta(r['net_tp_delta'])}"
+            for _, r in gains.iterrows()
+        ]))
+    if not losses.empty:
+        out.append("安全重要classのデグレ: " + _report_join_phrases([
+            f"{_report_nonempty_text(r['label'], '(no label)')} net {_report_num_delta(r['net_tp_delta'])}"
+            for _, r in losses.iterrows()
+        ]))
+    if not out:
+        out.append("主要な交通参加者classは概ね安定しており、残りの変化は優先度の低いclassに寄っている可能性があります。")
+    return out
+
+
+def _report_recommendation(
+    *,
+    tpr_delta: Optional[float],
+    fp_delta: int,
+    total_improved: Optional[int],
+    total_degraded: Optional[int],
+    diff_loss: List[str],
+    dist_phrases: List[str],
+) -> List[str]:
+    improved = total_improved or 0
+    degraded = total_degraded or 0
+    if tpr_delta is not None and tpr_delta >= -0.0005 and improved > degraded and fp_delta <= 0:
+        return ["Candidateをrelease候補として維持できます。", "ただし記載したhotspotでregression確認を行うべきです。"]
+    if improved > degraded and fp_delta > 0:
+        return ["Candidateは有望ですが、FP増加をrelease gateの確認項目にしてください。", f"優先確認対象: {_report_join_phrases(dist_phrases + diff_loss)}."]
+    if degraded >= improved:
+        return ["現時点では純粋な改善とは判断しない方が安全です。", f"重点調査対象: {_report_join_phrases(diff_loss + dist_phrases)}."]
+    return ["Candidateは概ねstableです。", "scenario/frame hotspotを確認し、release対象ODDで問題になる構造変化かを判断してください。"]
+
+
+def _report_human_pp(v: Any, *, sign: bool = True) -> str:
+    if v is None or pd.isna(v):
+        return "n/a"
+    val = float(v)
+    prefix = "+" if sign and val > 0 else ""
+    return f"{prefix}{val:.3f}"
+
+
+def _report_class_label_jp(label: str) -> str:
+    s = str(label).lower()
+    if "pedestrian" in s:
+        return "歩行者"
+    if "car" in s:
+        return "car"
+    if "truck" in s:
+        return "truck"
+    if "bus" in s:
+        return "bus"
+    if "bicycle" in s or "bike" in s or "cyclist" in s:
+        return "二輪/自転車"
+    return str(label)
+
+
+def _report_exec_summary_compare(
+    *,
+    candidate_label: str,
+    tpr_delta: Optional[float],
+    precision_delta: Optional[float],
+    f1_delta: Optional[float],
+    df_label: pd.DataFrame,
+    df_candidate_dist: pd.DataFrame,
+    df_critical_cases: pd.DataFrame,
+    recommendation: List[str],
+) -> str:
+    if df_label.empty:
+        weak_class_phrase = "安全重要class別の悪化は現在のsliceでは特定できませんでした"
+    else:
+        d = df_label.copy()
+        d["label_norm"] = d["label"].astype(str).str.lower()
+        priority_order = ["pedestrian", "car", "truck", "bus", "bicycle", "bike", "cyclist", "motorcycle"]
+        priority = d[d["label_norm"].apply(lambda s: any(k in s for k in priority_order))].copy()
+        if priority.empty:
+            priority = d
+        loss = priority.sort_values("tpr_delta", ascending=True).head(1)
+        if not loss.empty and float(loss.iloc[0]["tpr_delta"]) < -0.0005:
+            r = loss.iloc[0]
+            weak_class_phrase = f"{_report_class_label_jp(str(r['label']))}Recallが低下（Δ{_report_human_pp(r['tpr_delta'])}）"
+        else:
+            weak_class_phrase = "安全重要classのRecall低下は大きくありません"
+
+    far_phrase = "遠距離の改善は限定的です"
+    if not df_candidate_dist.empty and "distance_bin" in df_candidate_dist.columns:
+        far = df_candidate_dist[df_candidate_dist["distance_bin"].astype(str).str.extract(r"\[(\d+)", expand=False).fillna("0").astype(int) >= 50]
+        if not far.empty:
+            best_far = far.sort_values("tpr", ascending=False).head(1)
+            if not best_far.empty:
+                far_phrase = f"遠距離（50m+）では{best_far.iloc[0]['distance_bin']}のTP rateが{_report_pct(best_far.iloc[0]['tpr'])}です"
+
+    critical_phrase = (
+        "近距離・高可視性の安全criticalデグレが確認されました"
+        if df_critical_cases is not None and not df_critical_cases.empty
+        else "近距離・高可視性の安全criticalデグレは検出されていません"
+    )
+    if df_critical_cases is not None and not df_critical_cases.empty:
+        decision = "安全上criticalなデグレが解消されるまで本番採用は推奨しません。"
+    elif tpr_delta is not None and tpr_delta > 0.002 and (f1_delta is None or f1_delta >= -0.0005):
+        decision = "本番採用に向けて前向きですが、記載hotspotの確認をrelease gate条件とします。"
+    else:
+        decision = _report_join_phrases(recommendation, limit=1)
+
+    overall = (
+        f"{candidate_label}は全体Recallをδ{_report_human_pp(tpr_delta)}改善"
+        if tpr_delta is not None and tpr_delta > 0
+        else f"{candidate_label}の全体Recall差分はδ{_report_human_pp(tpr_delta)}"
+    )
+    precision_part = f"Precision差分はδ{_report_human_pp(precision_delta)}" if precision_delta is not None else "Precision差分はn/a"
+    f1_part = f"F1差分はδ{_report_human_pp(f1_delta)}" if f1_delta is not None else "F1差分はn/a"
+    return (
+        f"{overall}していますが、{weak_class_phrase}。"
+        f"{far_phrase}。一方で、{critical_phrase}。"
+        f"{precision_part}、{f1_part}。"
+        f"{decision}"
+    )
+
+
+def _report_degraded_object_details(
+    con,
+    base_view: str,
+    comp_view: str,
+    base_filter: str,
+    comp_filter: str,
+) -> pd.DataFrame:
+    q = f"""
+    WITH base_gt AS (
+        SELECT
+            t4dataset_id,
+            frame_index,
+            uuid AS gt_uuid,
+            COALESCE(MAX(CAST(label AS VARCHAR)), '') AS label,
+            MAX(dist_h) AS dist_h,
+            COALESCE(MAX(CAST(visibility AS VARCHAR)), '') AS visibility,
+            MAX(try_cast(pointcloud_num AS DOUBLE)) AS pointcloud_num,
+            COALESCE(MAX(CAST(scenario_name AS VARCHAR)), '') AS scenario_name,
+            COALESCE(MAX(CAST(t4dataset_name AS VARCHAR)), '') AS t4dataset_name,
+            COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base
+        FROM {base_view}
+        WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND {base_filter}
+        GROUP BY 1, 2, 3
+    ),
+    comp_gt AS (
+        SELECT
+            t4dataset_id,
+            frame_index,
+            uuid AS gt_uuid,
+            COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp
+        FROM {comp_view}
+        WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL AND {comp_filter}
+        GROUP BY 1, 2, 3
+    )
+    SELECT
+        CAST(b.t4dataset_id AS VARCHAR) AS t4dataset_id,
+        CAST(b.frame_index AS VARCHAR) AS frame_index,
+        b.gt_uuid,
+        b.label,
+        b.dist_h,
+        b.visibility,
+        b.pointcloud_num,
+        b.scenario_name,
+        b.t4dataset_name
+    FROM base_gt b
+    LEFT JOIN comp_gt c
+        ON b.t4dataset_id = c.t4dataset_id
+       AND b.frame_index = c.frame_index
+       AND b.gt_uuid = c.gt_uuid
+    WHERE b.tp_base AND NOT COALESCE(c.tp_comp, FALSE)
+    ORDER BY b.dist_h ASC, b.pointcloud_num DESC NULLS LAST
+    LIMIT 2000
+    """
+    try:
+        return con.execute(q).df()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _report_critical_case_phrases(df_degraded_objects: pd.DataFrame) -> Tuple[List[str], pd.DataFrame]:
+    if df_degraded_objects.empty:
+        return [], pd.DataFrame()
+    d = df_degraded_objects.copy()
+    vis = d["visibility"].fillna("").astype(str).str.upper()
+    critical = d[
+        (d["dist_h"].fillna(1e9) <= 20.0)
+        & (vis.isin(["FULL", "MOST"]))
+        & (d["pointcloud_num"].fillna(0) >= 20)
+    ].copy()
+    if critical.empty:
+        return ["20m以内・FULL/MOST・点群20点以上に該当する安全クリティカルなデグレは検出されませんでした。"], critical
+    phrases = []
+    for _, r in critical.head(3).iterrows():
+        uuid_s = _report_nonempty_text(r.get("gt_uuid"), "")[:8]
+        phrases.append(
+            f"{_report_nonempty_text(r.get('label'), '(no label)')} / "
+            f"{float(r.get('dist_h', 0.0)):.1f}m / "
+            f"点群{_report_int(r.get('pointcloud_num'))} / "
+            f"{_report_frame_ref(r)} / uuid={uuid_s}"
+        )
+    return phrases, critical
+
+
+def _report_consecutive_failure_phrases(df_degraded_objects: pd.DataFrame) -> Tuple[List[str], pd.DataFrame]:
+    if df_degraded_objects.empty:
+        return [], pd.DataFrame()
+    d = df_degraded_objects.copy()
+    grouped = (
+        d.groupby(["t4dataset_id", "gt_uuid", "label", "scenario_name"], dropna=False)
+        .agg(
+            degraded_frames=("frame_index", "nunique"),
+            min_dist=("dist_h", "min"),
+            max_pointcloud=("pointcloud_num", "max"),
+        )
+        .reset_index()
+        .sort_values(["degraded_frames", "max_pointcloud"], ascending=[False, False])
+    )
+    if grouped.empty:
+        return [], grouped
+    phrases = []
+    for _, r in grouped.head(3).iterrows():
+        uuid_s = _report_nonempty_text(r.get("gt_uuid"), "")[:8]
+        phrases.append(
+            f"{_report_nonempty_text(r.get('label'), '(no label)')} / "
+            f"{_report_nonempty_text(r.get('scenario_name'))} / "
+            f"{_report_int(r.get('degraded_frames'))} frames / "
+            f"min {float(r.get('min_dist', 0.0)):.1f}m / uuid={uuid_s}"
+        )
+    return phrases, grouped
+
+
+def build_single_detection_report(
+    con,
+    *,
+    run_label: str,
+    view: str,
+    filter_clause: str,
+    scope_label: str,
+    kpi: Optional[Dict[str, Any]],
+) -> Tuple[str, str, Dict[str, pd.DataFrame]]:
+    df_label = _report_label_metrics(con, view, filter_clause)
+    df_scene = _report_scene_metrics(con, view, filter_clause)
+    df_frames = _report_fn_frames(con, view, filter_clause)
+    df_dist = con.execute(sql_distance_bin_rates_from_eval_flat(view, filter_clause, metrics="both")).df()
+    df_err = _report_error_metrics(con, view, filter_clause)
+
+    strong_labels = _report_top_labels(df_label, "tpr", "gt_total", ascending=False)
+    weak_labels = _report_top_labels(df_label, "fn", "gt_total", ascending=False)
+    fp_labels = _report_top_labels(df_label, "fp", "est_total", ascending=False)
+    dist_phrases = _report_distance_phrases(df_dist)
+
+    top_scenes = []
+    if not df_scene.empty:
+        for _, r in df_scene.sort_values(["fn", "fn_rate", "fp"], ascending=[False, False, False]).head(3).iterrows():
+            top_scenes.append(
+                f"{_report_scene_ref(r)} (FN {_report_int(r['fn'])}, FN rate {_report_pct(r['fn_rate'])}, FP {_report_int(r['fp'])})"
+            )
+    top_frames = []
+    if not df_frames.empty:
+        for _, r in df_frames.head(3).iterrows():
+            top_frames.append(f"{_report_frame_ref(r)} (FN {_report_int(r['fn'])})")
+
+    error_phrase = ""
+    if not df_err.empty:
+        err_long = df_err.melt(id_vars=["label"], var_name="error_type", value_name="mean_error")
+        err_long = err_long.dropna().sort_values("mean_error", ascending=False)
+        if not err_long.empty:
+            r = err_long.iloc[0]
+            error_phrase = (
+                f"The largest TP localization error is {_report_error_name(str(r['error_type']))} "
+                f"on {_report_nonempty_text(r['label'], '(no label)')} ({float(r['mean_error']):.3f})."
+            )
+
+    tpr = (kpi or {}).get("tpr")
+    f1 = (kpi or {}).get("f1")
+    fp = (kpi or {}).get("fp")
+    fn = (kpi or {}).get("fn")
+    if tpr is not None and tpr >= 0.8 and fp <= max(10, 0.15 * max((kpi or {}).get("tp", 0), 1)):
+        badge, badge_tone = "Strong baseline", "good"
+        lead = "The selected run shows a healthy operating point: recall is high and the remaining quality work is concentrated in identifiable classes and scenes."
+    elif tpr is not None and tpr < 0.55:
+        badge, badge_tone = "Needs attention", "risk"
+        lead = "The selected run should be treated as an investigation baseline rather than a release achievement: misses are still prominent under the current slice."
+    else:
+        badge, badge_tone = "Mixed baseline", "mixed"
+        lead = "The selected run is mixed: some classes are stable while a small set of scenes and labels explain most remaining misses."
+
+    metric_cards = [
+        _report_metric_card("TP rate", _report_pct(tpr), "Primary recall signal", "good" if (tpr or 0) >= 0.75 else "risk"),
+        _report_metric_card("F1", _report_pct(f1), "Balance of precision and recall", "neutral"),
+        _report_metric_card("Misses", _report_int(fn), "GT objects still not detected", "risk" if (fn or 0) > 0 else "good"),
+        _report_metric_card("False positives", _report_int(fp), "Extra detections to review", "risk" if (fp or 0) > 0 else "good"),
+    ]
+    sections = [
+        _report_signpost(
+            "Manager takeaway",
+            "This is the current performance baseline for the active data slice. The hotspot list shows where the next improvement effort should go.",
+            [f"Stable classes: {_report_join_phrases(strong_labels)}", f"Range behavior: {_report_join_phrases(dist_phrases)}"],
+        ),
+        _report_signpost(
+            "Main quality risk",
+            "The important quality signal is where misses and false positives concentrate.",
+            [f"Miss drivers: {_report_join_phrases(weak_labels)}", f"FP drivers: {_report_join_phrases(fp_labels)}"],
+        ),
+        _report_signpost(
+            "Scenes to inspect",
+            "These frames and scenes concentrate the visible failures and should be opened in the viewer for root-cause inspection.",
+            top_scenes + top_frames,
+        ),
+    ]
+    if error_phrase:
+        sections.append(_report_signpost("Localization note", error_phrase, []))
+    report_html = _report_shell(
+        title=f"Perception Performance Report - Run {run_label}",
+        subtitle=f"Single-run assessment over {scope_label}.",
+        badge=badge,
+        badge_tone=badge_tone,
+        lead=lead,
+        metric_cards=metric_cards,
+        sections=sections,
+        footnote=f"Scope: {scope_label}. Filters from the sidebar are applied except the max-distance cap.",
+    )
+    report_md = f"""# Perception Performance Report - Run {run_label}
+
+Status: {badge}
+
+{lead}
+
+Key signals:
+- TP rate: {_report_pct(tpr)}
+- F1: {_report_pct(f1)}
+- Misses: {_report_int(fn)}
+- False positives: {_report_int(fp)}
+
+Manager takeaway:
+- Stable classes: {_report_join_phrases(strong_labels)}
+- Range behavior: {_report_join_phrases(dist_phrases)}
+
+Quality risks:
+- Miss drivers: {_report_join_phrases(weak_labels)}
+- FP drivers: {_report_join_phrases(fp_labels)}
+
+Scenes to inspect:
+- {_report_join_phrases(top_scenes)}
+- {_report_join_phrases(top_frames)}
+"""
+    if error_phrase:
+        report_md += f"\nLocalization note:\n- {error_phrase}\n"
+
+    tables = {
+        "Class metrics": df_label,
+        "Scene hotspots": df_scene.head(20),
+        "FN frames": df_frames,
+        "Distance rates": df_dist,
+    }
+    if not df_err.empty:
+        tables["Mean error by class"] = df_err
+    return report_html, report_md, tables
+
+
+def build_compare_detection_report(
+    con,
+    *,
+    base_label: str,
+    candidate_label: str,
+    base_view: str,
+    candidate_view: str,
+    base_filter: str,
+    candidate_filter: str,
+    scope_label: str,
+    base_kpi: Optional[Dict[str, Any]],
+    candidate_kpi: Optional[Dict[str, Any]],
+) -> Tuple[str, str, Dict[str, pd.DataFrame]]:
+    df_base_label = _report_label_metrics(con, base_view, base_filter)
+    df_candidate_label = _report_label_metrics(con, candidate_view, candidate_filter)
+    df_label = df_base_label.merge(df_candidate_label, on="label", suffixes=("_base", "_candidate"), how="outer").fillna(0)
+    for col in ["tpr", "fpr", "precision", "f1"]:
+        df_label[f"{col}_delta"] = df_label[f"{col}_candidate"] - df_label[f"{col}_base"]
+
+    df_diff_label = pd.DataFrame()
+    df_diff_scene = pd.DataFrame()
+    df_diff_frame = pd.DataFrame()
+    try:
+        df_diff_label = _report_diff_by_label(con, base_view, candidate_view, base_filter, candidate_filter)
+        df_diff_scene = _report_diff_by_scene_or_frame(con, base_view, candidate_view, base_filter, candidate_filter, by_frame=False)
+        df_diff_frame = _report_diff_by_scene_or_frame(con, base_view, candidate_view, base_filter, candidate_filter, by_frame=True)
+    except Exception:
+        pass
+    df_degraded_objects = _report_degraded_object_details(con, base_view, candidate_view, base_filter, candidate_filter)
+
+    df_base_dist = con.execute(sql_distance_bin_rates_from_eval_flat(base_view, base_filter, metrics="both")).df()
+    df_candidate_dist = con.execute(sql_distance_bin_rates_from_eval_flat(candidate_view, candidate_filter, metrics="both")).df()
+    df_label_dist_delta = pd.DataFrame()
+    try:
+        df_label_dist_delta = _report_label_distance_compare(con, base_view, candidate_view, base_filter, candidate_filter)
+    except Exception:
+        df_label_dist_delta = pd.DataFrame()
+
+    top_tpr_gain = []
+    top_tpr_loss = []
+    if not df_label.empty:
+        gt_total = df_label.get("gt_total_candidate", 0) + df_label.get("gt_total_base", 0)
+        signal = df_label[gt_total > 0].copy()
+        if not signal.empty:
+            gain_signal = signal[signal["tpr_delta"] > 0.0005]
+            loss_signal = signal[signal["tpr_delta"] < -0.0005]
+            for _, r in gain_signal.sort_values("tpr_delta", ascending=False).head(3).iterrows():
+                top_tpr_gain.append(f"{_report_nonempty_text(r['label'], '(no label)')} ({_report_pp_delta(r['tpr_delta'])})")
+            for _, r in loss_signal.sort_values("tpr_delta", ascending=True).head(3).iterrows():
+                top_tpr_loss.append(f"{_report_nonempty_text(r['label'], '(no label)')} ({_report_pp_delta(r['tpr_delta'])})")
+
+    diff_gain = []
+    diff_loss = []
+    if not df_diff_label.empty:
+        diff_gain_df = df_diff_label[df_diff_label["net_tp_delta"] > 0]
+        diff_loss_df = df_diff_label[df_diff_label["degraded_cnt"] > 0]
+        for _, r in diff_gain_df.sort_values(["net_tp_delta", "improved_cnt"], ascending=[False, False]).head(3).iterrows():
+            diff_gain.append(
+                f"{_report_nonempty_text(r['label'], '(no label)')} (net {_report_num_delta(r['net_tp_delta'])}, improved {_report_int(r['improved_cnt'])})"
+            )
+        for _, r in diff_loss_df.sort_values(["net_tp_delta", "degraded_cnt"], ascending=[True, False]).head(3).iterrows():
+            diff_loss.append(
+                f"{_report_nonempty_text(r['label'], '(no label)')} (net {_report_num_delta(r['net_tp_delta'])}, degraded {_report_int(r['degraded_cnt'])})"
+            )
+
+    scene_losses = []
+    if not df_diff_scene.empty:
+        degraded_scenes = df_diff_scene[df_diff_scene["degraded_cnt"] > 0]
+        for _, r in degraded_scenes.sort_values(["degraded_cnt", "net_tp_delta"], ascending=[False, True]).head(3).iterrows():
+            scene_losses.append(
+                f"{_report_scene_ref(r)} (degraded {_report_int(r['degraded_cnt'])}, improved {_report_int(r['improved_cnt'])}, net {_report_num_delta(r['net_tp_delta'])})"
+            )
+    frame_losses = []
+    if not df_diff_frame.empty:
+        degraded_frames = df_diff_frame[df_diff_frame["degraded_cnt"] > 0]
+        for _, r in degraded_frames.sort_values(["degraded_cnt", "net_tp_delta"], ascending=[False, True]).head(3).iterrows():
+            frame_losses.append(
+                f"{_report_frame_ref(r)} (degraded {_report_int(r['degraded_cnt'])}, net {_report_num_delta(r['net_tp_delta'])})"
+            )
+
+    dist_phrases = _report_distance_phrases(df_candidate_dist, compare_base=df_base_dist)
+    label_dist_phrases = _report_label_distance_phrases(df_label_dist_delta)
+    tp_delta = (candidate_kpi or {}).get("tp", 0) - (base_kpi or {}).get("tp", 0)
+    fn_delta = (candidate_kpi or {}).get("fn", 0) - (base_kpi or {}).get("fn", 0)
+    fp_delta = (candidate_kpi or {}).get("fp", 0) - (base_kpi or {}).get("fp", 0)
+    tpr_delta = ((candidate_kpi or {}).get("tpr") - (base_kpi or {}).get("tpr")) if base_kpi and candidate_kpi and base_kpi.get("tpr") is not None and candidate_kpi.get("tpr") is not None else None
+    precision_delta = ((candidate_kpi or {}).get("precision") - (base_kpi or {}).get("precision")) if base_kpi and candidate_kpi and base_kpi.get("precision") is not None and candidate_kpi.get("precision") is not None else None
+    f1_delta = ((candidate_kpi or {}).get("f1") - (base_kpi or {}).get("f1")) if base_kpi and candidate_kpi and base_kpi.get("f1") is not None and candidate_kpi.get("f1") is not None else None
+
+    total_improved = int(df_diff_label["improved_cnt"].sum()) if not df_diff_label.empty else None
+    total_degraded = int(df_diff_label["degraded_cnt"].sum()) if not df_diff_label.empty else None
+    net_tp = (total_improved - total_degraded) if total_improved is not None and total_degraded is not None else tp_delta
+    frame_concentration = _report_frame_concentration_phrase(df_diff_frame, total_degraded)
+    safety_perspective = _report_safety_perspective(df_diff_label)
+    critical_phrases, df_critical_cases = _report_critical_case_phrases(df_degraded_objects)
+    consecutive_phrases, df_consecutive_failures = _report_consecutive_failure_phrases(df_degraded_objects)
+
+    if tpr_delta is not None and tpr_delta > 0.002 and fp_delta <= 0:
+        verdict = "Release positive: Recallが改善し、FP増加も抑制されています。"
+        badge, badge_tone = "Release positive", "good"
+        lead = "Candidateは見落としを回復しつつ、False Positiveの増加も抑えられており、release候補として前向きな結果です。"
+    elif tpr_delta is not None and tpr_delta > 0.002:
+        verdict = "Mostly positive: Recallは改善していますが、FP増加の確認が必要です。"
+        badge, badge_tone = "Positive with caveat", "mixed"
+        lead = "CandidateはRecallを改善していますが、False Positiveも増加しているため、距離帯・class・scenarioごとの確認が必要です。"
+    elif tpr_delta is not None and tpr_delta < -0.002:
+        verdict = "Release risk: Recallが悪化しており、改善とは判断できません。"
+        badge, badge_tone = "Release risk", "risk"
+        lead = "Candidateはactive filter上でRecall regressionを示しています。主なrelease riskはデグレhotspotです。"
+    elif fp_delta > 0:
+        verdict = "Mixed: Recallは概ね維持されていますが、FP pressureが増加しています。"
+        badge, badge_tone = "Mixed", "mixed"
+        lead = "Recallは概ね維持されていますが、CandidateはFalse Positiveを増やしています。純粋な改善ではなくtrade-offとして扱うべき結果です。"
+    else:
+        verdict = "Stable: headline KPIには大きな変化はありません。"
+        badge, badge_tone = "Stable", "neutral"
+        lead = "CandidateはBaselineに対して概ねstableです。ただし、詳細hotspotにODD固有の重要な変化がないか確認が必要です。"
+    if (
+        f1_delta is not None
+        and abs(float(f1_delta)) < 0.0005
+        and ((total_improved or 0) + (total_degraded or 0)) > 0
+    ):
+        lead = (
+            "Overall F1はほぼ横ばいですが、CandidateはBaselineと同一挙動ではありません。"
+            "object単位では改善とデグレの入れ替わりが発生しており、"
+            "headline KPIはstableでも内部的には構造的な変化があります。"
+        )
+
+    df_err_base = _report_error_metrics(con, base_view, base_filter)
+    df_err_candidate = _report_error_metrics(con, candidate_view, candidate_filter)
+    localization_note = ""
+    if not df_err_base.empty and not df_err_candidate.empty:
+        df_err = df_err_base.merge(df_err_candidate, on="label", suffixes=("_base", "_candidate"), how="inner")
+        for c in ["mean_abs_x_error", "mean_abs_y_error", "mean_abs_yaw_error"]:
+            df_err[f"{c}_delta"] = df_err[f"{c}_candidate"] - df_err[f"{c}_base"]
+        err_long_all = df_err.melt(id_vars=["label"], value_vars=[c for c in df_err.columns if c.endswith("_delta")], var_name="error_type", value_name="delta")
+        err_long_all = err_long_all.dropna()
+        err_regress = err_long_all[err_long_all["delta"] > 0].sort_values("delta", ascending=False)
+        err_improve = err_long_all[err_long_all["delta"] < 0].sort_values("delta", ascending=True)
+        notes = []
+        if not err_improve.empty:
+            r = err_improve.iloc[0]
+            notes.append(
+                f"best improvement is {_report_error_name(str(r['error_type']))} "
+                f"on {_report_nonempty_text(r['label'], '(no label)')} ({float(r['delta']):+.3f})"
+            )
+        if not err_regress.empty:
+            r = err_regress.iloc[0]
+            notes.append(
+                f"largest regression is {_report_error_name(str(r['error_type']))} "
+                f"on {_report_nonempty_text(r['label'], '(no label)')} ({float(r['delta']):+.3f})"
+            )
+        if notes:
+            localization_note = (
+                "Localization changed even when detection rates are stable: "
+                + "; ".join(notes)
+                + "."
+            )
+    else:
+        df_err = pd.DataFrame()
+
+    metric_cards = [
+        _report_metric_card("Recall差分", _report_pp_delta(tpr_delta), "Candidate vs baseline", _report_delta_tone(tpr_delta)),
+        _report_metric_card("F1差分", _report_pp_delta(f1_delta), "全体バランス", _report_delta_tone(f1_delta)),
+        _report_metric_card("改善数", _report_int(total_improved), "FN->TP object", "good" if (total_improved or 0) > 0 else "neutral"),
+        _report_metric_card("デグレ数", _report_int(total_degraded), "TP->FN object", "risk" if (total_degraded or 0) > 0 else "good"),
+    ]
+    recommendation = _report_recommendation(
+        tpr_delta=tpr_delta,
+        fp_delta=fp_delta,
+        total_improved=total_improved,
+        total_degraded=total_degraded,
+        diff_loss=diff_loss,
+        dist_phrases=dist_phrases + label_dist_phrases,
+    )
+    executive_summary = _report_exec_summary_compare(
+        candidate_label=str(candidate_label),
+        tpr_delta=tpr_delta,
+        precision_delta=precision_delta,
+        f1_delta=f1_delta,
+        df_label=df_label,
+        df_candidate_dist=df_candidate_dist,
+        df_critical_cases=df_critical_cases,
+        recommendation=recommendation,
+    )
+    lead = executive_summary
+    sections = [
+        _report_html_panel(
+            "0. ヘッダー / メタ情報",
+            "評価対象と分析スコープを明記します。",
+            _report_meta_table([
+                ("作成日", pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y-%m-%d")),
+                ("比較対象", f"Baseline {base_label} vs Candidate {candidate_label}"),
+                ("距離スコープ", scope_label),
+                ("改善 / デグレ件数", f"{_report_int(total_improved)} improved / {_report_int(total_degraded)} degraded"),
+                ("分析方法", "Detection Stats parquetをDuckDB集計し、GT object単位でTP/FN変化を比較"),
+            ]),
+        ),
+        _report_html_panel(
+            "1. Executive Summary / Overall KPI",
+            executive_summary,
+            _report_kpi_compare_table(base_kpi, candidate_kpi),
+        ),
+        _report_signpost(
+            "2. Gain / Loss Analysis",
+            "F1だけでは見えない変化です。CandidateがどれだけFNを回復し、同時にどれだけ新しいFNを生んだかを確認します。",
+            [f"Object-level net change: {_report_num_delta(net_tp)}", f"Precision差分: {_report_pp_delta(precision_delta)}"],
+        ),
+        _report_signpost(
+            "3. Class Analysis",
+            "改善・悪化をカテゴリ単位で分解し、どのobject classが全体差分を作っているかを確認します。",
+            [f"改善class: {_report_join_phrases(top_tpr_gain)}", f"FN->TP集中class: {_report_join_phrases(diff_gain)}", f"デグレclass: {_report_join_phrases(top_tpr_loss)}"],
+        ),
+        _report_signpost(
+            "4. Distance Analysis",
+            "距離帯別の差分は自動運転perceptionでは特に重要です。近距離・中距離・遠距離のどこで改善/悪化したかを確認します。",
+            dist_phrases,
+        ),
+        _report_signpost(
+            "5. Label x Distance Analysis",
+            "クラス別かつ距離帯別に見ることで、どのobjectがどの距離で構造的に変化したかを特定します。",
+            label_dist_phrases,
+        ),
+        _report_signpost(
+            "6. Scenario Analysis",
+            "デグレが特定scenarioに集中している場合、モデル全般の弱点ではなく局所条件・ODD条件の問題である可能性が高くなります。",
+            scene_losses if scene_losses else diff_loss,
+        ),
+        _report_signpost(
+            "7. Frame Hotspot / Consecutive Failure",
+            frame_concentration,
+            frame_losses + consecutive_phrases,
+        ),
+    ]
+    if localization_note:
+        sections.append(_report_signpost("8. Localization Quality", localization_note, []))
+    else:
+        sections.append(_report_signpost("8. Localization Quality", "位置誤差列が存在しない、または明確な位置精度変化は検出されませんでした。", []))
+    sections.extend([
+        _report_signpost(
+            "9. Safety Critical Cases",
+            "20m以内 / FULL or MOST visibility / 点群20点以上のTP->FNを抽出し、安全上優先して確認すべきcaseを示します。",
+            critical_phrases + safety_perspective,
+        ),
+        _report_signpost(
+            "10. Final Recommendation",
+            "現時点の評価結果に基づくrelease gate向け判断です。",
+            recommendation,
+        ),
+    ])
+    report_html = _report_shell(
+        title=f"Perception Release Report - Run {candidate_label} vs {base_label}",
+        subtitle=f"Baseline {base_label} と Candidate {candidate_label} の比較 / {scope_label}",
+        badge=badge,
+        badge_tone=badge_tone,
+        lead=lead,
+        metric_cards=metric_cards,
+        sections=sections,
+        footnote=f"Scope: {scope_label}. Sidebar filterは適用し、max-distance capのみreportでは無効化しています。",
+    )
+    report_md = f"""# Perception Release Report - Run {candidate_label} vs {base_label}
+
+Status: {badge}
+
+{executive_summary}
+
+0. Header / Meta:
+- 作成日: {pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y-%m-%d")}
+- 比較対象: Baseline {base_label} vs Candidate {candidate_label}
+- 距離スコープ: {scope_label}
+- 分析方法: Detection Stats parquetをDuckDB集計し、GT object単位でTP/FN変化を比較
+
+Executive Summary:
+- {verdict}
+- TP rate movement: {_report_pp_delta(tpr_delta)}
+- Precision movement: {_report_pp_delta(precision_delta)}
+- F1 movement: {_report_pp_delta(f1_delta)}
+- Object-level net change: {_report_num_delta(net_tp)}
+
+1. Overall KPI:
+- TP: {_report_int((base_kpi or {}).get('tp'))} -> {_report_int((candidate_kpi or {}).get('tp'))} ({_report_num_delta(tp_delta)})
+- FP: {_report_int((base_kpi or {}).get('fp'))} -> {_report_int((candidate_kpi or {}).get('fp'))} ({_report_num_delta(fp_delta, lower_is_better=True)})
+- FN: {_report_int((base_kpi or {}).get('fn'))} -> {_report_int((candidate_kpi or {}).get('fn'))} ({_report_num_delta(fn_delta, lower_is_better=True)})
+
+2. Gain / Loss Analysis:
+- FN->TP improvements: {_report_int(total_improved)}
+- TP->FN degradations: {_report_int(total_degraded)}
+- Net TP delta: {_report_num_delta(net_tp)}
+
+3. Class Analysis:
+- Class-rate gains: {_report_join_phrases(top_tpr_gain)}
+- Recovered-object hotspots: {_report_join_phrases(diff_gain)}
+- Class-rate regressions: {_report_join_phrases(top_tpr_loss)}
+- Object-level regressions: {_report_join_phrases(diff_loss)}
+
+4. Distance Analysis:
+- Distance pattern: {_report_join_phrases(dist_phrases)}
+
+5. Per-Class + Distance:
+- {_report_join_phrases(label_dist_phrases)}
+
+6. Scenario Analysis:
+- Scenes: {_report_join_phrases(scene_losses)}
+
+7. Frame Hotspot Analysis:
+- {frame_concentration}
+- Frames: {_report_join_phrases(frame_losses)}
+- Consecutive failures: {_report_join_phrases(consecutive_phrases)}
+
+8. Localization Analysis:
+- {localization_note or 'No meaningful localization movement detected.'}
+
+9. Safety Critical Cases:
+- Critical degraded cases: {_report_join_phrases(critical_phrases)}
+- {_report_join_phrases(safety_perspective)}
+
+10. Recommendation:
+- {_report_join_phrases(recommendation)}
+"""
+
+    tables = {
+        "Class rate comparison": df_label.sort_values("tpr_delta", ascending=False),
+        "Object diff by class": df_diff_label,
+        "Object diff by scene": df_diff_scene,
+        "Object diff by frame": df_diff_frame,
+        "Distance rates - baseline": df_base_dist,
+        "Distance rates - candidate": df_candidate_dist,
+        "Per-class distance deltas": df_label_dist_delta,
+        "Critical degraded cases": df_critical_cases,
+        "Consecutive degraded objects": df_consecutive_failures,
+    }
+    if not df_err.empty:
+        tables["Mean error comparison"] = df_err
+    return report_html, report_md, tables
+
+
+def render_detection_report(report_html: str, report_md: str, tables: Dict[str, pd.DataFrame], *, key_prefix: str) -> None:
+    st.markdown(report_html, unsafe_allow_html=True)
+    st.download_button(
+        "Export report Markdown",
+        data=report_md.encode("utf-8"),
+        file_name=f"{key_prefix}_detection_report.md",
+        mime="text/markdown",
+        key=f"{key_prefix}_download_report_md",
+    )
+    with st.expander("Supporting analysis tables"):
+        for name, df in tables.items():
+            st.markdown(f"**{name}**")
+            if df is None or df.empty:
+                st.caption("No rows.")
+            else:
+                st.dataframe(df.head(100), width="stretch", hide_index=True)
+
+
 def build_filter_clause(filters: dict,*, enable_dist_h: bool = True) -> str:
     """Build WHERE clause from filters.
 
@@ -976,7 +2432,7 @@ try:
                 }
             cards_html_parts.append(render_kpi_card(f"Run {lbl}", kpi or {}, f"kpi-run-{lbl}", deltas=deltas))
         st.markdown('<div class="kpi-wrap">' + "".join(cards_html_parts) + "</div>", unsafe_allow_html=True)
-    
+
     if st.checkbox("Debug: Inspect Parquet (All Runs)" if not single_mode else "Debug: Inspect Parquet"):
         cols_used = st.columns(len(target_files))
         file_labels = [(f"Run ({run_labels_list[i]}) File", target_files[i]) for i in range(len(target_files))]
@@ -3459,6 +4915,99 @@ try:
                     st.error(f"Error (Run {lbl} − A): {e}")
                 finally:
                     _med_slot.empty()
+
+    # =============================
+    # Final section: perception release report
+    # =============================
+    ds_dlog("section: Manager_report_start")
+    st.divider()
+    st.markdown(
+        section_header_html(
+            "Perception release report",
+            "Optional all-distance release assessment. Disabled by default to avoid extra report queries.",
+        ),
+        unsafe_allow_html=True,
+    )
+    load_release_report = st.toggle(
+        "Load perception release report",
+        value=False,
+        key="ds_load_release_report",
+        help="Runs additional all-distance report queries only when enabled.",
+    )
+    if load_release_report:
+        _report_slot = st.empty()
+        _report_slot.markdown(ds_spot_loading_markup("Perception release report"), unsafe_allow_html=True)
+        try:
+            report_filter_clause = build_filter_clause(filters_base, enable_dist_h=False)
+            report_scope_label = "all available distances"
+            if single_mode:
+                report_kpi = _kpi_row_for_view(con, "view_eval_flat", report_filter_clause)
+                report_html, report_md, report_tables = build_single_detection_report(
+                    con,
+                    run_label=run_labels_list[0],
+                    view="view_eval_flat",
+                    filter_clause=report_filter_clause,
+                    scope_label=report_scope_label,
+                    kpi=report_kpi,
+                )
+                render_detection_report(report_html, report_md, report_tables, key_prefix="single")
+            else:
+                kpi_by_label = {
+                    lbl: _kpi_row_for_view(con, _flat_view(i), report_filter_clause)
+                    for i, lbl in enumerate(run_labels_list)
+                }
+                base_label = run_labels_list[0]
+                base_kpi = kpi_by_label.get(base_label)
+                if len(runs) == 2:
+                    for idx, lbl in enumerate(run_labels_list[1:], start=1):
+                        safe_lbl = "".join(ch if ch.isalnum() else "_" for ch in str(lbl))
+                        report_html, report_md, report_tables = build_compare_detection_report(
+                            con,
+                            base_label=base_label,
+                            candidate_label=lbl,
+                            base_view="view_eval_flat",
+                            candidate_view=_flat_view(idx),
+                            base_filter=report_filter_clause,
+                            candidate_filter=report_filter_clause,
+                            scope_label=report_scope_label,
+                            base_kpi=base_kpi,
+                            candidate_kpi=kpi_by_label.get(lbl),
+                        )
+                        render_detection_report(
+                            report_html,
+                            report_md,
+                            report_tables,
+                            key_prefix=f"compare_{idx}_{safe_lbl}",
+                        )
+                else:
+                    report_tabs = st.tabs([f"{lbl} vs {base_label}" for lbl in run_labels_list[1:]])
+                    for tab, idx, lbl in zip(report_tabs, range(1, len(runs)), run_labels_list[1:]):
+                        with tab:
+                            safe_lbl = "".join(ch if ch.isalnum() else "_" for ch in str(lbl))
+                            report_html, report_md, report_tables = build_compare_detection_report(
+                                con,
+                                base_label=base_label,
+                                candidate_label=lbl,
+                                base_view="view_eval_flat",
+                                candidate_view=_flat_view(idx),
+                                base_filter=report_filter_clause,
+                                candidate_filter=report_filter_clause,
+                                scope_label=report_scope_label,
+                                base_kpi=base_kpi,
+                                candidate_kpi=kpi_by_label.get(lbl),
+                            )
+                            render_detection_report(
+                                report_html,
+                                report_md,
+                                report_tables,
+                                key_prefix=f"compare_{idx}_{safe_lbl}",
+                            )
+        except Exception as e:
+            st.error(f"Error generating perception release report: {e}")
+        finally:
+            _report_slot.empty()
+    else:
+        st.caption("Release report is not loaded.")
     
     ds_dlog("main_content_try_exit_ok")
     ds_debug_log_memory("main_content_end")
