@@ -380,6 +380,35 @@ def _t4_viewer_link_column_config() -> Dict[str, Any]:
         )
     }
 
+
+def _compare_availability_mask(df: pd.DataFrame) -> pd.Series:
+    """Rows where both compared runs have GT objects for the same compare key."""
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    if "base_gt_cnt" not in df.columns or "candidate_gt_cnt" not in df.columns:
+        return pd.Series(True, index=df.index)
+    return (pd.to_numeric(df["base_gt_cnt"], errors="coerce").fillna(0) > 0) & (
+        pd.to_numeric(df["candidate_gt_cnt"], errors="coerce").fillna(0) > 0
+    )
+
+
+def _compare_availability_summary(df: pd.DataFrame, *, unit: str) -> str:
+    if df is None or df.empty or "base_gt_cnt" not in df.columns or "candidate_gt_cnt" not in df.columns:
+        return ""
+    base_cnt = pd.to_numeric(df["base_gt_cnt"], errors="coerce").fillna(0)
+    cand_cnt = pd.to_numeric(df["candidate_gt_cnt"], errors="coerce").fillna(0)
+    missing_base = int(((base_cnt <= 0) & (cand_cnt > 0)).sum())
+    missing_candidate = int(((base_cnt > 0) & (cand_cnt <= 0)).sum())
+    if missing_base == 0 and missing_candidate == 0:
+        return ""
+    parts = []
+    if missing_base:
+        parts.append(f"{missing_base} {unit} only in candidate")
+    if missing_candidate:
+        parts.append(f"{missing_candidate} {unit} only in baseline A")
+    return ", ".join(parts)
+
+
 def list_parquets_in_run(run_path) -> List[str]:
     """Return sorted list of absolute paths to .parquet files in the run directory."""
     p = Path(run_path)
@@ -3989,6 +4018,8 @@ try:
                         COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
                         COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
                         COALESCE(b.gt_uuid, c.gt_uuid) AS gt_uuid,
+                        b.gt_uuid IS NOT NULL AS has_base_gt,
+                        c.gt_uuid IS NOT NULL AS has_candidate_gt,
                         COALESCE(b.tp_base, FALSE) AS tp_base,
                         COALESCE(c.tp_comp, FALSE) AS tp_comp,
                         COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
@@ -4003,6 +4034,10 @@ try:
                 SELECT
                     t4dataset_id,
                     CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_gt,
+                    CAST(COUNT(*) FILTER (WHERE has_base_gt) AS DOUBLE) AS base_gt_cnt,
+                    CAST(COUNT(*) FILTER (WHERE has_candidate_gt) AS DOUBLE) AS candidate_gt_cnt,
+                    CAST(COUNT(*) FILTER (WHERE NOT has_base_gt AND has_candidate_gt) AS DOUBLE) AS missing_in_base_cnt,
+                    CAST(COUNT(*) FILTER (WHERE has_base_gt AND NOT has_candidate_gt) AS DOUBLE) AS missing_in_candidate_cnt,
                     CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp) AS DOUBLE) AS improved_cnt,
                     CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp) AS DOUBLE) AS degraded_cnt,
                     CAST(COUNT(*) FILTER (WHERE tp_base AND tp_comp) AS DOUBLE) AS both_tp_cnt,
@@ -4051,6 +4086,8 @@ try:
                                     COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
                                     COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
                                     COALESCE(b.gt_uuid, c.gt_uuid) AS gt_uuid,
+                                    b.gt_uuid IS NOT NULL AS has_base_gt,
+                                    c.gt_uuid IS NOT NULL AS has_candidate_gt,
                                     COALESCE(b.tp_base, FALSE) AS tp_base,
                                     COALESCE(c.tp_comp, FALSE) AS tp_comp,
                                     COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
@@ -4069,6 +4106,10 @@ try:
                                 suite_name,
                                 t4dataset_name,
                                 CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_gt,
+                                CAST(COUNT(*) FILTER (WHERE has_base_gt) AS DOUBLE) AS base_gt_cnt,
+                                CAST(COUNT(*) FILTER (WHERE has_candidate_gt) AS DOUBLE) AS candidate_gt_cnt,
+                                CAST(COUNT(*) FILTER (WHERE NOT has_base_gt AND has_candidate_gt) AS DOUBLE) AS missing_in_base_cnt,
+                                CAST(COUNT(*) FILTER (WHERE has_base_gt AND NOT has_candidate_gt) AS DOUBLE) AS missing_in_candidate_cnt,
                                 CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp) AS DOUBLE) AS improved_cnt,
                                 CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp) AS DOUBLE) AS degraded_cnt,
                                 CAST(COUNT(*) FILTER (WHERE tp_base AND tp_comp) AS DOUBLE) AS both_tp_cnt,
@@ -4112,6 +4153,8 @@ try:
                                     COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
                                     COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
                                     COALESCE(b.gt_uuid, c.gt_uuid) AS gt_uuid,
+                                    b.gt_uuid IS NOT NULL AS has_base_gt,
+                                    c.gt_uuid IS NOT NULL AS has_candidate_gt,
                                     COALESCE(b.tp_base, FALSE) AS tp_base,
                                     COALESCE(c.tp_comp, FALSE) AS tp_comp,
                                     COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
@@ -4138,6 +4181,12 @@ try:
                                 j.t4dataset_id,
                                 j.frame_index,
                                 j.gt_uuid,
+                                j.has_base_gt,
+                                j.has_candidate_gt,
+                                CAST(CASE WHEN j.has_base_gt THEN 1 ELSE 0 END AS DOUBLE) AS base_gt_cnt,
+                                CAST(CASE WHEN j.has_candidate_gt THEN 1 ELSE 0 END AS DOUBLE) AS candidate_gt_cnt,
+                                CAST(CASE WHEN NOT j.has_base_gt AND j.has_candidate_gt THEN 1 ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
+                                CAST(CASE WHEN j.has_base_gt AND NOT j.has_candidate_gt THEN 1 ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
                                 COALESCE(e.label, '') AS label,
                                 COALESCE(e.dist_h, 0.0) AS dist_h,
                                 {_DIST_BIN_CASE.replace("dist_h", "COALESCE(e.dist_h, 0.0)")} AS distance_bin,
@@ -4167,6 +4216,45 @@ try:
                         df_by_object_full = con.execute(query_object_p5).df()
                     except Exception:
                         df_by_object_full = pd.DataFrame()
+
+                    availability_messages = [
+                        msg
+                        for msg in [
+                            _compare_availability_summary(df_improved, unit="dataset rows"),
+                            _compare_availability_summary(df_by_frame, unit="frames"),
+                        ]
+                        if msg
+                    ]
+                    skip_incomplete_key = f"p5_skip_incomplete_{lbl}_{idx}"
+                    skip_incomplete_compare = True
+                    if availability_messages:
+                        st.warning(
+                            "Some compare keys have GT data on only one side. "
+                            + "; ".join(availability_messages)
+                            + ". These can create artificial large improvements/degradations.",
+                            icon="⚠️",
+                        )
+                        skip_incomplete_compare = st.checkbox(
+                            "Skip one-sided compare cases in diff hotspots",
+                            value=True,
+                            key=skip_incomplete_key,
+                            help=(
+                                "When enabled, Perception diff charts/tables only use dataset/frame/object keys "
+                                "where both baseline A and the candidate have GT objects after the active filters."
+                            ),
+                        )
+                    if skip_incomplete_compare:
+                        df_improved = df_improved[_compare_availability_mask(df_improved)].copy()
+                        df_by_frame = df_by_frame[_compare_availability_mask(df_by_frame)].copy()
+                        df_by_object_full = df_by_object_full[
+                            _compare_availability_mask(df_by_object_full)
+                        ].copy()
+                        if df_improved.empty:
+                            st.info(
+                                "All diff rows for this slice are one-sided after the active filters. "
+                                "Disable the skip option above to inspect them."
+                            )
+                            continue
     
                     tot_imp = float(df_improved["improved_cnt"].sum())
                     tot_deg = float(df_improved["degraded_cnt"].sum())
@@ -4320,6 +4408,8 @@ try:
                         joined AS (
                             SELECT
                                 COALESCE(b.label, c.label) AS label,
+                                b.gt_uuid IS NOT NULL AS has_base_gt,
+                                c.gt_uuid IS NOT NULL AS has_candidate_gt,
                                 COALESCE(b.tp_base, FALSE) AS tp_base,
                                 COALESCE(c.tp_comp, FALSE) AS tp_comp
                             FROM base_gt b
@@ -4331,6 +4421,10 @@ try:
                         SELECT
                             label,
                             CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_gt,
+                            CAST(COUNT(*) FILTER (WHERE has_base_gt) AS DOUBLE) AS base_gt_cnt,
+                            CAST(COUNT(*) FILTER (WHERE has_candidate_gt) AS DOUBLE) AS candidate_gt_cnt,
+                            CAST(COUNT(*) FILTER (WHERE NOT has_base_gt AND has_candidate_gt) AS DOUBLE) AS missing_in_base_cnt,
+                            CAST(COUNT(*) FILTER (WHERE has_base_gt AND NOT has_candidate_gt) AS DOUBLE) AS missing_in_candidate_cnt,
                             CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp) AS DOUBLE) AS improved_cnt,
                             CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp) AS DOUBLE) AS degraded_cnt,
                             CAST(COUNT(*) FILTER (WHERE tp_base AND tp_comp) AS DOUBLE) AS both_tp_cnt,
@@ -4343,6 +4437,39 @@ try:
                         df_by_label = pd.DataFrame()
                         try:
                             df_by_label = con.execute(query_label).df()
+                            if skip_incomplete_compare:
+                                if df_by_object_full.empty:
+                                    df_by_label = pd.DataFrame()
+                                else:
+                                    df_by_label = (
+                                        df_by_object_full.groupby("label", dropna=False)
+                                        .agg(
+                                            total_gt=("gt_uuid", "count"),
+                                            base_gt_cnt=("base_gt_cnt", "sum"),
+                                            candidate_gt_cnt=("candidate_gt_cnt", "sum"),
+                                            missing_in_base_cnt=("missing_in_base_cnt", "sum"),
+                                            missing_in_candidate_cnt=("missing_in_candidate_cnt", "sum"),
+                                            improved_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "improved").sum()),
+                                            ),
+                                            degraded_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "degraded").sum()),
+                                            ),
+                                            both_tp_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "both_tp").sum()),
+                                            ),
+                                            both_fn_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "both_fn").sum()),
+                                            ),
+                                        )
+                                        .reset_index()
+                                    )
+                                    df_by_label["net_tp_delta"] = df_by_label["improved_cnt"] - df_by_label["degraded_cnt"]
+                                    df_by_label = df_by_label.sort_values("net_tp_delta", ascending=False)
                         except Exception as e_label:
                             st.caption(f"Label query: {e_label}")
     
