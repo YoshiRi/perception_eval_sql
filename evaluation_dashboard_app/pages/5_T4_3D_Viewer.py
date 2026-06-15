@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from typing import Any, List
 
+DEFAULT_OBJECTS_TOPIC = "perception.object_recognition.objects"
+
 from lib.path_utils import path_display
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
@@ -65,6 +67,10 @@ def _prime_viewer_state_from_query_params() -> None:
 
 try_hydrate_session_from_overview_query_params()
 _prime_viewer_state_from_query_params()
+
+_viewer_compare_mode = _query_param_text("viewer_compare", "compare_view", "compare_mode")
+if _viewer_compare_mode not in {"side_by_side", "side-by-side", "sidebyside", "curtain", "overlay"}:
+    _viewer_compare_mode = "side_by_side"
 
 # =============================
 # Session state from Overview (run path)
@@ -156,9 +162,19 @@ with st.sidebar:
         if len(pl) == 1:
             selected_files[lbl] = pl[0]
         else:
+            preferred_file_index = next(
+                (
+                    idx
+                    for idx, path in enumerate(pl)
+                    if Path(path).stem == DEFAULT_OBJECTS_TOPIC
+                    or os.path.basename(path).startswith(f"{DEFAULT_OBJECTS_TOPIC}.")
+                ),
+                0,
+            )
             selected_files[lbl] = st.selectbox(
                 f"File (Run {lbl})",
                 pl,
+                index=preferred_file_index,
                 format_func=os.path.basename,
                 key=f"bbox_viewer_file_{lbl}",
             )
@@ -285,6 +301,8 @@ if "bbox_viewer_link_topic" in st.session_state:
     _ltopic = st.session_state.pop("bbox_viewer_link_topic", None)
     if _ltopic is not None and str(_ltopic) in [str(t) for t in topic_names]:
         st.session_state["bbox_viewer_topic"] = str(_ltopic)
+elif st.session_state.get("bbox_viewer_topic") not in topic_names and DEFAULT_OBJECTS_TOPIC in topic_names:
+    st.session_state["bbox_viewer_topic"] = DEFAULT_OBJECTS_TOPIC
 
 with st.sidebar:
     selected_topic = st.selectbox("topic_name (single)", topic_names, key="bbox_viewer_topic")
@@ -535,6 +553,8 @@ else:
     else:
         # Fixed entry frame so Streamlit slider does not reload the iframe; eval layers use bbox_layers_by_frame.
         _q_three = t4_share_query_params(_ds_t4, _sc_t4, _iframe_entry_frame)
+        if _viewer_compare_mode:
+            _q_three = f"{_q_three}&compare_view={_viewer_compare_mode}"
         _q_three = f"{_q_three}&{infer_external_bbox_alignment_query_params(df)}"
         _viewer_three_url = f"{browser_url_t4.rstrip('/')}/viewer/three?{_q_three}"
         _layer_payload = build_three_layer_payload_all_frames(df)

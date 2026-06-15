@@ -277,6 +277,11 @@ def build_three_layer_payload_all_frames(df: "pd.DataFrame") -> dict:
         return {"type": "bbox_layers_by_frame", "frames": {}}
     if "frame_index" not in df.columns:
         return {"type": "bbox_layers_by_frame", "frames": {}}
+    compare_runs: list[str] = []
+    if "run" in df.columns:
+        for value in df["run"].dropna().astype(str).tolist():
+            if value and value not in compare_runs:
+                compare_runs.append(value)
     swap_length_width = infer_legacy_width_length_swapped(df)
     frames: dict[str, dict] = {}
     for fi, group in df.groupby("frame_index", sort=True):
@@ -285,7 +290,10 @@ def build_three_layer_payload_all_frames(df: "pd.DataFrame") -> dict:
         except (TypeError, ValueError):
             continue
         frames[key] = _single_frame_layer_dict(group, swap_length_width=swap_length_width)
-    return {"type": "bbox_layers_by_frame", "frames": frames}
+    payload = {"type": "bbox_layers_by_frame", "frames": frames}
+    if len(compare_runs) >= 2:
+        payload["compare_runs"] = compare_runs
+    return payload
 
 
 def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height: int = 700) -> None:

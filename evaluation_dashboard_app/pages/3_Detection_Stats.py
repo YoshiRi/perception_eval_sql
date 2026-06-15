@@ -363,6 +363,7 @@ def _with_t4_viewer_links(df: pd.DataFrame, run_share_names: List[str]) -> pd.Da
             t4dataset_name=row.get("t4dataset_name"),
             t4dataset_id=row.get("t4dataset_id"),
             frame_index=row.get("frame_index"),
+            compare_view_mode="side_by_side",
         )
 
     out.insert(0, "open_3d", out.apply(_row_url, axis=1))

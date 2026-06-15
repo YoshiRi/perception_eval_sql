@@ -61,6 +61,7 @@ def t4_dashboard_query_params(
     t4dataset_name: Optional[Any] = None,
     t4dataset_id: Optional[Any] = None,
     frame_index: Optional[Any] = None,
+    compare_view_mode: Optional[Any] = None,
 ) -> str:
     """Query string for opening the dashboard T4 3D Viewer with run and scene context."""
 
@@ -86,6 +87,7 @@ def t4_dashboard_query_params(
         "viewer_scenario": scenario_name,
         "viewer_t4dataset": t4dataset_value,
         "viewer_frame": frame_index,
+        "viewer_compare": compare_view_mode,
     }
     for key, value in viewer_params.items():
         clean = _clean(value)
@@ -103,6 +105,7 @@ def t4_dashboard_url(
     t4dataset_name: Optional[Any] = None,
     t4dataset_id: Optional[Any] = None,
     frame_index: Optional[Any] = None,
+    compare_view_mode: Optional[Any] = None,
     page_path: str = "/T4_3D_Viewer",
 ) -> str:
     """Relative URL for the Streamlit dashboard T4 3D Viewer."""
@@ -114,6 +117,7 @@ def t4_dashboard_url(
         t4dataset_name=t4dataset_name,
         t4dataset_id=t4dataset_id,
         frame_index=frame_index,
+        compare_view_mode=compare_view_mode,
     )
     return f"{page_path}?{query}" if query else page_path
 
