@@ -70,7 +70,7 @@ _prime_viewer_state_from_query_params()
 
 _viewer_compare_mode = _query_param_text("viewer_compare", "compare_view", "compare_mode")
 if _viewer_compare_mode not in {"side_by_side", "side-by-side", "sidebyside", "curtain", "overlay"}:
-    _viewer_compare_mode = "side_by_side"
+    _viewer_compare_mode = ""
 
 # =============================
 # Session state from Overview (run path)
@@ -114,6 +114,8 @@ for i, (r, pl) in enumerate(zip(runs, parquet_lists)):
         st.stop()
 
 multi_run = len(runs) >= 2
+if not _viewer_compare_mode:
+    _viewer_compare_mode = "side_by_side" if multi_run else "overlay"
 
 _ld_entries = []
 for i, r in enumerate(runs):
