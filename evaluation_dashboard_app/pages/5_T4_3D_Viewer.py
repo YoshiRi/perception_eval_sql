@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, List
 
 from lib.path_utils import path_display
+from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
 from lib.t4_dataset_embed import t4_share_query_params
 from lib.t4_three_layers import (
@@ -35,6 +36,35 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 inject_app_page_styles()
+
+
+def _query_param_text(*names: str) -> str:
+    for name in names:
+        value = st.query_params.get(name)
+        if value is not None:
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _prime_viewer_state_from_query_params() -> None:
+    """Map share-link query params onto existing sidebar deep-link session keys."""
+    mapping = {
+        "bbox_viewer_link_suite": ("viewer_suite", "suite_name"),
+        "bbox_viewer_link_scenario": ("viewer_scenario", "scenario_name"),
+        "bbox_viewer_link_t4dataset": ("viewer_t4dataset", "t4dataset_name", "t4dataset_id"),
+        "bbox_viewer_link_topic": ("viewer_topic", "topic_name"),
+        "bbox_viewer_link_frame": ("viewer_frame", "frame_index"),
+    }
+    for state_key, param_names in mapping.items():
+        value = _query_param_text(*param_names)
+        if value:
+            st.session_state[state_key] = value
+
+
+try_hydrate_session_from_overview_query_params()
+_prime_viewer_state_from_query_params()
 
 # =============================
 # Session state from Overview (run path)
@@ -251,8 +281,13 @@ if not topic_names:
     )
     st.rerun()
 
+if "bbox_viewer_link_topic" in st.session_state:
+    _ltopic = st.session_state.pop("bbox_viewer_link_topic", None)
+    if _ltopic is not None and str(_ltopic) in [str(t) for t in topic_names]:
+        st.session_state["bbox_viewer_topic"] = str(_ltopic)
+
 with st.sidebar:
-    selected_topic = st.selectbox("topic_name (single)", topic_names)
+    selected_topic = st.selectbox("topic_name (single)", topic_names, key="bbox_viewer_topic")
 
 labels = con.execute(
     f"SELECT DISTINCT label AS v FROM parquet_scan(?) WHERE {scene_where} AND topic_name=? ORDER BY v",
@@ -394,8 +429,22 @@ else:
 
 f_min, f_max = int(df.frame_index.min()), int(df.frame_index.max())
 
+_iframe_entry_frame = f_min
+if "bbox_viewer_link_frame" in st.session_state:
+    _link_frame_raw = st.session_state.pop("bbox_viewer_link_frame", None)
+    try:
+        _link_frame = int(float(str(_link_frame_raw)))
+    except (TypeError, ValueError):
+        _link_frame = None
+    if _link_frame is not None:
+        frame_values = sorted({int(v) for v in df["frame_index"].dropna().tolist()})
+        if _link_frame in frame_values:
+            _iframe_entry_frame = _link_frame
+        elif frame_values:
+            _iframe_entry_frame = min(frame_values, key=lambda v: abs(v - _link_frame))
+
 # One reference slice for resolving t4dataset_id / scenario_name (same as iframe entry frame).
-_ref_frame = f_min
+_ref_frame = _iframe_entry_frame
 df_frame = df[df.frame_index == _ref_frame]
 if df_frame.empty and not df.empty:
     df_frame = df.iloc[:1].copy()
@@ -485,7 +534,6 @@ else:
                 )
     else:
         # Fixed entry frame so Streamlit slider does not reload the iframe; eval layers use bbox_layers_by_frame.
-        _iframe_entry_frame = int(df["frame_index"].min())
         _q_three = t4_share_query_params(_ds_t4, _sc_t4, _iframe_entry_frame)
         _q_three = f"{_q_three}&{infer_external_bbox_alignment_query_params(df)}"
         _viewer_three_url = f"{browser_url_t4.rstrip('/')}/viewer/three?{_q_three}"

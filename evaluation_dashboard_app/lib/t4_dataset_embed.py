@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, List, Mapping, Optional, Sequence
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from lib.t4_visualizer_client import (
     RenderRequest,
@@ -50,6 +50,72 @@ def t4_share_query_params(
         f"&scenario_name={quote(str(scenario_name), safe='')}"
         f"&frame_index={int(frame_index)}"
     )
+
+
+def t4_dashboard_query_params(
+    *,
+    mode: str,
+    run_names: Sequence[str],
+    suite_name: Optional[Any] = None,
+    scenario_name: Optional[Any] = None,
+    t4dataset_name: Optional[Any] = None,
+    t4dataset_id: Optional[Any] = None,
+    frame_index: Optional[Any] = None,
+) -> str:
+    """Query string for opening the dashboard T4 3D Viewer with run and scene context."""
+
+    def _clean(value: Optional[Any]) -> str:
+        if value is None:
+            return ""
+        text = str(value).strip()
+        return "" if text.lower() in {"none", "nan", "<na>"} else text
+
+    query: dict[str, str] = {
+        "mode": "compare" if str(mode).lower().startswith("compare") else "single",
+    }
+    clean_runs = [_clean(name) for name in run_names]
+    clean_runs = [name for name in clean_runs if name]
+    if clean_runs:
+        query["run_a"] = clean_runs[0]
+        for idx, run_name in enumerate(clean_runs[1:5]):
+            query[f"run_{chr(98 + idx)}"] = run_name
+
+    t4dataset_value = t4dataset_name if _clean(t4dataset_name) else t4dataset_id
+    viewer_params = {
+        "viewer_suite": suite_name,
+        "viewer_scenario": scenario_name,
+        "viewer_t4dataset": t4dataset_value,
+        "viewer_frame": frame_index,
+    }
+    for key, value in viewer_params.items():
+        clean = _clean(value)
+        if clean:
+            query[key] = clean
+    return urlencode(query)
+
+
+def t4_dashboard_url(
+    *,
+    mode: str,
+    run_names: Sequence[str],
+    suite_name: Optional[Any] = None,
+    scenario_name: Optional[Any] = None,
+    t4dataset_name: Optional[Any] = None,
+    t4dataset_id: Optional[Any] = None,
+    frame_index: Optional[Any] = None,
+    page_path: str = "/T4_3D_Viewer",
+) -> str:
+    """Relative URL for the Streamlit dashboard T4 3D Viewer."""
+    query = t4_dashboard_query_params(
+        mode=mode,
+        run_names=run_names,
+        suite_name=suite_name,
+        scenario_name=scenario_name,
+        t4dataset_name=t4dataset_name,
+        t4dataset_id=t4dataset_id,
+        frame_index=frame_index,
+    )
+    return f"{page_path}?{query}" if query else page_path
 
 
 def t4_share_query_params_from_post_render_json(body: Mapping[str, Any]) -> str:

@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 
-from lib.path_utils import path_display
+from lib.path_utils import get_run_display_name, path_display
 from lib.detection_stats_debug import (
     ds_debug_init_session_state,
     ds_debug_log_exception,
@@ -25,6 +25,7 @@ from lib.detection_stats_debug import (
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.parquet_schema import get_parquet_columns, missing_detection_stats_columns, schema_flags
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
+from lib.t4_dataset_embed import t4_dashboard_url
 from lib.ui.detection_stats import (
     detection_stats_page_loading_banner_markup,
     ds_spot_loading,
@@ -335,6 +336,48 @@ else:
             runs = [runA, runB]
             run_labels_list = ["A", "B"]
 single_mode = len(runs) == 1
+
+
+def _run_share_names_for_links() -> List[str]:
+    names: List[str] = []
+    for run in runs:
+        try:
+            names.append(get_run_display_name(Path(run["path"])))
+        except Exception:
+            names.append(str(run.get("path") or ""))
+    return names
+
+
+def _with_t4_viewer_links(df: pd.DataFrame, run_share_names: List[str]) -> pd.DataFrame:
+    """Add a compact dashboard 3D viewer deep-link column when rows include frame metadata."""
+    if df is None or df.empty or "frame_index" not in df.columns:
+        return df
+    out = df.copy()
+
+    def _row_url(row: pd.Series) -> str:
+        return t4_dashboard_url(
+            mode=mode,
+            run_names=run_share_names,
+            suite_name=row.get("suite_name"),
+            scenario_name=row.get("scenario_name"),
+            t4dataset_name=row.get("t4dataset_name"),
+            t4dataset_id=row.get("t4dataset_id"),
+            frame_index=row.get("frame_index"),
+        )
+
+    out.insert(0, "open_3d", out.apply(_row_url, axis=1))
+    return out
+
+
+def _t4_viewer_link_column_config() -> Dict[str, Any]:
+    return {
+        "open_3d": st.column_config.LinkColumn(
+            "3D viewer",
+            display_text="Open 3D",
+            help="Open this scene/frame in the dashboard T4 3D Viewer.",
+            width="small",
+        )
+    }
 
 def list_parquets_in_run(run_path) -> List[str]:
     """Return sorted list of absolute paths to .parquet files in the run directory."""
@@ -4323,6 +4366,7 @@ try:
                                 by=["degraded_cnt", "improved_cnt"],
                                 ascending=[False, True],
                             ).reset_index(drop=True)
+                        _t4_link_run_names = _run_share_names_for_links()
     
                         root_lens = f"{lbl} vs A"
                         lc1, lc2, lc3 = st.columns(3, gap="small")
@@ -4409,9 +4453,13 @@ try:
                             if not df_frame_sorted.empty:
                                 st.markdown("**Per frame** (sorted by degraded)")
                                 st.dataframe(
-                                    df_frame_sorted.head(200),
+                                    _with_t4_viewer_links(
+                                        df_frame_sorted.head(200),
+                                        _t4_link_run_names,
+                                    ),
                                     width='stretch',
                                     hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
                                 )
     
                         with st.expander("Full dataset breakdown (per t4dataset_id row)"):
@@ -4611,24 +4659,34 @@ try:
                                 f"Showing up to {n_show} rows; use **Download CSV** for the full filtered list."
                             )
                             if not df_obj_show.empty:
+                                df_obj_show_linked = _with_t4_viewer_links(
+                                    df_obj_show,
+                                    _t4_link_run_names,
+                                )
                                 st.download_button(
                                     label="Download filtered objects (CSV)",
-                                    data=df_obj_show.to_csv(index=False).encode("utf-8"),
+                                    data=df_obj_show_linked.to_csv(index=False).encode("utf-8"),
                                     file_name=f"perception_diff_{lbl}_vs_A_objects.csv",
                                     mime="text/csv",
                                     key=f"p5_dl_{lbl}_{idx}",
                                 )
                                 st.dataframe(
-                                    df_obj_show.head(n_show),
+                                    df_obj_show_linked.head(n_show),
                                     width='stretch',
                                     hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
                                 )
                             else:
                                 st.caption("No objects match filters.")
     
                         with st.expander("Full frame table (sort: degraded desc)"):
                             if not df_frame_sorted.empty:
-                                st.dataframe(df_frame_sorted, width='stretch', hide_index=True)
+                                st.dataframe(
+                                    _with_t4_viewer_links(df_frame_sorted, _t4_link_run_names),
+                                    width='stretch',
+                                    hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
+                                )
                             else:
                                 st.caption("No frame breakdown.")
                 else:
