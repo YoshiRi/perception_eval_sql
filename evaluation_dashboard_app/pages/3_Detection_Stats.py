@@ -4594,11 +4594,47 @@ try:
                                 ascending=[False, True],
                             )
     
+                        frame_sort_mode = st.radio(
+                            "Frame focus",
+                            ["Degraded first", "Improved first", "Largest net change"],
+                            horizontal=True,
+                            key=f"p5_frame_focus_{lbl}_{idx}",
+                            help="Choose whether the frame views prioritize regressions, recoveries, or the biggest overall swings.",
+                        )
                         df_frame_sorted = pd.DataFrame()
+                        frame_caption_metric = "degraded"
+                        frame_sort_desc = "degraded desc"
                         if not df_by_frame.empty:
-                            df_frame_sorted = df_by_frame.sort_values(
-                                by=["degraded_cnt", "improved_cnt"],
-                                ascending=[False, True],
+                            df_frame_sorted = df_by_frame.copy()
+                            if frame_sort_mode == "Improved first":
+                                frame_caption_metric = "improved"
+                                frame_sort_desc = "improved desc"
+                                df_frame_sorted = df_frame_sorted.sort_values(
+                                    by=["improved_cnt", "degraded_cnt"],
+                                    ascending=[False, True],
+                                )
+                            elif frame_sort_mode == "Largest net change":
+                                frame_caption_metric = "absolute net change"
+                                frame_sort_desc = "largest |net TP delta|"
+                                df_frame_sorted["net_tp_delta"] = (
+                                    pd.to_numeric(df_frame_sorted["improved_cnt"], errors="coerce").fillna(0)
+                                    - pd.to_numeric(df_frame_sorted["degraded_cnt"], errors="coerce").fillna(0)
+                                )
+                                df_frame_sorted["_abs_net_tp_delta"] = (
+                                    df_frame_sorted["net_tp_delta"].abs()
+                                )
+                                df_frame_sorted = df_frame_sorted.sort_values(
+                                    by=["_abs_net_tp_delta", "degraded_cnt", "improved_cnt"],
+                                    ascending=[False, False, False],
+                                )
+                            else:
+                                df_frame_sorted = df_frame_sorted.sort_values(
+                                    by=["degraded_cnt", "improved_cnt"],
+                                    ascending=[False, True],
+                                )
+                            df_frame_sorted = df_frame_sorted.drop(
+                                columns=["_abs_net_tp_delta"],
+                                errors="ignore",
                             ).reset_index(drop=True)
                         _t4_link_run_names = _run_share_names_for_links()
     
@@ -4667,7 +4703,7 @@ try:
                                     "By frame",
                                 )
                                 st.caption(
-                                    f"Top **{fr_cap}** frames by degraded, plus **Other frames** "
+                                    f"Top **{fr_cap}** frames by {frame_caption_metric}, plus **Other frames** "
                                     f"so totals match **By class** / **By scenario**."
                                 )
                             else:
@@ -4685,7 +4721,7 @@ try:
                                 st.markdown("**Per scenario**")
                                 st.dataframe(scen_agg, width='stretch', hide_index=True)
                             if not df_frame_sorted.empty:
-                                st.markdown("**Per frame** (sorted by degraded)")
+                                st.markdown(f"**Per frame** (sorted by {frame_caption_metric})")
                                 st.dataframe(
                                     _with_t4_viewer_links(
                                         df_frame_sorted.head(200),
@@ -4757,11 +4793,11 @@ try:
                                     # Use scenario_name (not suite_name) for frame option labels
                                     frame_key_labels[fk] = (
                                         f"{str(rw.get('scenario_name', ''))[:36]} | "
-                                        f"f{rw['frame_index']} | deg {int(rw['degraded_cnt'])}"
+                                        f"f{rw['frame_index']} | deg {int(rw['degraded_cnt'])} | imp {int(rw['improved_cnt'])}"
                                     )
                             with pr2:
                                 if st.button(
-                                    "Preset: top 10 degraded frames (object filter)",
+                                    f"Preset: top 10 {frame_caption_metric} frames (object filter)",
                                     key=f"p5_pre_fr_{lbl}_{idx}",
                                 ):
                                     if frame_key_labels:
@@ -4913,7 +4949,7 @@ try:
                             else:
                                 st.caption("No objects match filters.")
     
-                        with st.expander("Full frame table (sort: degraded desc)"):
+                        with st.expander(f"Full frame table (sort: {frame_sort_desc})"):
                             if not df_frame_sorted.empty:
                                 st.dataframe(
                                     _with_t4_viewer_links(df_frame_sorted, _t4_link_run_names),
