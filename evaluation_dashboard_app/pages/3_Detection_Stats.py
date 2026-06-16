@@ -409,6 +409,31 @@ def _compare_availability_summary(df: pd.DataFrame, *, unit: str) -> str:
     return ", ".join(parts)
 
 
+def _compare_availability_reason(df: pd.DataFrame) -> pd.Series:
+    """Human-readable reason for one-sided compare rows."""
+    if df is None or df.empty:
+        return pd.Series(dtype="object")
+    if "base_gt_cnt" not in df.columns or "candidate_gt_cnt" not in df.columns:
+        return pd.Series("available in both", index=df.index, dtype="object")
+    base_cnt = pd.to_numeric(df["base_gt_cnt"], errors="coerce").fillna(0)
+    cand_cnt = pd.to_numeric(df["candidate_gt_cnt"], errors="coerce").fillna(0)
+    return pd.Series(
+        np.select(
+            [
+                (base_cnt <= 0) & (cand_cnt > 0),
+                (base_cnt > 0) & (cand_cnt <= 0),
+            ],
+            [
+                "Only in candidate",
+                "Only in baseline A",
+            ],
+            default="Available in both",
+        ),
+        index=df.index,
+        dtype="object",
+    )
+
+
 def list_parquets_in_run(run_path) -> List[str]:
     """Return sorted list of absolute paths to .parquet files in the run directory."""
     p = Path(run_path)
@@ -4243,7 +4268,15 @@ try:
                                 "where both baseline A and the candidate have GT objects after the active filters."
                             ),
                         )
+                    df_improved_skipped = pd.DataFrame()
+                    df_by_frame_skipped = pd.DataFrame()
+                    df_by_object_skipped = pd.DataFrame()
                     if skip_incomplete_compare:
+                        df_improved_skipped = df_improved[~_compare_availability_mask(df_improved)].copy()
+                        df_by_frame_skipped = df_by_frame[~_compare_availability_mask(df_by_frame)].copy()
+                        df_by_object_skipped = df_by_object_full[
+                            ~_compare_availability_mask(df_by_object_full)
+                        ].copy()
                         df_improved = df_improved[_compare_availability_mask(df_improved)].copy()
                         df_by_frame = df_by_frame[_compare_availability_mask(df_by_frame)].copy()
                         df_by_object_full = df_by_object_full[
@@ -4271,7 +4304,80 @@ try:
                             f"**Summary:** Net **{net_s}** TP vs baseline A — "
                             f"**{int(tot_deg)}** degraded vs **{int(tot_imp)}** improved."
                         )
-    
+                        skipped_total = (
+                            len(df_improved_skipped) + len(df_by_frame_skipped) + len(df_by_object_skipped)
+                        )
+                        if skipped_total > 0:
+                            with st.expander("Skipped one-sided compare cases"):
+                                st.caption(
+                                    "These rows were excluded from the diff hotspots because the GT objects exist "
+                                    "on only one side after the active filters."
+                                )
+                                if not df_improved_skipped.empty:
+                                    skipped_dataset_rows = df_improved_skipped.copy()
+                                    skipped_dataset_rows["skip_reason"] = _compare_availability_reason(
+                                        skipped_dataset_rows
+                                    )
+                                    st.markdown("**Per dataset row**")
+                                    st.download_button(
+                                        label="Download skipped dataset rows (CSV)",
+                                        data=skipped_dataset_rows.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_dataset_rows.csv",
+                                        mime="text/csv",
+                                        key=f"p5_dl_skip_dataset_{lbl}_{idx}",
+                                    )
+                                    st.dataframe(
+                                        skipped_dataset_rows.head(200),
+                                        width='stretch',
+                                        hide_index=True,
+                                    )
+                                if not df_by_frame_skipped.empty:
+                                    skipped_frames = df_by_frame_skipped.copy()
+                                    skipped_frames["skip_reason"] = _compare_availability_reason(
+                                        skipped_frames
+                                    )
+                                    st.markdown("**Per frame**")
+                                    skipped_frames = _with_t4_viewer_links(
+                                        skipped_frames,
+                                        _run_share_names_for_links(),
+                                    )
+                                    st.download_button(
+                                        label="Download skipped frames (CSV)",
+                                        data=skipped_frames.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_frames.csv",
+                                        mime="text/csv",
+                                        key=f"p5_dl_skip_frames_{lbl}_{idx}",
+                                    )
+                                    st.dataframe(
+                                        skipped_frames.head(200),
+                                        width='stretch',
+                                        hide_index=True,
+                                        column_config=_t4_viewer_link_column_config(),
+                                    )
+                                if not df_by_object_skipped.empty:
+                                    skipped_objects = df_by_object_skipped.copy()
+                                    skipped_objects["skip_reason"] = _compare_availability_reason(
+                                        skipped_objects
+                                    )
+                                    st.markdown("**Per object**")
+                                    skipped_objects = _with_t4_viewer_links(
+                                        skipped_objects,
+                                        _run_share_names_for_links(),
+                                    )
+                                    st.download_button(
+                                        label="Download skipped objects (CSV)",
+                                        data=skipped_objects.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_objects.csv",
+                                        mime="text/csv",
+                                        key=f"p5_dl_skip_objects_{lbl}_{idx}",
+                                    )
+                                    st.dataframe(
+                                        skipped_objects.head(200),
+                                        width='stretch',
+                                        hide_index=True,
+                                        column_config=_t4_viewer_link_column_config(),
+                                    )
+
                         b_key = f"p5_baobab_{lbl}_{idx}"
                         c1b, c2b, c3b = st.columns([1, 1, 1])
                         with c1b:
