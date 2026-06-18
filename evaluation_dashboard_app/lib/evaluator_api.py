@@ -422,7 +422,7 @@ class EvaluationRunAPI:
         project_id: str,
         job_id: str,
         poll_interval: float = 60.0,
-        max_wait_seconds: float = 3600.0 * 24 * 7,  # Default 1 week
+        max_wait_seconds: float = 0.0,
         on_progress: Optional[Callable[[str], None]] = None,
         on_check: Optional[Callable[[str, float], None]] = None,
     ) -> dict[str, Any]:
@@ -433,7 +433,7 @@ class EvaluationRunAPI:
             project_id: Project ID
             job_id: Job ID to wait for
             poll_interval: Seconds between status checks (default 60s)
-            max_wait_seconds: Maximum seconds to wait (default 1 week)
+            max_wait_seconds: Maximum seconds to wait. Values <= 0 disable timeout.
             on_progress: Callback for progress messages (receives message string)
             on_check: Callback after each check (receives status string, elapsed seconds)
         
@@ -452,8 +452,8 @@ class EvaluationRunAPI:
         while True:
             elapsed = time.time() - start_time
             
-            # Check timeout
-            if elapsed > max_wait_seconds:
+            # Values <= 0 mean "wait indefinitely".
+            if max_wait_seconds > 0 and elapsed > max_wait_seconds:
                 raise EvaluationAPIError(
                     f"Timeout waiting for job {job_id} after {elapsed:.0f}s"
                 )

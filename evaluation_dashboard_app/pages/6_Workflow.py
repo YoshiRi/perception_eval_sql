@@ -1872,7 +1872,10 @@ def _render_start_workflow_form(
         "perception.object_recognition.tracking.objects",
     )
     default_poll_interval = int(get_config_value("poll_interval", 60))
-    default_max_wait_hours = int(get_config_value("max_wait_hours", 24))
+    try:
+        default_max_wait_hours = max(0, int(get_config_value("max_wait_hours", 0)))
+    except (TypeError, ValueError):
+        default_max_wait_hours = 0
     default_environment = get_config_value("environment", "")
     default_output = _make_default_output_path(default_target)
     default_skip_large_file = True
@@ -2188,22 +2191,35 @@ def _render_start_workflow_form(
             st.caption(f"Fetched catalog: {desc}")
 
     with st.expander("Advanced options", expanded=False):
-        adv_cols = st.columns([1.0, 1.0, 0.8, 0.8])
-        with adv_cols[0]:
-            download_type = st.radio(
-                "Download type",
-                ["Archives (ZIP)", "Result JSON"],
-                horizontal=True,
-                index=0 if default_download_type == "Archives (ZIP)" else 1,
-                key="workflow_download_type",
-                disabled=release_mode,
-                help=(
-                    "Release mode uses archives, but reuses existing downloaded artifacts when the output folders already contain them."
-                    if release_mode
-                    else None
-                ),
+        if release_mode:
+            download_type = "Archives (ZIP)"
+            generate_parquet = False
+            skip_large_file = _RELEASE_SKIP_LARGE_FILE
+            eval_recursive = False
+            st.caption(
+                "Release mode always uses archive downloads, skips oversized files, and generates parquet automatically when needed."
             )
-        with adv_cols[1]:
+            adv_cols = st.columns([1.0, 0.8, 0.8])
+        else:
+            adv_cols = st.columns([1.0, 1.0, 0.8, 0.8])
+            with adv_cols[0]:
+                download_type = st.radio(
+                    "Download type",
+                    ["Archives (ZIP)", "Result JSON"],
+                    horizontal=True,
+                    index=0 if default_download_type == "Archives (ZIP)" else 1,
+                    key="workflow_download_type",
+                )
+            env_col = adv_cols[1]
+            poll_col = adv_cols[2]
+            wait_col = adv_cols[3]
+
+        if release_mode:
+            env_col = adv_cols[0]
+            poll_col = adv_cols[1]
+            wait_col = adv_cols[2]
+
+        with env_col:
             environment = st.selectbox(
                 "Environment",
                 options=["", "dev", "stg", "prd"],
@@ -2211,7 +2227,7 @@ def _render_start_workflow_form(
                 key="workflow_environment",
                 format_func=lambda value: value or "default",
             )
-        with adv_cols[2]:
+        with poll_col:
             poll_interval = st.slider(
                 "Poll interval (s)",
                 min_value=10,
@@ -2220,53 +2236,56 @@ def _render_start_workflow_form(
                 step=10,
                 key="workflow_poll_interval",
             )
-        with adv_cols[3]:
-            max_wait_hours = st.slider(
-                "Max wait (h)",
-                min_value=1,
-                max_value=168,
+        with wait_col:
+            max_wait_hours = st.number_input(
+                "Max wait (h, 0 = no timeout)",
+                min_value=0,
+                max_value=24 * 30,
                 value=default_max_wait_hours,
+                step=1,
                 key="workflow_max_wait_hours",
+                help="Set to 0 to keep waiting for evaluator completion without an app-side timeout.",
             )
 
-        option_cols = st.columns(5)
+        option_col_count = 2 if release_mode else 5
+        option_cols = st.columns(option_col_count)
         with option_cols[0]:
             run_eval = st.checkbox(
                 "Run evaluation",
                 value=False if release_mode else True,
                 key="workflow_run_eval",
-                disabled=release_mode,
-                help="Release PDF generation uses parquet; eval/CSV detail checks can be run separately when needed.",
-            )
-        with option_cols[1]:
-            generate_parquet = st.checkbox(
-                "Generate parquet",
-                value=False if release_mode else CATALOG_IO_AVAILABLE,
-                disabled=release_mode or not CATALOG_IO_AVAILABLE,
-                key="workflow_generate_parquet",
-                help="Release mode generates parquet when missing; existing parquet is enough for PDF generation.",
-            )
-        with option_cols[2]:
-            skip_large_file = st.checkbox(
-                "Skip large files",
-                value=_RELEASE_SKIP_LARGE_FILE if release_mode else default_skip_large_file,
-                key="workflow_skip_large_file",
-                disabled=release_mode,
                 help=(
-                    f"Release mode always skips archives at or above {_RELEASE_LARGE_FILE_MB:g} MB."
+                    "Optional in release mode. Turn this on to also generate Summary.csv and Score.csv."
                     if release_mode
-                    else "Skip unusually large archives during download."
+                    else "Generate Summary.csv and Score.csv after download."
                 ),
             )
-        with option_cols[3]:
-            eval_recursive = st.checkbox(
-                "Recursive scan",
-                value=False if release_mode else True,
-                key="workflow_eval_recursive",
-                disabled=release_mode,
-                help="Not used in release mode.",
-            )
-        with option_cols[4]:
+        if not release_mode:
+            with option_cols[1]:
+                generate_parquet = st.checkbox(
+                    "Generate parquet",
+                    value=CATALOG_IO_AVAILABLE,
+                    disabled=not CATALOG_IO_AVAILABLE,
+                    key="workflow_generate_parquet",
+                )
+            with option_cols[2]:
+                skip_large_file = st.checkbox(
+                    "Skip large files",
+                    value=default_skip_large_file,
+                    key="workflow_skip_large_file",
+                    help="Skip unusually large archives during download.",
+                )
+            with option_cols[3]:
+                eval_recursive = st.checkbox(
+                    "Recursive scan",
+                    value=True,
+                    key="workflow_eval_recursive",
+                )
+            tag_col = option_cols[4]
+        else:
+            tag_col = option_cols[1]
+
+        with tag_col:
             is_tag = st.checkbox("Target is tag", value=False, key="workflow_is_tag")
 
     set_config_value("eval_project_id", project_id)
@@ -2333,7 +2352,7 @@ def _render_start_workflow_form(
             "phase": phase,
             "poll_interval": int(poll_interval),
             "max_wait_hours": int(max_wait_hours),
-            "run_eval": False if release_mode else bool(run_eval),
+            "run_eval": bool(run_eval),
             "generate_parquet": False if release_mode else bool(generate_parquet),
             "skip_large_file": _RELEASE_SKIP_LARGE_FILE if release_mode else bool(skip_large_file),
             "eval_recursive": False if release_mode else bool(eval_recursive),

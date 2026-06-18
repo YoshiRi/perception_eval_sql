@@ -1624,7 +1624,7 @@ def _render_recent_evaluator_job_retest_dialog(
             "large_file_mb": 50.0,
             "keep_zip_files": False,
             "poll_interval": 60,
-            "max_wait_seconds": 6 * 3600,
+            "max_wait_seconds": 0,
             "run_eval": run_eval,
             "generate_parquet": generate_parquet,
             "eval_recursive": eval_recursive,

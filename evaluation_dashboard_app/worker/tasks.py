@@ -43,6 +43,31 @@ _RELEASE_SKIP_LARGE_FILE = True
 _RELEASE_LARGE_FILE_MB = 50.0
 
 
+def _normalize_max_wait_seconds(value: Any, default: float = 0.0) -> float:
+    """Coerce wait timeout values; numbers <= 0 disable the timeout."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = float(default)
+    return seconds if seconds > 0 else 0.0
+
+
+def _wait_progress_pct(
+    *,
+    elapsed: float,
+    timeout_seconds: float,
+    pct_start: float,
+    pct_end: float,
+) -> float:
+    """Progress helper that works for both bounded and unbounded waits."""
+    if pct_end <= pct_start:
+        return pct_end
+    if timeout_seconds > 0:
+        ratio = min(max(elapsed / timeout_seconds, 0.0), 1.0)
+        return pct_start + ratio * (pct_end - pct_start)
+    return min(pct_start + max(1.0, (elapsed / 3600.0) * 2.0), pct_end)
+
+
 def _make_default_evaluator_description(parameters: Dict[str, Any]) -> str:
     stamp = time.strftime("%m-%d %H:%M")
     source_job_id = str(parameters.get("source_job_id") or "").strip()
@@ -1558,7 +1583,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
         topic = str(parameters.get("topic") or metadata.get("topic_name") or DEFAULT_SPECSHEET_TOPIC).strip()
         description = str(parameters.get("description") or target_name or "").strip()
         poll_interval = float(parameters.get("poll_interval", 60.0))
-        max_wait_seconds = float(parameters.get("max_wait_seconds", 3600.0 * 24 * 7))
+        max_wait_seconds = _normalize_max_wait_seconds(parameters.get("max_wait_seconds", 0.0))
         analysis_phase = str(
             parameters.get("analysis_phase")
             or "perception.object_recognition.tracking.objects"
@@ -1697,7 +1722,12 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 continue
 
             def _on_check(status: str, elapsed: float, *, role: str = str(item["role"]), pct_base: float = base_pct) -> None:
-                pct = min(pct_base + (elapsed / max_wait_seconds) * max(2.0, wait_span - 2.0), pct_base + wait_span - 2.0)
+                pct = _wait_progress_pct(
+                    elapsed=elapsed,
+                    timeout_seconds=max_wait_seconds,
+                    pct_start=pct_base,
+                    pct_end=pct_base + wait_span - 2.0,
+                )
                 summary["evaluator_jobs"][role]["status"] = status
                 update_task_progress(
                     task_id,
@@ -1973,7 +2003,7 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         
         # Evaluator polling options
         poll_interval = float(parameters.get("poll_interval", 60.0))
-        max_wait_seconds = float(parameters.get("max_wait_seconds", 3600.0 * 24 * 7))  # 1 week default
+        max_wait_seconds = _normalize_max_wait_seconds(parameters.get("max_wait_seconds", 0.0))
         download_ready_timeout = float(parameters.get("download_ready_timeout", 1800.0))
         download_ready_poll_interval = float(
             parameters.get("download_ready_poll_interval", min(max(poll_interval, 10.0), 60.0))
@@ -2134,7 +2164,12 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
             msg = f"Evaluator status: {status} (elapsed: {hours:.1f}h)"
             append_task_log(task_id, msg)
             # Progress: 5% to 40% during evaluation wait
-            pct = min(5 + (elapsed / max_wait_seconds) * 35, 40)
+            pct = _wait_progress_pct(
+                elapsed=elapsed,
+                timeout_seconds=max_wait_seconds,
+                pct_start=5.0,
+                pct_end=40.0,
+            )
             update_task_progress(task_id, message=f"Evaluator: {status} ({hours:.1f}h elapsed)", pct=pct)
             summary["evaluator_status"] = status
 
