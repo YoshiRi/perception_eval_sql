@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import html
-import json
 import math
+import base64
+import struct
 from urllib.parse import urlencode
 from typing import TYPE_CHECKING
 
@@ -48,6 +49,15 @@ _OPTIONAL_TEXT_FIELDS = (
     "run",
     "source",
 )
+_BINARY_MAGIC = b"T4BBOX1\x00"
+_BINARY_CORE_FLOAT_FIELDS = ("x", "y", "z", "width", "length", "height", "yaw")
+_BINARY_TEXT_FIELDS = ("uuid", "label", "status") + _OPTIONAL_TEXT_FIELDS
+_BINARY_BOX_FLOAT_COUNT = len(_BINARY_CORE_FLOAT_FIELDS) + len(_OPTIONAL_NUMERIC_FIELDS) + 24
+_BINARY_BOX_TEXT_COUNT = len(_BINARY_TEXT_FIELDS)
+_BINARY_BOX_STRUCT = struct.Struct("<" + ("f" * _BINARY_BOX_FLOAT_COUNT) + ("I" * _BINARY_BOX_TEXT_COUNT) + "B")
+_BINARY_FRAME_STRUCT = struct.Struct("<iIIIIII")
+_BINARY_PAIR_STRUCT = struct.Struct("<III")
+_BINARY_HEADER_STRUCT = struct.Struct("<8sIIIII")
 
 _VEHICLE_LABELS = {"car", "truck", "bus", "trailer"}
 _EXTERNAL_EVAL_TO_T4_YAW_OFFSET = 0.0
@@ -296,10 +306,159 @@ def build_three_layer_payload_all_frames(df: "pd.DataFrame") -> dict:
     return payload
 
 
-def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height: int = 700) -> None:
+def _pack_three_layer_payload_binary(layer_payload: dict) -> tuple[bytes, dict]:
+    """Pack bbox layer payload as a compact typed-array friendly binary blob."""
+    if not isinstance(layer_payload, dict):
+        layer_payload = {"type": "bbox_layers_clear"}
+
+    frames_obj: dict[str, dict]
+    if layer_payload.get("type") == "bbox_layers_by_frame" and isinstance(layer_payload.get("frames"), dict):
+        frames_obj = layer_payload.get("frames") or {}
+    elif layer_payload.get("type") == "bbox_layers":
+        frames_obj = {"0": layer_payload}
+    else:
+        frames_obj = {}
+
+    string_ids: dict[str, int] = {"": 0}
+    strings: list[str] = [""]
+
+    def sid(value: object) -> int:
+        text = "" if value is None else str(value)
+        if not text:
+            return 0
+        existing = string_ids.get(text)
+        if existing is not None:
+            return existing
+        idx = len(strings)
+        string_ids[text] = idx
+        strings.append(text)
+        return idx
+
+    compare_runs = [
+        str(v)
+        for v in (layer_payload.get("compare_runs") or [])
+        if str(v).strip()
+    ]
+
+    frame_rows: list[tuple[int, int, int, int, int, int, int]] = []
+    box_rows: list[tuple[list[float], list[int], int]] = []
+    pair_rows: list[tuple[int, int, int]] = []
+    gt_total = 0
+    pred_total = 0
+    max_boxes_per_frame = 0
+
+    def add_box(box: dict) -> None:
+        floats: list[float] = []
+        for field in _BINARY_CORE_FLOAT_FIELDS:
+            floats.append(_as_float(box.get(field), 0.0))
+        for field in _OPTIONAL_NUMERIC_FIELDS:
+            value = box.get(field)
+            floats.append(float("nan") if _is_missing(value) else _as_float(value))
+        corners = box.get("corners")
+        if isinstance(corners, list) and len(corners) >= 24:
+            floats.extend(_as_float(v, 0.0) for v in corners[:24])
+        else:
+            floats.extend([float("nan")] * 24)
+        text_ids = [sid(box.get(field)) for field in _BINARY_TEXT_FIELDS]
+        force_wireframe = 1 if box.get("force_wireframe") is True else 0
+        box_rows.append((floats, text_ids, force_wireframe))
+
+    def frame_sort_key(item: tuple[str, dict]) -> int:
+        try:
+            return int(item[0])
+        except (TypeError, ValueError):
+            return 0
+
+    for frame_key, frame_payload in sorted(frames_obj.items(), key=frame_sort_key):
+        if not isinstance(frame_payload, dict):
+            continue
+        try:
+            frame_index = int(frame_key)
+        except (TypeError, ValueError):
+            continue
+        gt_boxes = frame_payload.get("gt") if isinstance(frame_payload.get("gt"), list) else []
+        pred_boxes = frame_payload.get("pred") if isinstance(frame_payload.get("pred"), list) else []
+        pairs = frame_payload.get("matched_pairs") if isinstance(frame_payload.get("matched_pairs"), list) else []
+        gt_start = len(box_rows)
+        for box in gt_boxes:
+            if isinstance(box, dict):
+                add_box(box)
+        gt_count = len(box_rows) - gt_start
+        gt_total += gt_count
+        pred_start = len(box_rows)
+        for box in pred_boxes:
+            if isinstance(box, dict):
+                add_box(box)
+        pred_count = len(box_rows) - pred_start
+        pred_total += pred_count
+        max_boxes_per_frame = max(max_boxes_per_frame, gt_count + pred_count)
+        pair_start = len(pair_rows)
+        for pair in pairs:
+            if not isinstance(pair, dict):
+                continue
+            try:
+                pair_rows.append((int(pair.get("gt_idx", 0)), int(pair.get("pred_idx", 0)), sid(pair.get("pair_uuid"))))
+            except (TypeError, ValueError):
+                continue
+        pair_count = len(pair_rows) - pair_start
+        frame_rows.append((frame_index, gt_start, gt_count, pred_start, pred_count, pair_start, pair_count))
+
+    compare_run_ids = [sid(v) for v in compare_runs]
+    parts = [
+        _BINARY_HEADER_STRUCT.pack(
+            _BINARY_MAGIC,
+            len(frame_rows),
+            len(strings),
+            len(box_rows),
+            len(pair_rows),
+            len(compare_run_ids),
+        )
+    ]
+    for text in strings:
+        raw = text.encode("utf-8")
+        parts.append(struct.pack("<I", len(raw)))
+        parts.append(raw)
+    for run_id in compare_run_ids:
+        parts.append(struct.pack("<I", run_id))
+    for row in frame_rows:
+        parts.append(_BINARY_FRAME_STRUCT.pack(*row))
+    for floats, text_ids, force_wireframe in box_rows:
+        parts.append(_BINARY_BOX_STRUCT.pack(*floats, *text_ids, force_wireframe))
+    for row in pair_rows:
+        parts.append(_BINARY_PAIR_STRUCT.pack(*row))
+    blob = b"".join(parts)
+    frame_indexes = [row[0] for row in frame_rows]
+    stats = {
+        "format": "T4BBOX1",
+        "transport": "binary_typed_array_post_message",
+        "binary_bytes": len(blob),
+        "frame_count": len(frame_rows),
+        "first_frame": min(frame_indexes) if frame_indexes else None,
+        "last_frame": max(frame_indexes) if frame_indexes else None,
+        "gt_box_count": gt_total,
+        "pred_box_count": pred_total,
+        "box_count": len(box_rows),
+        "matched_pair_count": len(pair_rows),
+        "max_boxes_per_frame": max_boxes_per_frame,
+        "string_table_count": len(strings),
+        "compare_run_count": len(compare_run_ids),
+        "box_row_bytes": _BINARY_BOX_STRUCT.size,
+        "frame_row_bytes": _BINARY_FRAME_STRUCT.size,
+        "pair_row_bytes": _BINARY_PAIR_STRUCT.size,
+        "float_fields_per_box": _BINARY_BOX_FLOAT_COUNT,
+        "text_id_fields_per_box": _BINARY_BOX_TEXT_COUNT,
+        "numeric_fields": list(_BINARY_CORE_FLOAT_FIELDS + _OPTIONAL_NUMERIC_FIELDS),
+        "text_fields": list(_BINARY_TEXT_FIELDS),
+    }
+    return blob, stats
+
+
+def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height: int = 700) -> dict:
     """Iframe to T4 three viewer + postMessage with bbox layer payload (GT, pred, matched pairs)."""
-    _payload_json = json.dumps(layer_payload, ensure_ascii=True)
-    _payload_b64 = _payload_json.encode("utf-8").hex()
+    _payload_binary, _payload_stats = _pack_three_layer_payload_binary(layer_payload)
+    _payload_binary_b64 = base64.b64encode(_payload_binary).decode("ascii")
+    _payload_stats = dict(_payload_stats)
+    _payload_stats["base64_chars"] = len(_payload_binary_b64)
     _iframe_src = html.escape(viewer_three_url, quote=True)
     components.html(
         (
@@ -307,44 +466,33 @@ def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height:
             f'width="100%" height="{height}" style="border:none;border-radius:8px;background:#e2e8f0" '
             f'allowfullscreen allow="fullscreen *" '
             f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
+            f'<script id="t4-three-layer-payload" type="application/octet-stream">{_payload_binary_b64}</script>'
             "<script>"
             "(()=>{"
             "const iframe=document.getElementById('t4-three-viewer');"
-            f"const payloadHex='{_payload_b64}';"
-            "const hexToUtf8=(hex)=>{"
-            "if(!hex||hex.length%2!==0)return '';"
-            "const bytes=new Uint8Array(hex.length/2);"
-            "for(let i=0;i<hex.length;i+=2){bytes[i/2]=parseInt(hex.slice(i,i+2),16)||0;}"
-            "return new TextDecoder().decode(bytes);"
+            "const payloadEl=document.getElementById('t4-three-layer-payload');"
+            "const b64ToBuffer=(b64)=>{"
+            "const clean=(b64||'').replace(/\\s+/g,'');"
+            "const bin=atob(clean);"
+            "const bytes=new Uint8Array(bin.length);"
+            "for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);"
+            "return bytes.buffer;"
             "};"
-            "let payload={type:'bbox_layers_clear'};"
-            "try{"
-            "const payloadJson=hexToUtf8(payloadHex);"
-            "payload=JSON.parse(payloadJson);"
-            "const fc=payload.frames&&typeof payload.frames==='object'?Object.keys(payload.frames).length:0;"
-            "console.info('[bbox-debug] payload prepared', {type:payload.type,gt:(payload.gt||[]).length,pred:(payload.pred||[]).length,matched:(payload.matched_pairs||[]).length,frames:fc});"
-            "}catch(err){"
-            "console.error('[bbox-debug] payload parse failed', err);"
-            "}"
             "let postCount=0;"
             "const post=(reason)=>{"
             "if(!iframe||!iframe.contentWindow)return;"
             "let targetOrigin='*';"
             "try{ targetOrigin = new URL(iframe.src, window.location.href).origin || '*'; }catch(_){ targetOrigin='*'; }"
+            "const buffer=b64ToBuffer(payloadEl?payloadEl.textContent:'');"
             "postCount+=1;"
-            "iframe.contentWindow.postMessage(payload,targetOrigin);"
-            "console.info('[bbox-debug] postMessage sent', {reason,postCount,targetOrigin,payloadType:payload.type});"
+            "iframe.contentWindow.postMessage({type:'bbox_layers_binary_v1',buffer},targetOrigin,[buffer]);"
+            "console.info('[bbox-debug] binary payload sent', {reason,postCount,targetOrigin,bytes:buffer.byteLength});"
             "};"
-            "iframe.addEventListener('load',()=>{"
-            "post('iframe-load');"
-            "let n=0;"
-            "const t=setInterval(()=>{post('retry');n+=1;if(n>12)clearInterval(t);},250);"
-            "});"
-            "setTimeout(()=>post('initial-delay-300ms'),300);"
-            "setTimeout(()=>post('initial-delay-1200ms'),1200);"
+            "iframe.addEventListener('load',()=>post('iframe-load'),{once:true});"
             "})();"
             "</script>"
         ),
         height=height + 24,
         scrolling=True,
     )
+    return _payload_stats

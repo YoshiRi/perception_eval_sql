@@ -562,21 +562,46 @@ else:
         _layer_payload = build_three_layer_payload_all_frames(df)
 
         _viewer_three_h = 1400
-        render_t4_three_js_embed(_viewer_three_url, _layer_payload, height=_viewer_three_h)
-        with st.expander("T4 bbox alignment debug", expanded=False):
+        _transport_stats = render_t4_three_js_embed(_viewer_three_url, _layer_payload, height=_viewer_three_h)
+        with st.expander("T4 overlay transport debug", expanded=False):
             first_frame_key = next(iter(sorted((_layer_payload.get("frames") or {}).keys(), key=lambda v: int(v))), "")
             first_frame_payload = (_layer_payload.get("frames") or {}).get(first_frame_key, {})
             first_gt = (first_frame_payload.get("gt") or [{}])[0]
+            first_pred = (first_frame_payload.get("pred") or [{}])[0]
             st.code(_viewer_three_url, language="text")
             st.json(
                 {
                     "alignment_version": EXTERNAL_BBOX_ALIGNMENT_VERSION,
-                    "frame": first_frame_key,
+                    "transport": _transport_stats,
+                    "selected_context": {
+                        "runs": [lbl for _, lbl in files_to_load],
+                        "topic": selected_topic,
+                        "labels": list(selected_labels),
+                        "visibility": list(selected_visibility or []),
+                        "suite": selected_suite,
+                        "scenario": selected_scenario,
+                        "t4dataset": selected_t4dataset or _ds_t4,
+                    },
+                    "first_payload_frame": {
+                        "frame_index": first_frame_key,
+                        "gt_count": len(first_frame_payload.get("gt") or []),
+                        "pred_count": len(first_frame_payload.get("pred") or []),
+                        "matched_pair_count": len(first_frame_payload.get("matched_pairs") or []),
+                    },
                     "first_gt": {
                         key: first_gt.get(key)
                         for key in ("uuid", "label", "status", "length", "width", "height", "yaw", "force_wireframe")
                     },
-                    "has_corners": "corners" in first_gt,
+                    "first_pred": {
+                        key: first_pred.get(key)
+                        for key in ("uuid", "label", "status", "length", "width", "height", "yaw", "confidence")
+                    },
+                    "has_gt_corners": "corners" in first_gt,
+                    "notes": [
+                        "Overlay boxes are sent browser-side as T4BBOX1 binary, not JSON/hex.",
+                        "The ArrayBuffer is transferred to the iframe once on iframe load.",
+                        "The T4 dataset server receives only normal viewer query params; overlay boxes are not uploaded there.",
+                    ],
                 }
             )
 
