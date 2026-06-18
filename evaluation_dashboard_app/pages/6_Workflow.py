@@ -82,6 +82,7 @@ _RELEASE_DEVOPS_INTEGRATION_ID = "295cff78-9bc9-4d60-b7aa-f95be6ff96a4"
 _RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
 _RELEASE_SKIP_LARGE_FILE = True
 _RELEASE_LARGE_FILE_MB = 50.0
+_DEFAULT_MAX_WAIT_HOURS = 48
 _RELEASE_TREND_TOPIC_OPTIONS = {
     "Prediction / object recognition": DEFAULT_TREND_TOPIC,
     "ML model / CenterPoint": DETECTION_TREND_TOPIC_BY_MODEL["centerpoint"],
@@ -1860,8 +1861,6 @@ def _render_start_workflow_form(
 ) -> Dict[str, object]:
     if catalog_load_error:
         st.warning(f"Could not read catalog presets: {catalog_load_error}")
-    elif catalogs_path:
-        st.caption(f"Catalog presets loaded from `{catalogs_path}`.")
 
     catalog_names = [item["display_name"] for item in catalog_presets]
     default_project = get_config_value("eval_project_id", "x2_dev")
@@ -1873,9 +1872,9 @@ def _render_start_workflow_form(
     )
     default_poll_interval = int(get_config_value("poll_interval", 60))
     try:
-        default_max_wait_hours = max(0, int(get_config_value("max_wait_hours", 0)))
+        default_max_wait_hours = max(0, int(get_config_value("max_wait_hours", _DEFAULT_MAX_WAIT_HOURS)))
     except (TypeError, ValueError):
-        default_max_wait_hours = 0
+        default_max_wait_hours = _DEFAULT_MAX_WAIT_HOURS
     default_environment = get_config_value("environment", "")
     default_output = _make_default_output_path(default_target)
     default_skip_large_file = True
@@ -1913,12 +1912,14 @@ def _render_start_workflow_form(
         key="workflow_release_mode",
         help="Queues the two standard release evaluator jobs, processes both as normal app runs, then generates a release specsheet with trend data.",
     )
-    if release_mode:
-        st.info(
-            "Release mode uses the app-native flow: schedule Performance Test and Devops Test, create normal CSV/parquet analysis folders, write release metadata, and generate the trend-enabled specsheet PDF."
-        )
+    previous_release_mode = bool(st.session_state.get("workflow_previous_release_mode", release_mode))
+    if previous_release_mode != release_mode:
+        if release_mode:
+            st.session_state["workflow_run_eval"] = False
+            st.session_state["workflow_max_wait_hours"] = _DEFAULT_MAX_WAIT_HOURS
+    st.session_state["workflow_previous_release_mode"] = release_mode
 
-    top_cols = st.columns([1.0, 1.9, 1.2])
+    top_cols = st.columns([1.0, 1.2] if release_mode else [1.0, 1.9, 1.2])
     with top_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Project</div>', unsafe_allow_html=True)
         project_id = st.text_input(
@@ -1927,34 +1928,36 @@ def _render_start_workflow_form(
             key="workflow_project_id",
             label_visibility="collapsed",
         ).strip()
-    with top_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
-        catalog_picker_cols = st.columns([4.2, 1.1], gap="small")
-        with catalog_picker_cols[0]:
-            selected_catalog_name = st.selectbox(
-                "Catalog",
-                options=catalog_options if catalog_options else [""],
-                index=catalog_options.index(st.session_state.get("workflow_catalog_name", "")) if st.session_state.get("workflow_catalog_name", "") in catalog_options else 0,
-                key="workflow_catalog_name",
-                label_visibility="collapsed",
-                format_func=lambda value: value or "Choose a catalog",
-                disabled=release_mode,
-            )
-        with catalog_picker_cols[1]:
-            fetch_catalogs_clicked = st.button(
-                "Fetch",
-                key="workflow_fetch_server_catalogs",
-                use_container_width=True,
-                disabled=release_mode,
-            )
-            if fetch_catalogs_clicked:
-                try:
-                    current_environment = str(st.session_state.get("workflow_environment", default_environment) or "")
-                    st.session_state["workflow_server_catalogs"] = _fetch_server_catalogs(project_id, current_environment)
-                    st.session_state["workflow_server_catalog_error"] = ""
-                except Exception as exc:
-                    st.session_state["workflow_server_catalogs"] = []
-                    st.session_state["workflow_server_catalog_error"] = str(exc)
+    if release_mode:
+        selected_catalog_name = ""
+        fetch_catalogs_clicked = False
+    else:
+        with top_cols[1]:
+            st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
+            catalog_picker_cols = st.columns([4.2, 1.1], gap="small")
+            with catalog_picker_cols[0]:
+                selected_catalog_name = st.selectbox(
+                    "Catalog",
+                    options=catalog_options if catalog_options else [""],
+                    index=catalog_options.index(st.session_state.get("workflow_catalog_name", "")) if st.session_state.get("workflow_catalog_name", "") in catalog_options else 0,
+                    key="workflow_catalog_name",
+                    label_visibility="collapsed",
+                    format_func=lambda value: value or "Choose a catalog",
+                )
+            with catalog_picker_cols[1]:
+                fetch_catalogs_clicked = st.button(
+                    "Fetch",
+                    key="workflow_fetch_server_catalogs",
+                    use_container_width=True,
+                )
+                if fetch_catalogs_clicked:
+                    try:
+                        current_environment = str(st.session_state.get("workflow_environment", default_environment) or "")
+                        st.session_state["workflow_server_catalogs"] = _fetch_server_catalogs(project_id, current_environment)
+                        st.session_state["workflow_server_catalog_error"] = ""
+                    except Exception as exc:
+                        st.session_state["workflow_server_catalogs"] = []
+                        st.session_state["workflow_server_catalog_error"] = str(exc)
     selected_catalog = preset_by_label.get(selected_catalog_name)
     selected_server_catalog = server_by_label.get(selected_catalog_name)
     if "workflow_last_catalog_preset" not in st.session_state:
@@ -1984,7 +1987,7 @@ def _render_start_workflow_form(
     elif st.session_state["workflow_last_catalog_selection"] != selected_catalog_name:
         st.session_state["workflow_catalog_resolution_error"] = ""
         st.session_state["workflow_last_catalog_selection"] = selected_catalog_name
-    with top_cols[2]:
+    with top_cols[1 if release_mode else 2]:
         st.markdown('<div class="wf-toolbar-note">Branch or tag</div>', unsafe_allow_html=True)
         target_name = st.text_input(
             "Branch or Tag",
@@ -1997,11 +2000,11 @@ def _render_start_workflow_form(
     catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
     integration_id = str(st.session_state.get("workflow_integration_id") or "").strip()
 
-    if st.session_state.get("workflow_server_catalog_error"):
+    if not release_mode and st.session_state.get("workflow_server_catalog_error"):
         st.warning(f"Could not fetch catalogs: {st.session_state['workflow_server_catalog_error']}")
     catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
 
-    picker_cols = st.columns([1.2, 1.2, 1.75])
+    picker_cols = st.columns([1.2, 1.75] if release_mode else [1.2, 1.2, 1.75])
     with picker_cols[0]:
         st.markdown(
             f'<div class="wf-toolbar-note">{"Release output folder" if release_mode else "Output folder"}</div>',
@@ -2019,22 +2022,18 @@ def _render_start_workflow_form(
                 else "Output folder under the data directory."
             ),
         ).strip()
-    with picker_cols[1]:
-        st.markdown('<div class="wf-toolbar-note">Phase</div>', unsafe_allow_html=True)
-        phase_value = "perception.object_recognition.tracking.objects" if release_mode else default_phase
-        phase = st.text_input(
-            "Phase",
-            value=phase_value,
-            key="workflow_phase",
-            label_visibility="collapsed",
-            disabled=release_mode,
-            help=(
-                "Release mode uses this standard phase automatically for both detailed-analysis downloads."
-                if release_mode
-                else None
-            ),
-        )
-    with picker_cols[2]:
+    if release_mode:
+        phase = "perception.object_recognition.tracking.objects"
+    else:
+        with picker_cols[1]:
+            st.markdown('<div class="wf-toolbar-note">Phase</div>', unsafe_allow_html=True)
+            phase = st.text_input(
+                "Phase",
+                value=default_phase,
+                key="workflow_phase",
+                label_visibility="collapsed",
+            )
+    with picker_cols[1 if release_mode else 2]:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
         description = st.text_input(
             "Description",
@@ -2154,10 +2153,6 @@ def _render_start_workflow_form(
             ).strip()
         else:
             optional_job_id = ""
-        output_dirs = "`performance/`, `devops/`, and `planning_test/`" if optional_catalog_enabled else "`performance/` and `devops/`"
-        st.caption(
-            f"Normal detailed-analysis outputs are generated automatically under {output_dirs}; existing job IDs are waited on if still running and downloaded if already finished."
-        )
     else:
         performance_job_id = ""
         devops_job_id = ""
@@ -2179,13 +2174,13 @@ def _render_start_workflow_form(
     if release_mode and optional_catalog_enabled:
         with confirm_cols[2]:
             st.caption(f"Planning Test catalog: `{_RELEASE_OPTIONAL_CATALOG_ID}`")
-    if st.session_state.get("workflow_catalog_resolution_error"):
+    if not release_mode and st.session_state.get("workflow_catalog_resolution_error"):
         st.warning(f"Could not resolve integration automatically: {st.session_state['workflow_catalog_resolution_error']}")
 
-    if selected_catalog:
+    if not release_mode and selected_catalog:
         desc = str(selected_catalog.get("description") or "").strip() or "Preset selected for quick scheduling."
         st.caption(f"Preset: {desc}")
-    elif selected_server_catalog:
+    elif not release_mode and selected_server_catalog:
         desc = str(selected_server_catalog.get("description") or "").strip()
         if desc:
             st.caption(f"Fetched catalog: {desc}")
@@ -2399,10 +2394,14 @@ def _render_workflow_launcher_section(
         st.session_state["workflow_release_devops_job_id"] = ""
         st.session_state["workflow_release_trend_topic_label"] = "Prediction / object recognition"
         st.session_state["workflow_release_custom_trend_topic"] = ""
+        if bool(st.session_state.get("workflow_release_mode", False)):
+            st.session_state["workflow_run_eval"] = False
+        else:
+            st.session_state.pop("workflow_run_eval", None)
+        st.session_state["workflow_max_wait_hours"] = _DEFAULT_MAX_WAIT_HOURS
         st.session_state["workflow_output_path"] = _make_default_output_path(fresh_target)
 
     def _render_start_workflow_controls(*, key_suffix: str = "dialog") -> None:
-        st.caption("This is the full launcher for creating a new evaluator job, downloading results, and optionally running eval/parquet.")
         payload = _render_start_workflow_form(catalog_presets, catalogs_path, catalog_load_error)
         submit_cols = st.columns([1.15, 1.15, 3.7])
         close_clicked = submit_cols[0].button(
