@@ -1423,12 +1423,13 @@ def _build_detection_perception_diff_figures(
         df_obj = _query_perception_diff_objects(con, base_view, comp_view)
         if df_obj.empty:
             continue
-        h_imp = _baobab_hierarchy_from_objects(df_obj, "improved", f"Improved ({lbl} vs A)", 15, 10)
-        h_deg = _baobab_hierarchy_from_objects(df_obj, "degraded", f"Degraded ({lbl} vs A)", 15, 10)
+        h_imp = _baobab_hierarchy_from_objects(df_obj, "improved", f"Improved ({lbl} vs A)", 15, 12, 10)
+        h_deg = _baobab_hierarchy_from_objects(df_obj, "degraded", f"Degraded ({lbl} vs A)", 15, 12, 10)
         if not h_imp.empty and "n" in h_imp.columns:
+            h_imp_sunburst = _sunburst_without_frame_layer(h_imp)
             fig_imp = px.sunburst(
-                h_imp,
-                path=["root", "scen_g", "fr_display", "label"],
+                h_imp_sunburst,
+                path=["root", "scen_g", "dataset_display", "label"],
                 values="n",
                 color="n",
                 color_continuous_scale=[[0.0, "#f7fcf5"], [1.0, "#1a9850"]],
@@ -1437,9 +1438,10 @@ def _build_detection_perception_diff_figures(
             _apply_detection_theme(fig_imp, f"Sunburst: improved ({lbl} vs A)")
             figures.append((fig_imp, f"Perception diff sunburst for improved objects: {lbl} vs baseline A."))
         if not h_deg.empty and "n" in h_deg.columns:
+            h_deg_sunburst = _sunburst_without_frame_layer(h_deg)
             fig_deg = px.sunburst(
-                h_deg,
-                path=["root", "scen_g", "fr_display", "label"],
+                h_deg_sunburst,
+                path=["root", "scen_g", "dataset_display", "label"],
                 values="n",
                 color="n",
                 color_continuous_scale=[[0.0, "#fff5f0"], [1.0, "#d73027"]],
@@ -1448,7 +1450,7 @@ def _build_detection_perception_diff_figures(
             _apply_detection_theme(fig_deg, f"Sunburst: degraded ({lbl} vs A)")
             figures.append((fig_deg, f"Perception diff sunburst for degraded objects: {lbl} vs baseline A."))
 
-        df_by_label, scen_agg, df_frame_sorted = _query_perception_diff_lens_tables(con, base_view, comp_view)
+        df_by_label, scen_agg, df_dataset_sorted, df_frame_sorted = _query_perception_diff_lens_tables(con, base_view, comp_view)
         root_lens = f"{lbl} vs A"
         if not df_by_label.empty:
             tdf_l = _comparison_lens_treemap_df(
@@ -1460,34 +1462,36 @@ def _build_detection_perception_diff_figures(
             fig_l = _comparison_lens_treemap_figure(tdf_l, "By class")
             if fig_l is not None:
                 figures.append((fig_l, f"Perception diff comparison lens by class: {lbl} vs baseline A."))
-        if not scen_agg.empty:
-            tdf_s = _comparison_lens_treemap_df(
-                scen_agg["scenario_name"].astype(str),
-                scen_agg["improved_cnt"],
-                scen_agg["degraded_cnt"],
-                root_lens,
-            )
-            fig_s = _comparison_lens_treemap_figure(tdf_s, "By scenario")
-            if fig_s is not None:
-                figures.append((fig_s, f"Perception diff comparison lens by scenario: {lbl} vs baseline A."))
-        if not df_frame_sorted.empty:
-            fr_cap = 36
-            fr_top = df_frame_sorted.head(fr_cap).copy()
-            nms = (fr_top["scenario_name"].astype(str).str.slice(0, 26) + "\n· f" + fr_top["frame_index"].astype(str)).tolist()
-            ims = fr_top["improved_cnt"].astype(float).tolist()
-            dgs = fr_top["degraded_cnt"].astype(float).tolist()
-            rest = df_frame_sorted.iloc[fr_cap:]
+        if not df_dataset_sorted.empty:
+            ds_cap = 36
+            ds_top = df_dataset_sorted.head(ds_cap).copy()
+            _add_focus_labels(ds_top)
+            tdf_d = _comparison_lens_nested_treemap_df(ds_top, ["_scenario_focus", "_dataset_focus"], root_lens)
+            rest = df_dataset_sorted.iloc[ds_cap:]
             if not rest.empty:
                 io = float(rest["improved_cnt"].sum())
                 do = float(rest["degraded_cnt"].sum())
-                if io > 0 or do > 0:
-                    nms.append(f"Other frames\n({len(rest)} frames)")
-                    ims.append(io)
-                    dgs.append(do)
-            tdf_f = _comparison_lens_treemap_df(pd.Series(nms), pd.Series(ims), pd.Series(dgs), root_lens)
-            fig_f = _comparison_lens_treemap_figure(tdf_f, "By frame")
-            if fig_f is not None:
-                figures.append((fig_f, f"Perception diff comparison lens by frame: {lbl} vs baseline A."))
+                other_rows = []
+                for side, value in (("Improved", io), ("Degraded", do)):
+                    if value > 0:
+                        other_rows.append(
+                            {
+                                "root": root_lens,
+                                "side": side,
+                                "_scenario_focus": "Other scenarios",
+                                "_dataset_focus": f"Other datasets ({len(rest)})",
+                                "n": value,
+                            }
+                        )
+                if other_rows:
+                    tdf_d = pd.concat([tdf_d, pd.DataFrame(other_rows)], ignore_index=True)
+            fig_d = _comparison_lens_treemap_figure(
+                tdf_d,
+                "By scenario",
+                path=["root", "side", "_scenario_focus", "_dataset_focus"],
+            )
+            if fig_d is not None:
+                figures.append((fig_d, f"Perception diff comparison lens by scenario/dataset: {lbl} vs baseline A."))
     return figures
 
 
@@ -1585,7 +1589,7 @@ def _query_perception_diff_lens_tables(
     con: duckdb.DuckDBPyConnection,
     base_view: str,
     comp_view: str,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     query_label = f"""
     WITH base_gt AS (
         SELECT t4dataset_id, frame_index, uuid AS gt_uuid, COALESCE(MAX(try_cast(label AS VARCHAR)), '') AS label,
@@ -1615,14 +1619,16 @@ def _query_perception_diff_lens_tables(
     query_frame = f"""
     WITH base_gt AS (
         SELECT t4dataset_id, frame_index, uuid AS gt_uuid, COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_base,
-               COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name
+               COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+               COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
         FROM {base_view}
         WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL
         GROUP BY 1,2,3
     ),
     comp_gt AS (
         SELECT t4dataset_id, frame_index, uuid AS gt_uuid, COUNT(*) FILTER (WHERE status = 'TP') > 0 AS tp_comp,
-               COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name
+               COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+               COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
         FROM {comp_view}
         WHERE source = 'GT' AND uuid IS NOT NULL AND frame_index IS NOT NULL
         GROUP BY 1,2,3
@@ -1632,15 +1638,16 @@ def _query_perception_diff_lens_tables(
                COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
                COALESCE(b.tp_base, FALSE) AS tp_base,
                COALESCE(c.tp_comp, FALSE) AS tp_comp,
-               COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name
+               COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+               COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
         FROM base_gt b FULL OUTER JOIN comp_gt c
           ON b.t4dataset_id = c.t4dataset_id AND b.frame_index = c.frame_index AND b.gt_uuid = c.gt_uuid
     )
-    SELECT t4dataset_id, frame_index, scenario_name,
+    SELECT t4dataset_id, frame_index, scenario_name, t4dataset_name,
            CAST(COUNT(*) FILTER (WHERE NOT tp_base AND tp_comp) AS DOUBLE) AS improved_cnt,
            CAST(COUNT(*) FILTER (WHERE tp_base AND NOT tp_comp) AS DOUBLE) AS degraded_cnt
     FROM joined
-    GROUP BY t4dataset_id, frame_index, scenario_name
+    GROUP BY t4dataset_id, frame_index, scenario_name, t4dataset_name
     ORDER BY degraded_cnt DESC, improved_cnt DESC
     """
     query_scenario = f"""
@@ -1684,7 +1691,19 @@ def _query_perception_diff_lens_tables(
         df_frame = con.execute(query_frame).df()
     except Exception:
         df_frame = pd.DataFrame()
-    return df_label, df_scenario, df_frame
+    if df_frame.empty:
+        df_dataset = pd.DataFrame()
+    else:
+        df_dataset = (
+            df_frame.groupby(["t4dataset_id", "scenario_name", "t4dataset_name"], dropna=False)
+            .agg(
+                improved_cnt=("improved_cnt", "sum"),
+                degraded_cnt=("degraded_cnt", "sum"),
+            )
+            .reset_index()
+            .sort_values(["degraded_cnt", "improved_cnt"], ascending=[False, False])
+        )
+    return df_label, df_scenario, df_dataset, df_frame
 
 
 def _baobab_hierarchy_from_objects(
@@ -1692,6 +1711,7 @@ def _baobab_hierarchy_from_objects(
     change_type: str,
     root_label: str,
     max_scenarios: int,
+    max_datasets: int,
     max_frames: int,
 ) -> pd.DataFrame:
     if df_obj.empty or "change_type" not in df_obj.columns:
@@ -1700,22 +1720,40 @@ def _baobab_hierarchy_from_objects(
     if sub.empty:
         return pd.DataFrame()
     sub["scenario_name"] = sub["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
+    sub["t4dataset_id"] = sub["t4dataset_id"].fillna("").astype(str).replace("", "(no dataset)")
+    dataset_name = sub.get("t4dataset_name", sub["t4dataset_id"])
+    sub["dataset_display"] = dataset_name.fillna("").astype(str)
+    sub["dataset_display"] = sub["dataset_display"].where(
+        sub["dataset_display"].str.strip() != "",
+        sub["t4dataset_id"],
+    )
+    sub["dataset_key"] = sub["t4dataset_id"] + "|" + sub["dataset_display"]
     sub["label"] = sub["label"].fillna("").astype(str).replace("", "(no label)")
-    sub["frame_key"] = sub["t4dataset_id"].astype(str) + "|f" + sub["frame_index"].astype(str)
-    leaf = sub.groupby(["scenario_name", "frame_key", "label"], dropna=False).size().reset_index(name="n")
+    sub["frame_key"] = "f" + sub["frame_index"].astype(str)
+    leaf = sub.groupby(["scenario_name", "dataset_key", "frame_key", "label"], dropna=False).size().reset_index(name="n")
     scen_tot = leaf.groupby("scenario_name")["n"].sum().sort_values(ascending=False)
     top_scen = set(scen_tot.head(max_scenarios).index.tolist())
     leaf["scen_g"] = leaf["scenario_name"].where(leaf["scenario_name"].isin(top_scen), "Other scenarios")
     out_parts = []
     for _, g in leaf.groupby("scen_g"):
-        fr_tot = g.groupby("frame_key")["n"].sum().sort_values(ascending=False)
-        top_fr = set(fr_tot.head(max_frames).index.tolist())
+        ds_tot = g.groupby("dataset_key")["n"].sum().sort_values(ascending=False)
+        top_ds = set(ds_tot.head(max_datasets).index.tolist())
         g2 = g.copy()
-        g2["fr_g"] = g2["frame_key"].where(g2["frame_key"].isin(top_fr), "Other frames")
-        agg = g2.groupby(["scen_g", "fr_g", "label"], as_index=False)["n"].sum()
-        out_parts.append(agg)
+        g2["dataset_g"] = g2["dataset_key"].where(g2["dataset_key"].isin(top_ds), "Other datasets")
+        for _, dg in g2.groupby("dataset_g"):
+            fr_tot = dg.groupby("frame_key")["n"].sum().sort_values(ascending=False)
+            top_fr = set(fr_tot.head(max_frames).index.tolist())
+            dg2 = dg.copy()
+            dg2["fr_g"] = dg2["frame_key"].where(dg2["frame_key"].isin(top_fr), "Other frames")
+            agg = dg2.groupby(["scen_g", "dataset_g", "fr_g", "label"], as_index=False)["n"].sum()
+            out_parts.append(agg)
     out = pd.concat(out_parts, ignore_index=True)
     out["root"] = root_label
+    out["dataset_display"] = out["dataset_g"].astype(str).map(
+        lambda value: "Other datasets"
+        if value == "Other datasets"
+        else (value.split("|", 1)[-1] if len(value.split("|", 1)[-1]) <= 34 else value.split("|", 1)[-1][:31] + "...")
+    )
     out["fr_display"] = out["fr_g"].astype(str)
     return out
 
@@ -1732,12 +1770,43 @@ def _comparison_lens_treemap_df(names: pd.Series, improved: pd.Series, degraded:
     return pd.DataFrame(rows)
 
 
-def _comparison_lens_treemap_figure(tdf: pd.DataFrame, title: str) -> Optional[go.Figure]:
+def _add_focus_labels(df: pd.DataFrame) -> None:
+    if df.empty:
+        return
+    dataset_name = df.get("t4dataset_name", df["t4dataset_id"])
+    df["_scenario_focus"] = df["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
+    df["_dataset_focus"] = dataset_name.fillna("").astype(str)
+    df["_dataset_focus"] = df["_dataset_focus"].where(
+        df["_dataset_focus"].str.strip() != "",
+        df["t4dataset_id"].fillna("").astype(str),
+    )
+
+
+def _comparison_lens_nested_treemap_df(df: pd.DataFrame, levels: List[str], root_label: str) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    rows = []
+    for _, row in df.iterrows():
+        path_values = {level: str(row.get(level, "")).strip() or "-" for level in levels}
+        for side, col in (("Improved", "improved_cnt"), ("Degraded", "degraded_cnt")):
+            n = pd.to_numeric(pd.Series([row.get(col)]), errors="coerce").fillna(0).iloc[0]
+            if float(n) > 0:
+                rows.append({"root": root_label, "side": side, **path_values, "n": float(n)})
+    return pd.DataFrame(rows)
+
+
+def _sunburst_without_frame_layer(hdf: pd.DataFrame) -> pd.DataFrame:
+    if hdf.empty:
+        return pd.DataFrame()
+    return hdf.groupby(["root", "scen_g", "dataset_display", "label"], as_index=False, dropna=False)["n"].sum()
+
+
+def _comparison_lens_treemap_figure(tdf: pd.DataFrame, title: str, path: Optional[List[str]] = None) -> Optional[go.Figure]:
     if tdf.empty or "n" not in tdf.columns:
         return None
     fig = px.treemap(
         tdf,
-        path=["root", "side", "item"],
+        path=path or ["root", "side", "item"],
         values="n",
         color="side",
         color_discrete_map={"Improved": "#1a9850", "Degraded": "#d73027"},

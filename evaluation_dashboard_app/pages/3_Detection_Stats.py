@@ -349,8 +349,11 @@ def _run_share_names_for_links() -> List[str]:
 
 
 def _with_t4_viewer_links(df: pd.DataFrame, run_share_names: List[str]) -> pd.DataFrame:
-    """Add a compact dashboard 3D viewer deep-link column when rows include frame metadata."""
-    if df is None or df.empty or "frame_index" not in df.columns:
+    """Add a compact dashboard 3D viewer deep-link column for dataset/frame rows."""
+    if df is None or df.empty:
+        return df
+    has_dataset = "t4dataset_name" in df.columns or "t4dataset_id" in df.columns
+    if not has_dataset and "scenario_name" not in df.columns:
         return df
     out = df.copy()
 
@@ -362,7 +365,7 @@ def _with_t4_viewer_links(df: pd.DataFrame, run_share_names: List[str]) -> pd.Da
             scenario_name=row.get("scenario_name"),
             t4dataset_name=row.get("t4dataset_name"),
             t4dataset_id=row.get("t4dataset_id"),
-            frame_index=row.get("frame_index"),
+            frame_index=row.get("frame_index") if "frame_index" in row.index else None,
             compare_view_mode="side_by_side",
         )
 
@@ -3867,11 +3870,12 @@ try:
         change_type: str,
         root_label: str,
         max_scenarios: int,
+        max_datasets: int,
         max_frames: int,
     ) -> pd.DataFrame:
         """
-        Build a leaf table for Plotly sunburst/treemap: root → scenario → frame → label.
-        Caps scenarios and frames per scenario; merges the rest into Other buckets.
+        Build a leaf table for Plotly sunburst/treemap: root → scenario → dataset → frame → label.
+        Caps scenarios, datasets per scenario, and frames per dataset; merges the rest into Other buckets.
         """
         if df_obj.empty or "change_type" not in df_obj.columns:
             return pd.DataFrame()
@@ -3879,18 +3883,25 @@ try:
         if sub.empty:
             return pd.DataFrame()
         sub["scenario_name"] = sub["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
-        sub["label"] = sub["label"].fillna("").astype(str).replace("", "(no label)")
-        sub["frame_key"] = (
-            sub["t4dataset_id"].astype(str) + "|f" + sub["frame_index"].astype(str)
+        sub["t4dataset_id"] = sub["t4dataset_id"].fillna("").astype(str).replace("", "(no dataset)")
+        dataset_name = sub.get("t4dataset_name", sub["t4dataset_id"])
+        sub["dataset_display"] = dataset_name.fillna("").astype(str)
+        sub["dataset_display"] = sub["dataset_display"].where(
+            sub["dataset_display"].str.strip() != "",
+            sub["t4dataset_id"],
         )
+        sub["dataset_key"] = sub["t4dataset_id"] + "|" + sub["dataset_display"]
+        sub["label"] = sub["label"].fillna("").astype(str).replace("", "(no label)")
+        sub["frame_key"] = "f" + sub["frame_index"].astype(str)
         leaf = (
-            sub.groupby(["scenario_name", "frame_key", "label"], dropna=False)
+            sub.groupby(["scenario_name", "dataset_key", "frame_key", "label"], dropna=False)
             .size()
             .reset_index(name="n")
         )
         if leaf.empty:
             return pd.DataFrame()
         ms = max(int(max_scenarios), 1)
+        md = max(int(max_datasets), 1)
         mf = max(int(max_frames), 1)
         scen_tot = leaf.groupby("scenario_name")["n"].sum().sort_values(ascending=False)
         top_scen = set(scen_tot.head(ms).index)
@@ -3901,30 +3912,38 @@ try:
         )
         parts = []
         for _, g in leaf.groupby("scen_g"):
-            fr_tot = g.groupby("frame_key")["n"].sum().sort_values(ascending=False)
-            top_fr = set(fr_tot.head(mf).index)
+            ds_tot = g.groupby("dataset_key")["n"].sum().sort_values(ascending=False)
+            top_ds = set(ds_tot.head(md).index)
             g2 = g.copy()
-            g2["fr_g"] = np.where(g2["frame_key"].isin(top_fr), g2["frame_key"], "Other frames")
-            agg = g2.groupby(["scen_g", "fr_g", "label"], as_index=False)["n"].sum()
-            parts.append(agg)
+            g2["dataset_g"] = np.where(
+                g2["dataset_key"].isin(top_ds),
+                g2["dataset_key"],
+                "Other datasets",
+            )
+            for _, dg in g2.groupby("dataset_g"):
+                fr_tot = dg.groupby("frame_key")["n"].sum().sort_values(ascending=False)
+                top_fr = set(fr_tot.head(mf).index)
+                dg2 = dg.copy()
+                dg2["fr_g"] = np.where(dg2["frame_key"].isin(top_fr), dg2["frame_key"], "Other frames")
+                agg = dg2.groupby(["scen_g", "dataset_g", "fr_g", "label"], as_index=False)["n"].sum()
+                parts.append(agg)
         out = pd.concat(parts, ignore_index=True)
         out["root"] = root_label
     
-        def _frame_ring_label(fr_g: str, scen_g: str) -> str:
+        def _dataset_ring_label(dataset_g: str) -> str:
+            if str(dataset_g) == "Other datasets":
+                return "Other datasets"
+            text = str(dataset_g).split("|", 1)[-1]
+            return text if len(text) <= 34 else (text[:31] + "...")
+
+        def _frame_ring_label(fr_g: str) -> str:
             if fr_g == "Other frames" or str(fr_g) == "Other frames":
                 return "Other frames"
-            sfg = str(fr_g)
-            if "|f" not in sfg:
-                return sfg
-            fid = sfg.split("|f", 1)[-1]
-            if scen_g == "Other scenarios":
-                t4 = sfg.split("|f", 1)[0]
-                t4s = t4 if len(t4) <= 14 else ("…" + t4[-12:])
-                return f"{t4s}|f{fid}"
-            return f"f{fid}"
+            return str(fr_g)
     
+        out["dataset_display"] = out["dataset_g"].map(_dataset_ring_label)
         out["fr_display"] = out.apply(
-            lambda r: _frame_ring_label(r["fr_g"], r["scen_g"]), axis=1
+            lambda r: _frame_ring_label(r["fr_g"]), axis=1
         )
         return out
     
@@ -3958,13 +3977,14 @@ try:
         tdf: pd.DataFrame,
         st_key: str,
         title: str,
+        path: Optional[List[str]] = None,
     ) -> None:
         if tdf is None or tdf.empty:
             st.caption("_No data for this view._")
             return
         fig = px.treemap(
             tdf,
-            path=["root", "side", "item"],
+            path=path or ["root", "side", "item"],
             values="n",
             color="side",
             color_discrete_map={"Improved": IMPROVED_COLOR, "Degraded": DEGRADED_COLOR},
@@ -3984,12 +4004,50 @@ try:
         _title_layout = {**PLOTLY_LAYOUT_THEME["title"], "text": title}
         apply_chart_theme(
             fig,
-            height=430,
+            height=560,
             margin=dict(t=20, l=2, r=2, b=2),
             paper_bgcolor="rgba(0,0,0,0)",
             title=_title_layout,
         )
         st.plotly_chart(fig, width='stretch', key=st_key)
+
+
+    def _comparison_lens_nested_treemap_df(
+        df: pd.DataFrame,
+        levels: List[str],
+        root_title: str,
+    ) -> pd.DataFrame:
+        """Rows for px.treemap where Improved/Degraded contain nested focus levels."""
+        if df is None or df.empty:
+            return pd.DataFrame()
+        rows = []
+        for _, row in df.iterrows():
+            path_values: Dict[str, str] = {}
+            for level in levels:
+                value = str(row.get(level, "")).strip()
+                path_values[level] = value or "-"
+            for side, col in (("Improved", "improved_cnt"), ("Degraded", "degraded_cnt")):
+                n = pd.to_numeric(pd.Series([row.get(col)]), errors="coerce").fillna(0).iloc[0]
+                if float(n) <= 0:
+                    continue
+                rows.append(
+                    {
+                        "root": root_title,
+                        "side": side,
+                        **path_values,
+                        "n": float(n),
+                    }
+                )
+        return pd.DataFrame(rows)
+
+
+    def _sunburst_without_frame_layer(hdf: pd.DataFrame) -> pd.DataFrame:
+        if hdf is None or hdf.empty:
+            return pd.DataFrame()
+        return (
+            hdf.groupby(["root", "scen_g", "dataset_display", "label"], as_index=False, dropna=False)["n"]
+            .sum()
+        )
     
     
     if not single_mode:
@@ -4379,7 +4437,7 @@ try:
                                     )
 
                         b_key = f"p5_baobab_{lbl}_{idx}"
-                        c1b, c2b, c3b = st.columns([1, 1, 1])
+                        c1b, c2b, c3b, c4b = st.columns([1, 1, 1, 1])
                         with c1b:
                             baobab_viz = st.radio(
                                 "Chart type",
@@ -4396,8 +4454,16 @@ try:
                                 key=f"{b_key}_ns",
                             )
                         with c3b:
+                            baobab_nd = st.slider(
+                                "Max datasets / scenario",
+                                min_value=5,
+                                max_value=30,
+                                value=12,
+                                key=f"{b_key}_nd",
+                            )
+                        with c4b:
                             baobab_nf = st.slider(
-                                "Max frames / scenario",
+                                "Max frames / dataset",
                                 min_value=5,
                                 max_value=20,
                                 value=10,
@@ -4406,12 +4472,14 @@ try:
                         if df_by_object_full.empty:
                             st.caption("No object-level rows for hierarchy.")
                         else:
-                            path_cols = ["root", "scen_g", "fr_display", "label"]
+                            treemap_path_cols = ["root", "scen_g", "dataset_display", "fr_display", "label"]
+                            sunburst_path_cols = ["root", "scen_g", "dataset_display", "label"]
                             h_imp = _baobab_hierarchy_from_objects(
                                 df_by_object_full,
                                 "improved",
                                 f"Improved ({lbl} vs A)",
                                 baobab_ns,
+                                baobab_nd,
                                 baobab_nf,
                             )
                             h_deg = _baobab_hierarchy_from_objects(
@@ -4419,6 +4487,7 @@ try:
                                 "degraded",
                                 f"Degraded ({lbl} vs A)",
                                 baobab_ns,
+                                baobab_nd,
                                 baobab_nf,
                             )
                             pair_both = (not h_imp.empty) and (not h_deg.empty)
@@ -4432,9 +4501,10 @@ try:
                                     continue
                                 title = f"{baobab_viz}: {ct} (n = {int(hdf['n'].sum())} GT objects)"
                                 if baobab_viz == "Sunburst":
+                                    hdf_plot = _sunburst_without_frame_layer(hdf)
                                     fig_b = px.sunburst(
-                                        hdf,
-                                        path=path_cols,
+                                        hdf_plot,
+                                        path=sunburst_path_cols,
                                         values="n",
                                         color="n",
                                         color_continuous_scale=cmap,
@@ -4445,7 +4515,7 @@ try:
                                 else:
                                     fig_b = px.treemap(
                                         hdf,
-                                        path=path_cols,
+                                        path=treemap_path_cols,
                                         values="n",
                                         color="n",
                                         color_continuous_scale=cmap,
@@ -4485,7 +4555,7 @@ try:
                                     else:
                                         st.caption(f"No **{ct}** objects to chart.")
     
-                        # --- Comparison lens: label / scenario / frame (treemap trio, Baobab-aligned) ---
+                        # --- Comparison lens: label / scenario / dataset / frame (Baobab-aligned) ---
                         query_label = f"""
                         WITH base_gt AS (
                             SELECT
@@ -4595,17 +4665,70 @@ try:
                             )
     
                         frame_sort_mode = st.radio(
-                            "Frame focus",
+                            "Dataset/frame focus",
                             ["Degraded first", "Improved first", "Largest net change"],
                             horizontal=True,
                             key=f"p5_frame_focus_{lbl}_{idx}",
-                            help="Choose whether the frame views prioritize regressions, recoveries, or the biggest overall swings.",
+                            help="Choose whether dataset and frame views prioritize regressions, recoveries, or the biggest overall swings.",
                         )
+                        df_dataset_sorted = pd.DataFrame()
                         df_frame_sorted = pd.DataFrame()
                         frame_caption_metric = "degraded"
                         frame_sort_desc = "degraded desc"
+                        if not df_improved.empty:
+                            df_dataset_sorted = df_improved.copy()
+                            dataset_name = df_dataset_sorted.get(
+                                "t4dataset_name",
+                                df_dataset_sorted["t4dataset_id"],
+                            )
+                            df_dataset_sorted["_scenario_focus"] = (
+                                df_dataset_sorted["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
+                            )
+                            df_dataset_sorted["_dataset_focus"] = dataset_name.fillna("").astype(str)
+                            df_dataset_sorted["_dataset_focus"] = df_dataset_sorted["_dataset_focus"].where(
+                                df_dataset_sorted["_dataset_focus"].str.strip() != "",
+                                df_dataset_sorted["t4dataset_id"].fillna("").astype(str),
+                            )
+                            if frame_sort_mode == "Improved first":
+                                df_dataset_sorted = df_dataset_sorted.sort_values(
+                                    by=["improved_cnt", "degraded_cnt"],
+                                    ascending=[False, True],
+                                )
+                            elif frame_sort_mode == "Largest net change":
+                                df_dataset_sorted["net_tp_delta"] = (
+                                    pd.to_numeric(df_dataset_sorted["improved_cnt"], errors="coerce").fillna(0)
+                                    - pd.to_numeric(df_dataset_sorted["degraded_cnt"], errors="coerce").fillna(0)
+                                )
+                                df_dataset_sorted["_abs_net_tp_delta"] = (
+                                    df_dataset_sorted["net_tp_delta"].abs()
+                                )
+                                df_dataset_sorted = df_dataset_sorted.sort_values(
+                                    by=["_abs_net_tp_delta", "degraded_cnt", "improved_cnt"],
+                                    ascending=[False, False, False],
+                                )
+                            else:
+                                df_dataset_sorted = df_dataset_sorted.sort_values(
+                                    by=["degraded_cnt", "improved_cnt"],
+                                    ascending=[False, True],
+                                )
+                            df_dataset_sorted = df_dataset_sorted.drop(
+                                columns=["_abs_net_tp_delta"],
+                                errors="ignore",
+                            ).reset_index(drop=True)
                         if not df_by_frame.empty:
                             df_frame_sorted = df_by_frame.copy()
+                            frame_dataset_name = df_frame_sorted.get(
+                                "t4dataset_name",
+                                df_frame_sorted["t4dataset_id"],
+                            )
+                            df_frame_sorted["_scenario_focus"] = (
+                                df_frame_sorted["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
+                            )
+                            df_frame_sorted["_dataset_focus"] = frame_dataset_name.fillna("").astype(str)
+                            df_frame_sorted["_dataset_focus"] = df_frame_sorted["_dataset_focus"].where(
+                                df_frame_sorted["_dataset_focus"].str.strip() != "",
+                                df_frame_sorted["t4dataset_id"].fillna("").astype(str),
+                            )
                             if frame_sort_mode == "Improved first":
                                 frame_caption_metric = "improved"
                                 frame_sort_desc = "improved desc"
@@ -4639,77 +4762,58 @@ try:
                         _t4_link_run_names = _run_share_names_for_links()
     
                         root_lens = f"{lbl} vs A"
-                        lc1, lc2, lc3 = st.columns(3, gap="small")
-                        with lc1:
-                            if not df_by_label.empty:
-                                tdf_l = _comparison_lens_treemap_df(
-                                    df_by_label["label"],
-                                    df_by_label["improved_cnt"],
-                                    df_by_label["degraded_cnt"],
-                                    root_lens,
-                                )
-                                _plot_comparison_lens_treemap(
-                                    tdf_l,
-                                    f"p5_lens_lab_{lbl}_{idx}",
-                                    "By class",
-                                )
-                            else:
-                                st.caption("_No label data._")
-                        with lc2:
-                            if not scen_agg.empty:
-                                tdf_s = _comparison_lens_treemap_df(
-                                    scen_agg["scenario_name"].astype(str),
-                                    scen_agg["improved_cnt"],
-                                    scen_agg["degraded_cnt"],
-                                    root_lens,
-                                )
-                                _plot_comparison_lens_treemap(
-                                    tdf_s,
-                                    f"p5_lens_scen_{lbl}_{idx}",
-                                    "By scenario",
-                                )
-                            else:
-                                st.caption("_No scenario data._")
-                        with lc3:
-                            if not df_frame_sorted.empty:
-                                fr_cap = 36
-                                fr_top = df_frame_sorted.head(fr_cap).copy()
-                                nms = (
-                                    fr_top["scenario_name"].astype(str).str.slice(0, 26)
-                                    + "\n· f"
-                                    + fr_top["frame_index"].astype(str)
-                                ).tolist()
-                                ims = fr_top["improved_cnt"].astype(float).tolist()
-                                dgs = fr_top["degraded_cnt"].astype(float).tolist()
-                                rest = df_frame_sorted.iloc[fr_cap:]
-                                if not rest.empty:
-                                    io = float(rest["improved_cnt"].sum())
-                                    do = float(rest["degraded_cnt"].sum())
-                                    if io > 0 or do > 0:
-                                        nms.append(
-                                            f"Other frames\n({len(rest)} frames)"
+                        if not df_by_label.empty:
+                            tdf_l = _comparison_lens_treemap_df(
+                                df_by_label["label"],
+                                df_by_label["improved_cnt"],
+                                df_by_label["degraded_cnt"],
+                                root_lens,
+                            )
+                            _plot_comparison_lens_treemap(
+                                tdf_l,
+                                f"p5_lens_lab_{lbl}_{idx}",
+                                "By class",
+                            )
+                        else:
+                            st.caption("_No label data._")
+                        if not df_dataset_sorted.empty:
+                            ds_cap = 36
+                            ds_top = df_dataset_sorted.head(ds_cap).copy()
+                            tdf_d = _comparison_lens_nested_treemap_df(
+                                ds_top,
+                                ["_scenario_focus", "_dataset_focus"],
+                                root_lens,
+                            )
+                            rest = df_dataset_sorted.iloc[ds_cap:]
+                            if not rest.empty:
+                                io = float(rest["improved_cnt"].sum())
+                                do = float(rest["degraded_cnt"].sum())
+                                other_rows = []
+                                for side, value in (("Improved", io), ("Degraded", do)):
+                                    if value > 0:
+                                        other_rows.append(
+                                            {
+                                                "root": root_lens,
+                                                "side": side,
+                                                "_scenario_focus": "Other scenarios",
+                                                "_dataset_focus": f"Other datasets ({len(rest)})",
+                                                "n": value,
+                                            }
                                         )
-                                        ims.append(io)
-                                        dgs.append(do)
-                                tdf_f = _comparison_lens_treemap_df(
-                                    pd.Series(nms),
-                                    pd.Series(ims),
-                                    pd.Series(dgs),
-                                    root_lens,
-                                )
-                                _plot_comparison_lens_treemap(
-                                    tdf_f,
-                                    f"p5_lens_fr_{lbl}_{idx}",
-                                    "By frame",
-                                )
-                                st.caption(
-                                    f"Top **{fr_cap}** frames by {frame_caption_metric}, plus **Other frames** "
-                                    f"so totals match **By class** / **By scenario**."
-                                )
-                            else:
-                                st.caption("_No frame data._")
-    
-                        with st.expander("Tables behind the lens (label / scenario / frame)"):
+                                if other_rows:
+                                    tdf_d = pd.concat([tdf_d, pd.DataFrame(other_rows)], ignore_index=True)
+                            _plot_comparison_lens_treemap(
+                                tdf_d,
+                                f"p5_lens_scen_ds_{lbl}_{idx}",
+                                "By scenario",
+                                path=["root", "side", "_scenario_focus", "_dataset_focus"],
+                            )
+                            st.caption(
+                                f"Scenario view with top **{ds_cap}** datasets by {frame_caption_metric}, plus **Other datasets**."
+                            )
+                        else:
+                            st.caption("_No scenario/dataset data._")
+                        with st.expander("Tables behind the lens (label / scenario / dataset / frame)"):
                             if not df_by_label.empty:
                                 st.markdown("**Per label**")
                                 st.dataframe(
@@ -4720,6 +4824,17 @@ try:
                             if not scen_agg.empty:
                                 st.markdown("**Per scenario**")
                                 st.dataframe(scen_agg, width='stretch', hide_index=True)
+                            if not df_dataset_sorted.empty:
+                                st.markdown(f"**Per dataset** (sorted by {frame_caption_metric})")
+                                st.dataframe(
+                                    _with_t4_viewer_links(
+                                        df_dataset_sorted.head(200),
+                                        _t4_link_run_names,
+                                    ),
+                                    width='stretch',
+                                    hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
+                                )
                             if not df_frame_sorted.empty:
                                 st.markdown(f"**Per frame** (sorted by {frame_caption_metric})")
                                 st.dataframe(
@@ -4731,9 +4846,6 @@ try:
                                     hide_index=True,
                                     column_config=_t4_viewer_link_column_config(),
                                 )
-    
-                        with st.expander("Full dataset breakdown (per t4dataset_id row)"):
-                            st.dataframe(df_improved, width='stretch', hide_index=True)
     
                         # --- Drill-down: filters + objects ---
                         with st.expander("Drill-down: objects"):
