@@ -495,6 +495,135 @@ def _find_usecase_devops_parquet_near(path: str | Path) -> Path | None:
     return None
 
 
+_USECASE_DEVOPS_CATEGORY_MAPPING: dict[str, dict[str, dict[str, list[str]]]] = {
+    "物体未検出 (FN)": {
+        "定義済み物体に対する未検出": {
+            "前方車未検知": ["DevOps_V1_FN_Object_Ahead"],
+            "遠方物体未検知 (>80m)": ["DevOps_V1_FN_Distant_Object"],
+            "大型物体未検知": ["DevOps_V1_Misc_Large_Object"],
+            "二輪車未検知": ["DevOps_V1_FN_Bicycle_Motorcycle"],
+            "歩行者未検知": ["DevOps_V1_FN_Pedestrian"],
+        },
+        "定義済み物体の特別シーンに対する未検出": {
+            "傘を持った歩行者未検知": ["DevOps_V1_FN_Pedestrian_with_Umbrella"],
+            "人のいない自転車やバイク未検知": ["DevOps_V1_FN_Riderless_Bicycle_Motorcycle"],
+            "子供(75~90cm)未検知": ["DevOps_V1_FN_Small_Child"],
+            "しゃがんだ歩行者未検知": ["DevOps_V1_FN_Crouching_Pedestrian"],
+            "構造物に近い歩行者未検知": ["DevOps_V1_FN_Pedestrian_near_Structure"],
+            "遮蔽ケース": ["DevOps_V1_Misc_Occlusion"],
+        },
+        "未定義物体に対する未検出": {
+            "動物未検知": ["DevOps_V1_FN_Animal"],
+            "落下物未検知": ["DevOps_V1_FN_Road_Debris_Fallen_Object"],
+            "カラーコーン未検知": ["DevOps_V1_FN_Traffic_Cone"],
+            "その他未検知": ["DevOps_V1_Misc_Other_FNs"],
+        },
+    },
+    "物体過検出 (FP)": {
+        "定義済み物体に対する誤検出": {
+            "構造物を車と誤検知": [
+                "DevOps_V1_Misc_Structure_Misclassified_as_Vehicle",
+                "DevOps_V1_Misc_Structure_Misclassified_as_Vehicle_perception_fp",
+            ],
+            "構造物を歩行者と誤検知": [
+                "DevOps_V1_Misc_Structure_Misclassified_as_Pedestrian",
+                "DevOps_V1_Misc_Structure_Misclassified_as_Pedestrian_perception_fp",
+            ],
+            "構造物を自転車やバイクと誤検知": [
+                "DevOps_V1_Misc_Structure_Misclassified_as_Bicycles_Motorcycles",
+                "DevOps_V1_Misc_Structure_Misclassified_as_Bicycles_Motorcycles_perception_fp",
+            ],
+        },
+        "未定義物体に対する誤検出": {
+            "植栽誤検知": ["DevOps_V1_FP_Vegetation", "DevOps_V1_FP_Vegetation_perception_fp"],
+            "水しぶき誤検知": [
+                "DevOps_V1_FP_Water_Spray_Splash",
+                "DevOps_V1_FP_Water_Spray_Splash_perception_fp",
+            ],
+            "雨誤検知": ["DevOps_V1_FP_Rain", "DevOps_V1_FP_Rain_perception_fp"],
+            "排ガスや霧誤検知": ["DevOps_V1_FP_Exhaust_Fog", "DevOps_V1_FP_Exhaust_Fog_perception_fp"],
+            "地面誤検知": ["DevOps_V1_FP_Ground", "DevOps_V1_FP_Ground_perception_fp"],
+            "その他誤検知": ["DevOps_V1_Other_FPs", "DevOps_V1_Other_FPs_perception_fp"],
+        },
+        "ラベルミス": {
+            "自転車とバイクのミスラベル": ["DevOps_V1_Misc_Mislabeled_bicycles_motorcycles"],
+        },
+    },
+    "推定誤差": {
+        "位置・姿勢推定誤差": {
+            "xy位置ブレ": ["DevOps_V1_Misc_XY_Position_Jitter"],
+            "yawがおかしい": ["DevOps_V1_Misc_Inaccurate_Yaw"],
+        },
+        "速度推定誤差": {
+            "ロケット現象": ["DevOps_V1_FP_Rocket"],
+        },
+    },
+}
+
+
+def _empty_usecase_devops_result() -> dict[str, dict[str, dict[str, dict[str, int]]]]:
+    return {
+        major: {
+            mid: {minor: {"passed": 0, "total": 0} for minor in minors}
+            for mid, minors in mids.items()
+        }
+        for major, mids in _USECASE_DEVOPS_CATEGORY_MAPPING.items()
+    }
+
+
+def _fallback_category_for_usecase_devops_suite(suite_name: str) -> tuple[str, str, str]:
+    if "_FN_" in suite_name:
+        major = "物体未検出 (FN)"
+    elif "_FP_" in suite_name or suite_name.endswith("_perception_fp"):
+        major = "物体過検出 (FP)"
+    else:
+        major = "推定誤差"
+    label = re.sub(r"^DevOps_V\d+_", "", suite_name)
+    label = re.sub(r"_perception_fp$", "", label).replace("_", " ")
+    return major, "未分類", label
+
+
+def _aggregate_usecase_devops_frame(frame: pd.DataFrame) -> dict[str, dict[str, dict[str, dict[str, int]]]]:
+    suite_col = "Suite Name" if "Suite Name" in frame.columns else "suite_name"
+    success_col = "Success" if "Success" in frame.columns else "success"
+    total_col = "Total" if "Total" in frame.columns else "total"
+    if suite_col not in frame.columns or success_col not in frame.columns or total_col not in frame.columns:
+        return {}
+
+    by_suite: dict[str, tuple[int, int]] = {}
+    for _, row in frame.iterrows():
+        suite_name = str(row.get(suite_col) or "").strip()
+        if not suite_name:
+            continue
+        passed, total = by_suite.get(suite_name, (0, 0))
+        by_suite[suite_name] = (
+            passed + int(row.get(success_col, 0) or 0),
+            total + int(row.get(total_col, 0) or 0),
+        )
+
+    aggregated = _empty_usecase_devops_result()
+    mapped_suites: set[str] = set()
+    for major, mids in _USECASE_DEVOPS_CATEGORY_MAPPING.items():
+        for mid, minors in mids.items():
+            for minor, suite_names in minors.items():
+                for suite_name in suite_names:
+                    mapped_suites.add(suite_name)
+                    passed, total = by_suite.get(suite_name, (0, 0))
+                    aggregated[major][mid][minor]["passed"] += passed
+                    aggregated[major][mid][minor]["total"] += total
+
+    for suite_name, (passed, total) in by_suite.items():
+        if suite_name in mapped_suites:
+            continue
+        major, mid, minor = _fallback_category_for_usecase_devops_suite(suite_name)
+        aggregated.setdefault(major, {}).setdefault(mid, {})[minor] = {
+            "passed": passed,
+            "total": total,
+        }
+
+    return aggregated
+
+
 def _load_usecase_devops_data_from_parquet(parquet_path: str | Path | None) -> dict[str, Any]:
     if parquet_path is None:
         return {}
@@ -510,23 +639,9 @@ def _load_usecase_devops_data_from_parquet(parquet_path: str | Path | None) -> d
         frame = pd.read_parquet(parquet_path)
     except Exception:
         return {}
-    if frame.empty or "Suite Name" not in frame.columns:
+    if frame.empty:
         return {}
-    success_col = "Success" if "Success" in frame.columns else "success"
-    total_col = "Total" if "Total" in frame.columns else "total"
-    if success_col not in frame.columns or total_col not in frame.columns:
-        return {}
-
-    suite_pass_rate: dict[str, dict[str, int]] = {}
-    for _, row in frame.iterrows():
-        suite_name = str(row.get("Suite Name") or row.get("suite_name") or "").strip()
-        if not suite_name:
-            continue
-        suite_pass_rate[suite_name] = {
-            "passed": int(row.get(success_col, 0) or 0),
-            "total": int(row.get(total_col, 0) or 0),
-        }
-    return {"Suite pass rate": suite_pass_rate} if suite_pass_rate else {}
+    return _aggregate_usecase_devops_frame(frame)
 
 
 def _devops_summary_for_metadata(metadata_path: str | Path, summary: dict[str, Any]) -> dict[str, Any]:
@@ -997,7 +1112,7 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
                 rows.append(
                     {
                         "major_category": major_category,
-                        "mid_category": major_category,
+                        "mid_category": mid_category,
                         "minor_category": mid_category,
                         "case_name": mid_category,
                         "passed": passed,
