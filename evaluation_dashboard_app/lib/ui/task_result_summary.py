@@ -265,5 +265,25 @@ def render_task_result_summary(summary: Dict[str, Any]) -> None:
         if steps:
             st.caption("Recorded steps")
             st.dataframe(pd.DataFrame(steps), width="stretch", hide_index=True)
+    elif job == "local_evaluator_debug":
+        st.subheader("Local Evaluator Debug Summary")
+        st.write(f"- Mode: `{summary.get('mode', '')}`")
+        st.write(f"- Image: `{summary.get('image_name', '')}`")
+        if summary.get("branch"):
+            st.write(f"- Branch: `{summary.get('branch', '')}`")
+        if summary.get("git_sha"):
+            st.write(f"- Git SHA: `{summary.get('git_sha', '')}`")
+        if summary.get("checkout_path"):
+            st.write(f"- Checkout: `{summary.get('checkout_path', '')}`")
+        st.write(f"- Build: **{summary.get('build_status', 'skipped')}**")
+        st.write(f"- Test: **{summary.get('test_status', summary.get('commit_status', 'skipped'))}**")
+        if summary.get("scenario_returncode") is not None:
+            st.write(f"- Scenario exit code: `{summary.get('scenario_returncode')}`")
+        if summary.get("log_path"):
+            st.write(f"- Full log: `{summary.get('log_path', '')}`")
+        steps = summary.get("steps", [])
+        if steps:
+            st.caption("Steps")
+            st.dataframe(pd.DataFrame(steps), width="stretch", hide_index=True)
     else:
         st.json(summary)

@@ -41,6 +41,7 @@ def _task_type_label(task_type: str) -> str:
         "run_evaluator_and_process": "Run Evaluator + Process",
         "run_release_specsheet_workflow": "Release Specsheet",
         "prepare_pr_test_branch": "Prepare PR Test Branch",
+        "local_evaluator_debug": "Local Evaluator Debug",
     }
     return labels.get(task_type, task_type or "Task")
 
@@ -79,6 +80,11 @@ def _task_summary(t: Dict[str, Any]) -> str:
         source = params.get("sub_repo_branch") or (f"PR #{params.get('pr_number')}" if params.get("pr_number") else "")
         base = params.get("pilot_base_branch", "")
         return f"{sub_repo}: {source} on pilot {base}"
+    if task_type == "local_evaluator_debug":
+        mode = params.get("mode", "")
+        branch = params.get("branch") or params.get("image_name") or params.get("container_id") or ""
+        image = params.get("image_name") or params.get("commit_image_name") or ""
+        return f"{mode}: {branch} → {image}"
     return ""
 
 

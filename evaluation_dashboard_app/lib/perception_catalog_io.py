@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gc
 import glob
+import inspect
 import json
 import os
 import pickle
@@ -396,6 +397,39 @@ def build_scene_dataframe_from_pkl_dir(
     return df
 
 
+def _default_parquet_compression() -> Any:
+    """Return the analyzer compression enum when available, otherwise its string value."""
+    try:
+        from perception_catalog_analyzer.types import ParquetCompression
+
+        return ParquetCompression.SNAPPY
+    except Exception:
+        return "snappy"
+
+
+def _scene_dataframe_to_parquet_compat(df: Any, save_dir: Path) -> None:
+    """Call SceneDataFrame.to_parquet across analyzer versions."""
+    compression = _default_parquet_compression()
+    try:
+        parameters = inspect.signature(df.to_parquet).parameters
+    except (TypeError, ValueError):
+        try:
+            df.to_parquet(save_dir, compression=compression)
+        except TypeError as exc:
+            if "compression" not in str(exc):
+                raise
+            df.to_parquet(save_dir)
+        return
+
+    accepts_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+    )
+    if accepts_kwargs or "compression" in parameters:
+        df.to_parquet(save_dir, compression=compression)
+    else:
+        df.to_parquet(save_dir)
+
+
 def pkl_archive_to_parquet(
     pkl_dir: str | Path,
     parquet_path: str | Path | None = None,
@@ -437,7 +471,7 @@ def pkl_archive_to_parquet(
         project_id=project_id,
         job_id=job_id,
     )
-    df.to_parquet(pkl_dir)
+    _scene_dataframe_to_parquet_compat(df, pkl_dir)
     parquet_file = pkl_dir / "current.parquet"
     # Check if the file is generated successfully and return its path
     if parquet_file.exists():

@@ -2612,6 +2612,31 @@ def job_prepare_pr_test_branch(task_id: str, parameters: Dict[str, Any]) -> None
         raise
 
 
+def job_local_evaluator_debug(task_id: str, parameters: Dict[str, Any]) -> None:
+    append_task_log(task_id, "Starting local evaluator debug workflow")
+    update_task_progress(task_id, message="Starting local evaluator debug workflow", pct=0)
+    try:
+        from lib.local_evaluator_debug import run_local_evaluator_debug
+
+        summary = run_local_evaluator_debug(
+            task_id=task_id,
+            parameters=parameters,
+            append_log=append_task_log,
+            update_progress=update_task_progress,
+            update_summary=update_task_result_summary,
+        )
+        update_task_result_summary(task_id, summary)
+        update_task_status(
+            task_id,
+            "completed",
+            result_path=str(summary.get("run_dir") or summary.get("log_path") or ""),
+        )
+    except Exception as e:
+        append_task_log(task_id, f"Failed: {e}")
+        update_task_status(task_id, "failed", error_message=str(e))
+        raise
+
+
 # Map task_type (from Postgres) to job function
 TASK_JOB_MAP = {
     "generate_summary_csv": job_generate_summary_csv,
@@ -2623,6 +2648,7 @@ TASK_JOB_MAP = {
     "run_release_specsheet_workflow": job_run_release_specsheet_workflow,
     "run_evaluator_and_process": job_run_evaluator_and_process,
     "prepare_pr_test_branch": job_prepare_pr_test_branch,
+    "local_evaluator_debug": job_local_evaluator_debug,
 }
 
 
