@@ -12,6 +12,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -36,6 +37,17 @@ DEFAULT_SIM_ASSET_DIR = os.environ.get("LOCAL_EVALUATOR_SIM_ASSET_DIR", "/tmp/we
 DEFAULT_ROS_DISTRO = os.environ.get("LOCAL_EVALUATOR_ROS_DISTRO", "humble")
 DEFAULT_SIMULATION_NAME = os.environ.get("LOCAL_EVALUATOR_SIMULATION_NAME", "planning_sim_v2_j6_gen2")
 DEFAULT_TIMEOUT = os.environ.get("LOCAL_EVALUATOR_TIMEOUT", "45m")
+DEFAULT_WEBAUTO_SCENARIO_COMMAND = os.environ.get(
+    "LOCAL_EVALUATOR_WEBAUTO_COMMAND",
+    (
+        "webauto ci scenario run --project-id x2_dev "
+        "--scenario-id 78b9286c-a9d5-4293-a0eb-7ff2746168a0 "
+        "--scenario-version-id 2 "
+        "--scenario-parameters "
+        "'t4_dataset_id=4ec4c905-6521-40de-99dd-8ceae04fa348,t4_dataset_version_id=1' "
+        "--simulation-name perception"
+    ),
+)
 ERROR_PATTERN = re.compile(r"(error|exception|failed|fatal|traceback)", re.IGNORECASE)
 
 
@@ -131,6 +143,7 @@ class LocalEvaluatorJob:
         pct_start: float,
         pct_end: float,
         env: Optional[Dict[str, str]] = None,
+        stdin_path: Optional[Path] = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         started = time.monotonic()
@@ -139,26 +152,32 @@ class LocalEvaluatorJob:
         proc_env = os.environ.copy()
         if env:
             proc_env.update(env)
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=proc_env,
-        )
-        assert proc.stdout is not None
-        last_progress = started
-        for raw in proc.stdout:
-            line = raw.rstrip("\n")
-            output_lines.append(line)
-            self.log(line, important=bool(ERROR_PATTERN.search(line)))
-            if time.monotonic() - last_progress > 20:
-                pct = pct_start + min(0.9, (time.monotonic() - started) / 3600.0) * (pct_end - pct_start)
-                self.update_progress(self.task_id, message=f"{step_name}: running", pct=min(pct_end, pct))
-                last_progress = time.monotonic()
-        returncode = proc.wait()
+        stdin_handle = stdin_path.open("rb") if stdin_path else None
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdin=stdin_handle,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=proc_env,
+            )
+            assert proc.stdout is not None
+            last_progress = started
+            for raw in proc.stdout:
+                line = raw.rstrip("\n")
+                output_lines.append(line)
+                self.log(line, important=bool(ERROR_PATTERN.search(line)))
+                if time.monotonic() - last_progress > 20:
+                    pct = pct_start + min(0.9, (time.monotonic() - started) / 3600.0) * (pct_end - pct_start)
+                    self.update_progress(self.task_id, message=f"{step_name}: running", pct=min(pct_end, pct))
+                    last_progress = time.monotonic()
+            returncode = proc.wait()
+        finally:
+            if stdin_handle:
+                stdin_handle.close()
         elapsed = round(time.monotonic() - started, 2)
         status = "completed" if returncode == 0 else "failed"
         self.step(step_name, status, command=cmd, cwd=str(cwd), returncode=returncode, elapsed_seconds=elapsed)
@@ -187,9 +206,57 @@ def docker_error(result: subprocess.CompletedProcess[str]) -> str:
     return (result.stderr or result.stdout or f"docker exited with code {result.returncode}").strip()
 
 
-def _git_has_changes(path: Path) -> bool:
+def _git_has_changes(path: Path, *, allowed_untracked_prefixes: tuple[str, ...] = ()) -> bool:
     result = _run_quiet(["git", "status", "--porcelain"], cwd=path)
-    return result.returncode == 0 and bool(result.stdout.strip())
+    if result.returncode != 0:
+        return False
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        if line.startswith("?? "):
+            rel_path = line[3:]
+            if any(rel_path == prefix.rstrip("/") or rel_path.startswith(prefix) for prefix in allowed_untracked_prefixes):
+                continue
+        return True
+    return False
+
+
+def find_repos_file(checkout: Path, configured: object = "") -> Optional[Path]:
+    configured_text = str(configured or "").strip()
+    if configured_text:
+        configured_path = Path(configured_text).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = checkout / configured_path
+        return configured_path if configured_path.is_file() else None
+
+    candidates = [
+        checkout / "autoware.repos",
+        checkout / "src" / "autoware.repos",
+    ]
+    candidates.extend(sorted(checkout.glob("*.repos")))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def import_src_repos(job: LocalEvaluatorJob, checkout: Path) -> Path:
+    repos_file = find_repos_file(checkout, job.parameters.get("repos_file"))
+    if repos_file is None:
+        raise RuntimeError(f"Could not find autoware.repos under {checkout}. Cannot populate src.")
+    src_dir = checkout / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    job.progress(f"Importing src repositories from {repos_file.name}", 18)
+    job.run_command(
+        ["vcs", "import", "src"],
+        cwd=checkout,
+        step_name="vcs import src",
+        pct_start=18,
+        pct_end=22,
+        stdin_path=repos_file,
+    )
+    job.set_summary(repos_file=str(repos_file), src_path=str(src_dir))
+    return src_dir
 
 
 def prepare_checkout(job: LocalEvaluatorJob) -> Path:
@@ -220,10 +287,10 @@ def prepare_checkout(job: LocalEvaluatorJob) -> Path:
             pct_end=18,
         )
     else:
-        if clean_checkout and _git_has_changes(checkout):
+        if clean_checkout and _git_has_changes(checkout, allowed_untracked_prefixes=("src/",)):
             job.run_command(["git", "reset", "--hard"], cwd=checkout, step_name="git reset", pct_start=5, pct_end=7)
-            job.run_command(["git", "clean", "-fd"], cwd=checkout, step_name="git clean", pct_start=7, pct_end=9)
-        elif not allow_dirty and _git_has_changes(checkout):
+            job.run_command(["git", "clean", "-fd", "-e", "src/"], cwd=checkout, step_name="git clean", pct_start=7, pct_end=9)
+        elif not allow_dirty and _git_has_changes(checkout, allowed_untracked_prefixes=("src/",)):
             raise RuntimeError(
                 f"Checkout has local changes: {checkout}. Enable allow_dirty_checkout or choose a clean path."
             )
@@ -283,37 +350,54 @@ def list_scenarios(job: LocalEvaluatorJob) -> None:
     )
 
 
+def _has_cli_option(cmd: List[str], option: str) -> bool:
+    prefix = f"{option}="
+    return any(part == option or part.startswith(prefix) for part in cmd)
+
+
+def build_webauto_command(
+    raw_command: object,
+    *,
+    image_name: str,
+    container_runtime_path: str,
+    work_dir: str,
+    asset_dir: str,
+    timeout: str,
+) -> List[str]:
+    raw = str(raw_command or DEFAULT_WEBAUTO_SCENARIO_COMMAND).strip()
+    if not raw:
+        raw = DEFAULT_WEBAUTO_SCENARIO_COMMAND
+    cmd = shlex.split(raw)
+    if cmd[:4] != ["webauto", "ci", "scenario", "run"]:
+        raise RuntimeError("Test command must start with: webauto ci scenario run")
+    additions = [
+        ("--docker-image", image_name),
+        ("--container-runtime-path", container_runtime_path),
+        ("--work-dir", work_dir),
+        ("--asset-dir", asset_dir),
+        ("--timeout", timeout),
+    ]
+    for option, value in additions:
+        clean_value = str(value or "").strip()
+        if clean_value and not _has_cli_option(cmd, option):
+            cmd.extend([option, clean_value])
+    return cmd
+
+
 def run_scenario(job: LocalEvaluatorJob, image_name: str) -> str:
     params = job.parameters
-    project_id = str(params.get("project_id") or "").strip()
-    scenario_id = str(params.get("scenario_id") or "").strip()
-    if not project_id or not scenario_id:
-        raise RuntimeError("project_id and scenario_id are required for test mode.")
-
-    cmd = [
-        "webauto",
-        "ci",
-        "scenario",
-        "run",
-        "--project-id",
-        project_id,
-        "--scenario-id",
-        scenario_id,
-        "--simulation-name",
-        str(params.get("simulation_name") or DEFAULT_SIMULATION_NAME).strip(),
-        "--docker-image",
-        image_name,
-        "--container-runtime-path",
-        str(params.get("container_runtime_path") or DEFAULT_CONTAINER_RUNTIME_ROOT).strip(),
-        "--work-dir",
-        str(params.get("work_dir") or DEFAULT_SIM_WORK_DIR).strip(),
-        "--asset-dir",
-        str(params.get("asset_dir") or DEFAULT_SIM_ASSET_DIR).strip(),
-        "--timeout",
-        str(params.get("timeout") or DEFAULT_TIMEOUT).strip(),
-    ]
+    runtime_path = str(params.get("container_runtime_path") or DEFAULT_CONTAINER_RUNTIME_ROOT).strip()
+    cmd = build_webauto_command(
+        params.get("webauto_command") or DEFAULT_WEBAUTO_SCENARIO_COMMAND,
+        image_name=image_name,
+        container_runtime_path=runtime_path,
+        work_dir=str(params.get("work_dir") or DEFAULT_SIM_WORK_DIR).strip(),
+        asset_dir=str(params.get("asset_dir") or DEFAULT_SIM_ASSET_DIR).strip(),
+        timeout=str(params.get("timeout") or DEFAULT_TIMEOUT).strip(),
+    )
     list_scenarios(job)
     job.progress("Starting scenario run", 78)
+    job.set_summary(webauto_command=" ".join(shlex.quote(part) for part in cmd))
     result = job.run_command(cmd, cwd=job.run_dir, step_name="scenario run", pct_start=78, pct_end=98, check=False)
     test_status = "passed" if result.returncode == 0 else "failed"
     job.set_summary(test_status=test_status, scenario_returncode=result.returncode)
@@ -365,6 +449,7 @@ def run_local_evaluator_debug(
 
     if mode in ("build", "build_and_test"):
         checkout = prepare_checkout(job)
+        import_src_repos(job, checkout)
         image_name = build_image(job, checkout)
     elif mode == "test":
         if not image_name:

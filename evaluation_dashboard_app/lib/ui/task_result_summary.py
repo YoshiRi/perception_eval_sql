@@ -275,6 +275,13 @@ def render_task_result_summary(summary: Dict[str, Any]) -> None:
             st.write(f"- Git SHA: `{summary.get('git_sha', '')}`")
         if summary.get("checkout_path"):
             st.write(f"- Checkout: `{summary.get('checkout_path', '')}`")
+        if summary.get("repos_file"):
+            st.write(f"- Repos file: `{summary.get('repos_file', '')}`")
+        if summary.get("src_path"):
+            st.write(f"- Source workspace: `{summary.get('src_path', '')}`")
+        if summary.get("webauto_command"):
+            st.caption("WebAuto command")
+            st.code(summary.get("webauto_command", ""), language="bash")
         st.write(f"- Build: **{summary.get('build_status', 'skipped')}**")
         st.write(f"- Test: **{summary.get('test_status', summary.get('commit_status', 'skipped'))}**")
         if summary.get("scenario_returncode") is not None:

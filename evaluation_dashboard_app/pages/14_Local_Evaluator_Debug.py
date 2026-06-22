@@ -14,8 +14,8 @@ from lib.local_evaluator_debug import (
     DEFAULT_REPO_URL,
     DEFAULT_SIM_ASSET_DIR,
     DEFAULT_SIM_WORK_DIR,
-    DEFAULT_SIMULATION_NAME,
     DEFAULT_TIMEOUT,
+    DEFAULT_WEBAUTO_SCENARIO_COMMAND,
     commit_debug_container,
     default_checkout_path,
     default_debug_container_name,
@@ -151,6 +151,7 @@ with tab_submit:
             if branch:
                 st.caption(f"Derived checkout: `{checkout_path}`")
                 st.caption(f"Derived image: `{image_name}`")
+                st.caption("Source workspace: `vcs import src < autoware.repos`")
             c5, c6, c7 = st.columns(3)
             with c5:
                 clean_checkout = st.checkbox("Clean checkout before build", value=False)
@@ -170,29 +171,31 @@ with tab_submit:
                 image_name = st.text_input("Existing image", value="pilot-auto:evaluation")
 
         if mode in ("test", "build_and_test"):
-            section_header("Scenario", "Runs `webauto ci scenario run` using the selected image.")
-            c1, c2 = st.columns(2)
-            with c1:
-                project_id = st.text_input("Project ID")
-            with c2:
-                scenario_id = st.text_input("Scenario ID")
-            c3, c4 = st.columns(2)
-            with c3:
-                simulation_name = st.text_input("Simulation name", value=DEFAULT_SIMULATION_NAME)
-            with c4:
-                timeout = st.text_input("Timeout", value=DEFAULT_TIMEOUT)
-            c5, c6 = st.columns(2)
+            section_header("Scenario", "Runs a WebAuto command using the selected or newly built image.")
+            st.caption("The worker needs access to the WebAuto data/config folder, usually `~/.webauto`.")
+            webauto_command = st.text_area(
+                "WebAuto command",
+                value=DEFAULT_WEBAUTO_SCENARIO_COMMAND,
+                height=120,
+                key="local_eval_webauto_command",
+            )
             runtime_default = checkout_path if mode == "build_and_test" and checkout_path else DEFAULT_CONTAINER_RUNTIME_ROOT
-            with c5:
-                container_runtime_path = st.text_input("Container runtime path", value=runtime_default)
-            with c6:
-                work_dir = st.text_input("Work dir", value=DEFAULT_SIM_WORK_DIR)
-            asset_dir = st.text_input("Asset dir", value=DEFAULT_SIM_ASSET_DIR)
-            list_scenarios = st.checkbox("List scenarios before run", value=False)
+            with st.expander("Command defaults added when missing", expanded=False):
+                c1, c2 = st.columns(2)
+                with c1:
+                    container_runtime_path = st.text_input("Container runtime path", value=runtime_default)
+                with c2:
+                    timeout = st.text_input("Timeout", value=DEFAULT_TIMEOUT)
+                c3, c4 = st.columns(2)
+                with c3:
+                    work_dir = st.text_input("Work dir", value=DEFAULT_SIM_WORK_DIR)
+                with c4:
+                    asset_dir = st.text_input("Asset dir", value=DEFAULT_SIM_ASSET_DIR)
+                list_scenarios = st.checkbox("List scenarios before run", value=False)
+                project_id = st.text_input("Project ID for scenario list", value="x2_dev")
         else:
             project_id = ""
-            scenario_id = ""
-            simulation_name = DEFAULT_SIMULATION_NAME
+            webauto_command = ""
             timeout = DEFAULT_TIMEOUT
             container_runtime_path = DEFAULT_CONTAINER_RUNTIME_ROOT
             work_dir = DEFAULT_SIM_WORK_DIR
@@ -211,8 +214,7 @@ with tab_submit:
                     "allow_dirty_checkout": allow_dirty_checkout,
                     "ros_distro": ros_distro.strip(),
                     "project_id": project_id.strip(),
-                    "scenario_id": scenario_id.strip(),
-                    "simulation_name": simulation_name.strip(),
+                    "webauto_command": webauto_command.strip(),
                     "container_runtime_path": container_runtime_path.strip(),
                     "work_dir": work_dir.strip(),
                     "asset_dir": asset_dir.strip(),
