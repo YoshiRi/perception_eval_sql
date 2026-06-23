@@ -92,7 +92,6 @@ _RELEASE_LARGE_FILE_MB = 50.0
 _DEFAULT_MAX_WAIT_HOURS = 48
 _WORKFLOW_KIND_PERCEPTION = "Perception"
 _WORKFLOW_KIND_TLR = "TLR"
-_WORKFLOW_KIND_OPTIONS = [_WORKFLOW_KIND_PERCEPTION, _WORKFLOW_KIND_TLR]
 _DEFAULT_PERCEPTION_PHASE = "perception.object_recognition.tracking.objects"
 _TLR_DOWNLOAD_TYPE = "Result JSON"
 _RELEASE_TREND_TOPIC_OPTIONS = {
@@ -121,6 +120,11 @@ inject_download_page_styles()
 
 
 _user_config = UserConfig(warning_fn=st.warning)
+
+
+def _looks_like_tlr_catalog(*values: object) -> bool:
+    text = " ".join(str(value or "") for value in values).lower()
+    return "tlr" in text or "traffic light" in text or "traffic_light" in text
 
 
 def _parse_rq_timeout_sec(raw: Optional[str], *, default: int, minimum: int) -> int:
@@ -1898,9 +1902,6 @@ def _render_start_workflow_form(
     catalog_names = [item["display_name"] for item in catalog_presets]
     default_project = get_config_value("eval_project_id", "x2_dev")
     default_target = get_config_value("target_name", "beta/v4.3.2")
-    default_workflow_kind = get_config_value("workflow_kind", _WORKFLOW_KIND_PERCEPTION)
-    if default_workflow_kind not in _WORKFLOW_KIND_OPTIONS:
-        default_workflow_kind = _WORKFLOW_KIND_PERCEPTION
     default_download_type = get_config_value("eval_download_type", "Archives (ZIP)")
     default_phase = get_config_value(
         "eval_phase",
@@ -1955,7 +1956,7 @@ def _render_start_workflow_form(
             st.session_state["workflow_max_wait_hours"] = _DEFAULT_MAX_WAIT_HOURS
     st.session_state["workflow_previous_release_mode"] = release_mode
 
-    top_cols = st.columns([1.0, 1.2] if release_mode else [1.0, 0.9, 1.7, 1.2])
+    top_cols = st.columns([1.0, 1.2] if release_mode else [1.0, 1.9, 1.2])
     with top_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Project</div>', unsafe_allow_html=True)
         project_id = st.text_input(
@@ -1965,21 +1966,10 @@ def _render_start_workflow_form(
             label_visibility="collapsed",
         ).strip()
     if release_mode:
-        workflow_kind = _WORKFLOW_KIND_PERCEPTION
         selected_catalog_name = ""
         fetch_catalogs_clicked = False
     else:
         with top_cols[1]:
-            st.markdown('<div class="wf-toolbar-note">Workflow kind</div>', unsafe_allow_html=True)
-            workflow_kind = st.selectbox(
-                "Workflow kind",
-                options=_WORKFLOW_KIND_OPTIONS,
-                index=_WORKFLOW_KIND_OPTIONS.index(default_workflow_kind),
-                key="workflow_kind",
-                label_visibility="collapsed",
-                help="TLR downloads result JSON for the Traffic Light Recognition analysis page.",
-            )
-        with top_cols[2]:
             st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
             catalog_picker_cols = st.columns([4.2, 1.1], gap="small")
             with catalog_picker_cols[0]:
@@ -2045,7 +2035,7 @@ def _render_start_workflow_form(
     elif st.session_state["workflow_last_catalog_selection"] != selected_catalog_name:
         st.session_state["workflow_catalog_resolution_error"] = ""
         st.session_state["workflow_last_catalog_selection"] = selected_catalog_name
-    with top_cols[1 if release_mode else 3]:
+    with top_cols[1 if release_mode else 2]:
         st.markdown('<div class="wf-toolbar-note">Branch or tag</div>', unsafe_allow_html=True)
         target_name = st.text_input(
             "Branch or Tag",
@@ -2057,6 +2047,20 @@ def _render_start_workflow_form(
 
     catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
     integration_id = str(st.session_state.get("workflow_integration_id") or "").strip()
+    catalog_auto_tlr_mode = (
+        not release_mode
+        and _looks_like_tlr_catalog(
+            selected_catalog_name,
+            catalog_id,
+            selected_catalog.get("display_name") if selected_catalog else "",
+            selected_catalog.get("description") if selected_catalog else "",
+            selected_server_catalog.get("display_name") if selected_server_catalog else "",
+            selected_server_catalog.get("description") if selected_server_catalog else "",
+        )
+    )
+    workflow_kind = _WORKFLOW_KIND_TLR if (
+        catalog_auto_tlr_mode or bool(st.session_state.get("workflow_tlr_mode_manual", False))
+    ) else _WORKFLOW_KIND_PERCEPTION
 
     if not release_mode and st.session_state.get("workflow_server_catalog_error"):
         st.warning(f"Could not fetch catalogs: {st.session_state['workflow_server_catalog_error']}")
@@ -2277,6 +2281,25 @@ def _render_start_workflow_form(
             env_col = adv_cols[1]
             poll_col = adv_cols[2]
             wait_col = adv_cols[3]
+
+        if not release_mode:
+            if catalog_auto_tlr_mode:
+                st.checkbox(
+                    "TLR mode",
+                    value=True,
+                    disabled=True,
+                    key="workflow_tlr_mode_auto",
+                    help="Enabled automatically because the selected catalog looks like a TLR catalog.",
+                )
+            else:
+                manual_tlr_mode = st.checkbox(
+                    "TLR mode",
+                    value=bool(st.session_state.get("workflow_tlr_mode_manual", False)),
+                    key="workflow_tlr_mode_manual",
+                    help="Use result JSON downloads for Traffic Light Recognition analysis.",
+                )
+                if manual_tlr_mode != bool(workflow_kind == _WORKFLOW_KIND_TLR):
+                    st.rerun()
 
         if release_mode or workflow_kind == _WORKFLOW_KIND_TLR:
             env_col = adv_cols[0]

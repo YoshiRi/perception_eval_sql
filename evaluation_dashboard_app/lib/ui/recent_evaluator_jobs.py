@@ -26,7 +26,6 @@ ENVIRONMENT = "default"
 _DEFAULT_EVAL_WORKERS = 4
 _WORKFLOW_KIND_PERCEPTION = "Perception"
 _WORKFLOW_KIND_TLR = "TLR"
-_WORKFLOW_KIND_OPTIONS = [_WORKFLOW_KIND_PERCEPTION, _WORKFLOW_KIND_TLR]
 
 
 def _default_eval_workers() -> int:
@@ -51,6 +50,27 @@ def _looks_like_tlr_job(detail: Dict[str, Any]) -> bool:
         )
     ).lower()
     return "tlr" in haystack or "traffic light" in haystack or "traffic_light" in haystack
+
+
+def _close_conflicting_workflow_dialogs() -> None:
+    for key in (
+        "workflow_start_dialog_open",
+        "workflow_pr_branch_dialog_open",
+        "recent_eval_jobs_manual_run_selected",
+        "recent_eval_jobs_manual_retest_selected",
+        "recent_eval_jobs_run_selected",
+        "recent_eval_jobs_retest_selected",
+        "recent_eval_jobs_selected",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _open_existing_job_dialog(state_key: str, job_id: str) -> None:
+    _close_conflicting_workflow_dialogs()
+    if "retest" in state_key:
+        st.session_state.pop(_retest_suite_selection_key(str(job_id or "")), None)
+    st.session_state[state_key] = str(job_id or "")
+    _fetch_evaluator_job_detail.clear()
 
 
 def configure_recent_evaluator_jobs_ui(*, get_config_value: Callable[[str, Any], Any], set_config_value: Callable[[str, Any], None], enqueue_task: Callable[[str, Dict[str, Any]], Optional[str]], catalog_io_available: bool, environment: str = "default") -> None:
@@ -1301,19 +1321,19 @@ def _render_recent_evaluator_job_run_dialog(
     large_file_mb_default: float,
     keep_zip_files_default: bool,
 ) -> None:
-    """Render the dialog used to enqueue Download + Eval + Parquet from a recent job row."""
+    """Render the dialog used to enqueue processing from an existing evaluator job row."""
     job_id = str(job.get("job_id", "") or "")
     if not job_id:
         st.error("Missing evaluator job id.")
         return
 
     detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
-    default_workflow_kind = _WORKFLOW_KIND_TLR if _looks_like_tlr_job(detail) else _WORKFLOW_KIND_PERCEPTION
+    auto_tlr_mode = _looks_like_tlr_job(detail)
     suite_options = _extract_suite_selection_options(detail.get("suite_rows") or [])
     suite_label_to_id = {opt["label"]: opt["id"] for opt in suite_options}
     suite_labels = [opt["label"] for opt in suite_options]
 
-    st.caption("Confirm the workflow options for this evaluator job, then start a background task.")
+    st.caption("Confirm the processing options for this existing evaluator job, then queue a background task.")
     summary_cols = st.columns([1.45, 1.15, 1.35, 1.05])
     summary_cols[0].markdown(f"**Title**  \n`{detail.get('title', '—')}`")
     summary_cols[1].markdown(f"**Status**  \n`{detail.get('status', 'unknown')}`")
@@ -1344,12 +1364,24 @@ def _render_recent_evaluator_job_run_dialog(
             disabled=not suite_labels,
         )
 
-        workflow_kind = st.selectbox(
-            "Workflow kind",
-            options=_WORKFLOW_KIND_OPTIONS,
-            index=_WORKFLOW_KIND_OPTIONS.index(default_workflow_kind),
-            help="Use TLR for traffic light recognition jobs; it downloads result JSON for the TLR analysis page.",
-        )
+        if auto_tlr_mode:
+            st.checkbox(
+                "TLR mode",
+                value=True,
+                disabled=True,
+                help="Enabled automatically because this evaluator job looks like TLR.",
+            )
+            workflow_kind = _WORKFLOW_KIND_TLR
+        else:
+            workflow_kind = (
+                _WORKFLOW_KIND_TLR
+                if st.checkbox(
+                    "TLR mode",
+                    value=False,
+                    help="Use result JSON downloads for Traffic Light Recognition analysis.",
+                )
+                else _WORKFLOW_KIND_PERCEPTION
+            )
 
         if workflow_kind == _WORKFLOW_KIND_TLR:
             run_download_type = "Result JSON only"
@@ -1424,7 +1456,7 @@ def _render_recent_evaluator_job_run_dialog(
 
         action_cols = st.columns([1.15, 1.15, 3.7])
         cancel_clicked = action_cols[0].form_submit_button("Cancel", use_container_width=True)
-        start_clicked = action_cols[1].form_submit_button("Start", type="primary", use_container_width=True)
+        start_clicked = action_cols[1].form_submit_button("Queue download", type="primary", use_container_width=True)
 
     if cancel_clicked:
         st.session_state.pop("recent_eval_jobs_run_selected", None)
@@ -1487,9 +1519,9 @@ def _render_recent_evaluator_job_run_dialog(
         st.error("Failed to enqueue task. Check REDIS_URL and DATABASE_URL.")
         return
 
+    queued_label = "TLR result JSON download" if workflow_kind == _WORKFLOW_KIND_TLR else "existing-job processing"
     st.session_state["recent_eval_jobs_flash"] = (
-        f"Queued Download + Eval + Parquet for `{detail.get('title', job_id)}`. "
-        f"Task id: `{task_id}`."
+        f"Queued {queued_label} for `{detail.get('title', job_id)}`. Task id: `{task_id}`."
     )
     st.session_state.pop("recent_eval_jobs_run_selected", None)
     st.rerun()
@@ -1510,7 +1542,7 @@ def _render_recent_evaluator_job_retest_dialog(
         return
 
     detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
-    default_workflow_kind = _WORKFLOW_KIND_TLR if _looks_like_tlr_job(detail) else _WORKFLOW_KIND_PERCEPTION
+    auto_tlr_mode = _looks_like_tlr_job(detail)
     raw_report = detail.get("raw_report") or {}
     raw_catalog = raw_report.get("catalog") or {}
     resolved_source_job_id = _resolve_retest_source_job_id(
@@ -1605,13 +1637,26 @@ def _render_recent_evaluator_job_retest_dialog(
         value=default_output_path,
         help="Folder under the data directory for the downloaded retest results.",
     )
-    workflow_kind = st.selectbox(
-        "Workflow kind",
-        options=_WORKFLOW_KIND_OPTIONS,
-        index=_WORKFLOW_KIND_OPTIONS.index(default_workflow_kind),
-        key=f"recent_eval_retest_workflow_kind_{job_id}",
-        help="Use TLR for traffic light recognition jobs; it downloads result JSON for the TLR analysis page.",
-    )
+    if auto_tlr_mode:
+        st.checkbox(
+            "TLR mode",
+            value=True,
+            disabled=True,
+            key=f"recent_eval_retest_tlr_auto_{job_id}",
+            help="Enabled automatically because this evaluator job looks like TLR.",
+        )
+        workflow_kind = _WORKFLOW_KIND_TLR
+    else:
+        workflow_kind = (
+            _WORKFLOW_KIND_TLR
+            if st.checkbox(
+                "TLR mode",
+                value=False,
+                key=f"recent_eval_retest_tlr_manual_{job_id}",
+                help="Use result JSON downloads for Traffic Light Recognition analysis.",
+            )
+            else _WORKFLOW_KIND_PERCEPTION
+        )
     if workflow_kind == _WORKFLOW_KIND_TLR:
         run_download_type = "Result JSON only"
         st.caption("TLR mode schedules the artifact retest, then downloads simulation result JSON and skips eval/parquet processing.")
@@ -1883,22 +1928,23 @@ def _render_recent_evaluator_jobs_section(
         ).strip()
     exact_job_id = _extract_job_id_from_text(exact_job_input)
     with exact_cols[1]:
-        if st.button("Download", key="recent_eval_jobs_exact_download", use_container_width=True):
-            if exact_job_id:
-                st.session_state["recent_eval_jobs_manual_run_selected"] = exact_job_id
-                _fetch_evaluator_job_detail.clear()
-                st.rerun()
-            else:
-                st.warning("Enter a job ID or evaluator report URL first.")
+        st.button(
+            "Download",
+            key="recent_eval_jobs_exact_download",
+            use_container_width=True,
+            disabled=not exact_job_id,
+            on_click=_open_existing_job_dialog,
+            args=("recent_eval_jobs_manual_run_selected", exact_job_id),
+        )
     with exact_cols[2]:
-        if st.button("Retest", key="recent_eval_jobs_exact_retest", use_container_width=True):
-            if exact_job_id:
-                st.session_state["recent_eval_jobs_manual_retest_selected"] = exact_job_id
-                st.session_state.pop(_retest_suite_selection_key(exact_job_id), None)
-                _fetch_evaluator_job_detail.clear()
-                st.rerun()
-            else:
-                st.warning("Enter a job ID or evaluator report URL first.")
+        st.button(
+            "Retest",
+            key="recent_eval_jobs_exact_retest",
+            use_container_width=True,
+            disabled=not exact_job_id,
+            on_click=_open_existing_job_dialog,
+            args=("recent_eval_jobs_manual_retest_selected", exact_job_id),
+        )
     with exact_cols[3]:
         if exact_job_id:
             st.caption(f"Resolved job: `{exact_job_id}`")
@@ -2089,21 +2135,29 @@ def _render_recent_evaluator_jobs_section(
             with row_cols[1]:
                 action_cols = st.columns([1.0, 1.0, 1.0], gap="small")
                 with action_cols[0]:
-                    if st.button("Details", key=f"recent_eval_view_{job['job_id']}", use_container_width=True):
-                        st.session_state["recent_eval_jobs_selected"] = str(job["job_id"])
-                        _fetch_evaluator_job_detail.clear()
-                        st.rerun()
+                    st.button(
+                        "Details",
+                        key=f"recent_eval_view_{job['job_id']}",
+                        use_container_width=True,
+                        on_click=_open_existing_job_dialog,
+                        args=("recent_eval_jobs_selected", str(job["job_id"])),
+                    )
                 with action_cols[1]:
-                    if st.button("Start", key=f"recent_eval_run_{job['job_id']}", use_container_width=True):
-                        st.session_state["recent_eval_jobs_run_selected"] = str(job["job_id"])
-                        _fetch_evaluator_job_detail.clear()
-                        st.rerun()
+                    st.button(
+                        "Download",
+                        key=f"recent_eval_run_{job['job_id']}",
+                        use_container_width=True,
+                        on_click=_open_existing_job_dialog,
+                        args=("recent_eval_jobs_run_selected", str(job["job_id"])),
+                    )
                 with action_cols[2]:
-                    if st.button("Retest", key=f"recent_eval_retest_{job['job_id']}", use_container_width=True):
-                        st.session_state.pop(_retest_suite_selection_key(str(job["job_id"])), None)
-                        st.session_state["recent_eval_jobs_retest_selected"] = str(job["job_id"])
-                        _fetch_evaluator_job_detail.clear()
-                        st.rerun()
+                    st.button(
+                        "Retest",
+                        key=f"recent_eval_retest_{job['job_id']}",
+                        use_container_width=True,
+                        on_click=_open_existing_job_dialog,
+                        args=("recent_eval_jobs_retest_selected", str(job["job_id"])),
+                    )
         st.markdown("</div>", unsafe_allow_html=True)
 
         selected_job_id = st.session_state.get("recent_eval_jobs_selected")
@@ -2140,7 +2194,7 @@ def _render_recent_evaluator_jobs_section(
             if selected_run_job:
                 if callable(getattr(st, "dialog", None)):
                     try:
-                        @st.dialog(f"Download + Eval + Parquet · {selected_run_job.get('title', '—')}", width="large")
+                        @st.dialog(f"Process existing job · {selected_run_job.get('title', '—')}", width="large")
                         def _recent_eval_run_dialog() -> None:
                             _render_recent_evaluator_job_run_dialog(
                                 project_id,
@@ -2162,7 +2216,7 @@ def _render_recent_evaluator_jobs_section(
                     st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
                     hdr_cols = st.columns([4.4, 1.1])
                     with hdr_cols[0]:
-                        st.subheader(f"Download + Eval + Parquet · {selected_run_job.get('title', '—')}")
+                        st.subheader(f"Process existing job · {selected_run_job.get('title', '—')}")
                     with hdr_cols[1]:
                         if st.button("Close", key="recent_eval_jobs_close_run_fallback", use_container_width=True):
                             st.session_state.pop("recent_eval_jobs_run_selected", None)
@@ -2224,7 +2278,7 @@ def _render_recent_evaluator_jobs_section(
             manual_job = {"job_id": manual_run_job_id, "title": manual_run_job_id}
             if callable(getattr(st, "dialog", None)):
                 try:
-                    @st.dialog(f"Download + Eval + Parquet · {manual_run_job_id}", width="large")
+                    @st.dialog(f"Process existing job · {manual_run_job_id}", width="large")
                     def _manual_recent_eval_run_dialog() -> None:
                         _render_recent_evaluator_job_run_dialog(
                             project_id,
@@ -2246,7 +2300,7 @@ def _render_recent_evaluator_jobs_section(
                 st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
                 hdr_cols = st.columns([4.4, 1.1])
                 with hdr_cols[0]:
-                    st.subheader(f"Download + Eval + Parquet · {manual_run_job_id}")
+                    st.subheader(f"Process existing job · {manual_run_job_id}")
                 with hdr_cols[1]:
                     if st.button("Close", key="recent_eval_jobs_close_manual_run_fallback", use_container_width=True):
                         st.session_state.pop("recent_eval_jobs_manual_run_selected", None)
