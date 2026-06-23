@@ -11,6 +11,7 @@ import os
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
@@ -67,7 +68,7 @@ def get_or_load_analyzer(resolved_path: str):
     """Load analyzer for path; cache in session_state by path."""
     if not resolved_path:
         return None
-    cache_key = "tlr_analyzer_cache_v2"
+    cache_key = "tlr_analyzer_cache_v3"
     if cache_key not in st.session_state:
         st.session_state[cache_key] = {}
     cache = st.session_state[cache_key]
@@ -75,7 +76,7 @@ def get_or_load_analyzer(resolved_path: str):
         with st.spinner(f"Loading TLR results: {Path(resolved_path).name}..."):
             analyzer = TLREvaluationAnalyzer(resolved_path)
             analyzer.load_all_results()
-            if not analyzer.scenario_results:
+            if not analyzer.scenario_results and not analyzer.loaded_from_cache:
                 return None
             analyzer.extract_criteria_data()
             analyzer.pre_calculate_all_data()
@@ -269,7 +270,367 @@ def _render_tlr_viewer_tab(detail_sources: dict[str, pd.DataFrame | None], *, ke
     _render_tlr_viewer_embed(viewer_url, payload, iframe_id=f"{key_prefix}_iframe", height=1600)
 
 
-def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
+def _signal_mask(series: pd.Series) -> pd.Series:
+    text = series.fillna("").astype(str)
+    return (text != "") & (text != "0 []") & (text != "null")
+
+
+def _short_scenario_label(value: str, max_len: int = 54) -> str:
+    text = str(value or "")
+    label = text.split("/", 1)[-1]
+    return label if len(label) <= max_len else f"{label[:max_len - 1]}..."
+
+
+def _build_scenario_insights_df(details_df: pd.DataFrame | None) -> pd.DataFrame:
+    if details_df is None or details_df.empty:
+        return pd.DataFrame()
+
+    df = details_df.copy()
+    df["scenario"] = df["scenario"].fillna("").astype(str)
+    split = df["scenario"].str.split("/", n=1, expand=True)
+    df["suite"] = split[0].replace("", "Current run")
+    df["scenario_name"] = split[1] if split.shape[1] > 1 else df["scenario"]
+    df["scenario_label"] = df["scenario"].map(_short_scenario_label)
+    df["_has_tp"] = _signal_mask(df["tp"])
+    df["_has_fn"] = _signal_mask(df["fn"])
+    df["_evaluable"] = df["_has_tp"] | df["_has_fn"]
+
+    grouped = df.groupby(["suite", "scenario", "scenario_name", "scenario_label"], dropna=False)
+    summary = grouped.agg(
+        frames=("frame_index", "count"),
+        evaluable_frames=("_evaluable", "sum"),
+        tp_frames=("_has_tp", "sum"),
+        fn_frames=("_has_fn", "sum"),
+        criteria_count=("criteria", "nunique"),
+        traffic_light_types=("traffic_light_type", "nunique"),
+    ).reset_index()
+    summary["tp_rate"] = np.where(
+        summary["evaluable_frames"] > 0,
+        summary["tp_frames"] / summary["evaluable_frames"],
+        np.nan,
+    )
+
+    status_counts = (
+        df.groupby(["scenario", "status"], dropna=False)
+        .size()
+        .unstack(fill_value=0)
+        .reset_index()
+    )
+    for col in ["Driving", "Turning", "No Move"]:
+        if col not in status_counts:
+            status_counts[col] = 0
+    status_counts["dominant_status"] = status_counts[["Driving", "Turning", "No Move"]].idxmax(axis=1)
+    summary = summary.merge(
+        status_counts[["scenario", "Driving", "Turning", "No Move", "dominant_status"]],
+        on="scenario",
+        how="left",
+    )
+
+    tlr_mix = (
+        df.groupby("scenario")["traffic_light_type"]
+        .agg(lambda s: ", ".join(s.fillna("unknown").astype(str).value_counts().head(3).index.tolist()))
+        .reset_index(name="top_tlr_types")
+    )
+    return summary.merge(tlr_mix, on="scenario", how="left").sort_values(
+        ["suite", "tp_rate", "frames"],
+        ascending=[True, True, False],
+    )
+
+
+def _build_scenario_timeline_df(details_df: pd.DataFrame, scenario: str) -> pd.DataFrame:
+    df = details_df[details_df["scenario"].astype(str) == str(scenario)].copy()
+    if df.empty:
+        return df
+    df = df.sort_values("frame_index").reset_index(drop=True)
+    df["_has_tp"] = _signal_mask(df["tp"])
+    df["_has_fn"] = _signal_mask(df["fn"])
+    df["_evaluable"] = df["_has_tp"] | df["_has_fn"]
+    df["detection_result"] = np.select(
+        [df["_has_tp"], df["_has_fn"]],
+        ["TP", "FN"],
+        default="Not evaluated",
+    )
+    df["result_score"] = np.where(df["_has_tp"], 1.0, np.where(df["_has_fn"], 0.0, np.nan))
+    frame_order = pd.Series(range(1, len(df) + 1), index=df.index)
+    df["cumulative_tp_rate"] = df["_has_tp"].cumsum() / df["_evaluable"].cumsum().replace(0, np.nan)
+    df["rolling_tp_rate"] = df["result_score"].rolling(window=50, min_periods=1).mean()
+    time_values = pd.to_numeric(df.get("current_time"), errors="coerce")
+    positive_time = time_values.where(time_values > 0)
+    if positive_time.notna().any():
+        df["timeline_x"] = (positive_time - float(positive_time.dropna().iloc[0])).fillna(0.0)
+        df["timeline_label"] = "Time from scenario start (s)"
+    else:
+        df["timeline_x"] = df["frame_index"]
+        df["timeline_label"] = "Frame index"
+    df["frame_order"] = frame_order
+    return df
+
+
+def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFrame, filtered: pd.DataFrame, *, key_prefix: str) -> None:
+    st.markdown("**Scenario timeline**")
+    candidate_df = filtered[filtered["evaluable_frames"] > 0].copy()
+    if candidate_df.empty:
+        candidate_df = filtered.copy()
+    candidate_df = candidate_df.sort_values(["tp_rate", "frames"], ascending=[True, False]).reset_index(drop=True)
+    scenario_options = candidate_df["scenario"].tolist()
+    label_by_scenario = {
+        row["scenario"]: f"{row['suite']} / {row['scenario_name']}  ({row['frames']:,} frames, TP {row['tp_rate']:.1%})"
+        for _, row in candidate_df.iterrows()
+    }
+    selected_scenario = st.selectbox(
+        "Scenario",
+        options=scenario_options,
+        index=0,
+        format_func=lambda value: label_by_scenario.get(value, value),
+        key=f"{key_prefix}_timeline_scenario",
+    )
+    timeline_df = _build_scenario_timeline_df(details_df, selected_scenario)
+    if timeline_df.empty:
+        st.info("No frame timeline is available for the selected scenario.")
+        return
+
+    selected_summary = scenario_df[scenario_df["scenario"] == selected_scenario].iloc[0]
+    tm1, tm2, tm3, tm4 = st.columns(4)
+    tm1.metric("Frames", f"{int(selected_summary['frames']):,}")
+    tm2.metric("Evaluable", f"{int(selected_summary['evaluable_frames']):,}")
+    tm3.metric("TP / FN", f"{int(selected_summary['tp_frames']):,} / {int(selected_summary['fn_frames']):,}")
+    tp_rate = selected_summary["tp_rate"]
+    tm4.metric("TP rate", "N/A" if pd.isna(tp_rate) else f"{float(tp_rate):.2%}")
+
+    x_title = timeline_df["timeline_label"].iloc[0]
+    result_colors = {"TP": "#2ca25f", "FN": "#de2d26", "Not evaluated": "#9aa4b2"}
+    fig_events = px.scatter(
+        timeline_df,
+        x="timeline_x",
+        y="traffic_light_type",
+        color="detection_result",
+        symbol="status",
+        color_discrete_map=result_colors,
+        hover_data={
+            "frame_index": True,
+            "frame_name": True,
+            "criteria": True,
+            "status": True,
+            "tp": True,
+            "fn": True,
+            "timeline_x": ":.3f",
+        },
+        title="Frame-by-frame detection result",
+    )
+    fig_events.update_traces(marker={"size": 7, "opacity": 0.82})
+    fig_events.update_layout(height=430, xaxis_title=x_title, yaxis_title="Traffic light type")
+    st.plotly_chart(fig_events, width="stretch")
+
+    rate_df = timeline_df[timeline_df["_evaluable"]].copy()
+    if not rate_df.empty:
+        fig_rate = go.Figure()
+        fig_rate.add_trace(
+            go.Scatter(
+                x=rate_df["timeline_x"],
+                y=rate_df["rolling_tp_rate"],
+                name="Rolling TP rate (50 frames)",
+                mode="lines",
+                line={"color": "#2563eb", "width": 3},
+            )
+        )
+        fig_rate.add_trace(
+            go.Scatter(
+                x=rate_df["timeline_x"],
+                y=rate_df["cumulative_tp_rate"],
+                name="Cumulative TP rate",
+                mode="lines",
+                line={"color": "#111827", "width": 2, "dash": "dash"},
+            )
+        )
+        fn_rows = rate_df[rate_df["detection_result"] == "FN"]
+        if not fn_rows.empty:
+            fig_rate.add_trace(
+                go.Scatter(
+                    x=fn_rows["timeline_x"],
+                    y=[0.02] * len(fn_rows),
+                    name="FN frame",
+                    mode="markers",
+                    marker={"color": "#de2d26", "size": 7, "symbol": "x"},
+                    hovertext=fn_rows["frame_name"],
+                    hoverinfo="x+text+name",
+                )
+            )
+        fig_rate.update_layout(
+            title="Detection quality over time",
+            height=360,
+            xaxis_title=x_title,
+            yaxis_title="TP rate",
+            yaxis_range=[0, 1.05],
+            yaxis_tickformat=".0%",
+        )
+        st.plotly_chart(fig_rate, width="stretch")
+
+    with st.expander("Timeline frame rows", expanded=False):
+        cols = [
+            "frame_index", "current_time", "frame_name", "detection_result", "traffic_light_type",
+            "status", "criteria", "tp", "fn", "rolling_tp_rate", "cumulative_tp_rate",
+        ]
+        st.dataframe(timeline_df[[c for c in cols if c in timeline_df.columns]], width="stretch", hide_index=True)
+
+
+def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Current run") -> None:
+    st.subheader("Scenario insights")
+    details_df = analyzer.get_vehicle_status_details_df()
+    scenario_df = _build_scenario_insights_df(details_df)
+    if scenario_df.empty:
+        st.info("No per-scenario details available.")
+        return
+
+    suite_options = sorted(scenario_df["suite"].dropna().astype(str).unique().tolist())
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        selected_suites = st.multiselect(
+            "Suite(s)",
+            options=suite_options,
+            default=[],
+            key=f"{key_prefix}_suite_filter",
+            help="Leave empty to include every suite in this run.",
+        )
+    with c2:
+        min_frames = st.number_input(
+            "Minimum frames",
+            min_value=0,
+            value=0,
+            step=100,
+            key=f"{key_prefix}_min_frames",
+        )
+    with c3:
+        top_n = st.slider("Scenario count", min_value=5, max_value=40, value=15, step=5, key=f"{key_prefix}_top_n")
+
+    filtered = scenario_df.copy()
+    if selected_suites:
+        filtered = filtered[filtered["suite"].isin(selected_suites)]
+    if min_frames > 0:
+        filtered = filtered[filtered["frames"] >= min_frames]
+    if filtered.empty:
+        st.info("No scenarios match the selected filters.")
+        return
+
+    total_frames = int(filtered["frames"].sum())
+    total_eval = int(filtered["evaluable_frames"].sum())
+    total_tp = int(filtered["tp_frames"].sum())
+    overall_rate = total_tp / total_eval if total_eval else 0.0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Suites", filtered["suite"].nunique())
+    m2.metric("Scenarios", filtered["scenario"].nunique())
+    m3.metric("Frames", f"{total_frames:,}")
+    m4.metric("TP rate", f"{overall_rate:.2%}")
+
+    suite_summary = (
+        filtered.groupby("suite", as_index=False)
+        .agg(
+            scenarios=("scenario", "nunique"),
+            frames=("frames", "sum"),
+            evaluable_frames=("evaluable_frames", "sum"),
+            tp_frames=("tp_frames", "sum"),
+            fn_frames=("fn_frames", "sum"),
+        )
+        .sort_values("frames", ascending=False)
+    )
+    suite_summary["tp_rate"] = np.where(
+        suite_summary["evaluable_frames"] > 0,
+        suite_summary["tp_frames"] / suite_summary["evaluable_frames"],
+        np.nan,
+    )
+
+    left, right = st.columns([1.1, 1])
+    with left:
+        fig_suite = px.treemap(
+            suite_summary,
+            path=["suite"],
+            values="frames",
+            color="tp_rate",
+            color_continuous_scale="RdYlGn",
+            range_color=[0, 1],
+            hover_data={"scenarios": True, "frames": ":,", "tp_rate": ":.2%"},
+            title=f"{label}: frame volume and TP rate by suite",
+        )
+        fig_suite.update_layout(height=430, margin=dict(t=48, l=8, r=8, b=8))
+        st.plotly_chart(fig_suite, width="stretch")
+    with right:
+        worst = filtered[filtered["evaluable_frames"] > 0].nsmallest(top_n, "tp_rate").sort_values("tp_rate")
+        fig_worst = px.bar(
+            worst,
+            x="tp_rate",
+            y="scenario_label",
+            color="suite",
+            orientation="h",
+            hover_data={
+                "scenario": True,
+                "frames": ":,",
+                "tp_frames": ":,",
+                "fn_frames": ":,",
+                "top_tlr_types": True,
+                "tp_rate": ":.2%",
+            },
+            title=f"Lowest TP-rate scenarios ({min(top_n, len(worst))})",
+        )
+        fig_worst.update_layout(height=430, xaxis_tickformat=".0%", xaxis_range=[0, 1], yaxis_title="")
+        st.plotly_chart(fig_worst, width="stretch")
+
+    fig_scatter = px.scatter(
+        filtered,
+        x="frames",
+        y="tp_rate",
+        size="evaluable_frames",
+        color="suite",
+        hover_name="scenario_label",
+        hover_data={
+            "scenario": True,
+            "frames": ":,",
+            "evaluable_frames": ":,",
+            "tp_frames": ":,",
+            "fn_frames": ":,",
+            "dominant_status": True,
+            "top_tlr_types": True,
+            "tp_rate": ":.2%",
+        },
+        title="Scenario performance map",
+    )
+    fig_scatter.update_layout(height=430, yaxis_tickformat=".0%", yaxis_range=[0, 1.05])
+    st.plotly_chart(fig_scatter, width="stretch")
+
+    status_cols = [col for col in ["Driving", "Turning", "No Move"] if col in filtered.columns]
+    status_by_suite = filtered.groupby("suite", as_index=False)[status_cols].sum()
+    status_long = status_by_suite.melt(id_vars="suite", value_vars=status_cols, var_name="status", value_name="frames")
+    fig_status = px.bar(
+        status_long,
+        x="suite",
+        y="frames",
+        color="status",
+        barmode="stack",
+        title="Vehicle-status frame mix by suite",
+    )
+    fig_status.update_layout(height=360, xaxis_title="", yaxis_title="Frames")
+    st.plotly_chart(fig_status, width="stretch")
+
+    _render_scenario_timeline(details_df, scenario_df, filtered, key_prefix=key_prefix)
+
+    with st.expander("Scenario summary table", expanded=False):
+        display_cols = [
+            "suite", "scenario_name", "frames", "evaluable_frames", "tp_frames", "fn_frames",
+            "tp_rate", "dominant_status", "traffic_light_types", "top_tlr_types",
+        ]
+        st.dataframe(
+            filtered[display_cols].sort_values(["tp_rate", "frames"], ascending=[True, False]),
+            width="stretch",
+            hide_index=True,
+        )
+        st.download_button(
+            "Download scenario insights CSV",
+            data=filtered[display_cols + ["scenario"]].to_csv(index=False).encode("utf-8"),
+            file_name="tlr_scenario_insights.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_download_scenario_insights",
+        )
+
+
+def _render_single_tabs(analyzer, tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
     with tab_criteria:
         st.subheader("Criteria: TP rate and total frames")
         criteria_df = analyzer.create_criteria_matrix()
@@ -282,6 +643,9 @@ def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_d
         fig2 = px.bar(criteria_df, x="criteria_num", y="Number of total frames", title="Total frames by criteria")
         fig2.update_layout(xaxis_title="Criteria number")
         st.plotly_chart(fig2, width='stretch')
+
+    with tab_scenarios:
+        _render_scenario_insights_tab(analyzer, key_prefix="tlr_single_scenario_insights")
 
     with tab_vehicle:
         st.subheader("Vehicle status vs traffic light type (TP rate)")
@@ -418,7 +782,7 @@ def _render_single_tabs(analyzer, tab_criteria, tab_vehicle, tab_critical, tab_d
         _render_tlr_viewer_tab({"Current run": analyzer.get_vehicle_status_details_df()}, key_prefix="tlr_single_viewer")
 
 
-def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
+def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer):
     with tab_criteria:
         st.subheader("Criteria: A vs B (TP rate and delta)")
         df_a = analyzer_a.create_criteria_matrix()
@@ -453,6 +817,20 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
         )
         fig_delta.add_hline(y=0, line_dash="dash", line_color="gray")
         st.plotly_chart(fig_delta, width='stretch')
+
+    with tab_scenarios:
+        view_which = st.radio(
+            "Show scenario insights for",
+            [label_a, label_b],
+            horizontal=True,
+            key="tlr_compare_scenario_insights_which",
+        )
+        analyzer = analyzer_b if view_which == label_b else analyzer_a
+        _render_scenario_insights_tab(
+            analyzer,
+            key_prefix=f"tlr_compare_scenario_insights_{view_which}",
+            label=view_which,
+        )
 
     with tab_vehicle:
         st.subheader("Vehicle status vs TLR type: A vs B (TP rate delta)")
@@ -892,10 +1270,11 @@ if mode == "Single":
             f"Worst: **{stats['worst_criteria']}** (TP rate {stats['worst_tp_rate']:.2%})"
         )
 
-    tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
-        "Criteria matrix", "Vehicle status vs TLR type", "Critical & priority zones", "Vehicle status details", "TLR viewer",
+    tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
+        "Criteria matrix", "Scenario insights", "Vehicle status vs TLR type",
+        "Critical & priority zones", "Vehicle status details", "TLR viewer",
     ])
-    _render_single_tabs(analyzer_a, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer)
+    _render_single_tabs(analyzer_a, tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer)
     st.stop()
 
 # ========== COMPARE MODE ==========
@@ -930,7 +1309,11 @@ with col_b:
     st.metric("Total TP", f"{stats_b['total_tp']:,}")
     st.metric("Overall TP rate", f"{stats_b['overall_tp_rate']:.2%}")
 
-tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
-    "Criteria matrix", "Vehicle status vs TLR type", "Critical & priority zones", "Vehicle status details", "TLR viewer",
+tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
+    "Criteria matrix", "Scenario insights", "Vehicle status vs TLR type",
+    "Critical & priority zones", "Vehicle status details", "TLR viewer",
 ])
-_render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer)
+_render_compare_tabs(
+    analyzer_a, analyzer_b, label_a, label_b,
+    tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer,
+)

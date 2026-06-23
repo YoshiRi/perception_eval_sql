@@ -251,9 +251,11 @@ def count_tlr_scenarios(path: Path) -> int:
 
 
 def list_tlr_result_directories() -> List[Tuple[Path, int]]:
-    """Return sorted list of (path, scenario_count) for direct children of data root that contain TLR result.json.
-    Only includes one level (e.g. TLR_A), not the root itself nor nested subdirs (e.g. not TLR_A/Gen2).
-    Scenario count includes result.json in direct subdirs and in suite-style subdirs (one level under the candidate)."""
+    """Return sorted list of (path, scenario_count) for direct TLR children of the data root.
+
+    A selected top-level folder can still contain suite-style nested folders; the scenario
+    count includes all result.json files in those nested suites.
+    """
     root = get_data_root()
     if not root.exists():
         return []

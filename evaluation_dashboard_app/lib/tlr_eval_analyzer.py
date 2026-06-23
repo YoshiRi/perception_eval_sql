@@ -4,8 +4,10 @@ Loads data from result.json (JSONL, preferred) or scene_result.pkl / *.pkl.z fro
 """
 
 import json
+import hashlib
 import math
 import os
+import pickle
 import re
 from pathlib import Path
 from collections import defaultdict
@@ -44,14 +46,125 @@ class TLREvaluationAnalyzer:
         self.criteria_data: Dict[str, Dict] = {}
         self.cached_vehicle_statuses: Dict[str, List[Dict]] = {}
         self.cached_traffic_light_data: Dict[str, List[Dict]] = {}
+        self.scenario_frame_counts: Dict[str, int] = {}
+        self.vehicle_status_details_df: pd.DataFrame | None = None
+        self.loaded_from_cache = False
+
+    CACHE_VERSION = 1
+    CACHE_FILENAME = ".tlr_analysis_cache_v1.pkl"
 
     def load_all_results(self) -> None:
         """Load all results: prefer result.json (JSONL), then fall back to pkl (scene_result.pkl / *.pkl.z)."""
         if not self.result_directory or not os.path.isdir(self.result_directory):
             return
+        if self._load_derived_cache():
+            return
         self.load_all_results_from_json()
         if not self.scenario_results:
             self.load_all_results_from_pkl()
+        self._refresh_scenario_frame_counts()
+
+    def _refresh_scenario_frame_counts(self) -> None:
+        self.scenario_frame_counts = {
+            scenario_name: len(results)
+            for scenario_name, results in self.scenario_results.items()
+        }
+
+    def _cache_path(self) -> Path:
+        resolved = str(Path(self.result_directory).resolve())
+        digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:24]
+        return Path.cwd() / ".cache" / "tlr_analysis" / f"{digest}_{self.CACHE_FILENAME}"
+
+    def _iter_result_json_files(self) -> List[Tuple[str, Path]]:
+        """Return scenario keys and result.json paths for flat and one-level suite layouts."""
+        root = Path(self.result_directory)
+        files: List[Tuple[str, Path]] = []
+        if not root.is_dir():
+            return files
+        for child in sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name):
+            result_file = child / "result.json"
+            if result_file.exists():
+                files.append((child.name, result_file))
+                continue
+            for testcase_dir in sorted((p for p in child.iterdir() if p.is_dir()), key=lambda p: p.name):
+                tc_result = testcase_dir / "result.json"
+                if tc_result.exists():
+                    files.append((f"{child.name}/{testcase_dir.name}", tc_result))
+        return files
+
+    def _source_signature(self) -> dict:
+        root = Path(self.result_directory)
+        entries = []
+        for scenario_key, path in self._iter_result_json_files():
+            try:
+                stat = path.stat()
+                rel = path.resolve().relative_to(root.resolve()).as_posix()
+            except OSError:
+                continue
+            entries.append({
+                "scenario": scenario_key,
+                "path": rel,
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            })
+        return {
+            "version": self.CACHE_VERSION,
+            "files": entries,
+        }
+
+    def _load_derived_cache(self) -> bool:
+        """Load compact derived TLR data when all source result.json files are unchanged."""
+        cache_path = self._cache_path()
+        if not cache_path.is_file():
+            return False
+        try:
+            with cache_path.open("rb") as f:
+                payload = pickle.load(f)
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("version") != self.CACHE_VERSION:
+            return False
+        if payload.get("source_signature") != self._source_signature():
+            return False
+
+        details_df = payload.get("vehicle_status_details_df")
+        if details_df is not None and not isinstance(details_df, pd.DataFrame):
+            return False
+        self.criteria_data = payload.get("criteria_data") or {}
+        self.scenario_frame_counts = payload.get("scenario_frame_counts") or {}
+        self.scenario_metadata = payload.get("scenario_metadata") or {}
+        self.vehicle_status_details_df = details_df
+        self.loaded_from_cache = True
+        return bool(self.criteria_data or self.scenario_frame_counts or (details_df is not None and not details_df.empty))
+
+    def _write_derived_cache(self) -> None:
+        """Persist compact derived TLR data so later page loads skip JSONL parsing."""
+        if not self.result_directory or not os.path.isdir(self.result_directory):
+            return
+        if not self.criteria_data and not self.scenario_frame_counts and self.vehicle_status_details_df is None:
+            return
+        payload = {
+            "version": self.CACHE_VERSION,
+            "source_signature": self._source_signature(),
+            "criteria_data": self.criteria_data,
+            "scenario_frame_counts": self.scenario_frame_counts,
+            "scenario_metadata": self.scenario_metadata,
+            "vehicle_status_details_df": self.vehicle_status_details_df,
+        }
+        cache_path = self._cache_path()
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with tmp_path.open("wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp_path.replace(cache_path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def load_all_results_from_pkl(self) -> None:
         """Load from scene_result.pkl or *.pkl.z in each scenario subdirectory."""
@@ -162,25 +275,9 @@ class TLREvaluationAnalyzer:
         """
         if not self.result_directory or not os.path.isdir(self.result_directory):
             return
-        root = Path(self.result_directory)
-        for child in root.iterdir():
-            if not child.is_dir():
-                continue
-            result_file = child / "result.json"
-            if result_file.exists():
-                # Flat: direct child has result.json
-                self.scenario_results[child.name] = self._load_result_jsonl(os.fspath(result_file))
-                self.scenario_paths[child.name] = child
-            else:
-                # Suite: child is a suite folder; look for testcase subdirs with result.json
-                for testcase_dir in child.iterdir():
-                    if not testcase_dir.is_dir():
-                        continue
-                    tc_result = testcase_dir / "result.json"
-                    if tc_result.exists():
-                        scenario_key = f"{child.name}/{testcase_dir.name}"
-                        self.scenario_results[scenario_key] = self._load_result_jsonl(os.fspath(tc_result))
-                        self.scenario_paths[scenario_key] = testcase_dir
+        for scenario_key, result_file in self._iter_result_json_files():
+            self.scenario_results[scenario_key] = self._load_result_jsonl(os.fspath(result_file))
+            self.scenario_paths[scenario_key] = result_file.parent
 
     def _load_result_jsonl(self, file_path: str) -> List[Dict]:
         """Load and parse result.json (JSONL format)."""
@@ -213,11 +310,16 @@ class TLREvaluationAnalyzer:
 
     def pre_calculate_all_data(self) -> None:
         """Pre-calculate and cache vehicle statuses and traffic light data for all scenarios."""
+        if self.loaded_from_cache:
+            return
         for scenario_name, results in self.scenario_results.items():
             if not results:
                 continue
             self.cached_vehicle_statuses[scenario_name] = self._calculate_vehicle_status(results)
             self.cached_traffic_light_data[scenario_name] = self._extract_traffic_light_data(results)
+        self._refresh_scenario_frame_counts()
+        self.vehicle_status_details_df = self._build_vehicle_status_details_df()
+        self._write_derived_cache()
 
     def _parse_summary(self, summary: str) -> Dict[str, Dict]:
         """Parse the Summary string to extract criteria results."""
@@ -478,6 +580,10 @@ class TLREvaluationAnalyzer:
         return pd.DataFrame(matrix_data)
 
     def _calculate_status_tlr_data(self, status: str, tlr_type: str) -> Tuple[int, int, float]:
+        details_df = self.vehicle_status_details_df
+        if details_df is not None:
+            return self._calculate_status_tlr_data_from_df(details_df, status, tlr_type)
+
         total_tp = total_frames = 0
         for scenario_name, results in self.scenario_results.items():
             if not results:
@@ -510,6 +616,43 @@ class TLREvaluationAnalyzer:
         else:
             tp_rate = 0.0
         return total_tp, total_frames, tp_rate
+
+    def _calculate_status_tlr_data_from_df(self, df: pd.DataFrame, status: str, tlr_type: str) -> Tuple[int, int, float]:
+        if df.empty:
+            return 0, 0, 1.0
+        mask = pd.Series(True, index=df.index)
+        if status != "All Status Combined":
+            mask &= df["status"] == status
+        if tlr_type != "all types combined":
+            actual_type = df["traffic_light_type"].fillna("").astype(str)
+            category = tlr_type.lower()
+            if "green" in category:
+                mask &= actual_type == "green"
+            elif "yellow" in category:
+                mask &= actual_type == "yellow"
+            elif "red" in category:
+                mask &= actual_type == "red"
+            elif "other types" in category:
+                mask &= ~actual_type.isin(["green", "yellow", "red"])
+        criteria_is_0_9 = df["criteria"].fillna("").astype(str).map(self._is_criteria0_9)
+        if "criteria0-9" in tlr_type:
+            mask &= criteria_is_0_9
+        elif "other criteria" in tlr_type:
+            mask &= ~criteria_is_0_9
+
+        filtered = df.loc[mask]
+        if filtered.empty:
+            return 0, 0, 1.0
+        tp_info = filtered["tp"].fillna("").astype(str)
+        fn_info = filtered["fn"].fillna("").astype(str)
+        has_tp = (tp_info != "") & (tp_info != "0 []") & (tp_info != "null")
+        has_fn = (fn_info != "") & (fn_info != "0 []") & (fn_info != "null")
+        evaluable = has_tp | has_fn
+        total_frames = int(evaluable.sum())
+        total_tp = int((has_tp & evaluable).sum())
+        if total_tp == 0 and total_frames == 0:
+            return total_tp, total_frames, 1.0
+        return total_tp, total_frames, total_tp / total_frames if total_frames > 0 else 0.0
 
     def _matches_tlr_category(self, actual_type: str, category: str) -> bool:
         if category == "all types combined":
@@ -600,6 +743,10 @@ class TLREvaluationAnalyzer:
         return pd.DataFrame(matrix_data)
 
     def _calculate_status_tlr_data_critical_priority(self, status: str, tlr_type: str) -> Tuple[int, int, float]:
+        details_df = self.vehicle_status_details_df
+        if details_df is not None:
+            return self._calculate_status_tlr_data_critical_priority_from_df(details_df, status, tlr_type)
+
         total_tp = total_frames = 0
         for scenario_name, results in self.scenario_results.items():
             if not results:
@@ -633,6 +780,46 @@ class TLREvaluationAnalyzer:
         else:
             tp_rate = 0.0
         return total_tp, total_frames, tp_rate
+
+    def _calculate_status_tlr_data_critical_priority_from_df(self, df: pd.DataFrame, status: str, tlr_type: str) -> Tuple[int, int, float]:
+        if df.empty:
+            return 0, 0, 1.0
+        mask = pd.Series(True, index=df.index)
+        if status != "All Status Combined":
+            mask &= df["status"] == status
+        if tlr_type != "all types combined":
+            actual_type = df["traffic_light_type"].fillna("").astype(str)
+            category = tlr_type.lower()
+            if "green" in category:
+                mask &= actual_type == "green"
+            elif "yellow" in category:
+                mask &= actual_type == "yellow"
+            elif "red" in category:
+                mask &= actual_type == "red"
+            elif "other types" in category:
+                mask &= ~actual_type.isin(["green", "yellow", "red"])
+
+        criteria_range = df["criteria"].fillna("").astype(str).map(self._get_criteria_range_critical_priority)
+        if "criteria5-6(critical zone)" in tlr_type:
+            mask &= criteria_range == "critical"
+        elif "criteria2-4(priority zone)" in tlr_type:
+            mask &= criteria_range == "priority"
+        elif "other criteria" in tlr_type:
+            mask &= criteria_range == "other"
+
+        filtered = df.loc[mask]
+        if filtered.empty:
+            return 0, 0, 1.0
+        tp_info = filtered["tp"].fillna("").astype(str)
+        fn_info = filtered["fn"].fillna("").astype(str)
+        has_tp = (tp_info != "") & (tp_info != "0 []") & (tp_info != "null")
+        has_fn = (fn_info != "") & (fn_info != "0 []") & (fn_info != "null")
+        evaluable = has_tp | has_fn
+        total_frames = int(evaluable.sum())
+        total_tp = int((has_tp & evaluable).sum())
+        if total_tp == 0 and total_frames == 0:
+            return total_tp, total_frames, 1.0
+        return total_tp, total_frames, total_tp / total_frames if total_frames > 0 else 0.0
 
     def _matches_tlr_category_critical_priority(self, actual_type: str, category: str) -> bool:
         if category == "all types combined":
@@ -716,6 +903,13 @@ class TLREvaluationAnalyzer:
 
     def get_vehicle_status_details_df(self) -> pd.DataFrame | None:
         """Return a DataFrame of per-frame vehicle status and TLR info for all scenarios."""
+        if self.vehicle_status_details_df is not None:
+            return self.vehicle_status_details_df.copy()
+        self.vehicle_status_details_df = self._build_vehicle_status_details_df()
+        return self.vehicle_status_details_df.copy() if self.vehicle_status_details_df is not None else None
+
+    def _build_vehicle_status_details_df(self) -> pd.DataFrame | None:
+        """Build a compact per-frame DataFrame from loaded raw scenario results."""
         all_status_data = []
         for scenario_name, results in self.scenario_results.items():
             if not results:
@@ -753,8 +947,9 @@ class TLREvaluationAnalyzer:
         overall_tp_rate = total_tp / total_frames if total_frames > 0 else 0.0
         best = criteria_df.loc[criteria_df["TP rate"].idxmax()] if not criteria_df.empty else None
         worst = criteria_df.loc[criteria_df["TP rate"].idxmin()] if not criteria_df.empty else None
+        num_scenarios = len(self.scenario_results) or len(self.scenario_frame_counts)
         return {
-            "num_scenarios": len(self.scenario_results),
+            "num_scenarios": num_scenarios,
             "num_scenarios_with_criteria": len(self.criteria_data),
             "total_tp": total_tp,
             "total_frames": total_frames,
