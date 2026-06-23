@@ -25,6 +25,7 @@ from lib.specsheet_report import (
     DEFAULT_SPECSHEET_TOPIC,
     DEFAULT_TREND_METADATA_TEXT,
     collect_candidate_specsheet_labels,
+    discover_trend_release_groups,
     generate_specsheet_pdf,
     get_release_specsheet_context,
     get_specsheet_artifact_paths,
@@ -962,6 +963,83 @@ if specsheet_trend_enabled:
     except Exception as trend_exc:
         trend_metadata_status.error(f"Trend metadata error: {trend_exc}")
 
+selected_trend_metadata_paths: list[Path] | None = None
+if specsheet_trend_enabled:
+    manual_trend_history = st.checkbox(
+        "Choose trend history manually",
+        value=bool(st.session_state.get("specsheet_manual_trend_history", False)),
+        key="specsheet_manual_trend_history",
+        help="Show saved trend releases and include only selected history in the PDF.",
+    )
+    if manual_trend_history:
+        try:
+            trend_groups = discover_trend_release_groups()
+        except Exception as trend_group_exc:
+            trend_groups = []
+            st.warning(f"Could not load saved trend history: {trend_group_exc}")
+
+        trend_group_options: dict[str, dict[str, object]] = {}
+        for idx, group in enumerate(trend_groups):
+            metadata = {}
+            for role_name in ("full", "usecase", "devops", "performance_blocks", "unknown"):
+                role_job = group.jobs.get(role_name)
+                if isinstance(role_job, dict) and isinstance(role_job.get("metadata"), dict):
+                    metadata = role_job["metadata"]
+                    break
+            version = str(metadata.get("pilot_auto_version") or group.display_name or "").strip()
+            date = str(metadata.get("date") or "").strip()
+            description = str(metadata.get("description") or "").strip()
+            roles = ", ".join(sorted(str(role) for role in group.jobs.keys()))
+            label_parts = [part for part in (date, version, description) if part]
+            option_label = " | ".join(label_parts) or group.display_name or f"Trend history {idx + 1}"
+            if roles:
+                option_label = f"{option_label} ({roles})"
+            option_key = f"{group.group_key}::{idx}"
+            metadata_paths = [
+                job.get("metadata_path")
+                for job in group.jobs.values()
+                if isinstance(job, dict) and isinstance(job.get("metadata_path"), Path)
+            ]
+            if metadata_paths:
+                trend_group_options[option_key] = {
+                    "label": option_label,
+                    "metadata_paths": metadata_paths,
+                }
+
+        if trend_group_options:
+            trend_option_keys = list(trend_group_options.keys())
+            current_trend_selection = st.session_state.get("specsheet_selected_trend_groups")
+            safe_trend_selection = (
+                _safe_default(current_trend_selection, trend_option_keys)
+                if current_trend_selection is not None
+                else trend_option_keys
+            )
+            st.session_state["specsheet_selected_trend_groups"] = safe_trend_selection
+            selected_trend_group_keys = st.multiselect(
+                "Trend history to include",
+                options=trend_option_keys,
+                default=safe_trend_selection,
+                format_func=lambda key: str(trend_group_options[key]["label"]),
+                key="specsheet_selected_trend_groups",
+                help="The current release is always included; this controls the saved past trend points.",
+            )
+            selected_trend_metadata_paths = []
+            seen_trend_metadata_paths = set()
+            for option_key in selected_trend_group_keys:
+                option = trend_group_options.get(option_key)
+                if not option:
+                    continue
+                for metadata_path in option["metadata_paths"]:
+                    path_key = str(metadata_path.resolve())
+                    if path_key in seen_trend_metadata_paths:
+                        continue
+                    selected_trend_metadata_paths.append(metadata_path)
+                    seen_trend_metadata_paths.add(path_key)
+            st.caption(f"Selected {len(selected_trend_group_keys)} trend releases.")
+        else:
+            selected_trend_metadata_paths = []
+            st.info("No saved trend history candidates were found.")
+
 _specsheet_key = {
     "run_paths": [str(path) for path in selected_specsheet_run_paths],
     "project_id": specsheet_project_id,
@@ -970,6 +1048,12 @@ _specsheet_key = {
     "labels": list(specsheet_labels),
     "include_trend": specsheet_trend_enabled,
     "trend_metadata": trend_metadata_payload if specsheet_trend_enabled else None,
+    "manual_trend_history": bool(specsheet_trend_enabled and selected_trend_metadata_paths is not None),
+    "trend_metadata_paths": (
+        [str(path) for path in selected_trend_metadata_paths]
+        if specsheet_trend_enabled and selected_trend_metadata_paths is not None
+        else None
+    ),
     "artifact_kind": "zip" if len(selected_specsheet_run_paths) > 1 else "pdf",
 }
 _specsheet_ready = (
@@ -1098,6 +1182,7 @@ with specsheet_action_col1:
                     topic_name=specsheet_topic_name,
                     include_trend=specsheet_trend_enabled,
                     trend_metadata=trend_metadata_payload,
+                    trend_metadata_paths=selected_trend_metadata_paths,
                     force=True,
                     progress_callback=_update_specsheet_status,
                 )

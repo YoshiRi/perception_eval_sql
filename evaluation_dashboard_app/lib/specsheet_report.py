@@ -1812,6 +1812,7 @@ def generate_specsheet_pdf(
     topic_name: str = DEFAULT_SPECSHEET_TOPIC,
     include_trend: bool = False,
     trend_metadata: dict[str, Any] | None = None,
+    trend_metadata_paths: Sequence[str | Path] | None = None,
     force: bool = False,
     progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[Path, bool]:
@@ -1888,8 +1889,29 @@ def generate_specsheet_pdf(
             shutil.copy2(generated_trend_summary, paths["trend_summary"])
         _notify(progress_callback, "Saving trend metadata")
         write_trend_metadata(run_path, trend_metadata)
-        metadata_list = discover_trend_metadata_files()
         release_context = get_release_specsheet_context(run_path)
+        if trend_metadata_paths is None:
+            metadata_list = discover_trend_metadata_files()
+        else:
+            metadata_list = [
+                Path(metadata_path)
+                for metadata_path in trend_metadata_paths
+                if Path(metadata_path).exists()
+            ]
+            metadata_list.append(paths["trend_metadata"])
+            if release_context is not None:
+                roles = release_context.get("roles", {})
+                if isinstance(roles, dict):
+                    for role_info in roles.values():
+                        if not isinstance(role_info, dict):
+                            continue
+                        metadata_path = role_info.get("metadata")
+                        if isinstance(metadata_path, Path) and metadata_path.exists():
+                            metadata_list.append(metadata_path)
+            metadata_list = sorted(
+                dict.fromkeys(path.resolve() for path in metadata_list),
+                key=lambda path: str(path),
+            )
         current_devops_summary_path = None
         if release_context is not None:
             roles = release_context.get("roles", {})
