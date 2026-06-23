@@ -1995,6 +1995,17 @@ def _render_start_workflow_form(
         st.session_state["workflow_integration_id"] = str(selected_catalog.get("integration_id") or "")
         st.session_state["workflow_selected_server_catalog_id"] = ""
         st.session_state["workflow_catalog_resolution_error"] = ""
+        if st.session_state["workflow_catalog_id"] and not st.session_state["workflow_integration_id"]:
+            current_environment = str(st.session_state.get("workflow_environment", default_environment) or "")
+            try:
+                st.session_state["workflow_integration_id"] = _resolve_integration_id_for_catalog(
+                    project_id,
+                    current_environment,
+                    st.session_state["workflow_catalog_id"],
+                )
+                st.session_state["workflow_catalog_resolution_error"] = ""
+            except Exception as exc:
+                st.session_state["workflow_catalog_resolution_error"] = str(exc)
         st.session_state["workflow_last_catalog_preset"] = selected_catalog_name
     elif selected_server_catalog:
         st.session_state["workflow_catalog_id"] = str(selected_server_catalog.get("catalog_id") or "")

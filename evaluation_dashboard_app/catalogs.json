@@ -34,5 +34,11 @@
     "catalog_id": "14b1d54b-5c9f-4cbf-a7e1-0eebceb1d30f",
     "description": "[WARN] This is a regression test for L4, please do not use it for other purposes",
     "integration_id": "c5f58b3c-8974-4f33-a8fa-e1f443320cfd"
+  },
+  {
+    "display_name": "J6Gen2_TLR_Regression",
+    "catalog_id": "ebecfc44-b954-4a06-ac28-150bd1482be5",
+    "description": "x2 gen2 TLR Regression Test",
+    "integration_id": "f4380545-c147-4f7a-897c-8f2536dbbf1f"
   }
 ]
