@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Dict, Optional
 
 import streamlit as st
 
-from lib.db import create_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
+from lib.db import create_task, get_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
 from lib.local_evaluator_debug import (
-    DEFAULT_CONTAINER_RUNTIME_ROOT,
+    DEFAULT_AGNOCAST_MODE,
+    DEFAULT_EVALUATOR_ARTIFACT,
     DEFAULT_REPO_URL,
     DEFAULT_SIM_ASSET_DIR,
     DEFAULT_SIM_WORK_DIR,
     DEFAULT_TIMEOUT,
     DEFAULT_WEBAUTO_SCENARIO_COMMAND,
+    DEFAULT_WORK_ROOT,
     commit_debug_container,
     default_checkout_path,
     default_debug_container_name,
@@ -39,6 +42,64 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 inject_app_page_styles()
+
+
+def _query_value(name: str) -> str:
+    try:
+        value = st.query_params.get(name)
+        if isinstance(value, list):
+            return str(value[0] if value else "").strip()
+        return str(value or "").strip()
+    except Exception:
+        return ""
+
+
+def _log_path_from_task(task_id: str) -> str:
+    if not task_id:
+        return ""
+    row = get_task(task_id)
+    if not row:
+        return ""
+    summary_raw = row.get("result_summary")
+    if not summary_raw:
+        return ""
+    try:
+        summary = json.loads(summary_raw) if isinstance(summary_raw, str) else summary_raw
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(summary, dict):
+        return ""
+    return str(summary.get("log_path") or "").strip()
+
+
+def _render_log_file(path_text: str, *, key_prefix: str) -> None:
+    path = Path(path_text).expanduser()
+    if not path.exists() or not path.is_file():
+        st.warning("Log file was not found on this worker filesystem.")
+        if str(path_text).startswith("/tmp/webauto-local-evaluator/"):
+            st.info(
+                "This looks like an older log path under `/tmp`. In Docker deployments `/tmp` is not shared "
+                "between the worker and Streamlit containers, so the web page cannot read that file. "
+                "New jobs write logs under the shared dashboard data directory."
+            )
+        st.caption(path_text)
+        return
+    max_kb = st.slider(
+        "Tail size",
+        min_value=16,
+        max_value=1024,
+        value=256,
+        step=16,
+        key=f"{key_prefix}_tail_kb",
+    )
+    st.code(tail_text(path, max_bytes=max_kb * 1024) or "(empty log)", language=None)
+    st.download_button(
+        "Download full log",
+        data=path.read_bytes(),
+        file_name=path.name,
+        mime="text/plain",
+        key=f"{key_prefix}_download",
+    )
 
 
 def _enqueue(params: Dict[str, object]) -> Optional[str]:
@@ -106,6 +167,14 @@ st.info(
     "mount `/var/run/docker.sock` into the worker and mount the same pilot checkout/runtime paths."
 )
 
+query_log_path = _query_value("log_path")
+query_task_id = _query_value("task_id")
+if not query_log_path and query_task_id:
+    query_log_path = _log_path_from_task(query_task_id)
+if query_log_path:
+    section_header("Requested log", "Opened from a task link.")
+    _render_log_file(query_log_path, key_prefix="query_log")
+
 tab_submit, tab_edit, tab_logs, tab_tasks = st.tabs(["Submit", "Container edit", "Logs", "Tasks"])
 
 with tab_submit:
@@ -152,6 +221,22 @@ with tab_submit:
                 st.caption(f"Derived checkout: `{checkout_path}`")
                 st.caption(f"Derived image: `{image_name}`")
                 st.caption("Source workspace: `vcs import src < autoware.repos`")
+            build_method_label = st.radio(
+                "Build method",
+                ["Evaluator CI scripts", "Docker multi-stage"],
+                horizontal=True,
+                help="Evaluator CI scripts reproduces `.webauto-ci/main/*/run.sh`; Docker multi-stage keeps the older local build path.",
+            )
+            build_method = "evaluator_ci" if build_method_label == "Evaluator CI scripts" else "docker_multi_stage"
+            if build_method == "evaluator_ci":
+                st.caption(
+                    "Evaluator CI build runs Ubuntu 22.04 sandbox steps: environment setup, Autoware setup, "
+                    "Autoware build, asset deploy, then commits the sandbox as the derived image."
+                )
+                with st.expander("Advanced build settings", expanded=False):
+                    evaluator_artifact = st.text_input("Evaluator artifact", value=DEFAULT_EVALUATOR_ARTIFACT)
+            else:
+                evaluator_artifact = DEFAULT_EVALUATOR_ARTIFACT
             c5, c6, c7 = st.columns(3)
             with c5:
                 clean_checkout = st.checkbox("Clean checkout before build", value=False)
@@ -161,14 +246,18 @@ with tab_submit:
                 ros_distro = st.text_input("ROS distro", value="humble")
         else:
             repo_url = DEFAULT_REPO_URL
+            build_method = "evaluator_ci"
+            evaluator_artifact = DEFAULT_EVALUATOR_ARTIFACT
             clean_checkout = False
             allow_dirty_checkout = False
             ros_distro = "humble"
             images = docker_images()
             if images:
-                image_name = st.selectbox("Existing image", images)
+                selected_image = st.selectbox("Existing evaluator image", images)
+                image_name = st.text_input("Image name", value=selected_image)
             else:
                 image_name = st.text_input("Existing image", value="pilot-auto:evaluation")
+                st.caption("No firmware/pilot-auto evaluator images were found in host Docker.")
 
         if mode in ("test", "build_and_test"):
             section_header("Scenario", "Runs a WebAuto command using the selected or newly built image.")
@@ -179,7 +268,7 @@ with tab_submit:
                 height=120,
                 key="local_eval_webauto_command",
             )
-            runtime_default = checkout_path if mode == "build_and_test" and checkout_path else DEFAULT_CONTAINER_RUNTIME_ROOT
+            runtime_default = checkout_path if mode == "build_and_test" and checkout_path else ""
             with st.expander("Command defaults added when missing", expanded=False):
                 c1, c2 = st.columns(2)
                 with c1:
@@ -191,15 +280,28 @@ with tab_submit:
                     work_dir = st.text_input("Work dir", value=DEFAULT_SIM_WORK_DIR)
                 with c4:
                     asset_dir = st.text_input("Asset dir", value=DEFAULT_SIM_ASSET_DIR)
+                webauto_bin = st.text_input("WebAuto executable", value=os.environ.get("LOCAL_EVALUATOR_WEBAUTO_BIN", "webauto"))
+                agnocast_options = ["auto", "disable", "require", "enable"]
+                agnocast_default = DEFAULT_AGNOCAST_MODE if DEFAULT_AGNOCAST_MODE in agnocast_options else "auto"
+                agnocast_mode = st.selectbox(
+                    "Agnocast mode",
+                    agnocast_options,
+                    index=agnocast_options.index(agnocast_default),
+                    help="auto disables Agnocast when /dev/agnocast is unavailable; require fails early if the device is missing.",
+                )
+                run_simulation_pretasks = st.checkbox("Run .webauto-ci.yml pre_tasks", value=True)
                 list_scenarios = st.checkbox("List scenarios before run", value=False)
                 project_id = st.text_input("Project ID for scenario list", value="x2_dev")
         else:
             project_id = ""
             webauto_command = ""
             timeout = DEFAULT_TIMEOUT
-            container_runtime_path = DEFAULT_CONTAINER_RUNTIME_ROOT
+            container_runtime_path = ""
             work_dir = DEFAULT_SIM_WORK_DIR
             asset_dir = DEFAULT_SIM_ASSET_DIR
+            webauto_bin = os.environ.get("LOCAL_EVALUATOR_WEBAUTO_BIN", "webauto")
+            agnocast_mode = DEFAULT_AGNOCAST_MODE
+            run_simulation_pretasks = False
             list_scenarios = False
 
         if st.button("Queue local evaluator job", type="primary", disabled=not task_queue_enabled):
@@ -210,15 +312,20 @@ with tab_submit:
                     "repo_url": repo_url.strip(),
                     "checkout_path": checkout_path.strip(),
                     "image_name": image_name.strip(),
+                    "build_method": build_method,
+                    "evaluator_artifact": evaluator_artifact.strip(),
                     "clean_checkout": clean_checkout,
                     "allow_dirty_checkout": allow_dirty_checkout,
                     "ros_distro": ros_distro.strip(),
                     "project_id": project_id.strip(),
                     "webauto_command": webauto_command.strip(),
+                    "webauto_bin": webauto_bin.strip(),
+                    "agnocast_mode": agnocast_mode,
                     "container_runtime_path": container_runtime_path.strip(),
                     "work_dir": work_dir.strip(),
                     "asset_dir": asset_dir.strip(),
                     "timeout": timeout.strip(),
+                    "run_simulation_pretasks": run_simulation_pretasks,
                     "list_scenarios": list_scenarios,
                 }
             )
@@ -354,20 +461,13 @@ with tab_edit:
 
 with tab_logs:
     section_header("Full log file", "The task row keeps a short useful tail; the full build/test log stays here.")
-    log_path = st.text_input("Log path", placeholder="/tmp/webauto-local-evaluator/runs/.../local_evaluator.log")
-    max_kb = st.slider("Tail size", min_value=16, max_value=1024, value=128, step=16)
+    log_path = st.text_input(
+        "Log path",
+        value=query_log_path,
+        placeholder=str(DEFAULT_WORK_ROOT / "runs" / "..." / "local_evaluator.log"),
+    )
     if log_path:
-        path = Path(log_path).expanduser()
-        if path.exists() and path.is_file():
-            st.code(tail_text(path, max_bytes=max_kb * 1024) or "(empty log)", language=None)
-            st.download_button(
-                "Download full log",
-                data=path.read_bytes(),
-                file_name=path.name,
-                mime="text/plain",
-            )
-        else:
-            st.warning("Log file was not found on this worker filesystem.")
+        _render_log_file(log_path, key_prefix="logs_tab")
 
 with tab_tasks:
     section_header("Local evaluator tasks", "Recent jobs from this dashboard session.")

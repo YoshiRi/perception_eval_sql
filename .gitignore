@@ -9,3 +9,4 @@ evaluation_dashboard_app/deploy/postgres_data/
 *.zip
 evaluation_dashboard_app/deploy/configs/autoware_evaluator_dl_config.json
 evaluation_dashboard_app/configs/autoware_evaluator_dl_config.json
+evaluation_dashboard_app/static/

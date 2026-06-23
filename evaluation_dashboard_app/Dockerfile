@@ -14,7 +14,7 @@ WORKDIR /app
 ENV ROS_DISTRO=${ROS_DISTRO}
 
 # Install needed system packages: python, geos, git/ssh (for pip install from private repos), pipx,
-# OpenGL for matplotlib, and Chrome for Kaleido static image export.
+# Docker CLI/buildx for local evaluator build jobs, OpenGL for matplotlib, and Chrome for Kaleido static image export.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive \
     apt-get install -y --no-install-recommends \
@@ -22,6 +22,12 @@ RUN apt-get update \
       libgl1-mesa-glx libgl1-mesa-dri ca-certificates curl gnupg \
       fontconfig fonts-noto-cjk fonts-ipafont-gothic \
  && install -d -m 0755 /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && chmod a+r /etc/apt/keyrings/docker.gpg \
+ && . /etc/os-release \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+    > /etc/apt/sources.list.d/docker.list \
  && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
     | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
  && chmod a+r /etc/apt/keyrings/google-chrome.gpg \
@@ -29,7 +35,8 @@ RUN apt-get update \
     > /etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \
  && DEBIAN_FRONTEND=noninteractive \
-    apt-get install -y --no-install-recommends google-chrome-stable \
+    apt-get install -y --no-install-recommends \
+      docker-ce-cli docker-buildx-plugin docker-compose-plugin google-chrome-stable \
  && ln -sf /usr/bin/google-chrome-stable /usr/bin/google-chrome \
  && fc-cache -f \
  && rm -rf /var/lib/apt/lists/*
@@ -84,8 +91,8 @@ COPY docker-entrypoint.sh .
 
 RUN chmod +x /app/docker-entrypoint.sh
 
-# Create data folder (should be mounted in production)
-RUN mkdir -p /app/data
+# Create runtime folders used by bind mounts / config
+RUN mkdir -p /app/data /app/.streamlit
 
 EXPOSE 8501
 

@@ -22,7 +22,14 @@ from typing import Dict, List, Optional
 import streamlit as st
 import requests
 
-from lib.db import count_recent_tasks, create_task, is_task_queue_enabled, list_recent_tasks, update_task_rq_job_id
+from lib.db import (
+    count_recent_tasks,
+    create_task,
+    is_task_queue_enabled,
+    list_recent_tasks,
+    update_task_rq_job_id,
+    update_task_status,
+)
 from lib.page_chrome import (
     inject_app_page_styles,
     render_page_hero,
@@ -109,6 +116,23 @@ inject_download_page_styles()
 
 
 _user_config = UserConfig(warning_fn=st.warning)
+
+
+def _parse_rq_timeout_sec(raw: Optional[str], *, default: int, minimum: int) -> int:
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return max(minimum, int(str(raw).strip(), 10))
+    except ValueError:
+        return default
+
+
+_RQ_JOB_TIMEOUT_DEFAULT_SEC = 7 * 24 * 3600
+_RQ_DEFAULT_JOB_TIMEOUT_SEC = _parse_rq_timeout_sec(
+    os.environ.get("RQ_JOB_TIMEOUT_SEC"),
+    default=_RQ_JOB_TIMEOUT_DEFAULT_SEC,
+    minimum=60,
+)
 
 
 def get_config_value(key: str, default=None):
@@ -249,10 +273,12 @@ def _resolve_integration_id_for_catalog(project_id: str, environment: str, catal
 
 
 def _enqueue_task(task_type: str, params: dict) -> Optional[str]:
+    task_id = None
     try:
         session_id = get_task_list_current_user()
         task_id = create_task(task_type, params, session_id=session_id)
         if not task_id:
+            st.error("Failed to create task row. Check DATABASE_URL and task parameters.")
             return None
 
         from redis import Redis
@@ -264,21 +290,23 @@ def _enqueue_task(task_type: str, params: dict) -> Optional[str]:
         queue = Queue(
             name=os.environ.get("RQ_QUEUE", "default"),
             connection=redis_conn,
-            default_timeout="7d",
+            default_timeout=_RQ_DEFAULT_JOB_TIMEOUT_SEC,
         )
         job = queue.enqueue(
             run_job,
             task_id,
             task_type,
             params,
-            job_timeout="7d",
-            result_ttl="7d",
+            job_timeout=_RQ_DEFAULT_JOB_TIMEOUT_SEC,
+            result_ttl=_RQ_DEFAULT_JOB_TIMEOUT_SEC,
         )
         rq_id = getattr(job, "id", None)
         if rq_id:
             update_task_rq_job_id(task_id, str(rq_id))
         return task_id
     except Exception as exc:
+        if task_id:
+            update_task_status(task_id, "failed", error_message=f"Failed to enqueue RQ job: {exc}")
         st.error(f"Failed to enqueue task: {exc}")
         return None
 

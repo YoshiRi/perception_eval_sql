@@ -5,4 +5,4 @@ if [[ -n "${ROS_DISTRO}" && -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
   source "/opt/ros/${ROS_DISTRO}/setup.bash"
 fi
 
-exec streamlit run Overview.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --server.enableStaticServing=true "$@"
+exec streamlit run Overview.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --server.enableStaticServing=true --server.maxMessageSize=500 "$@"

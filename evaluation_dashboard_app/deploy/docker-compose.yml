@@ -12,6 +12,8 @@
 #   - ./postgres_data -> Postgres database files (tasks table, etc.)
 #   - ${HOME}/.webauto -> Download/Scenario API credentials (streamlit + worker)
 #   - secrets.ssh -> Git SSH key for private repository access (streamlit + worker)
+#   - /usr/local/bin/webauto -> host WebAuto CLI used by local evaluator scenario runs
+#   - /var/run/docker.sock -> host Docker daemon access for local evaluator debug/build jobs
 #
 # App source is mounted so you can edit Python code without rebuilding the image.
 # Streamlit will reload on file changes. Restart workers: docker compose restart worker
@@ -38,6 +40,10 @@ x-streamlit-app: &streamlit-app
     # Verbose stderr logs + timing expander on Detection Stats page (see lib/detection_stats_debug.py)
     - EVAL_DETECTION_STATS_DEBUG=${EVAL_DETECTION_STATS_DEBUG:-0}
     - EVAL_DASHBOARD_DATA_ROOT=${EVAL_DASHBOARD_DATA_ROOT:-/app/data}
+    - LOCAL_EVALUATOR_CONTAINER_DATA_ROOT=${LOCAL_EVALUATOR_CONTAINER_DATA_ROOT:-/app/data}
+    - LOCAL_EVALUATOR_HOST_DATA_ROOT=${LOCAL_EVALUATOR_HOST_DATA_ROOT:-${PWD}/../data}
+    - LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT=${LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT:-${HOME}/.webauto}
+    - LOCAL_EVALUATOR_WEBAUTO_BIN=${LOCAL_EVALUATOR_WEBAUTO_BIN:-/usr/local/bin/webauto}
     - EVAL_DASHBOARD_CONFIG=/app/docker_config/autoware_evaluator_dl_config.json
     - USE_TASK_QUEUE=${USE_TASK_QUEUE:-true}
     - DATABASE_URL=${DATABASE_URL}
@@ -52,7 +58,10 @@ x-streamlit-app: &streamlit-app
     - EVAL_DEPLOYMENT_DEBUG_EXEC=${EVAL_DEPLOYMENT_DEBUG_EXEC:-0}
   volumes:
     - ../data:/app/data
+    - ${LOCAL_EVALUATOR_HOST_DATA_ROOT:-${PWD}/../data}:${LOCAL_EVALUATOR_HOST_DATA_ROOT:-${PWD}/../data}
     - ${HOME}/.webauto:/root/.webauto
+    - ${LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT:-${HOME}/.webauto}:${LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT:-${HOME}/.webauto}
+    - ${LOCAL_EVALUATOR_WEBAUTO_BIN_HOST:-/usr/local/bin/webauto}:/usr/local/bin/webauto:ro
     - pr_git_workspaces:/app/git_workspaces
     # Docker-only config (separate from your local configs)
     - ./configs:/app/docker_config
@@ -67,7 +76,7 @@ x-streamlit-app: &streamlit-app
     - ../worker:/app/worker
     - ../configs:/app/configs
     - ../static:/app/static
-    - ../.streamlit:/app/.streamlit
+    - ./.streamlit/config.toml:/app/.streamlit/config.toml:ro
     - /var/run/docker.sock:/var/run/docker.sock
   extra_hosts:
     - "host.docker.internal:host-gateway"
@@ -127,6 +136,10 @@ services:
     environment:
       - TZ=Asia/Tokyo
       - EVAL_DASHBOARD_DATA_ROOT=${EVAL_DASHBOARD_DATA_ROOT:-/app/data}
+      - LOCAL_EVALUATOR_CONTAINER_DATA_ROOT=${LOCAL_EVALUATOR_CONTAINER_DATA_ROOT:-/app/data}
+      - LOCAL_EVALUATOR_HOST_DATA_ROOT=${LOCAL_EVALUATOR_HOST_DATA_ROOT:-${PWD}/../data}
+      - LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT=${LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT:-${HOME}/.webauto}
+      - LOCAL_EVALUATOR_WEBAUTO_BIN=${LOCAL_EVALUATOR_WEBAUTO_BIN:-/usr/local/bin/webauto}
       - EVAL_DASHBOARD_CONFIG=/app/docker_config/autoware_evaluator_dl_config.json
       - USE_TASK_QUEUE=true
       - DATABASE_URL=${DATABASE_URL}
@@ -137,7 +150,10 @@ services:
       - GIT_SSH_COMMAND=ssh -i /run/secrets/ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/eval_dashboard_known_hosts
     volumes:
       - ../data:/app/data
+      - ${LOCAL_EVALUATOR_HOST_DATA_ROOT:-${PWD}/../data}:${LOCAL_EVALUATOR_HOST_DATA_ROOT:-${PWD}/../data}
       - ${HOME}/.webauto:/root/.webauto
+      - ${LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT:-${HOME}/.webauto}:${LOCAL_EVALUATOR_HOST_WEBAUTO_ROOT:-${HOME}/.webauto}
+      - ${LOCAL_EVALUATOR_WEBAUTO_BIN_HOST:-/usr/local/bin/webauto}:/usr/local/bin/webauto:ro
       - pr_git_workspaces:/app/git_workspaces
       # Docker-only config (separate from your local configs)
       - ./configs:/app/docker_config
@@ -150,6 +166,7 @@ services:
       - ../lib:/app/lib
       - ../worker:/app/worker
       - ../configs:/app/configs
+      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:

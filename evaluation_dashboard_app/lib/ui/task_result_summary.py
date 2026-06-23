@@ -1,5 +1,6 @@
 """Shared task result-summary renderers used by background task pages."""
 
+import urllib.parse
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -279,15 +280,51 @@ def render_task_result_summary(summary: Dict[str, Any]) -> None:
             st.write(f"- Repos file: `{summary.get('repos_file', '')}`")
         if summary.get("src_path"):
             st.write(f"- Source workspace: `{summary.get('src_path', '')}`")
+        if summary.get("build_method"):
+            st.write(f"- Build method: `{summary.get('build_method', '')}`")
+        if summary.get("sandbox_container"):
+            st.write(f"- Sandbox container: `{summary.get('sandbox_container', '')}`")
+        if summary.get("evaluator_base_image"):
+            st.write(f"- Evaluator base image: `{summary.get('evaluator_base_image', '')}`")
+        if summary.get("evaluator_artifact"):
+            st.write(f"- Evaluator artifact: `{summary.get('evaluator_artifact', '')}`")
+        if summary.get("evaluator_github_auth"):
+            st.write(f"- Evaluator GitHub auth: `{summary.get('evaluator_github_auth', '')}`")
+        if summary.get("evaluator_phases"):
+            st.write(f"- Evaluator phases: `{', '.join(str(item) for item in summary.get('evaluator_phases', []))}`")
+        if summary.get("agnocast_mode"):
+            st.write(f"- Agnocast mode: `{summary.get('agnocast_mode', '')}`")
+        if summary.get("agnocast_env"):
+            env_text = ", ".join(f"{key}={value}" for key, value in summary.get("agnocast_env", {}).items())
+            st.write(f"- Agnocast env: `{env_text}`")
+        if summary.get("agnocast_device_available") is not None:
+            st.write(f"- Agnocast device: **{'available' if summary.get('agnocast_device_available') else 'missing'}**")
+        if summary.get("docker_version"):
+            st.write(f"- Docker: `{summary.get('docker_version', '')}`")
+        if summary.get("docker_buildx_version"):
+            st.write(f"- Buildx: `{summary.get('docker_buildx_version', '')}`")
         if summary.get("webauto_command"):
             st.caption("WebAuto command")
             st.code(summary.get("webauto_command", ""), language="bash")
+        if summary.get("simulation_pretasks"):
+            st.write(f"- Simulation pre-tasks: **{summary.get('simulation_pretasks')}**")
+        if summary.get("simulation_pretask_source"):
+            st.write(f"- Pre-task source: `{summary.get('simulation_pretask_source', '')}`")
+        if summary.get("simulation_pretask_count") is not None:
+            st.write(f"- Pre-task count: `{summary.get('simulation_pretask_count')}`")
+        pretask_commands = summary.get("simulation_pretask_commands", [])
+        if pretask_commands:
+            st.caption(".webauto-ci.yml pre_tasks")
+            st.code("\n\n".join(str(cmd) for cmd in pretask_commands), language="bash")
         st.write(f"- Build: **{summary.get('build_status', 'skipped')}**")
         st.write(f"- Test: **{summary.get('test_status', summary.get('commit_status', 'skipped'))}**")
         if summary.get("scenario_returncode") is not None:
             st.write(f"- Scenario exit code: `{summary.get('scenario_returncode')}`")
         if summary.get("log_path"):
-            st.write(f"- Full log: `{summary.get('log_path', '')}`")
+            log_path = str(summary.get("log_path", ""))
+            log_url = f"/Local_Evaluator_Debug?log_path={urllib.parse.quote(log_path)}"
+            st.markdown(f"- Full log: [Open log]({log_url})")
+            st.caption(log_path)
         steps = summary.get("steps", [])
         if steps:
             st.caption("Steps")
