@@ -22,9 +22,23 @@ def try_cancel_rq_job(rq_job_id: Optional[str]) -> bool:
     try:
         from rq.job import Job
 
-        job = Job.fetch(str(rq_job_id), connection=_redis_connection())
+        conn = _redis_connection()
+        job = Job.fetch(str(rq_job_id), connection=conn)
         if job.is_finished or job.is_failed:
             return True
+        try:
+            js = job.get_status()
+            js_name = getattr(js, "name", str(js))
+        except Exception:
+            js_name = ""
+        if getattr(job, "is_started", False) or js_name == "STARTED":
+            try:
+                from rq.command import send_stop_job_command
+
+                send_stop_job_command(conn, str(rq_job_id))
+                return True
+            except Exception:
+                pass
         job.cancel()
         return True
     except Exception:
@@ -110,7 +124,7 @@ def reconcile_task_row_in_place(task: Dict[str, Any]) -> bool:
         task["status"] = "running"
         return True
 
-    if js_name in ("STOPPED", "CANCELLED"):
+    if js_name in ("STOPPED", "CANCELED", "CANCELLED"):
         msg = "Job stopped in the queue (cancelled or worker shutdown). Reconciled."
         update_task_status(tid, "failed", error_message=msg)
         append_task_log(tid, msg)
