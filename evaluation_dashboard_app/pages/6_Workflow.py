@@ -90,6 +90,11 @@ _RELEASE_OPTIONAL_CATALOG_ID = "09039022-ec91-41bf-9e93-fdefccdfc9bc"
 _RELEASE_SKIP_LARGE_FILE = True
 _RELEASE_LARGE_FILE_MB = 50.0
 _DEFAULT_MAX_WAIT_HOURS = 48
+_WORKFLOW_KIND_PERCEPTION = "Perception"
+_WORKFLOW_KIND_TLR = "TLR"
+_WORKFLOW_KIND_OPTIONS = [_WORKFLOW_KIND_PERCEPTION, _WORKFLOW_KIND_TLR]
+_DEFAULT_PERCEPTION_PHASE = "perception.object_recognition.tracking.objects"
+_TLR_DOWNLOAD_TYPE = "Result JSON"
 _RELEASE_TREND_TOPIC_OPTIONS = {
     "Prediction / object recognition": DEFAULT_TREND_TOPIC,
     "ML model / CenterPoint": DETECTION_TREND_TOPIC_BY_MODEL["centerpoint"],
@@ -1874,7 +1879,7 @@ def _get_start_workflow_defaults() -> Dict[str, object]:
         "download_type_default": get_config_value("eval_download_type", "Archives (ZIP)"),
         "phase_default": get_config_value(
             "eval_phase",
-            "perception.object_recognition.tracking.objects",
+            _DEFAULT_PERCEPTION_PHASE,
         ),
         "skip_large_file_default": True,
         "large_file_mb_default": 50.0,
@@ -1893,10 +1898,13 @@ def _render_start_workflow_form(
     catalog_names = [item["display_name"] for item in catalog_presets]
     default_project = get_config_value("eval_project_id", "x2_dev")
     default_target = get_config_value("target_name", "beta/v4.3.2")
+    default_workflow_kind = get_config_value("workflow_kind", _WORKFLOW_KIND_PERCEPTION)
+    if default_workflow_kind not in _WORKFLOW_KIND_OPTIONS:
+        default_workflow_kind = _WORKFLOW_KIND_PERCEPTION
     default_download_type = get_config_value("eval_download_type", "Archives (ZIP)")
     default_phase = get_config_value(
         "eval_phase",
-        "perception.object_recognition.tracking.objects",
+        _DEFAULT_PERCEPTION_PHASE,
     )
     default_poll_interval = int(get_config_value("poll_interval", 60))
     try:
@@ -1947,7 +1955,7 @@ def _render_start_workflow_form(
             st.session_state["workflow_max_wait_hours"] = _DEFAULT_MAX_WAIT_HOURS
     st.session_state["workflow_previous_release_mode"] = release_mode
 
-    top_cols = st.columns([1.0, 1.2] if release_mode else [1.0, 1.9, 1.2])
+    top_cols = st.columns([1.0, 1.2] if release_mode else [1.0, 0.9, 1.7, 1.2])
     with top_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Project</div>', unsafe_allow_html=True)
         project_id = st.text_input(
@@ -1957,10 +1965,21 @@ def _render_start_workflow_form(
             label_visibility="collapsed",
         ).strip()
     if release_mode:
+        workflow_kind = _WORKFLOW_KIND_PERCEPTION
         selected_catalog_name = ""
         fetch_catalogs_clicked = False
     else:
         with top_cols[1]:
+            st.markdown('<div class="wf-toolbar-note">Workflow kind</div>', unsafe_allow_html=True)
+            workflow_kind = st.selectbox(
+                "Workflow kind",
+                options=_WORKFLOW_KIND_OPTIONS,
+                index=_WORKFLOW_KIND_OPTIONS.index(default_workflow_kind),
+                key="workflow_kind",
+                label_visibility="collapsed",
+                help="TLR downloads result JSON for the Traffic Light Recognition analysis page.",
+            )
+        with top_cols[2]:
             st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
             catalog_picker_cols = st.columns([4.2, 1.1], gap="small")
             with catalog_picker_cols[0]:
@@ -2026,7 +2045,7 @@ def _render_start_workflow_form(
     elif st.session_state["workflow_last_catalog_selection"] != selected_catalog_name:
         st.session_state["workflow_catalog_resolution_error"] = ""
         st.session_state["workflow_last_catalog_selection"] = selected_catalog_name
-    with top_cols[1 if release_mode else 2]:
+    with top_cols[1 if release_mode else 3]:
         st.markdown('<div class="wf-toolbar-note">Branch or tag</div>', unsafe_allow_html=True)
         target_name = st.text_input(
             "Branch or Tag",
@@ -2043,7 +2062,7 @@ def _render_start_workflow_form(
         st.warning(f"Could not fetch catalogs: {st.session_state['workflow_server_catalog_error']}")
     catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
 
-    picker_cols = st.columns([1.2, 1.75] if release_mode else [1.2, 1.2, 1.75])
+    picker_cols = st.columns([1.2, 1.75] if release_mode or workflow_kind == _WORKFLOW_KIND_TLR else [1.2, 1.2, 1.75])
     with picker_cols[0]:
         st.markdown(
             f'<div class="wf-toolbar-note">{"Release output folder" if release_mode else "Output folder"}</div>',
@@ -2062,7 +2081,9 @@ def _render_start_workflow_form(
             ),
         ).strip()
     if release_mode:
-        phase = "perception.object_recognition.tracking.objects"
+        phase = _DEFAULT_PERCEPTION_PHASE
+    elif workflow_kind == _WORKFLOW_KIND_TLR:
+        phase = ""
     else:
         with picker_cols[1]:
             st.markdown('<div class="wf-toolbar-note">Phase</div>', unsafe_allow_html=True)
@@ -2072,7 +2093,7 @@ def _render_start_workflow_form(
                 key="workflow_phase",
                 label_visibility="collapsed",
             )
-    with picker_cols[1 if release_mode else 2]:
+    with picker_cols[1 if release_mode or workflow_kind == _WORKFLOW_KIND_TLR else 2]:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
         description = st.text_input(
             "Description",
@@ -2234,6 +2255,15 @@ def _render_start_workflow_form(
                 "Release mode always uses archive downloads, skips oversized files, and generates parquet automatically when needed."
             )
             adv_cols = st.columns([1.0, 0.8, 0.8])
+        elif workflow_kind == _WORKFLOW_KIND_TLR:
+            download_type = _TLR_DOWNLOAD_TYPE
+            generate_parquet = False
+            skip_large_file = False
+            eval_recursive = True
+            st.caption(
+                "TLR mode downloads simulation result JSON for the Traffic Light Recognition analysis page."
+            )
+            adv_cols = st.columns([1.0, 0.8, 0.8])
         else:
             adv_cols = st.columns([1.0, 1.0, 0.8, 0.8])
             with adv_cols[0]:
@@ -2248,7 +2278,7 @@ def _render_start_workflow_form(
             poll_col = adv_cols[2]
             wait_col = adv_cols[3]
 
-        if release_mode:
+        if release_mode or workflow_kind == _WORKFLOW_KIND_TLR:
             env_col = adv_cols[0]
             poll_col = adv_cols[1]
             wait_col = adv_cols[2]
@@ -2281,20 +2311,33 @@ def _render_start_workflow_form(
                 help="Set to 0 to keep waiting for evaluator completion without an app-side timeout.",
             )
 
-        option_col_count = 2 if release_mode else 5
+        option_col_count = 2 if release_mode else (3 if workflow_kind == _WORKFLOW_KIND_TLR else 5)
         option_cols = st.columns(option_col_count)
         with option_cols[0]:
             run_eval = st.checkbox(
                 "Run evaluation",
-                value=False if release_mode else True,
+                value=False if release_mode or workflow_kind == _WORKFLOW_KIND_TLR else True,
+                disabled=workflow_kind == _WORKFLOW_KIND_TLR,
                 key="workflow_run_eval",
                 help=(
                     "Optional in release mode. Turn this on to also generate Summary.csv and Score.csv."
                     if release_mode
+                    else "TLR mode downloads result JSON directly for analysis."
+                    if workflow_kind == _WORKFLOW_KIND_TLR
                     else "Generate Summary.csv and Score.csv after download."
                 ),
             )
-        if not release_mode:
+        if workflow_kind == _WORKFLOW_KIND_TLR:
+            with option_cols[1]:
+                st.checkbox(
+                    "Generate parquet",
+                    value=False,
+                    disabled=True,
+                    key="workflow_generate_parquet_tlr",
+                    help="TLR result JSON is analyzed directly.",
+                )
+            tag_col = option_cols[2]
+        elif not release_mode:
             with option_cols[1]:
                 generate_parquet = st.checkbox(
                     "Generate parquet",
@@ -2322,11 +2365,21 @@ def _render_start_workflow_form(
         with tag_col:
             is_tag = st.checkbox("Target is tag", value=False, key="workflow_is_tag")
 
+    if workflow_kind == _WORKFLOW_KIND_TLR:
+        download_type = _TLR_DOWNLOAD_TYPE
+        phase = ""
+        run_eval = False
+        generate_parquet = False
+        skip_large_file = False
+        eval_recursive = True
+
     set_config_value("eval_project_id", project_id)
     set_config_value("target_name", target_name)
+    set_config_value("workflow_kind", workflow_kind)
     if not release_mode:
         set_config_value("eval_download_type", download_type)
-        set_config_value("eval_phase", phase)
+        if workflow_kind != _WORKFLOW_KIND_TLR:
+            set_config_value("eval_phase", phase)
     set_config_value("poll_interval", poll_interval)
     set_config_value("max_wait_hours", max_wait_hours)
     set_config_value("environment", environment)
@@ -2390,6 +2443,7 @@ def _render_start_workflow_form(
             "generate_parquet": False if release_mode else bool(generate_parquet),
             "skip_large_file": _RELEASE_SKIP_LARGE_FILE if release_mode else bool(skip_large_file),
             "eval_recursive": False if release_mode else bool(eval_recursive),
+            "workflow_kind": workflow_kind,
             "release_mode": bool(release_mode),
             "trend_metadata": trend_metadata if release_mode else {},
             "performance_job_id": performance_job_id if release_mode else "",
@@ -2478,6 +2532,7 @@ def _render_workflow_launcher_section(
                     "record_caret": False,
                     "log_expiration_time_in_days": 14.0,
                     "is_tag": dialog_payload["is_tag"],
+                    "workflow_kind": dialog_payload.get("workflow_kind", _WORKFLOW_KIND_PERCEPTION),
                     "download_type": "archives" if dialog_payload["download_type"] == "Archives (ZIP)" else "result_json",
                     "phase": dialog_payload["phase"],
                     "skip_large_file": bool(dialog_payload.get("skip_large_file", True)),

@@ -24,6 +24,9 @@ _ENQUEUE_TASK: Callable[[str, Dict[str, Any]], Optional[str]] = lambda task_type
 CATALOG_IO_AVAILABLE = False
 ENVIRONMENT = "default"
 _DEFAULT_EVAL_WORKERS = 4
+_WORKFLOW_KIND_PERCEPTION = "Perception"
+_WORKFLOW_KIND_TLR = "TLR"
+_WORKFLOW_KIND_OPTIONS = [_WORKFLOW_KIND_PERCEPTION, _WORKFLOW_KIND_TLR]
 
 
 def _default_eval_workers() -> int:
@@ -32,6 +35,22 @@ def _default_eval_workers() -> int:
     except (TypeError, ValueError):
         workers = _DEFAULT_EVAL_WORKERS
     return max(1, min(workers, 16))
+
+
+def _looks_like_tlr_job(detail: Dict[str, Any]) -> bool:
+    raw_report = detail.get("raw_report") if isinstance(detail.get("raw_report"), dict) else {}
+    raw_catalog = raw_report.get("catalog") if isinstance(raw_report.get("catalog"), dict) else {}
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            detail.get("title"),
+            detail.get("target"),
+            detail.get("catalog"),
+            raw_catalog.get("display_name"),
+            raw_catalog.get("name"),
+        )
+    ).lower()
+    return "tlr" in haystack or "traffic light" in haystack or "traffic_light" in haystack
 
 
 def configure_recent_evaluator_jobs_ui(*, get_config_value: Callable[[str, Any], Any], set_config_value: Callable[[str, Any], None], enqueue_task: Callable[[str, Dict[str, Any]], Optional[str]], catalog_io_available: bool, environment: str = "default") -> None:
@@ -67,6 +86,24 @@ def _friendly_request_error_message(exc: Exception) -> str:
     if "timed out" in lowered or "timeout" in lowered:
         return "Loading evaluator jobs took too long. Please try again."
     return "Could not load evaluator jobs right now. Please check the network connection and try again."
+
+
+def _extract_job_id_from_text(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "/" not in text and "?" not in text and ":" not in text:
+        return text
+    try:
+        parsed = urllib.parse.urlparse(text)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if "reports" in path_parts:
+            idx = path_parts.index("reports")
+            if idx + 1 < len(path_parts):
+                return urllib.parse.unquote(path_parts[idx + 1]).strip()
+        return urllib.parse.unquote(path_parts[-1]).strip() if path_parts else ""
+    except Exception:
+        return text
 
 
 def _load_catalog_presets() -> List[Dict[str, str]]:
@@ -1271,6 +1308,7 @@ def _render_recent_evaluator_job_run_dialog(
         return
 
     detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
+    default_workflow_kind = _WORKFLOW_KIND_TLR if _looks_like_tlr_job(detail) else _WORKFLOW_KIND_PERCEPTION
     suite_options = _extract_suite_selection_options(detail.get("suite_rows") or [])
     suite_label_to_id = {opt["label"]: opt["id"] for opt in suite_options}
     suite_labels = [opt["label"] for opt in suite_options]
@@ -1306,12 +1344,23 @@ def _render_recent_evaluator_job_run_dialog(
             disabled=not suite_labels,
         )
 
-        run_download_type = st.radio(
-            "Download type",
-            ["Archives (ZIP)", "Result JSON only"],
-            index=0 if download_type_default == "Archives (ZIP)" else 1,
-            horizontal=True,
+        workflow_kind = st.selectbox(
+            "Workflow kind",
+            options=_WORKFLOW_KIND_OPTIONS,
+            index=_WORKFLOW_KIND_OPTIONS.index(default_workflow_kind),
+            help="Use TLR for traffic light recognition jobs; it downloads result JSON for the TLR analysis page.",
         )
+
+        if workflow_kind == _WORKFLOW_KIND_TLR:
+            run_download_type = "Result JSON only"
+            st.caption("TLR mode downloads simulation result JSON and skips eval/parquet processing.")
+        else:
+            run_download_type = st.radio(
+                "Download type",
+                ["Archives (ZIP)", "Result JSON only"],
+                index=0 if download_type_default == "Archives (ZIP)" else 1,
+                horizontal=True,
+            )
 
         run_phase = ""
         run_skip_large_file = False
@@ -1349,15 +1398,22 @@ def _render_recent_evaluator_job_run_dialog(
         with run_cols[0]:
             run_eval = st.checkbox(
                 "Run evaluation",
-                value=True,
+                value=workflow_kind != _WORKFLOW_KIND_TLR,
+                disabled=workflow_kind == _WORKFLOW_KIND_TLR,
                 help="Run eval_result and generate Summary.csv / Score.csv after download.",
             )
         with run_cols[1]:
             generate_parquet = st.checkbox(
                 "Generate parquet",
-                value=CATALOG_IO_AVAILABLE,
-                disabled=not CATALOG_IO_AVAILABLE,
-                help="Build scene_result.parquet from .pkl files." if CATALOG_IO_AVAILABLE else "Install perception_catalog_analyzer to enable this.",
+                value=CATALOG_IO_AVAILABLE and workflow_kind != _WORKFLOW_KIND_TLR,
+                disabled=not CATALOG_IO_AVAILABLE or workflow_kind == _WORKFLOW_KIND_TLR,
+                help=(
+                    "TLR result JSON is analyzed directly."
+                    if workflow_kind == _WORKFLOW_KIND_TLR
+                    else "Build scene_result.parquet from .pkl files."
+                    if CATALOG_IO_AVAILABLE
+                    else "Install perception_catalog_analyzer to enable this."
+                ),
             )
         with run_cols[2]:
             eval_recursive = st.checkbox(
@@ -1377,6 +1433,16 @@ def _render_recent_evaluator_job_run_dialog(
     if not start_clicked:
         return
 
+    if workflow_kind == _WORKFLOW_KIND_TLR:
+        run_download_type = "Result JSON only"
+        run_phase = ""
+        run_skip_large_file = False
+        run_large_file_mb = 50.0
+        run_keep_zip_files = False
+        run_eval = False
+        generate_parquet = False
+        eval_recursive = True
+
     resolved_output, path_err = resolve_under_data_root(run_output_path, allow_create=True)
     if path_err:
         st.error(f"Output path is invalid: {path_err}")
@@ -1391,6 +1457,7 @@ def _render_recent_evaluator_job_run_dialog(
     set_config_value("suite_id", "")
     set_config_value("suite_ids", selected_suite_ids)
     set_config_value("download_type", run_download_type)
+    set_config_value("workflow_kind", workflow_kind)
     if run_download_type == "Archives (ZIP)":
         set_config_value("phase", run_phase)
         set_config_value("skip_large_file", run_skip_large_file)
@@ -1403,6 +1470,7 @@ def _render_recent_evaluator_job_run_dialog(
         "job_id": job_id,
         "suite_id": "",
         "suite_ids": selected_suite_ids or None,
+        "workflow_kind": workflow_kind,
         "download_type": "archives" if run_download_type == "Archives (ZIP)" else "result_json",
         "phase": run_phase if run_download_type == "Archives (ZIP)" else "",
         "skip_large_file": run_skip_large_file if run_download_type == "Archives (ZIP)" else False,
@@ -1442,6 +1510,7 @@ def _render_recent_evaluator_job_retest_dialog(
         return
 
     detail = _fetch_evaluator_job_detail(project_id, environment, job_id)
+    default_workflow_kind = _WORKFLOW_KIND_TLR if _looks_like_tlr_job(detail) else _WORKFLOW_KIND_PERCEPTION
     raw_report = detail.get("raw_report") or {}
     raw_catalog = raw_report.get("catalog") or {}
     resolved_source_job_id = _resolve_retest_source_job_id(
@@ -1536,12 +1605,23 @@ def _render_recent_evaluator_job_retest_dialog(
         value=default_output_path,
         help="Folder under the data directory for the downloaded retest results.",
     )
-    run_download_type = st.radio(
-        "Download type",
-        ["Archives (ZIP)", "Result JSON only"],
-        index=0,
-        horizontal=True,
+    workflow_kind = st.selectbox(
+        "Workflow kind",
+        options=_WORKFLOW_KIND_OPTIONS,
+        index=_WORKFLOW_KIND_OPTIONS.index(default_workflow_kind),
+        key=f"recent_eval_retest_workflow_kind_{job_id}",
+        help="Use TLR for traffic light recognition jobs; it downloads result JSON for the TLR analysis page.",
     )
+    if workflow_kind == _WORKFLOW_KIND_TLR:
+        run_download_type = "Result JSON only"
+        st.caption("TLR mode schedules the artifact retest, then downloads simulation result JSON and skips eval/parquet processing.")
+    else:
+        run_download_type = st.radio(
+            "Download type",
+            ["Archives (ZIP)", "Result JSON only"],
+            index=0,
+            horizontal=True,
+        )
     run_phase = ""
     if run_download_type == "Archives (ZIP)":
         run_phase = st.text_input(
@@ -1554,15 +1634,22 @@ def _render_recent_evaluator_job_retest_dialog(
     with run_cols[0]:
         run_eval = st.checkbox(
             "Run evaluation",
-            value=True,
+            value=workflow_kind != _WORKFLOW_KIND_TLR,
+            disabled=workflow_kind == _WORKFLOW_KIND_TLR,
             help="Run eval_result and generate Summary.csv / Score.csv after download.",
         )
     with run_cols[1]:
         generate_parquet = st.checkbox(
             "Generate parquet",
-            value=CATALOG_IO_AVAILABLE,
-            disabled=not CATALOG_IO_AVAILABLE,
-            help="Build scene_result.parquet from .pkl files." if CATALOG_IO_AVAILABLE else "Install perception_catalog_analyzer to enable this.",
+            value=CATALOG_IO_AVAILABLE and workflow_kind != _WORKFLOW_KIND_TLR,
+            disabled=not CATALOG_IO_AVAILABLE or workflow_kind == _WORKFLOW_KIND_TLR,
+            help=(
+                "TLR result JSON is analyzed directly."
+                if workflow_kind == _WORKFLOW_KIND_TLR
+                else "Build scene_result.parquet from .pkl files."
+                if CATALOG_IO_AVAILABLE
+                else "Install perception_catalog_analyzer to enable this."
+            ),
         )
     with run_cols[2]:
         eval_recursive = st.checkbox(
@@ -1582,6 +1669,13 @@ def _render_recent_evaluator_job_retest_dialog(
 
     if not start_clicked:
         return
+
+    if workflow_kind == _WORKFLOW_KIND_TLR:
+        run_download_type = "Result JSON only"
+        run_phase = ""
+        run_eval = False
+        generate_parquet = False
+        eval_recursive = True
 
     final_catalog_id = str(selected_preset.get("catalog_id") or catalog_id or "").strip()
     if not final_catalog_id:
@@ -1614,6 +1708,7 @@ def _render_recent_evaluator_job_retest_dialog(
             "description": final_description,
             "output_path": resolved_path_str,
             "environment": environment,
+            "workflow_kind": workflow_kind,
             "max_retries": 0,
             "clean_build": False,
             "debug": False,
@@ -1641,6 +1736,7 @@ def _render_recent_evaluator_job_retest_dialog(
     set_config_value("project_id", project_id)
     set_config_value("catalog_id", final_catalog_id)
     set_config_value("suite_ids", selected_suite_ids)
+    set_config_value("workflow_kind", workflow_kind)
 
     st.session_state["recent_eval_jobs_flash"] = (
         f"Queued artifact retest for `{detail.get('title', job_id)}`. "
@@ -1775,6 +1871,37 @@ def _render_recent_evaluator_jobs_section(
             _fetch_recent_evaluator_job_pages.clear()
             _fetch_evaluator_job_detail.clear()
             st.rerun()
+
+    exact_cols = st.columns([3.4, 0.85, 0.85, 3.0])
+    with exact_cols[0]:
+        exact_job_input = st.text_input(
+            "Exact evaluator job",
+            value=st.session_state.get("recent_eval_jobs_exact_input", ""),
+            key="recent_eval_jobs_exact_input",
+            placeholder="Paste job ID or report URL",
+            help="Use this when the job is not in the recent list.",
+        ).strip()
+    exact_job_id = _extract_job_id_from_text(exact_job_input)
+    with exact_cols[1]:
+        if st.button("Download", key="recent_eval_jobs_exact_download", use_container_width=True):
+            if exact_job_id:
+                st.session_state["recent_eval_jobs_manual_run_selected"] = exact_job_id
+                _fetch_evaluator_job_detail.clear()
+                st.rerun()
+            else:
+                st.warning("Enter a job ID or evaluator report URL first.")
+    with exact_cols[2]:
+        if st.button("Retest", key="recent_eval_jobs_exact_retest", use_container_width=True):
+            if exact_job_id:
+                st.session_state["recent_eval_jobs_manual_retest_selected"] = exact_job_id
+                st.session_state.pop(_retest_suite_selection_key(exact_job_id), None)
+                _fetch_evaluator_job_detail.clear()
+                st.rerun()
+            else:
+                st.warning("Enter a job ID or evaluator report URL first.")
+    with exact_cols[3]:
+        if exact_job_id:
+            st.caption(f"Resolved job: `{exact_job_id}`")
 
     page_key = "recent_eval_jobs_page"
     if page_key not in st.session_state:
@@ -2091,4 +2218,88 @@ def _render_recent_evaluator_jobs_section(
                     )
                     st.markdown("</div>", unsafe_allow_html=True)
 
+    def _render_manual_job_dialogs() -> None:
+        manual_run_job_id = str(st.session_state.get("recent_eval_jobs_manual_run_selected") or "").strip()
+        if manual_run_job_id:
+            manual_job = {"job_id": manual_run_job_id, "title": manual_run_job_id}
+            if callable(getattr(st, "dialog", None)):
+                try:
+                    @st.dialog(f"Download + Eval + Parquet · {manual_run_job_id}", width="large")
+                    def _manual_recent_eval_run_dialog() -> None:
+                        _render_recent_evaluator_job_run_dialog(
+                            project_id,
+                            environment,
+                            manual_job,
+                            output_path_default=output_path_default,
+                            download_type_default=download_type_default,
+                            phase_default=phase_default,
+                            skip_large_file_default=skip_large_file_default,
+                            large_file_mb_default=large_file_mb_default,
+                            keep_zip_files_default=keep_zip_files_default,
+                        )
+
+                    _manual_recent_eval_run_dialog()
+                finally:
+                    if st.session_state.get("recent_eval_jobs_manual_run_selected") == manual_run_job_id:
+                        st.session_state.pop("recent_eval_jobs_manual_run_selected", None)
+            else:
+                st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
+                hdr_cols = st.columns([4.4, 1.1])
+                with hdr_cols[0]:
+                    st.subheader(f"Download + Eval + Parquet · {manual_run_job_id}")
+                with hdr_cols[1]:
+                    if st.button("Close", key="recent_eval_jobs_close_manual_run_fallback", use_container_width=True):
+                        st.session_state.pop("recent_eval_jobs_manual_run_selected", None)
+                        st.rerun()
+                _render_recent_evaluator_job_run_dialog(
+                    project_id,
+                    environment,
+                    manual_job,
+                    output_path_default=output_path_default,
+                    download_type_default=download_type_default,
+                    phase_default=phase_default,
+                    skip_large_file_default=skip_large_file_default,
+                    large_file_mb_default=large_file_mb_default,
+                    keep_zip_files_default=keep_zip_files_default,
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
+
+        manual_retest_job_id = str(st.session_state.get("recent_eval_jobs_manual_retest_selected") or "").strip()
+        if manual_retest_job_id:
+            manual_job = {"job_id": manual_retest_job_id, "title": manual_retest_job_id}
+            if callable(getattr(st, "dialog", None)):
+                try:
+                    @st.dialog(f"Artifact retest · {manual_retest_job_id}", width="large")
+                    def _manual_recent_eval_retest_dialog() -> None:
+                        _render_recent_evaluator_job_retest_dialog(
+                            project_id,
+                            environment,
+                            manual_job,
+                            output_path_default=output_path_default,
+                            phase_default=phase_default,
+                        )
+
+                    _manual_recent_eval_retest_dialog()
+                finally:
+                    if st.session_state.get("recent_eval_jobs_manual_retest_selected") == manual_retest_job_id:
+                        st.session_state.pop("recent_eval_jobs_manual_retest_selected", None)
+            else:
+                st.markdown('<div class="evj-detail">', unsafe_allow_html=True)
+                hdr_cols = st.columns([4.4, 1.1])
+                with hdr_cols[0]:
+                    st.subheader(f"Artifact retest · {manual_retest_job_id}")
+                with hdr_cols[1]:
+                    if st.button("Close", key="recent_eval_jobs_close_manual_retest_fallback", use_container_width=True):
+                        st.session_state.pop("recent_eval_jobs_manual_retest_selected", None)
+                        st.rerun()
+                _render_recent_evaluator_job_retest_dialog(
+                    project_id,
+                    environment,
+                    manual_job,
+                    output_path_default=output_path_default,
+                    phase_default=phase_default,
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    _render_manual_job_dialogs()
     _render_job_list()
