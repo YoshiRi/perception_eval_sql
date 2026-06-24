@@ -14,6 +14,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from pathlib import Path
 from urllib.parse import quote
 
@@ -399,71 +400,101 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
 
     x_title = timeline_df["timeline_label"].iloc[0]
     result_colors = {"TP": "#2ca25f", "FN": "#de2d26", "Not evaluated": "#9aa4b2"}
-    fig_events = px.scatter(
-        timeline_df,
-        x="timeline_x",
-        y="traffic_light_type",
-        color="detection_result",
-        symbol="status",
-        color_discrete_map=result_colors,
-        hover_data={
-            "frame_index": True,
-            "frame_name": True,
-            "criteria": True,
-            "status": True,
-            "tp": True,
-            "fn": True,
-            "timeline_x": ":.3f",
-        },
-        title="Frame-by-frame detection result",
-    )
-    fig_events.update_traces(marker={"size": 7, "opacity": 0.82})
-    fig_events.update_layout(height=430, xaxis_title=x_title, yaxis_title="Traffic light type")
-    st.plotly_chart(fig_events, width="stretch")
+    status_symbols = {"Driving": "circle", "Turning": "diamond", "No Move": "square"}
+    type_order = sorted(timeline_df["traffic_light_type"].fillna("unknown").astype(str).unique().tolist())
+    type_positions = {value: i for i, value in enumerate(type_order)}
+    timeline_df["tlr_type_pos"] = timeline_df["traffic_light_type"].fillna("unknown").astype(str).map(type_positions)
+    fig_combined = make_subplots(specs=[[{"secondary_y": True}]])
+    for result_name in ["TP", "FN", "Not evaluated"]:
+        result_rows = timeline_df[timeline_df["detection_result"] == result_name]
+        if result_rows.empty:
+            continue
+        for status_name in sorted(result_rows["status"].fillna("unknown").astype(str).unique().tolist()):
+            rows = result_rows[result_rows["status"].fillna("unknown").astype(str) == status_name]
+            fig_combined.add_trace(
+                go.Scatter(
+                    x=rows["timeline_x"],
+                    y=rows["tlr_type_pos"],
+                    name=f"{result_name} · {status_name}",
+                    mode="markers",
+                    marker={
+                        "color": result_colors.get(result_name, "#9aa4b2"),
+                        "symbol": status_symbols.get(status_name, "circle-open"),
+                        "size": 7,
+                        "opacity": 0.78,
+                    },
+                    customdata=np.stack(
+                        [
+                            rows["frame_index"],
+                            rows["frame_name"].fillna(""),
+                            rows["criteria"].fillna(""),
+                            rows["traffic_light_type"].fillna("unknown"),
+                            rows["tp"].fillna(""),
+                            rows["fn"].fillna(""),
+                        ],
+                        axis=-1,
+                    ),
+                    hovertemplate=(
+                        f"{x_title}: %{{x:.3f}}<br>"
+                        "Traffic light: %{customdata[3]}<br>"
+                        "Frame: %{customdata[0]} · %{customdata[1]}<br>"
+                        "Criteria: %{customdata[2]}<br>"
+                        f"Result: {result_name}<br>"
+                        f"Status: {status_name}<br>"
+                        "TP: %{customdata[4]}<br>"
+                        "FN: %{customdata[5]}<extra></extra>"
+                    ),
+                    legendgroup=f"{result_name}:{status_name}",
+                ),
+                secondary_y=False,
+            )
 
     rate_df = timeline_df[timeline_df["_evaluable"]].copy()
     if not rate_df.empty:
-        fig_rate = go.Figure()
-        fig_rate.add_trace(
+        fig_combined.add_trace(
             go.Scatter(
                 x=rate_df["timeline_x"],
                 y=rate_df["rolling_tp_rate"],
                 name="Rolling TP rate (50 frames)",
                 mode="lines",
                 line={"color": "#2563eb", "width": 3},
-            )
+                hovertemplate=f"{x_title}: %{{x:.3f}}<br>Rolling TP rate: %{{y:.1%}}<extra></extra>",
+            ),
+            secondary_y=True,
         )
-        fig_rate.add_trace(
+        fig_combined.add_trace(
             go.Scatter(
                 x=rate_df["timeline_x"],
                 y=rate_df["cumulative_tp_rate"],
                 name="Cumulative TP rate",
                 mode="lines",
                 line={"color": "#111827", "width": 2, "dash": "dash"},
-            )
+                hovertemplate=f"{x_title}: %{{x:.3f}}<br>Cumulative TP rate: %{{y:.1%}}<extra></extra>",
+            ),
+            secondary_y=True,
         )
-        fn_rows = rate_df[rate_df["detection_result"] == "FN"]
-        if not fn_rows.empty:
-            fig_rate.add_trace(
-                go.Scatter(
-                    x=fn_rows["timeline_x"],
-                    y=[0.02] * len(fn_rows),
-                    name="FN frame",
-                    mode="markers",
-                    marker={"color": "#de2d26", "size": 7, "symbol": "x"},
-                    hovertext=fn_rows["frame_name"],
-                    hoverinfo="x+text+name",
-                )
-            )
-        fig_rate.update_layout(
-            title="Detection quality over time",
-            height=360,
-            xaxis_title=x_title,
-            yaxis_title="TP rate",
-            yaxis_range=[0, 1.05],
-            yaxis_tickformat=".0%",
-        )
-        st.plotly_chart(fig_rate, width="stretch")
+    fig_combined.update_layout(
+        title="Detection result and quality over time",
+        height=520,
+        xaxis_title=x_title,
+        legend_title_text="Result · status",
+        hovermode="closest",
+    )
+    fig_combined.update_yaxes(
+        title_text="Traffic light type",
+        tickmode="array",
+        tickvals=list(range(len(type_order))),
+        ticktext=type_order,
+        secondary_y=False,
+    )
+    fig_combined.update_yaxes(
+        title_text="TP rate",
+        range=[0, 1.05],
+        tickformat=".0%",
+        secondary_y=True,
+        showgrid=False,
+    )
+    st.plotly_chart(fig_combined, width="stretch")
 
     with st.expander("Timeline frame rows", expanded=False):
         cols = [

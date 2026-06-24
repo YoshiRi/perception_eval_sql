@@ -1641,6 +1641,18 @@ def _coerce_specsheet_scene_numeric_columns(df):
     return df
 
 
+def _coerce_analyzer_evaluation_type(evaluation_type: str):
+    """Normalize analyzer evaluation type strings for versions that expect enums."""
+    if hasattr(evaluation_type, "value"):
+        return evaluation_type
+    try:
+        from perception_catalog_analyzer.specsheet.blocks import EvaluationType
+
+        return EvaluationType(evaluation_type)
+    except Exception:
+        return evaluation_type
+
+
 def _get_blocks_compat(
     get_blocks_func: Callable[..., tuple[Sequence[str], Sequence[str]]],
     *,
@@ -1660,6 +1672,7 @@ def _get_blocks_compat(
     except Exception:
         pass
 
+    analyzer_evaluation_type = _coerce_analyzer_evaluation_type(evaluation_type)
     semantic_kwargs = {
         "df": df,
         "labels": list(labels),
@@ -1671,7 +1684,7 @@ def _get_blocks_compat(
         "topic": topic_name,
         "path": outdir,
         "outdir": outdir,
-        "evaluation_type": evaluation_type,
+        "evaluation_type": analyzer_evaluation_type,
     }
     try:
         parameters = inspect.signature(get_blocks_func).parameters
