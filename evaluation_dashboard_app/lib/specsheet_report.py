@@ -1398,6 +1398,14 @@ def _devops_trend_rows_for_template(devops_trend_data: Sequence[dict[str, Any]])
     return rows
 
 
+def _recall_ratio_to_percent(value: Any) -> float:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return float("nan")
+    numeric = float(numeric)
+    return numeric * 100.0 if -1.0 <= numeric <= 1.0 else numeric
+
+
 def _build_trend_context(
     metadata_list: Sequence[Path],
     output_dir: Path,
@@ -1455,7 +1463,7 @@ def _build_trend_context(
 
     devops_trend_data = load_devops_trend_data(list(metadata_list))
     recall_by_version = {
-        str(row.get("version") or ""): row.get("recall")
+        str(row.get("version") or ""): _recall_ratio_to_percent(row.get("recall"))
         for row in performance_trend_data
         if str(row.get("version") or "")
     }

@@ -1378,6 +1378,7 @@ def _build_release_analysis_artifacts(
     run_eval: bool = False,
     skip_large_file: bool = _RELEASE_SKIP_LARGE_FILE,
     large_file_mb: float = _RELEASE_LARGE_FILE_MB,
+    force_redownload: bool = False,
     progress_start: float = 48.0,
     progress_end: float = 78.0,
 ) -> Dict[str, Any]:
@@ -1386,6 +1387,12 @@ def _build_release_analysis_artifacts(
 
     eval_summary = _import_eval_summary()
     pkl_archive_to_parquet = _import_catalog_io()
+    if force_redownload:
+        if not job_id:
+            raise RuntimeError(f"{role}: force redownload requested but no evaluator job id is available.")
+        if output_path.exists():
+            append_task_log(task_id, f"{role}: clearing existing artifacts before redownload: {output_path}")
+            shutil.rmtree(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
     result: Dict[str, Any] = {
         "path": str(output_path),
@@ -1419,7 +1426,7 @@ def _build_release_analysis_artifacts(
         result["warnings"].append(msg)
         append_task_log(task_id, f"WARNING: {role}: {msg}")
 
-    if existing_parquet or _has_release_download_artifacts(output_path):
+    if not force_redownload and (existing_parquet or _has_release_download_artifacts(output_path)):
         append_task_log(task_id, f"{role}: using existing downloaded artifacts in {output_path}")
         update_task_progress(task_id, message=f"{role}: using existing downloaded artifacts", pct=download_end)
         failure_count = 0
@@ -1648,6 +1655,11 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                     "job_id": str(parameters.get("optional_job_id") or "").strip(),
                 }
             )
+        force_redownload_roles = {
+            str(role).strip()
+            for role in (parameters.get("force_redownload_roles") or [])
+            if str(role).strip()
+        }
         summary: Dict[str, Any] = {
             "job": "run_release_specsheet_workflow",
             "release_root": str(release_root),
@@ -1665,11 +1677,19 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             item["description"] = schedule_description
             role = str(item["role"])
             local_path = role_paths[role]
-            local_ready = _find_release_parquet(local_path) is not None or _has_release_download_artifacts(local_path)
+            force_redownload = role in force_redownload_roles
+            local_ready = (
+                not force_redownload
+                and (_find_release_parquet(local_path) is not None or _has_release_download_artifacts(local_path))
+            )
+            item["force_redownload"] = force_redownload
             item["local_artifacts_ready"] = local_ready
             job_id = str(item.get("job_id") or "").strip()
             if job_id:
-                append_task_log(task_id, f"Using existing {item['label']}: {job_id}")
+                if force_redownload:
+                    append_task_log(task_id, f"Redownloading {item['label']} from existing job: {job_id}")
+                else:
+                    append_task_log(task_id, f"Using existing {item['label']}: {job_id}")
                 status = "existing"
             elif local_ready:
                 append_task_log(task_id, f"Using existing local artifacts for {item['label']}: {local_path}")
@@ -1771,6 +1791,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
                 run_eval=bool(parameters.get("run_eval", False)),
                 skip_large_file=skip_large_file,
                 large_file_mb=large_file_mb,
+                force_redownload=bool(item.get("force_redownload", False)),
                 progress_start=48 + (artifact_span * artifact_idx),
                 progress_end=48 + (artifact_span * (artifact_idx + 1)),
             )

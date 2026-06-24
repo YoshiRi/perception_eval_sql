@@ -420,30 +420,110 @@ def _looks_like_release_trend_metadata_text(text: str) -> bool:
     )
 
 
-def _load_existing_release_metadata_text(output_path: str) -> tuple[str, str]:
-    """Return existing release metadata YAML for an output folder, if present."""
+def _release_target_from_metadata(metadata: dict) -> str:
+    for key in ("target_name", "target", "git_ref"):
+        value = str(metadata.get(key) or "").strip()
+        if not value:
+            continue
+        for prefix in ("refs/heads/", "refs/tags/"):
+            if value.startswith(prefix):
+                return value[len(prefix):]
+        return value
+    return ""
+
+
+def _load_existing_release_context(output_path: str) -> dict[str, object]:
+    """Return existing release metadata/job context for an output folder, if present."""
+    context: dict[str, object] = {
+        "metadata_text": "",
+        "metadata_source": "",
+        "target_name": "",
+        "job_ids": {},
+    }
     if not str(output_path or "").strip():
-        return "", ""
+        return context
     resolved_output, path_error = resolve_under_data_root(output_path, allow_missing=True)
     if path_error or resolved_output is None:
-        return "", ""
+        return context
+
+    run_metadata = read_run_metadata(resolved_output)
+    request_meta = run_metadata.get("request") if isinstance(run_metadata.get("request"), dict) else {}
+    parameter_meta = request_meta.get("parameters") if isinstance(request_meta.get("parameters"), dict) else {}
+    release_specsheet = (
+        run_metadata.get("release_specsheet")
+        if isinstance(run_metadata.get("release_specsheet"), dict)
+        else {}
+    )
+    evaluator_jobs = (
+        release_specsheet.get("evaluator_jobs")
+        if isinstance(release_specsheet.get("evaluator_jobs"), dict)
+        else {}
+    )
+    target_name = str(
+        parameter_meta.get("target_name")
+        or request_meta.get("target_name")
+        or release_specsheet.get("target_name")
+        or ""
+    ).strip()
+    job_ids: dict[str, str] = {}
+    for role in ("performance", "devops", "planning_test"):
+        role_meta = evaluator_jobs.get(role) if isinstance(evaluator_jobs.get(role), dict) else {}
+        job_id = str(
+            role_meta.get("job_id")
+            or parameter_meta.get(f"{role}_job_id")
+            or request_meta.get(f"{role}_job_id")
+            or ""
+        ).strip()
+        if job_id:
+            job_ids[role] = job_id
+
     candidates = [
-        resolved_output / "metadata.yaml",
-        resolved_output / "performance" / "resources" / "metadata.yaml",
-        resolved_output / "devops" / "resources" / "metadata.yaml",
-        resolved_output / "performance" / "metadata.yaml",
-        resolved_output / "devops" / "metadata.yaml",
+        ("", resolved_output / "metadata.yaml"),
+        ("performance", resolved_output / "performance" / "resources" / "metadata.yaml"),
+        ("devops", resolved_output / "devops" / "resources" / "metadata.yaml"),
+        ("performance", resolved_output / "performance" / "metadata.yaml"),
+        ("devops", resolved_output / "devops" / "metadata.yaml"),
     ]
-    for candidate in candidates:
+    for role, candidate in candidates:
         if not candidate.exists() or not candidate.is_file():
             continue
         try:
             text = candidate.read_text(encoding="utf-8")
+            metadata = yaml.safe_load(text or "") or {}
         except Exception:
             continue
         if _looks_like_release_trend_metadata_text(text):
-            return text, str(candidate)
-    return "", ""
+            if not context["metadata_text"]:
+                context["metadata_text"] = text
+                context["metadata_source"] = str(candidate)
+            if not target_name and isinstance(metadata, dict):
+                target_name = _release_target_from_metadata(metadata)
+            if role and isinstance(metadata, dict):
+                job_id = str(metadata.get("job_id") or "").strip()
+                if job_id:
+                    job_ids.setdefault(role, job_id)
+    context["target_name"] = target_name
+    context["job_ids"] = job_ids
+    return context
+
+
+def _load_existing_release_metadata_text(output_path: str) -> tuple[str, str]:
+    context = _load_existing_release_context(output_path)
+    return str(context.get("metadata_text") or ""), str(context.get("metadata_source") or "")
+
+
+def _release_role_has_local_artifacts(output_path: str, role: str) -> bool:
+    resolved_output, path_error = resolve_under_data_root(output_path, allow_missing=True)
+    if path_error or resolved_output is None:
+        return False
+    role_path = resolved_output / role
+    if not role_path.exists():
+        return False
+    if (role_path / "current.parquet").exists():
+        return True
+    if any(role_path.glob("*.parquet")):
+        return True
+    return any(role_path.rglob("scene_result.pkl")) or any(role_path.rglob("*.pkl.z"))
 
 
 def _extract_release_metadata_topic(text: str) -> str:
@@ -2002,7 +2082,7 @@ def _render_start_workflow_form(
             st.session_state["workflow_max_wait_hours"] = _DEFAULT_MAX_WAIT_HOURS
     st.session_state["workflow_previous_release_mode"] = release_mode
 
-    top_cols = st.columns([1.0, 1.2] if release_mode else [1.0, 1.9, 1.2])
+    top_cols = st.columns([1.0, 1.8] if release_mode else [1.0, 1.9, 1.2])
     with top_cols[0]:
         st.markdown('<div class="wf-toolbar-note">Project</div>', unsafe_allow_html=True)
         project_id = st.text_input(
@@ -2014,7 +2094,25 @@ def _render_start_workflow_form(
     if release_mode:
         selected_catalog_name = ""
         fetch_catalogs_clicked = False
+        with top_cols[1]:
+            st.markdown('<div class="wf-toolbar-note">Release output folder</div>', unsafe_allow_html=True)
+            output_path = st.text_input(
+                "Release output folder",
+                value=default_output,
+                key="workflow_output_path",
+                label_visibility="collapsed",
+                placeholder=_make_default_output_path(default_target),
+                help="Folder under data/. Existing release folders can hydrate metadata and recorded job IDs.",
+            ).strip()
+        existing_release_context = _load_existing_release_context(output_path)
+        context_output_key = "workflow_release_context_output_path"
+        if st.session_state.get(context_output_key) != output_path:
+            loaded_target = str(existing_release_context.get("target_name") or "").strip()
+            if loaded_target:
+                st.session_state["workflow_target_name"] = loaded_target
+            st.session_state[context_output_key] = output_path
     else:
+        existing_release_context = {}
         with top_cols[1]:
             st.markdown('<div class="wf-toolbar-note">Catalog</div>', unsafe_allow_html=True)
             catalog_picker_cols = st.columns([4.2, 1.1], gap="small")
@@ -2081,7 +2179,9 @@ def _render_start_workflow_form(
     elif st.session_state["workflow_last_catalog_selection"] != selected_catalog_name:
         st.session_state["workflow_catalog_resolution_error"] = ""
         st.session_state["workflow_last_catalog_selection"] = selected_catalog_name
-    with top_cols[1 if release_mode else 2]:
+    release_detail_cols = st.columns([1.2, 1.75]) if release_mode else []
+    target_col = release_detail_cols[0] if release_mode else top_cols[2]
+    with target_col:
         st.markdown('<div class="wf-toolbar-note">Branch or tag</div>', unsafe_allow_html=True)
         target_name = st.text_input(
             "Branch or Tag",
@@ -2113,23 +2213,17 @@ def _render_start_workflow_form(
     catalog_id = str(st.session_state.get("workflow_catalog_id") or "").strip()
 
     picker_cols = st.columns([1.2, 1.75] if release_mode or workflow_kind == _WORKFLOW_KIND_TLR else [1.2, 1.2, 1.75])
-    with picker_cols[0]:
-        st.markdown(
-            f'<div class="wf-toolbar-note">{"Release output folder" if release_mode else "Output folder"}</div>',
-            unsafe_allow_html=True,
-        )
-        output_path = st.text_input(
-            "Release output folder" if release_mode else "Output folder",
-            value=default_output,
-            key="workflow_output_path",
-            label_visibility="collapsed",
-            placeholder=_make_default_output_path(target_name),
-            help=(
-                "Folder under data/. Release mode creates metadata.yaml, performance/, devops/, and specsheet/ in this single folder."
-                if release_mode
-                else "Output folder under the data directory."
-            ),
-        ).strip()
+    if not release_mode:
+        with picker_cols[0]:
+            st.markdown('<div class="wf-toolbar-note">Output folder</div>', unsafe_allow_html=True)
+            output_path = st.text_input(
+                "Output folder",
+                value=default_output,
+                key="workflow_output_path",
+                label_visibility="collapsed",
+                placeholder=_make_default_output_path(target_name),
+                help="Output folder under the data directory.",
+            ).strip()
     if release_mode:
         phase = _DEFAULT_PERCEPTION_PHASE
     elif workflow_kind == _WORKFLOW_KIND_TLR:
@@ -2143,7 +2237,8 @@ def _render_start_workflow_form(
                 key="workflow_phase",
                 label_visibility="collapsed",
             )
-    with picker_cols[1 if release_mode or workflow_kind == _WORKFLOW_KIND_TLR else 2]:
+    description_col = release_detail_cols[1] if release_mode else picker_cols[1 if workflow_kind == _WORKFLOW_KIND_TLR else 2]
+    with description_col:
         st.markdown('<div class="wf-toolbar-note">Description</div>', unsafe_allow_html=True)
         description = st.text_input(
             "Description",
@@ -2159,7 +2254,8 @@ def _render_start_workflow_form(
         metadata_output_key = "workflow_release_metadata_output_path"
         metadata_source_key = "workflow_release_metadata_source_path"
         metadata_text_key = "workflow_release_metadata_text"
-        existing_metadata_text, existing_metadata_source = _load_existing_release_metadata_text(output_path)
+        existing_metadata_text = str(existing_release_context.get("metadata_text") or "")
+        existing_metadata_source = str(existing_release_context.get("metadata_source") or "")
         if (
             st.session_state.get(metadata_output_key) != output_path
             or metadata_text_key not in st.session_state
@@ -2279,12 +2375,46 @@ def _render_start_workflow_form(
             ).strip()
         else:
             optional_job_id = ""
+
+        recorded_job_ids = (
+            existing_release_context.get("job_ids")
+            if isinstance(existing_release_context.get("job_ids"), dict)
+            else {}
+        )
+        force_redownload_roles: list[str] = []
+
+        def _render_redownload_option(role: str, label: str, entered_job_id: str) -> None:
+            recorded_job_id = str(recorded_job_ids.get(role) or "").strip()
+            if (
+                not entered_job_id
+                or not recorded_job_id
+                or entered_job_id == recorded_job_id
+                or not _release_role_has_local_artifacts(output_path, role)
+            ):
+                return
+            st.warning(
+                f"{label} job ID differs from the local folder record. "
+                f"Recorded: `{recorded_job_id}` / entered: `{entered_job_id}`."
+            )
+            if st.checkbox(
+                f"Clear existing {label} artifacts and download from entered job ID",
+                value=False,
+                key=f"workflow_release_force_redownload_{role}",
+                help="Only this role subfolder will be cleared. Leave unchecked to keep using local artifacts.",
+            ):
+                force_redownload_roles.append(role)
+
+        _render_redownload_option("performance", "Performance", performance_job_id)
+        _render_redownload_option("devops", "DevOps", devops_job_id)
+        if optional_catalog_enabled:
+            _render_redownload_option("planning_test", "Planning Test", optional_job_id)
     else:
         performance_job_id = ""
         devops_job_id = ""
         optional_catalog_enabled = False
         optional_job_id = ""
         metadata_error = ""
+        force_redownload_roles = []
 
     confirm_cols = st.columns([1.0, 1.0, 1.0] if release_mode and optional_catalog_enabled else [1.0, 1.0])
     with confirm_cols[0]:
@@ -2536,6 +2666,7 @@ def _render_start_workflow_form(
             "optional_catalog_enabled": bool(optional_catalog_enabled) if release_mode else False,
             "optional_catalog_id": _RELEASE_OPTIONAL_CATALOG_ID if release_mode and optional_catalog_enabled else "",
             "optional_job_id": optional_job_id if release_mode and optional_catalog_enabled else "",
+            "force_redownload_roles": force_redownload_roles if release_mode else [],
         },
     }
 
@@ -2662,6 +2793,7 @@ def _render_workflow_launcher_section(
                             "optional_catalog_enabled": bool(dialog_payload.get("optional_catalog_enabled", False)),
                             "optional_catalog_id": dialog_payload.get("optional_catalog_id", ""),
                             "optional_job_id": dialog_payload.get("optional_job_id", ""),
+                            "force_redownload_roles": list(dialog_payload.get("force_redownload_roles") or []),
                             "analysis_phase": "perception.object_recognition.tracking.objects",
                             "skip_large_file": _RELEASE_SKIP_LARGE_FILE,
                             "large_file_mb": _RELEASE_LARGE_FILE_MB,
