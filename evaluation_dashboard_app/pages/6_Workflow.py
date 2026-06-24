@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 
 import streamlit as st
 import requests
+import yaml
 
 from lib.db import (
     count_recent_tasks,
@@ -398,6 +399,51 @@ def _make_default_release_metadata_text(target_name: str) -> str:
         f"date: {date}\n"
         f"topic_name: {DEFAULT_TREND_TOPIC}\n"
     )
+
+
+def _looks_like_release_trend_metadata_text(text: str) -> bool:
+    try:
+        data = yaml.safe_load(text or "")
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    tags = data.get("tags")
+    if isinstance(tags, str):
+        tags = [tags]
+    if not isinstance(tags, list) or not any(str(tag).strip() == "trend" for tag in tags):
+        return False
+    return bool(
+        str(data.get("pilot_auto_version") or "").strip()
+        and str(data.get("data_count") or "").strip()
+        and str(data.get("date") or "").strip()
+    )
+
+
+def _load_existing_release_metadata_text(output_path: str) -> tuple[str, str]:
+    """Return existing release metadata YAML for an output folder, if present."""
+    if not str(output_path or "").strip():
+        return "", ""
+    resolved_output, path_error = resolve_under_data_root(output_path, allow_missing=True)
+    if path_error or resolved_output is None:
+        return "", ""
+    candidates = [
+        resolved_output / "metadata.yaml",
+        resolved_output / "performance" / "resources" / "metadata.yaml",
+        resolved_output / "devops" / "resources" / "metadata.yaml",
+        resolved_output / "performance" / "metadata.yaml",
+        resolved_output / "devops" / "metadata.yaml",
+    ]
+    for candidate in candidates:
+        if not candidate.exists() or not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if _looks_like_release_trend_metadata_text(text):
+            return text, str(candidate)
+    return "", ""
 
 
 def _extract_release_metadata_topic(text: str) -> str:
@@ -2110,13 +2156,29 @@ def _render_start_workflow_form(
     trend_metadata: Dict[str, object] = {}
     if release_mode:
         metadata_default_key = "workflow_release_metadata_default_target"
+        metadata_output_key = "workflow_release_metadata_output_path"
+        metadata_source_key = "workflow_release_metadata_source_path"
         metadata_text_key = "workflow_release_metadata_text"
+        existing_metadata_text, existing_metadata_source = _load_existing_release_metadata_text(output_path)
         if (
-            st.session_state.get(metadata_default_key) != target_name
+            st.session_state.get(metadata_output_key) != output_path
             or metadata_text_key not in st.session_state
+        ):
+            st.session_state[metadata_text_key] = existing_metadata_text or _make_default_release_metadata_text(target_name)
+            st.session_state[metadata_default_key] = target_name
+            st.session_state[metadata_output_key] = output_path
+            st.session_state[metadata_source_key] = existing_metadata_source
+        elif (
+            not existing_metadata_text
+            and st.session_state.get(metadata_default_key) != target_name
+            and st.session_state.get(metadata_source_key) == ""
         ):
             st.session_state[metadata_text_key] = _make_default_release_metadata_text(target_name)
             st.session_state[metadata_default_key] = target_name
+
+        metadata_source_path = str(st.session_state.get(metadata_source_key) or "")
+        if metadata_source_path:
+            st.caption(f"Loaded release metadata from `{metadata_source_path}`")
 
         current_metadata_text = str(st.session_state.get(metadata_text_key) or "")
         trend_topic_from_metadata = _extract_release_metadata_topic(current_metadata_text)
@@ -2510,6 +2572,10 @@ def _render_workflow_launcher_section(
         st.session_state["workflow_release_devops_job_id"] = ""
         st.session_state["workflow_release_trend_topic_label"] = "Prediction / object recognition"
         st.session_state["workflow_release_custom_trend_topic"] = ""
+        st.session_state.pop("workflow_release_metadata_default_target", None)
+        st.session_state.pop("workflow_release_metadata_output_path", None)
+        st.session_state.pop("workflow_release_metadata_source_path", None)
+        st.session_state.pop("workflow_release_metadata_text", None)
         if bool(st.session_state.get("workflow_release_mode", False)):
             st.session_state["workflow_run_eval"] = False
         else:

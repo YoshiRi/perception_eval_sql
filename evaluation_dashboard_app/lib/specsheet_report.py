@@ -418,7 +418,11 @@ def write_trend_metadata(run_dir: str | Path, metadata: dict[str, Any]) -> Path:
     return metadata_path
 
 
-def discover_trend_metadata_files(root_dir: str | Path | None = None) -> list[Path]:
+def discover_trend_metadata_files(
+    root_dir: str | Path | None = None,
+    *,
+    include_release_specs: bool = False,
+) -> list[Path]:
     base_dir = Path(root_dir) if root_dir is not None else get_data_root()
     if not base_dir.exists():
         return []
@@ -429,7 +433,10 @@ def discover_trend_metadata_files(root_dir: str | Path | None = None) -> list[Pa
             continue
         if GENERATED_TREND_HISTORY_DIRNAME in metadata_path.parts:
             continue
-        if any(part.startswith("release_spec_") for part in metadata_path.parts):
+        in_release_spec = any(part.startswith("release_spec_") for part in metadata_path.parts)
+        if not include_release_specs and in_release_spec:
+            continue
+        if include_release_specs and in_release_spec and metadata_path.parent.name != "resources":
             continue
         if not (metadata_path.parent / TREND_SUMMARY_FILENAME).exists():
             continue
@@ -736,7 +743,7 @@ def _job_id_from_matching_release_run_metadata(root_dir: str | Path | None, targ
 
 
 def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[TrendReleaseGroup]:
-    metadata_files = discover_trend_metadata_files(root_dir)
+    metadata_files = discover_trend_metadata_files(root_dir, include_release_specs=True)
     grouped: dict[str, TrendReleaseGroup] = {}
     standalone_records: list[dict[str, Any]] = []
 
@@ -1911,20 +1918,20 @@ def generate_specsheet_pdf(
                 for metadata_path in trend_metadata_paths
                 if Path(metadata_path).exists()
             ]
-            metadata_list.append(paths["trend_metadata"])
-            if release_context is not None:
-                roles = release_context.get("roles", {})
-                if isinstance(roles, dict):
-                    for role_info in roles.values():
-                        if not isinstance(role_info, dict):
-                            continue
-                        metadata_path = role_info.get("metadata")
-                        if isinstance(metadata_path, Path) and metadata_path.exists():
-                            metadata_list.append(metadata_path)
-            metadata_list = sorted(
-                dict.fromkeys(path.resolve() for path in metadata_list),
-                key=lambda path: str(path),
-            )
+        metadata_list.append(paths["trend_metadata"])
+        if release_context is not None:
+            roles = release_context.get("roles", {})
+            if isinstance(roles, dict):
+                for role_info in roles.values():
+                    if not isinstance(role_info, dict):
+                        continue
+                    metadata_path = role_info.get("metadata")
+                    if isinstance(metadata_path, Path) and metadata_path.exists():
+                        metadata_list.append(metadata_path)
+        metadata_list = sorted(
+            dict.fromkeys(path.resolve() for path in metadata_list if path.exists()),
+            key=lambda path: str(path),
+        )
         current_devops_summary_path = None
         if release_context is not None:
             roles = release_context.get("roles", {})
