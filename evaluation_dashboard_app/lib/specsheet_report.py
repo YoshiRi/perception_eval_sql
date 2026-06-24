@@ -485,6 +485,11 @@ def classify_trend_summary(summary: dict[str, Any]) -> str:
 def _unwrap_devops_summary(summary: dict[str, Any]) -> dict[str, Any]:
     devops = summary.get("DevOps") if isinstance(summary, dict) else None
     if isinstance(devops, dict):
+        suite_pass_rate = devops.get("Suite pass rate")
+        if isinstance(suite_pass_rate, dict):
+            categorized = _category_summary_from_suite_pass_rate(suite_pass_rate)
+            if categorized:
+                return categorized
         return devops
     return summary
 
@@ -588,6 +593,42 @@ def _fallback_category_for_usecase_devops_suite(suite_name: str) -> tuple[str, s
     label = re.sub(r"^DevOps_V\d+_", "", suite_name)
     label = re.sub(r"_perception_fp$", "", label).replace("_", " ")
     return major, "未分類", label
+
+
+def _category_summary_from_suite_pass_rate(
+    suite_results: dict[str, Any],
+) -> dict[str, dict[str, dict[str, dict[str, int]]]]:
+    categorized: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
+    matched_suites: set[str] = set()
+    for major, mids in _USECASE_DEVOPS_CATEGORY_MAPPING.items():
+        for mid, minors in mids.items():
+            for minor, suite_names in minors.items():
+                passed = 0
+                total = 0
+                matched = False
+                for suite_name in suite_names:
+                    result = suite_results.get(str(suite_name))
+                    if not isinstance(result, dict):
+                        continue
+                    matched = True
+                    matched_suites.add(str(suite_name))
+                    passed += int(result.get("passed", 0) or 0)
+                    total += int(result.get("total", 0) or 0)
+                if matched:
+                    categorized.setdefault(major, {}).setdefault(mid, {})[minor] = {
+                        "passed": passed,
+                        "total": total,
+                    }
+
+    for suite_name, result in suite_results.items():
+        if str(suite_name) in matched_suites or not isinstance(result, dict):
+            continue
+        major, mid, minor = _fallback_category_for_usecase_devops_suite(str(suite_name))
+        categorized.setdefault(major, {}).setdefault(mid, {})[minor] = {
+            "passed": int(result.get("passed", 0) or 0),
+            "total": int(result.get("total", 0) or 0),
+        }
+    return categorized
 
 
 def _aggregate_usecase_devops_frame(frame: pd.DataFrame) -> dict[str, dict[str, dict[str, dict[str, int]]]]:

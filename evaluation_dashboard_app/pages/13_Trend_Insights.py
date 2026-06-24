@@ -1352,7 +1352,7 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
 
     for group in groups:
         primary_metadata = _select_primary_metadata(group)
-        version = str(primary_metadata.get("pilot_auto_version") or "")
+        version = str(primary_metadata.get("version_abbr") or primary_metadata.get("pilot_auto_version") or "")
         date = str(primary_metadata.get("date") or "")
         description = str(primary_metadata.get("description") or "")
         data_count = str(primary_metadata.get("data_count") or "")
