@@ -248,7 +248,7 @@ def _pdf_links_for_prefix(release: dict[str, Any], prefix: str) -> str:
             if topic.startswith("perception.object_recognition.detection."):
                 label = topic.replace("perception.object_recognition.detection.", "").replace(".objects", "")
                 label = label.replace("bevfusion", "BEVFusion").replace("centerpoint", "CenterPoint")
-            links.append(_html_link(str(pdf.get("static_url") or ""), label, "pdf"))
+            links.append(_html_link(str(pdf.get("static_url") or pdf.get("link_url") or ""), label, "pdf"))
     return '<span class="link-chip-row">' + "".join(links) + "</span>" if links else '<span class="muted-cell">-</span>'
 
 
@@ -266,8 +266,9 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
         ("Overview", 3),
         ("Specsheet PDF", 2),
         ("Evaluator Job", 3),
+        ("Folder", 1),
     ]
-    col_widths = [360, 96, 240, 92, 96, 96, 96, 128, 168, 96, 96, 96]
+    col_widths = [220, 96, 280, 92, 96, 96, 96, 128, 168, 96, 96, 96, 200]
     headers = [
         "Version",
         "Date",
@@ -281,11 +282,13 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
         "Performance",
         "Usecase",
         "DevOps",
+        "Folder",
     ]
-    sort_types = ["text", "date", "text", "number", "text", "text", "text", "text", "text", "text", "text", "text"]
-    sortable_columns = {0, 1, 2, 3}
+    sort_types = ["text", "date", "text", "number", "text", "text", "text", "text", "text", "text", "text", "text", "text"]
+    sortable_columns = {0, 1, 2, 3, 12}
     rows_html = []
     for release in releases:
+        folder_name = str(release.get("release") or "")
         sort_values = [
             str(release.get("version") or ""),
             str(_date_sort_value(release.get("date"))),
@@ -299,6 +302,7 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
             "report" if _role_evaluator_url(release, "performance") else "",
             "report" if _role_evaluator_url(release, "usecase") else "",
             "report" if _role_evaluator_url(release, "devops") else "",
+            folder_name,
         ]
         cells = [
             escape(str(release.get("version") or "")),
@@ -313,6 +317,7 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
             _html_link(_role_evaluator_url(release, "performance"), "Report", "job"),
             _html_link(_role_evaluator_url(release, "usecase"), "Report", "job"),
             _html_link(_role_evaluator_url(release, "devops"), "Report", "job"),
+            f'<span class="folder-cell" title="{escape(folder_name, quote=True)}">{escape(folder_name)}</span>',
         ]
         rows_html.append(
             "<tr>"
@@ -354,7 +359,7 @@ body {{
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
-  min-width: 1660px;
+  min-width: 1900px;
   width: 100%;
   font-size: 0.88rem;
 }}
@@ -366,6 +371,7 @@ body {{
   vertical-align: middle;
   line-height: 1.22;
   white-space: nowrap;
+  overflow: hidden;
 }}
 .release-library-table th {{
   background: #f8fafc;
@@ -430,25 +436,27 @@ body {{
 }}
 .release-library-table td:nth-child(3) {{
   color: #475569;
-  overflow: hidden;
   text-overflow: ellipsis;
 }}
 .release-library-table td:nth-child(2),
 .release-library-table td:nth-child(4) {{
   color: #475569;
 }}
-.release-library-table td:nth-child(n+5) {{
+.release-library-table td:nth-child(n+5):not(:last-child) {{
   text-align: center;
 }}
-.release-library-table td:nth-child(5),
-.release-library-table td:nth-child(6),
-.release-library-table td:nth-child(7),
-.release-library-table td:nth-child(10),
-.release-library-table td:nth-child(11),
-.release-library-table td:nth-child(12) {{
+.release-library-table td:last-child {{
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
 }}
-.release-library-table td:nth-child(8),
-.release-library-table td:nth-child(9) {{
+.folder-cell {{
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }}
 .link-chip {{
   display: inline-flex;
@@ -563,8 +571,8 @@ body {{
 </body>
 </html>
 """
-    component_height = 124 + max(1, len(releases)) * 32
-    components.html(table_html, height=component_height, scrolling=False)
+    component_height = min(920, 148 + max(1, len(releases)) * 38)
+    components.html(table_html, height=component_height, scrolling=True)
 
 
 def _release_inventory_debug_rows(releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -572,7 +580,11 @@ def _release_inventory_debug_rows(releases: list[dict[str, Any]]) -> list[dict[s
     for release in releases:
         rows.append(
             {
+                "folder": release["release"],
+                "source_kind": release.get("source_kind") or "",
                 "version": release["version"],
+                "version_abbr": release.get("version_abbr") or "",
+                "pilot_auto_version": release.get("pilot_auto_version") or "",
                 "date": release["date"],
                 "release": release["release"],
                 "release_dir": release["release_dir_absolute"],
@@ -1488,6 +1500,11 @@ if not release_df.empty:
 section_header("Release History")
 release_specsheets = discover_release_specsheet_inventory(get_data_root())
 if release_specsheets:
+    workflow_count = sum(1 for row in release_specsheets if str(row.get("source_kind") or "") == "workflow")
+    imported_count = len(release_specsheets) - workflow_count
+    st.caption(
+        f"{len(release_specsheets)} release(s): {workflow_count} workflow folder(s), {imported_count} imported library folder(s)."
+    )
     release_specsheets = sorted(
         release_specsheets,
         key=lambda row: (
@@ -1501,7 +1518,7 @@ if release_specsheets:
     )
     _render_release_library_table(release_specsheets)
 else:
-    st.info("No imported release library was found. Run `python scripts/import_catalog_analyzer_releases.py --force` to import analyzer output.")
+    st.info("No release folders were found. Add workflow release output under the data root or import legacy analyzer output with `python scripts/import_catalog_analyzer_releases.py --force`.")
 
 section_header("Release Performance")
 top1, top2, top3, top4, top5 = st.columns(5)
