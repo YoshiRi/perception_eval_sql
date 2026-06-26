@@ -1902,6 +1902,16 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             force=bool(parameters.get("overwrite", True)),
             progress_callback=lambda msg: append_task_log(task_id, f"specsheet: {msg}"),
         )
+        from lib.release_specsheet_library import publish_static_release_pdf
+
+        published_pdf = publish_static_release_pdf(
+            specsheet_pdf,
+            release_root.name,
+            topic,
+            force=bool(parameters.get("overwrite", True)),
+        )
+        if published_pdf is not None:
+            append_task_log(task_id, f"Published release specsheet PDF: {published_pdf}")
         summary["specsheet_pdf"] = str(specsheet_pdf)
         summary["specsheet_generated"] = bool(generated)
 

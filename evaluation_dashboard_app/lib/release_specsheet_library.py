@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -54,6 +56,54 @@ def _pdf_static_url(release_name: str, topic_name: str) -> str:
     release_part = _safe_url_part(release_name, "release")
     topic_part = _safe_url_part(topic_name, "topic")
     return f"/app/static/release_specs/{release_part}/{topic_part}.pdf"
+
+
+def _static_pdf_path(release_name: str, topic_name: str) -> Path:
+    return (
+        Path.cwd()
+        / "static"
+        / "release_specs"
+        / _safe_url_part(release_name, "release")
+        / f"{_safe_url_part(topic_name, 'topic')}.pdf"
+    )
+
+
+def publish_static_release_pdf(
+    pdf_path: Path,
+    release_name: str,
+    topic_name: str,
+    *,
+    force: bool = False,
+) -> Path | None:
+    """Publish a release specsheet PDF under static/release_specs for Streamlit static serving."""
+    if not pdf_path.exists() or pdf_path.is_dir():
+        return None
+
+    static_pdf_path = _static_pdf_path(release_name, topic_name)
+    source = pdf_path.resolve()
+    if static_pdf_path.exists() or static_pdf_path.is_symlink():
+        if not force:
+            try:
+                if static_pdf_path.resolve() == source:
+                    return static_pdf_path
+                if static_pdf_path.stat().st_mtime >= source.stat().st_mtime:
+                    return static_pdf_path
+            except OSError:
+                pass
+        if static_pdf_path.is_dir():
+            shutil.rmtree(static_pdf_path)
+        else:
+            static_pdf_path.unlink(missing_ok=True)
+
+    static_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(source, static_pdf_path)
+    except OSError:
+        try:
+            os.symlink(source, static_pdf_path)
+        except OSError:
+            shutil.copy2(source, static_pdf_path)
+    return static_pdf_path
 
 
 def _release_version_label(metadata: dict[str, Any]) -> str:
@@ -153,13 +203,8 @@ def _pdf_entry(
     release_name: str,
     link_url: str = "",
 ) -> dict[str, Any]:
-    static_path = (
-        Path.cwd()
-        / "static"
-        / "release_specs"
-        / _safe_url_part(release_name, "release")
-        / f"{_safe_url_part(topic, 'topic')}.pdf"
-    )
+    published_path = publish_static_release_pdf(pdf_path, release_name, topic)
+    static_path = published_path or _static_pdf_path(release_name, topic)
     static_available = static_path.exists() and not static_path.is_dir()
     static_url = _pdf_static_url(release_name, topic) if static_available else ""
     return {
@@ -169,7 +214,7 @@ def _pdf_entry(
         "absolute_path": str(pdf_path.resolve()),
         "static_path": static_path,
         "static_url": static_url,
-        "link_url": link_url or static_url,
+        "link_url": static_url or link_url,
         "available": pdf_path.exists() and not pdf_path.is_dir(),
         "static_available": static_available,
     }
