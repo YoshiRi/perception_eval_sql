@@ -41,6 +41,7 @@ from lib.path_utils import (
     format_size,
     get_data_root_display,
     get_run_info,
+    get_run_storage_name,
     list_run_directories,
     resolve_run_subdirectory,
     resolve_under_data_root,
@@ -552,6 +553,29 @@ def _format_run_mtime(mtime: float) -> str:
         return datetime.fromtimestamp(mtime, tz=_JST).strftime("%Y-%m-%d %H:%M JST")
     except Exception:
         return "—"
+
+
+def _run_row_key(run: Dict[str, object]) -> str:
+    run_path = run.get("run_path")
+    if isinstance(run_path, Path):
+        return get_run_storage_name(run_path)
+    return str(run.get("name") or "").strip()
+
+
+def _normalize_compare_run_key(
+    value: str,
+    runs_by_key: Dict[str, Dict[str, object]],
+    runs_by_name: Dict[str, List[Dict[str, object]]],
+) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if value in runs_by_key:
+        return value
+    matches = runs_by_name.get(value, [])
+    if matches:
+        return _run_row_key(matches[0])
+    return value
 
 
 def _build_overview_url(run_a: str, compare_runs: Optional[List[str]] = None) -> str:
@@ -1117,16 +1141,17 @@ def _render_local_run_download_dialog(run_name: str) -> None:
         )
 
 
-def _render_local_run_delete_dialog(run_name: str) -> None:
+def _render_local_run_delete_dialog(run_name: str, *, confirm_label: Optional[str] = None) -> None:
+    confirm_target = str(confirm_label or run_name).strip()
     st.warning("This deletes the local run directory permanently.")
     confirm = st.text_input(
         "Type the run name to confirm",
         value="",
-        placeholder=run_name,
+        placeholder=confirm_target,
         key=f"workflow_delete_confirm::{run_name}",
     ).strip()
     if st.button("Delete run", key=f"workflow_delete_btn::{run_name}", type="primary", use_container_width=True):
-        if confirm != run_name:
+        if confirm not in {confirm_target, run_name}:
             st.error("Confirmation text does not match the run name.")
             return
         ok, msg = delete_run(run_name)
@@ -1210,6 +1235,7 @@ def _backfill_local_run_source_metadata(runs: List[Dict[str, object]]) -> Dict[s
 
 
 def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
+    row_key = _run_row_key(run)
     name_raw = str(run["name"])
     name = html.escape(name_raw)
     modified = html.escape(str(run["modified"]))
@@ -1248,7 +1274,7 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     if not compare_available:
         flag_html += '<div class="wf-unavailable-note">Unavailable for compare</div>'
     size_label = html.escape(str(run["size"]))
-    checkbox_key = f"workflow_compare_pick::{name_raw}"
+    checkbox_key = f"workflow_compare_pick::{row_key}"
     if not compare_available:
         st.session_state[checkbox_key] = False
     elif checkbox_key not in st.session_state:
@@ -1262,7 +1288,7 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
             disabled=not compare_available,
         )
     with row_cols[1]:
-        title_html = f'<div class="{title_class}"><a href="{_build_overview_url(name_raw)}" target="_self">{name}</a></div>'
+        title_html = f'<div class="{title_class}"><a href="{_build_overview_url(row_key)}" target="_self">{name}</a></div>'
         if meta_bits:
             meta_html = html.escape(" · ".join(meta_bits[:3]))
             title_html += f'<div class="{meta_class}">{meta_html}</div>'
@@ -1297,18 +1323,19 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
     with row_cols[9]:
         action_cols = st.columns([0.78, 0.82, 0.82], gap="small")
         with action_cols[0]:
-            if st.button("ℹ", key=f"workflow_run_details::{name_raw}", use_container_width=True, help="Show run details"):
-                st.session_state["workflow_local_run_detail"] = name_raw
+            if st.button("ℹ", key=f"workflow_run_details::{row_key}", use_container_width=True, help="Show run details"):
+                st.session_state["workflow_local_run_detail"] = row_key
         with action_cols[1]:
-            if st.button("⬇", key=f"workflow_run_download::{name_raw}", use_container_width=True, help="Prepare ZIP download"):
-                st.session_state["workflow_local_run_download"] = name_raw
+            if st.button("⬇", key=f"workflow_run_download::{row_key}", use_container_width=True, help="Prepare ZIP download"):
+                st.session_state["workflow_local_run_download"] = row_key
         with action_cols[2]:
-            if st.button("🗑", key=f"workflow_run_delete::{name_raw}", use_container_width=True, help="Delete this local run"):
-                st.session_state["workflow_local_run_delete"] = name_raw
+            if st.button("🗑", key=f"workflow_run_delete::{row_key}", use_container_width=True, help="Delete this local run"):
+                st.session_state["workflow_local_run_delete"] = row_key
     return bool(checked)
 
 
 def _render_local_run_details(run: Dict[str, object]) -> None:
+    row_key = _run_row_key(run)
     metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
     task_meta = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
     request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
@@ -1351,7 +1378,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
         with title_cols[0]:
             st.markdown(f"### Local Run Details: `{run['name']}`")
         with title_cols[1]:
-            if st.button("Clear", key=f"workflow_clear_run_details::{run['name']}", use_container_width=True):
+            if st.button("Clear", key=f"workflow_clear_run_details::{row_key}", use_container_width=True):
                 st.session_state["workflow_local_run_detail"] = ""
                 st.rerun()
 
@@ -1426,9 +1453,9 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                 if catalog_url:
                     st.link_button("Open catalog", catalog_url, use_container_width=True)
             with action_cols[3]:
-                if st.button("Artifact retest", key=f"workflow_local_run_retest::{run['name']}", type="primary", use_container_width=True):
+                if st.button("Artifact retest", key=f"workflow_local_run_retest::{row_key}", type="primary", use_container_width=True):
                     st.session_state.pop(f"recent_eval_retest_suite_selection_{evaluator_job_id}", None)
-                    st.session_state["workflow_local_run_retest"] = str(run["name"])
+                    st.session_state["workflow_local_run_retest"] = row_key
                     st.rerun()
 
             info_cols = st.columns([1.6, 2.4])
@@ -1503,7 +1530,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
             st.json(metadata or {})
 
         selected_retest_run = str(st.session_state.get("workflow_local_run_retest") or "").strip()
-        if selected_retest_run == str(run["name"]) and evaluator_job_id:
+        if selected_retest_run == row_key and evaluator_job_id:
             dialog_job = {
                 "job_id": evaluator_job_id,
                 "title": str(evaluator_detail.get("title") or run.get("description") or run["name"]),
@@ -1522,7 +1549,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
 
                     _workflow_local_run_retest_dialog()
                 finally:
-                    if st.session_state.get("workflow_local_run_retest") == str(run["name"]):
+                    if st.session_state.get("workflow_local_run_retest") == row_key:
                         st.session_state.pop("workflow_local_run_retest", None)
             else:
                 st.markdown("---")
@@ -1530,7 +1557,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                 with fallback_cols[0]:
                     st.subheader(f"Artifact retest · {dialog_job['title']}")
                 with fallback_cols[1]:
-                    if st.button("Close", key=f"workflow_local_run_retest_close::{run['name']}", use_container_width=True):
+                    if st.button("Close", key=f"workflow_local_run_retest_close::{row_key}", use_container_width=True):
                         st.session_state.pop("workflow_local_run_retest", None)
                         st.rerun()
                 _render_recent_evaluator_job_retest_dialog(
@@ -1794,17 +1821,23 @@ def _render_local_runs_section() -> None:
         filtered = [row for row in filtered if bool(row["has_parquet"])]
 
     compare_ready = [
-        str(row["name"])
+        _run_row_key(row)
         for row in filtered
         if bool(row["has_summary"]) or bool(row["has_score"]) or bool(row["has_parquet"])
     ]
+    runs_by_key = {_run_row_key(row): row for row in runs}
+    runs_by_name: Dict[str, List[Dict[str, object]]] = {}
+    for row in runs:
+        runs_by_name.setdefault(str(row["name"]), []).append(row)
+    display_by_key = {_run_row_key(row): str(row["name"]) for row in runs}
     if "workflow_compare_runs" not in st.session_state:
         st.session_state["workflow_compare_runs"] = compare_ready[:1]
 
-    compare_selected = [
-        name for name in st.session_state.get("workflow_compare_runs", [])
-        if name in compare_ready
-    ]
+    compare_selected = []
+    for key in st.session_state.get("workflow_compare_runs", []):
+        normalized = _normalize_compare_run_key(str(key), runs_by_key, runs_by_name)
+        if normalized in compare_ready and normalized not in compare_selected:
+            compare_selected.append(normalized)
     st.session_state["workflow_compare_runs"] = compare_selected
 
     if not filtered:
@@ -1819,7 +1852,7 @@ def _render_local_runs_section() -> None:
         st.session_state[page_key] = current_page
     start_idx = (current_page - 1) * page_size
     visible_runs = filtered[start_idx:start_idx + page_size]
-    visible_names = {str(run["name"]) for run in visible_runs}
+    visible_keys = {_run_row_key(run) for run in visible_runs}
 
     visible_end = min(len(filtered), start_idx + len(visible_runs))
     st.markdown('<div class="wf-pager-strip">', unsafe_allow_html=True)
@@ -1841,7 +1874,7 @@ def _render_local_runs_section() -> None:
             current_page = int(selected_page)
             start_idx = (current_page - 1) * page_size
             visible_runs = filtered[start_idx:start_idx + page_size]
-            visible_names = {str(run["name"]) for run in visible_runs}
+            visible_keys = {_run_row_key(run) for run in visible_runs}
     with pager_cols[2]:
         if st.button("›", key="workflow_runs_page_next", use_container_width=True, disabled=current_page >= page_count):
             current_page += 1
@@ -1855,12 +1888,12 @@ def _render_local_runs_section() -> None:
     st.markdown('</div>', unsafe_allow_html=True)
 
     _render_local_runs_header()
-    next_selected = [name for name in st.session_state.get("workflow_compare_runs", []) if name not in visible_names]
+    next_selected = [key for key in st.session_state.get("workflow_compare_runs", []) if key not in visible_keys]
     for run in visible_runs:
-        run_name = str(run["name"])
-        if _render_local_run_row(run, selected=run_name in st.session_state.get("workflow_compare_runs", [])) and run_name in compare_ready:
-            next_selected.append(run_name)
-    st.session_state["workflow_compare_runs"] = [name for name in compare_ready if name in next_selected]
+        row_key = _run_row_key(run)
+        if _render_local_run_row(run, selected=row_key in st.session_state.get("workflow_compare_runs", [])) and row_key in compare_ready:
+            next_selected.append(row_key)
+    st.session_state["workflow_compare_runs"] = [key for key in compare_ready if key in next_selected]
 
     st.markdown('<div class="wf-compare-bar">', unsafe_allow_html=True)
     st.markdown('<p class="wf-compare-title">Compare</p>', unsafe_allow_html=True)
@@ -1869,7 +1902,7 @@ def _render_local_runs_section() -> None:
         st.markdown('<div class="wf-toolbar-note">Selected runs</div>', unsafe_allow_html=True)
         selected_runs = list(st.session_state.get("workflow_compare_runs", []))
         if selected_runs:
-            st.caption(" | ".join(selected_runs))
+            st.caption(" | ".join(display_by_key.get(key, key) for key in selected_runs))
     with compare_cols[1]:
         st.markdown('<div class="wf-toolbar-note">Action</div>', unsafe_allow_html=True)
         if len(selected_runs) >= 2:
@@ -1880,13 +1913,14 @@ def _render_local_runs_section() -> None:
             st.button("Open", disabled=True, use_container_width=True, key="workflow_compare_run_disabled")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    download_run_name = str(st.session_state.get("workflow_local_run_download") or "").strip()
-    if download_run_name:
+    download_run_key = str(st.session_state.get("workflow_local_run_download") or "").strip()
+    if download_run_key:
+        download_run_name = display_by_key.get(download_run_key, download_run_key)
         if callable(getattr(st, "dialog", None)):
             @st.dialog(f"Download artifacts · {download_run_name}", width="large")
             def _workflow_local_run_download_dialog() -> None:
-                _render_local_run_download_dialog(download_run_name)
-                if st.button("Close", key=f"workflow_local_run_download_close::{download_run_name}", use_container_width=True):
+                _render_local_run_download_dialog(download_run_key)
+                if st.button("Close", key=f"workflow_local_run_download_close::{download_run_key}", use_container_width=True):
                     st.session_state.pop("workflow_local_run_download", None)
                     st.rerun()
 
@@ -1894,15 +1928,16 @@ def _render_local_runs_section() -> None:
         else:
             st.markdown("---")
             st.subheader(f"Download artifacts · {download_run_name}")
-            _render_local_run_download_dialog(download_run_name)
+            _render_local_run_download_dialog(download_run_key)
 
-    delete_run_name = str(st.session_state.get("workflow_local_run_delete") or "").strip()
-    if delete_run_name:
+    delete_run_key = str(st.session_state.get("workflow_local_run_delete") or "").strip()
+    if delete_run_key:
+        delete_run_name = display_by_key.get(delete_run_key, delete_run_key)
         if callable(getattr(st, "dialog", None)):
             @st.dialog(f"Delete local run · {delete_run_name}", width="large")
             def _workflow_local_run_delete_dialog() -> None:
-                _render_local_run_delete_dialog(delete_run_name)
-                if st.button("Cancel", key=f"workflow_local_run_delete_close::{delete_run_name}", use_container_width=True):
+                _render_local_run_delete_dialog(delete_run_key, confirm_label=delete_run_name)
+                if st.button("Cancel", key=f"workflow_local_run_delete_close::{delete_run_key}", use_container_width=True):
                     st.session_state.pop("workflow_local_run_delete", None)
                     st.rerun()
 
@@ -1910,11 +1945,11 @@ def _render_local_runs_section() -> None:
         else:
             st.markdown("---")
             st.subheader(f"Delete local run · {delete_run_name}")
-            _render_local_run_delete_dialog(delete_run_name)
+            _render_local_run_delete_dialog(delete_run_key, confirm_label=delete_run_name)
 
-    detail_run_name = str(st.session_state.get("workflow_local_run_detail") or "").strip()
-    if detail_run_name:
-        detail_run = next((row for row in runs if str(row["name"]) == detail_run_name), None)
+    detail_run_key = str(st.session_state.get("workflow_local_run_detail") or "").strip()
+    if detail_run_key:
+        detail_run = runs_by_key.get(_normalize_compare_run_key(detail_run_key, runs_by_key, runs_by_name))
         if detail_run is not None:
             _render_local_run_details(detail_run)
 
