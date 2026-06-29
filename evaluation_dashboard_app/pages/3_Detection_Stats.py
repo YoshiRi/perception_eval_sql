@@ -773,6 +773,173 @@ def _report_pp_delta(v: Any, *, lower_is_better: bool = False) -> str:
     return f"{sign}{val:.1f} pp ({suffix})"
 
 
+def _analyze_kpi_comparison(baseline: Optional[dict], candidate: Optional[dict], candidate_label: str = "Candidate") -> str:
+    """Generate a natural-language interpretation of KPI comparison results.
+
+    Provides a verdict and actionable recommendation for all combined scenarios
+    (both improve, both degrade, trade-offs, flat).  Does NOT repeat the raw numbers
+    already visible in the KPI cards above — only adds insight.
+    """
+    if baseline is None or candidate is None:
+        return '<div class="kpi-analysis kpi-analysis-neutral">ⓘ Insufficient data for comparison analysis — one or both runs have no KPI data.</div>'
+
+    # Extract values needed for classification
+    tp_b, tp_c = baseline.get("tp", 0), candidate.get("tp", 0)
+    fp_b, fp_c = baseline.get("fp", 0), candidate.get("fp", 0)
+    fn_b, fn_c = baseline.get("fn", 0), candidate.get("fn", 0)
+    tpr_b, tpr_c = baseline.get("tpr"), candidate.get("tpr")
+    fpr_b, fpr_c = baseline.get("fpr"), candidate.get("fpr")
+    prec_b, prec_c = baseline.get("precision"), candidate.get("precision")
+
+    dtp = tp_c - tp_b
+    dfp = fp_c - fp_b
+    dfn = fn_c - fn_b
+    dtpr = (tpr_c - tpr_b) if (tpr_b is not None and tpr_c is not None) else None
+    dfpr = (fpr_c - fpr_b) if (fpr_b is not None and fpr_c is not None) else None
+    dprec = (prec_c - prec_b) if (prec_b is not None and prec_c is not None) else None
+
+    EPS_RATE = 0.001   # 0.1pp threshold for "flat"
+
+    def classify_rate(delta):
+        if delta is None:
+            return "n/a"
+        if delta > EPS_RATE:
+            return "up"
+        if delta < -EPS_RATE:
+            return "down"
+        return "flat"
+
+    def fmt_rate_delta(delta):
+        if delta is None:
+            return "N/A"
+        sign = "+" if delta > 0 else ""
+        return f"{sign}{delta * 100:.1f}pp"
+
+    def fmt_count_delta(delta):
+        sign = "+" if delta > 0 else ""
+        return f"{sign}{abs(delta):,}"
+
+    tpr_dir = classify_rate(dtpr)
+    prec_dir = classify_rate(dprec)
+    fpr_dir = classify_rate(dfpr)
+
+    # --- Verdict line ---
+    if tpr_dir == "up" and prec_dir == "up":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-good">{candidate_label} improves on all key metrics</strong> — '
+            f"both Recall and Precision increased vs baseline."
+        )
+        tone_class = "kpi-analysis-good"
+    elif tpr_dir == "down" and prec_dir == "down":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-bad">{candidate_label} degrades on all key metrics</strong> — '
+            f"both Recall and Precision decreased vs baseline."
+        )
+        tone_class = "kpi-analysis-bad"
+    elif tpr_dir == "up" and prec_dir == "down":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-warn">Recall-precision trade-off detected:</strong> '
+            f"Recall improved ({fmt_rate_delta(dtpr)}) but Precision decreased ({fmt_rate_delta(dprec)})."
+        )
+        tone_class = "kpi-analysis-warn"
+    elif tpr_dir == "down" and prec_dir == "up":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-warn">Precision-recall trade-off detected:</strong> '
+            f"Precision improved ({fmt_rate_delta(dprec)}) but Recall decreased ({fmt_rate_delta(dtpr)})."
+        )
+        tone_class = "kpi-analysis-warn"
+    elif tpr_dir == "flat" and prec_dir == "flat":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-neutral">{candidate_label} is essentially unchanged</strong> — '
+            f"both Recall and Precision are flat vs baseline."
+        )
+        tone_class = "kpi-analysis-neutral"
+    elif tpr_dir == "flat":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-neutral">{candidate_label}:</strong> '
+            f"Recall is flat, Precision {prec_dir} ({fmt_rate_delta(dprec)})."
+        )
+        tone_class = "kpi-analysis-neutral"
+    elif prec_dir == "flat":
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-neutral">{candidate_label}:</strong> '
+            f"Precision is flat, Recall {tpr_dir} ({fmt_rate_delta(dtpr)})."
+        )
+        tone_class = "kpi-analysis-neutral"
+    else:
+        verdict = (
+            f'<strong class="kpi-analysis-verdict kpi-analysis-warn">{candidate_label}:</strong> '
+            f"Recall {tpr_dir} ({fmt_rate_delta(dtpr)}), Precision {prec_dir} ({fmt_rate_delta(dprec)})."
+        )
+        tone_class = "kpi-analysis-warn"
+
+    # --- Interpretation / recommendation ---
+    if tpr_dir == "up" and fpr_dir == "down":
+        recommendation = (
+            f"<strong>Strong improvement:</strong> model is both more sensitive (higher recall) "
+            f"and more specific (lower FPR). This is the ideal outcome — consider this candidate for production."
+        )
+    elif tpr_dir == "up" and fpr_dir == "up":
+        recommendation = (
+            f"<strong>Higher recall at cost of more false positives:</strong> model finds more objects "
+            f"but also generates more false alarms. Evaluate whether the recall gain ({fmt_rate_delta(dtpr)}) "
+            f"justifies the precision cost ({fmt_rate_delta(dprec)})."
+        )
+    elif tpr_dir == "down" and fpr_dir == "down":
+        recommendation = (
+            f"<strong>More conservative model:</strong> fewer false positives but also lower recall. "
+            f"Model may be too cautious — {fmt_count_delta(-dfn) if dfn else '0'} more GT objects are now missed."
+        )
+    elif tpr_dir == "down" and fpr_dir == "up":
+        recommendation = (
+            f"<strong>Degradation on all fronts:</strong> both recall dropped and false positives increased. "
+            f"This candidate is strictly worse than baseline — do not adopt without further tuning."
+        )
+    elif tpr_dir == "flat" and prec_dir == "flat":
+        recommendation = (
+            f"<strong>No significant change:</strong> the candidate performs similarly to baseline across all metrics. "
+            f"Adoption depends on other factors (e.g., latency, robustness to edge cases)."
+        )
+    elif tpr_dir == "up":
+        recommendation = (
+            f"<strong>Net positive:</strong> recall improved with manageable precision impact. "
+            f"Review the {fmt_count_delta(abs(dfn) if dfn else 0)} FN-to-TP recoveries and "
+            f"{fmt_count_delta(abs(dfp) if dfp else 0)} new FPs in the per-class / per-distance breakdowns below."
+        )
+    elif prec_dir == "up":
+        recommendation = (
+            f"<strong>Precision gain:</strong> {fmt_rate_delta(dprec)} improvement with recall impact. "
+            f"Review the trade-off: {fmt_count_delta(abs(dfn) if dfn else 0)} more misses for "
+            f"{fmt_count_delta(abs(dfp) if dfp else 0)} fewer false alarms."
+        )
+    else:
+        recommendation = (
+            f"The overall impact is mixed — check per-class and per-distance breakdowns "
+            f"below for more granular insight."
+        )
+
+    # Edge-case notes
+    notes = []
+    gt_b = tp_b + fn_b
+    gt_c = tp_c + fn_c
+    if gt_b != gt_c:
+        notes.append(f"GT total differs between runs ({gt_b:,} vs {gt_c:,}) — filter conditions may not be identical.")
+    if tpr_b is None or tpr_c is None or prec_b is None or prec_c is None:
+        notes.append("Some rate metrics are N/A due to zero denominators (no GT or EST objects in one run).")
+
+    note_suffix = ""
+    if notes:
+        note_suffix = ' <span class="kpi-analysis-note">' + " ".join(notes) + "</span>"
+
+    return (
+        f'<div class="kpi-analysis {tone_class}">'
+        f"{verdict}"
+        f'<p class="kpi-analysis-recommendation">{recommendation}</p>'
+        f"{note_suffix}"
+        f"</div>"
+    )
+
+
 def _report_num_delta(v: Any, *, lower_is_better: bool = False) -> str:
     if v is None or pd.isna(v):
         return "n/a"
@@ -2533,6 +2700,13 @@ try:
                 }
             cards_html_parts.append(render_kpi_card(f"Run {lbl}", kpi or {}, f"kpi-run-{lbl}", deltas=deltas))
         st.markdown('<div class="kpi-wrap">' + "".join(cards_html_parts) + "</div>", unsafe_allow_html=True)
+        # --- KPI Comparison Analysis ---
+        if not single_mode and baseline and len(kpis) >= 2:
+            for lbl, kpi in kpis:
+                if lbl != run_labels_list[0] and kpi:
+                    analysis_html = _analyze_kpi_comparison(baseline, kpi, candidate_label=str(lbl))
+                    st.markdown(analysis_html, unsafe_allow_html=True)
+                    break  # analyze first non-baseline run
 
     if st.checkbox("Debug: Inspect Parquet (All Runs)" if not single_mode else "Debug: Inspect Parquet"):
         cols_used = st.columns(len(target_files))

@@ -203,6 +203,47 @@ def inject_detection_stats_kpi_styles() -> None:
 .kpi-delta-inline.delta-pos { color: #0d6b0d; }
 .kpi-delta-inline.delta-neg { color: #b02a37; }
 .kpi-empty { font-size: 1rem; color: #6c757d; font-style: italic; }
+
+/* KPI Comparison Analysis */
+.kpi-analysis {
+    border-radius: 10px;
+    padding: 1rem 1.5rem;
+    margin: 0.5rem 0 1.5rem 0;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: #212529;
+    border-left: 4px solid #adb5bd;
+}
+.kpi-analysis-good {
+    background: linear-gradient(135deg, #f0faf0 0%, #e8f5e9 100%);
+    border-left-color: #2d8f47;
+}
+.kpi-analysis-bad {
+    background: linear-gradient(135deg, #fff5f5 0%, #ffe8e8 100%);
+    border-left-color: #d73027;
+}
+.kpi-analysis-warn {
+    background: linear-gradient(135deg, #fffdf0 0%, #fff8e1 100%);
+    border-left-color: #e6a817;
+}
+.kpi-analysis-neutral {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-left-color: #6c757d;
+}
+.kpi-analysis-verdict { font-size: 0.98rem; }
+.kpi-analysis-verdict.kpi-analysis-good { color: #1a6b2a; }
+.kpi-analysis-verdict.kpi-analysis-bad { color: #a82030; }
+.kpi-analysis-verdict.kpi-analysis-warn { color: #8a6d14; }
+.kpi-analysis-verdict.kpi-analysis-neutral { color: #495057; }
+.kpi-analysis-recommendation {
+    margin: 0.45rem 0 0.15rem 0;
+    color: #374151;
+}
+.kpi-analysis-note {
+    font-size: 0.84rem;
+    color: #6b7280;
+    font-style: italic;
+}
 </style>
 
         """,
