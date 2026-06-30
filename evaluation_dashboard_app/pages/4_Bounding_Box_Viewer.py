@@ -249,6 +249,20 @@ if selected_t4dataset is not None:
 if scene_where == "1=1":
     scene_params = [filter_file]
 
+# Build a load-scene WHERE that excludes t4dataset_name so each run's parquet is
+# queried without the single-dataset restriction. t4dataset_name differs between
+# baseline and candidate when comparing different releases.
+_load_scene_where = scene_where
+_load_scene_params = list(scene_params)
+if selected_t4dataset is not None:
+    # Remove the "t4dataset_name = ?" clause (always the last filter added).
+    if _load_scene_where == "t4dataset_name = ?":
+        _load_scene_where = "1=1"
+        _load_scene_params = [filter_file]
+    else:
+        _load_scene_where = _load_scene_where.replace(" AND t4dataset_name = ?", "")
+        _load_scene_params = _load_scene_params[:-1]
+
 # --- topic_name（単一選択）
 topic_names = con.execute(
     f"SELECT DISTINCT topic_name AS v FROM parquet_scan(?) WHERE {scene_where} ORDER BY v",
@@ -360,8 +374,10 @@ with st.sidebar:
 # ----------------------------
 # Build query safely & load data
 # ----------------------------
-where = [scene_where, "topic_name = ?"]  # topic_name は単一選択
-params = scene_params + [selected_topic]
+# Use _load_scene_where (without t4dataset_name) so each run's parquet is
+# queried independently — baseline and candidate may have different dataset names.
+where = [_load_scene_where, "topic_name = ?"]  # topic_name は単一選択
+params = _load_scene_params + [selected_topic]
 
 # label IN (...)
 where.append(f"label IN ({','.join(['?']*len(selected_labels))})")
@@ -391,7 +407,7 @@ ORDER BY frame_index
 files_to_load: List[Tuple[str, str]] = [(selected_files[lbl], lbl) for lbl in runs_to_show if lbl in selected_files]
 
 # Base params after the file (suite, scenario, topic, labels, visibility)
-base_params = scene_params[1:] + [selected_topic] + list(selected_labels)
+base_params = _load_scene_params[1:] + [selected_topic] + list(selected_labels)
 if has_visibility and selected_visibility:
     base_params = base_params + list(selected_visibility)
 
