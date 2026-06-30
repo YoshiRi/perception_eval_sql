@@ -448,6 +448,9 @@ def _compare_availability_reason(df: pd.DataFrame) -> pd.Series:
     )
 
 
+# Internal columns kept for availability filtering but hidden from display tables
+_FP_INTERNAL_COLS = ["total_est", "base_est_cnt", "candidate_est_cnt", "missing_in_base_cnt", "missing_in_candidate_cnt"]
+
 # --- FP-side availability helpers (use base_est_cnt / candidate_est_cnt) ---
 
 
@@ -5627,9 +5630,10 @@ try:
         st.markdown(
             section_header_html(
                 "Perception diff: False Positives (vs baseline A)",
-                "Aggregate FP count comparison vs baseline A (per dataset / frame / label). "
-                "Compares total FP counts between runs. Negative net delta = fewer FPs in candidate (improvement). "
-                "Hotspots prioritize regressions (more FPs in candidate).",
+                "Compares total FP counts between runs (per dataset / frame / label). "
+                "Shows Baseline FP, Candidate FP, and FP Delta (candidate − baseline). "
+                "Negative delta = fewer FPs in candidate (improvement). "
+                "Positive delta = more FPs in candidate (degradation).",
             ),
             unsafe_allow_html=True,
         )
@@ -5680,18 +5684,16 @@ try:
                     CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
                     CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
                     CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
-                    CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_improved_cnt,
-                    CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS fp_degraded_cnt,
-                    CAST(0 AS DOUBLE) AS both_fp_cnt,
-                    CAST(0 AS DOUBLE) AS both_tp_cnt,
-                    CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS net_fp_delta,
+                    CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS baseline_fp,
+                    CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS candidate_fp,
+                    CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_delta,
                     COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
                     COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
                     COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
                 FROM base_stats b
                 FULL OUTER JOIN comp_stats c
                     ON CAST(b.t4dataset_id AS VARCHAR) = CAST(c.t4dataset_id AS VARCHAR)
-                ORDER BY net_fp_delta DESC
+                ORDER BY fp_delta DESC
                 """
                 df_fp = con.execute(query_fp).df()
                 if not df_fp.empty:
@@ -5739,16 +5741,14 @@ try:
                         CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
                         CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
                         CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
-                        CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_improved_cnt,
-                        CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS fp_degraded_cnt,
-                        CAST(0 AS DOUBLE) AS both_fp_cnt,
-                        CAST(0 AS DOUBLE) AS both_tp_cnt,
-                        CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS net_fp_delta
+                        CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS baseline_fp,
+                        CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS candidate_fp,
+                        CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_delta
                     FROM base_stats b
                     FULL OUTER JOIN comp_stats c
                         ON CAST(b.t4dataset_id AS VARCHAR) = CAST(c.t4dataset_id AS VARCHAR)
                        AND CAST(b.frame_index AS VARCHAR) = CAST(c.frame_index AS VARCHAR)
-                    ORDER BY net_fp_delta DESC
+                    ORDER BY fp_delta DESC
                     """
                     try:
                         df_fp_frame = con.execute(query_fp_frame).df()
@@ -5938,22 +5938,22 @@ try:
                             continue
 
                     # --- KPI summary ---
-                    # fp_improved_cnt = baseline FP count, fp_degraded_cnt = candidate FP count
-                    # net_fp_delta = candidate_FP - baseline_FP (negative = improvement)
-                    tot_fp_base = float(df_fp["fp_improved_cnt"].sum())
-                    tot_fp_comp = float(df_fp["fp_degraded_cnt"].sum())
+                    # baseline_fp = baseline FP count, candidate_fp = candidate FP count
+                    # fp_delta = candidate_FP - baseline_FP (negative = improvement)
+                    tot_fp_base = float(df_fp["baseline_fp"].sum())
+                    tot_fp_comp = float(df_fp["candidate_fp"].sum())
                     tot_fp_net = tot_fp_comp - tot_fp_base
                     net_fp_s = f"{int(tot_fp_net):+d}"
 
                     with st.expander(f"FP diff · Run {lbl} vs A", expanded=(len(runs) == 2)):
                         c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("FP count (baseline A)", int(tot_fp_base))
-                        c2.metric("FP count (candidate)", int(tot_fp_comp))
-                        c3.metric("Net FP delta", net_fp_s)
+                        c1.metric("Baseline FP", int(tot_fp_base))
+                        c2.metric("Candidate FP", int(tot_fp_comp))
+                        c3.metric("FP Delta", net_fp_s, delta_color="inverse")
                         c4.caption("Negative = fewer FPs in candidate (improvement). Positive = more FPs in candidate (degradation).")
                         st.markdown(
                             f"**FP Summary:** Baseline A had **{int(tot_fp_base)}** FPs, candidate has **{int(tot_fp_comp)}** FPs — "
-                            f"net delta **{net_fp_s}**."
+                            f"delta **{net_fp_s}**."
                         )
                         skipped_total_fp = (
                             len(df_fp_skipped) + len(df_fp_frame_skipped) + len(df_fp_object_skipped)
@@ -5972,13 +5972,13 @@ try:
                                     st.markdown("**Per dataset row**")
                                     st.download_button(
                                         label="Download skipped FP dataset rows (CSV)",
-                                        data=skipped_fp_dataset.to_csv(index=False).encode("utf-8"),
+                                        data=skipped_fp_dataset.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                         file_name=f"fp_diff_{lbl}_vs_A_skipped_dataset_rows.csv",
                                         mime="text/csv",
                                         key=f"p5fp_dl_skip_dataset_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_fp_dataset.head(200),
+                                        skipped_fp_dataset.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
                                     )
@@ -5994,13 +5994,13 @@ try:
                                     )
                                     st.download_button(
                                         label="Download skipped FP frames (CSV)",
-                                        data=skipped_fp_frames.to_csv(index=False).encode("utf-8"),
+                                        data=skipped_fp_frames.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                         file_name=f"fp_diff_{lbl}_vs_A_skipped_frames.csv",
                                         mime="text/csv",
                                         key=f"p5fp_dl_skip_frames_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_fp_frames.head(200),
+                                        skipped_fp_frames.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
                                         column_config=_t4_viewer_link_column_config(),
@@ -6017,13 +6017,13 @@ try:
                                     )
                                     st.download_button(
                                         label="Download skipped FP objects (CSV)",
-                                        data=skipped_fp_objects.to_csv(index=False).encode("utf-8"),
+                                        data=skipped_fp_objects.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                         file_name=f"fp_diff_{lbl}_vs_A_skipped_objects.csv",
                                         mime="text/csv",
                                         key=f"p5fp_dl_skip_objects_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_fp_objects.head(200),
+                                        skipped_fp_objects.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
                                         column_config=_t4_viewer_link_column_config(),
@@ -6180,20 +6180,18 @@ try:
                             CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
                             CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
                             CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
-                            CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_improved_cnt,
-                            CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS fp_degraded_cnt,
-                            CAST(0 AS DOUBLE) AS both_fp_cnt,
-                            CAST(0 AS DOUBLE) AS both_tp_cnt,
-                            CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS net_fp_delta
+                            CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS baseline_fp,
+                            CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS candidate_fp,
+                            CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_delta
                         FROM base_stats b
                         FULL OUTER JOIN comp_stats c
                             ON b.label = c.label
-                        ORDER BY net_fp_delta DESC
+                        ORDER BY fp_delta DESC
                         """
                         df_fp_label = pd.DataFrame()
                         try:
                             df_fp_label = con.execute(query_fp_label).df()
-                            # net_fp_delta is already computed in the query as candidate_FP - baseline_FP
+                            # fp_delta is already computed in the query as candidate_FP - baseline_FP
                             # The query does a FULL OUTER JOIN on label, so it correctly shows
                             # labels from both runs with one-sided indicators.
                             if skip_incomplete_compare_fp and not df_fp_label.empty:
@@ -6208,13 +6206,14 @@ try:
                             fp_scen_agg = (
                                 df_fp.groupby("scenario_name", dropna=False)
                                 .agg(
-                                    fp_improved_cnt=("fp_improved_cnt", "sum"),
-                                    fp_degraded_cnt=("fp_degraded_cnt", "sum"),
+                                    baseline_fp=("baseline_fp", "sum"),
+                                    candidate_fp=("candidate_fp", "sum"),
                                 )
                                 .reset_index()
                             )
+                            fp_scen_agg["fp_delta"] = fp_scen_agg["candidate_fp"] - fp_scen_agg["baseline_fp"]
                             fp_scen_agg = fp_scen_agg.sort_values(
-                                by=["fp_degraded_cnt", "fp_improved_cnt"],
+                                by=["candidate_fp", "baseline_fp"],
                                 ascending=[False, True],
                             )
 
@@ -6244,33 +6243,29 @@ try:
                                 df_fp_dataset_sorted["t4dataset_id"].fillna("").astype(str),
                             )
                             if fp_frame_sort_mode == "FP improved first":
-                                # fp_improved_cnt = baseline FP, fp_degraded_cnt = candidate FP
+                                # baseline_fp = baseline FP, candidate_fp = candidate FP
                                 # Sort by largest baseline FP first (potential improvement)
                                 df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
-                                    by=["fp_improved_cnt", "fp_degraded_cnt"],
+                                    by=["baseline_fp", "candidate_fp"],
                                     ascending=[False, True],
                                 )
                             elif fp_frame_sort_mode == "Largest net change":
-                                # net_fp_delta = candidate_FP - baseline_FP (from query)
+                                # fp_delta = candidate_FP - baseline_FP (from query)
                                 # For "largest net change", sort by absolute delta
-                                df_fp_dataset_sorted["net_fp_delta"] = (
-                                    pd.to_numeric(df_fp_dataset_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
-                                    - pd.to_numeric(df_fp_dataset_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
-                                )
-                                df_fp_dataset_sorted["_abs_net_fp_delta"] = (
-                                    df_fp_dataset_sorted["net_fp_delta"].abs()
+                                df_fp_dataset_sorted["_abs_fp_delta"] = (
+                                    df_fp_dataset_sorted["fp_delta"].abs()
                                 )
                                 df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
-                                    by=["_abs_net_fp_delta", "fp_degraded_cnt", "fp_improved_cnt"],
+                                    by=["_abs_fp_delta", "candidate_fp", "baseline_fp"],
                                     ascending=[False, False, False],
                                 )
                             else:
                                 df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
-                                    by=["fp_degraded_cnt", "fp_improved_cnt"],
+                                    by=["candidate_fp", "baseline_fp"],
                                     ascending=[False, True],
                                 )
                             df_fp_dataset_sorted = df_fp_dataset_sorted.drop(
-                                columns=["_abs_net_fp_delta"],
+                                columns=["_abs_fp_delta"],
                                 errors="ignore",
                             ).reset_index(drop=True)
                         if not df_fp_frame.empty:
@@ -6289,34 +6284,28 @@ try:
                             )
                             if fp_frame_sort_mode == "FP improved first":
                                 fp_frame_caption_metric = "fp improved"
-                                fp_frame_sort_desc = "fp_improved desc"
-                                # fp_improved_cnt = baseline FP, fp_degraded_cnt = candidate FP
+                                fp_frame_sort_desc = "baseline_fp desc"
                                 df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
-                                    by=["fp_improved_cnt", "fp_degraded_cnt"],
+                                    by=["baseline_fp", "candidate_fp"],
                                     ascending=[False, True],
                                 )
                             elif fp_frame_sort_mode == "Largest net change":
                                 fp_frame_caption_metric = "absolute net change"
-                                fp_frame_sort_desc = "largest |net FP delta|"
-                                # net_fp_delta = candidate_FP - baseline_FP
-                                df_fp_frame_sorted["net_fp_delta"] = (
-                                    pd.to_numeric(df_fp_frame_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
-                                    - pd.to_numeric(df_fp_frame_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
-                                )
-                                df_fp_frame_sorted["_abs_net_fp_delta"] = (
-                                    df_fp_frame_sorted["net_fp_delta"].abs()
+                                fp_frame_sort_desc = "largest |FP delta|"
+                                df_fp_frame_sorted["_abs_fp_delta"] = (
+                                    df_fp_frame_sorted["fp_delta"].abs()
                                 )
                                 df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
-                                    by=["_abs_net_fp_delta", "fp_degraded_cnt", "fp_improved_cnt"],
+                                    by=["_abs_fp_delta", "candidate_fp", "baseline_fp"],
                                     ascending=[False, False, False],
                                 )
                             else:
                                 df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
-                                    by=["fp_degraded_cnt", "fp_improved_cnt"],
+                                    by=["candidate_fp", "baseline_fp"],
                                     ascending=[False, True],
                                 )
                             df_fp_frame_sorted = df_fp_frame_sorted.drop(
-                                columns=["_abs_net_fp_delta"],
+                                columns=["_abs_fp_delta"],
                                 errors="ignore",
                             ).reset_index(drop=True)
                         _t4_link_run_names = _run_share_names_for_links()
@@ -6325,8 +6314,8 @@ try:
                         if not df_fp_label.empty:
                             tdf_fp_l = _comparison_lens_treemap_df(
                                 df_fp_label["label"],
-                                df_fp_label["fp_improved_cnt"],
-                                df_fp_label["fp_degraded_cnt"],
+                                df_fp_label["baseline_fp"],
+                                df_fp_label["candidate_fp"],
                                 root_lens_fp,
                                 side_labels=("Baseline FP", "Candidate FP"),
                             )
@@ -6342,7 +6331,7 @@ try:
                             ds_top = df_fp_dataset_sorted.head(ds_cap).copy()
                             # _comparison_lens_nested_treemap_df expects improved_cnt / degraded_cnt columns
                             ds_top_renamed = ds_top.rename(
-                                columns={"fp_improved_cnt": "improved_cnt", "fp_degraded_cnt": "degraded_cnt"}
+                                columns={"baseline_fp": "improved_cnt", "candidate_fp": "degraded_cnt"}
                             )
                             tdf_fp_d = _comparison_lens_nested_treemap_df(
                                 ds_top_renamed,
@@ -6352,8 +6341,8 @@ try:
                             )
                             rest = df_fp_dataset_sorted.iloc[ds_cap:]
                             if not rest.empty:
-                                io = float(rest["fp_improved_cnt"].sum())
-                                do = float(rest["fp_degraded_cnt"].sum())
+                                io = float(rest["baseline_fp"].sum())
+                                do = float(rest["candidate_fp"].sum())
                                 other_rows = []
                                 for side, value in (("Baseline FP", io), ("Candidate FP", do)):
                                     if value > 0:
@@ -6383,7 +6372,7 @@ try:
                             if not df_fp_label.empty:
                                 st.markdown("**Per label (FP)**")
                                 st.dataframe(
-                                    df_fp_label,
+                                    df_fp_label.drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                     width='stretch',
                                     hide_index=True,
                                 )
@@ -6394,7 +6383,7 @@ try:
                                 st.markdown(f"**Per dataset (FP)** (sorted by {fp_frame_caption_metric})")
                                 st.dataframe(
                                     _with_t4_viewer_links(
-                                        df_fp_dataset_sorted.head(200),
+                                        df_fp_dataset_sorted.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                         _t4_link_run_names,
                                     ),
                                     width='stretch',
@@ -6405,7 +6394,7 @@ try:
                                 st.markdown(f"**Per frame (FP)** (sorted by {fp_frame_caption_metric})")
                                 st.dataframe(
                                     _with_t4_viewer_links(
-                                        df_fp_frame_sorted.head(200),
+                                        df_fp_frame_sorted.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                         _t4_link_run_names,
                                     ),
                                     width='stretch',
@@ -6450,7 +6439,7 @@ try:
                                     if not df_fp.empty:
                                         sa = (
                                             df_fp.groupby("scenario_name", dropna=False)[
-                                                "fp_degraded_cnt"
+                                                "candidate_fp"
                                             ]
                                             .sum()
                                             .sort_values(ascending=False)
@@ -6469,7 +6458,7 @@ try:
                                     fk = f"{rw['t4dataset_id']}|{rw['frame_index']}"
                                     fp_frame_key_labels[fk] = (
                                         f"{str(rw.get('scenario_name', ''))[:36]} | "
-                                        f"f{rw['frame_index']} | candidate FP {int(rw['fp_degraded_cnt'])} | baseline FP {int(rw['fp_improved_cnt'])}"
+                                        f"f{rw['frame_index']} | candidate FP {int(rw['candidate_fp'])} | baseline FP {int(rw['baseline_fp'])}"
                                     )
                             with pr2:
                                 if st.button(
@@ -6611,13 +6600,13 @@ try:
                                 )
                                 st.download_button(
                                     label="Download filtered FP objects (CSV)",
-                                    data=df_fp_obj_show_linked.to_csv(index=False).encode("utf-8"),
+                                    data=df_fp_obj_show_linked.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                     file_name=f"fp_diff_{lbl}_vs_A_objects.csv",
                                     mime="text/csv",
                                     key=f"p5fp_dl_{lbl}_{idx}",
                                 )
                                 st.dataframe(
-                                    df_fp_obj_show_linked.head(n_show),
+                                    df_fp_obj_show_linked.head(n_show).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                     width='stretch',
                                     hide_index=True,
                                     column_config=_t4_viewer_link_column_config(),
@@ -6628,7 +6617,10 @@ try:
                         with st.expander(f"Full FP frame table (sort: {fp_frame_sort_desc})"):
                             if not df_fp_frame_sorted.empty:
                                 st.dataframe(
-                                    _with_t4_viewer_links(df_fp_frame_sorted, _t4_link_run_names),
+                                    _with_t4_viewer_links(
+                                        df_fp_frame_sorted.drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
+                                        _t4_link_run_names,
+                                    ),
                                     width='stretch',
                                     hide_index=True,
                                     column_config=_t4_viewer_link_column_config(),
