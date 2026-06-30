@@ -186,6 +186,33 @@ with st.sidebar:
 
 con = duckdb.connect()
 
+# Debug: show all parquet files found per run
+with st.expander("Parquet files debug", expanded=True):
+    for i, (r, pl) in enumerate(zip(runs, parquet_lists)):
+        lbl = run_labels_list[i] if i < len(run_labels_list) else str(i)
+        st.write(f"Run **{lbl}** path: {r['path']}")
+        st.write(f"  Parquet files ({len(pl)}): {[os.path.basename(p) for p in pl]}")
+        # Quick peek at each parquet: row count and source distribution
+        for pf in pl:
+            try:
+                _cnt = con.execute("SELECT COUNT(*) AS cnt FROM parquet_scan(?)", [pf]).fetchone()[0]
+                _cols = con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [pf]).df()["column_name"].tolist()
+                st.write(f"  {os.path.basename(pf)}: {_cnt} rows, columns={_cols}")
+                if "source" in _cols:
+                    _src = con.execute("SELECT source, COUNT(*) AS cnt FROM parquet_scan(?) GROUP BY source", [pf]).df()
+                    st.write(f"    source dist: {dict(zip(_src['source'], _src['cnt']))}")
+                if "suite_name" in _cols:
+                    _suites = con.execute("SELECT DISTINCT suite_name FROM parquet_scan(?)", [pf]).df()["suite_name"].tolist()
+                    st.write(f"    suites: {_suites}")
+                if "scenario_name" in _cols:
+                    _scenarios = con.execute("SELECT DISTINCT scenario_name FROM parquet_scan(?)", [pf]).df()["scenario_name"].tolist()
+                    st.write(f"    scenarios: {_scenarios}")
+                if "t4dataset_name" in _cols:
+                    _t4ds = con.execute("SELECT DISTINCT t4dataset_name FROM parquet_scan(?)", [pf]).df()["t4dataset_name"].tolist()
+                    st.write(f"    t4dataset_names: {_t4ds}")
+            except Exception as _e:
+                st.write(f"  {os.path.basename(pf)}: ERROR - {_e}")
+
 cols = con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [filter_file]).df()["column_name"].tolist()
 has_visibility = "visibility" in cols
 has_suite_name = "suite_name" in cols
@@ -451,13 +478,34 @@ if not dfs:
 df = pd.concat(dfs, ignore_index=True)
 
 # Debug: show loaded data summary per run and source
-with st.expander("Data load debug", expanded=False):
+with st.expander("Data load debug", expanded=True):
+    st.write(f"**files_to_load**: {files_to_load}")
+    st.write(f"**_load_scene_where**: {_load_scene_where}")
+    st.write(f"**_load_scene_params**: {_load_scene_params}")
+    st.write(f"**base_params** (after stripping filter_file): {base_params}")
+    st.write(f"**SQL**: {sql}")
+    st.write(f"**scene_where** (original): {scene_where}")
+    st.write(f"**scene_params** (original): {scene_params}")
+    st.write(f"**selected_t4dataset**: {selected_t4dataset}")
     for _rn in df["run"].unique() if "run" in df.columns else ["(single)"]:
         _rdf = df[df["run"] == _rn] if "run" in df.columns else df
         _gt = int((_rdf["source"] == "GT").sum()) if "source" in _rdf.columns else 0
         _est = int((_rdf["source"] == "EST").sum()) if "source" in _rdf.columns else 0
         _src_vals = _rdf["source"].unique().tolist() if "source" in _rdf.columns else []
         st.write(f"Run **{_rn}**: {len(_rdf)} rows, GT={_gt}, EST={_est}, source_values={_src_vals}, frames={_rdf['frame_index'].nunique() if 'frame_index' in _rdf.columns else 'N/A'}")
+        # Show sample EST box dimensions
+        _est_df = _rdf[_rdf["source"] == "EST"] if "source" in _rdf.columns else _rdf
+        if not _est_df.empty:
+            _sample = _est_df.head(5)
+            st.write(f"Sample EST boxes (first 5):")
+            _show_cols = [c for c in ["x", "y", "z", "length", "width", "height", "yaw", "label", "uuid", "frame_index"] if c in _sample.columns]
+            st.dataframe(_sample[_show_cols])
+            # Check for extreme values
+            for col in ["x", "y", "length", "width"]:
+                if col in _est_df.columns:
+                    _vals = pd.to_numeric(_est_df[col], errors="coerce").dropna()
+                    if len(_vals) > 0:
+                        st.write(f"  {col}: min={_vals.min():.2f}, max={_vals.max():.2f}, mean={_vals.mean():.2f}")
 
 if len(files_to_load) == 1:
     df["run"] = df["run"].iloc[0]
@@ -589,12 +637,34 @@ else:
 
         _viewer_three_h = 1400
         _transport_stats = render_t4_three_js_embed(_viewer_three_url, _layer_payload, height=_viewer_three_h)
-        with st.expander("T4 overlay transport debug", expanded=False):
-            first_frame_key = next(iter(sorted((_layer_payload.get("frames") or {}).keys(), key=lambda v: int(v))), "")
-            first_frame_payload = (_layer_payload.get("frames") or {}).get(first_frame_key, {})
+        with st.expander("T4 overlay transport debug", expanded=True):
+            # Aggregate stats across all frames in the payload
+            _all_frames = _layer_payload.get("frames") or {}
+            _total_gt = sum(len(f.get("gt") or []) for f in _all_frames.values())
+            _total_pred = sum(len(f.get("pred") or []) for f in _all_frames.values())
+            _total_pairs = sum(len(f.get("matched_pairs") or []) for f in _all_frames.values())
+            _frames_with_pred = sum(1 for f in _all_frames.values() if len(f.get("pred") or []) > 0)
+            _frames_with_gt = sum(1 for f in _all_frames.values() if len(f.get("gt") or []) > 0)
+            st.write(f"Payload summary: {len(_all_frames)} frames, total GT={_total_gt}, total EST={_total_pred}, total pairs={_total_pairs}")
+            st.write(f"Frames with GT={_frames_with_gt}, frames with EST={_frames_with_pred}")
+            st.write(f"compare_runs in payload: {_layer_payload.get('compare_runs', [])}")
+            first_frame_key = next(iter(sorted(_all_frames.keys(), key=lambda v: int(v))), "")
+            first_frame_payload = _all_frames.get(first_frame_key, {})
             first_gt = (first_frame_payload.get("gt") or [{}])[0]
             first_pred = (first_frame_payload.get("pred") or [{}])[0]
             st.code(_viewer_three_url, language="text")
+            # Per-run breakdown of first frame
+            _df_first = df[df["frame_index"] == int(first_frame_key)] if first_frame_key and "frame_index" in df.columns else df
+            if "run" in _df_first.columns:
+                for _rn in sorted(_df_first["run"].dropna().unique()):
+                    _rdf_f = _df_first[_df_first["run"] == _rn]
+                    _rgt = int((_rdf_f["source"] == "GT").sum())
+                    _rest = int((_rdf_f["source"] == "EST").sum())
+                    st.write(f"  Frame {first_frame_key} Run {_rn}: GT={_rgt}, EST={_rest}")
+                    if _rest > 0:
+                        _est_sample = _rdf_f[_rdf_f["source"] == "EST"].head(3)
+                        _show_cols = [c for c in ["x", "y", "z", "length", "width", "height", "yaw", "label", "uuid"] if c in _est_sample.columns]
+                        st.write(f"    Sample EST: {_est_sample[_show_cols].to_dict('records')}")
             st.json(
                 {
                     "alignment_version": EXTERNAL_BBOX_ALIGNMENT_VERSION,
@@ -616,13 +686,14 @@ else:
                     },
                     "first_gt": {
                         key: first_gt.get(key)
-                        for key in ("uuid", "label", "status", "length", "width", "height", "yaw", "force_wireframe")
+                        for key in ("uuid", "label", "status", "x", "y", "z", "length", "width", "height", "yaw", "force_wireframe", "run")
                     },
                     "first_pred": {
                         key: first_pred.get(key)
-                        for key in ("uuid", "label", "status", "length", "width", "height", "yaw", "confidence")
+                        for key in ("uuid", "label", "status", "x", "y", "z", "length", "width", "height", "yaw", "confidence", "run")
                     },
                     "has_gt_corners": "corners" in first_gt,
+                    "swap_length_width_detected": infer_legacy_width_length_swapped(df) if "df" in dir() else "unknown",
                     "notes": [
                         "Overlay boxes are sent browser-side as T4BBOX1 binary, not JSON/hex.",
                         "The ArrayBuffer is transferred to the iframe once on iframe load.",
