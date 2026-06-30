@@ -425,6 +425,15 @@ if not dfs:
     st.stop()
 
 df = pd.concat(dfs, ignore_index=True)
+
+# Debug: show loaded data summary per run and source
+with st.expander("Data load debug", expanded=False):
+    for _rn in df["run"].unique() if "run" in df.columns else ["(single)"]:
+        _rdf = df[df["run"] == _rn] if "run" in df.columns else df
+        _gt = int((_rdf["source"] == "GT").sum()) if "source" in _rdf.columns else 0
+        _est = int((_rdf["source"] == "EST").sum()) if "source" in _rdf.columns else 0
+        _src_vals = _rdf["source"].unique().tolist() if "source" in _rdf.columns else []
+        st.write(f"Run **{_rn}**: {len(_rdf)} rows, GT={_gt}, EST={_est}, source_values={_src_vals}, frames={_rdf['frame_index'].nunique() if 'frame_index' in _rdf.columns else 'N/A'}")
 # When only one run, drop "run" column so rest of code unchanged (optional; we can keep it as "A" or "B")
 if len(files_to_load) == 1:
     df["run"] = df["run"].iloc[0]  # keep column for uniform legend logic
