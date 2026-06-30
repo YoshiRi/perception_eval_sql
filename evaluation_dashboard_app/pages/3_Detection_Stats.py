@@ -402,8 +402,19 @@ def _compare_availability_summary(df: pd.DataFrame, *, unit: str) -> str:
     cand_cnt = pd.to_numeric(df["candidate_gt_cnt"], errors="coerce").fillna(0)
     missing_base = int(((base_cnt <= 0) & (cand_cnt > 0)).sum())
     missing_candidate = int(((base_cnt > 0) & (cand_cnt <= 0)).sum())
+    both_avail = int(((base_cnt > 0) & (cand_cnt > 0)).sum())
+    total = missing_base + missing_candidate + both_avail
     if missing_base == 0 and missing_candidate == 0:
         return ""
+    # If >80% of rows are one-sided, likely a filter mismatch (e.g. different topic_name per run)
+    if total > 0 and (missing_base + missing_candidate) > 0.8 * total:
+        parts = []
+        if missing_base:
+            parts.append(f"{missing_base} {unit} only in candidate")
+        if missing_candidate:
+            parts.append(f"{missing_candidate} {unit} only in baseline A")
+        parts.append("⚠️ heavy one-sided data — check Topic Name filter (runs may have different topics)")
+        return ", ".join(parts)
     parts = []
     if missing_base:
         parts.append(f"{missing_base} {unit} only in candidate")
@@ -491,6 +502,121 @@ def _compare_availability_reason_fp(df: pd.DataFrame) -> pd.Series:
         index=df.index,
         dtype="object",
     )
+
+
+def _dataset_name_debug_summary(con, base_view: str, base_filter: str, cand_view: str, cand_filter: str, source: str = "GT") -> str:
+    """Return a markdown summary of unique t4dataset_name/t4dataset_id from both sides for debugging."""
+    lines: List[str] = []
+    id_col = "uuid" if source == "GT" else "pair_uuid"
+    try:
+        for label, view, fc in [("Baseline A", base_view, base_filter), ("Candidate", cand_view, cand_filter)]:
+            q = f"""
+                SELECT DISTINCT t4dataset_id, COALESCE(try_cast(t4dataset_name AS VARCHAR), '') AS t4dataset_name
+                FROM {view}
+                WHERE source = '{source}' AND {id_col} IS NOT NULL AND frame_index IS NOT NULL
+                    AND {fc}
+                ORDER BY t4dataset_id
+            """
+            df_names = con.execute(q).df()
+            lines.append(f"**{label}** ({len(df_names)} unique t4dataset_id):")
+            for _, row in df_names.iterrows():
+                did = str(row["t4dataset_id"])
+                dname = str(row["t4dataset_name"]).strip()
+                lines.append(f"- `t4dataset_id={did}`  name=`{dname}`")
+            lines.append("")
+    except Exception as e:
+        lines.append(f"⚠️ dataset name debug query failed: {e}")
+    return "\n".join(lines)
+
+
+def _fp_pair_uuid_debug(con, base_view: str, base_filter: str, cand_view: str, cand_filter: str, limit: int = 5) -> str:
+    """Return a markdown summary comparing pair_uuid samples from overlapping datasets
+    to diagnose why FP diff JOIN fails to match."""
+    lines: List[str] = []
+    try:
+        # Find overlapping t4dataset_ids
+        overlap_q = f"""
+            SELECT DISTINCT CAST(b.t4dataset_id AS VARCHAR) AS t4dataset_id
+            FROM (SELECT DISTINCT t4dataset_id FROM {base_view}
+                  WHERE source = 'EST' AND pair_uuid IS NOT NULL AND frame_index IS NOT NULL
+                    AND {base_filter}) b
+            INNER JOIN (SELECT DISTINCT t4dataset_id FROM {cand_view}
+                        WHERE source = 'EST' AND pair_uuid IS NOT NULL AND frame_index IS NOT NULL
+                          AND {cand_filter}) c
+                ON CAST(b.t4dataset_id AS VARCHAR) = CAST(c.t4dataset_id AS VARCHAR)
+            LIMIT {limit}
+        """
+        overlap_df = con.execute(overlap_q).df()
+        if overlap_df.empty:
+            lines.append("⚠️ No overlapping t4dataset_id found between baseline and candidate (EST side).")
+            return "\n".join(lines)
+
+        lines.append(f"**Sampling {len(overlap_df)} overlapping datasets to compare pair_uuid values:**")
+        lines.append("")
+
+        for _, row in overlap_df.iterrows():
+            did = str(row["t4dataset_id"])
+            lines.append(f"---")
+            lines.append(f"**t4dataset_id=`{did}`**")
+            for label, view, fc in [("Baseline A", base_view, base_filter), ("Candidate", cand_view, cand_filter)]:
+                sample_q = f"""
+                    SELECT frame_index, CAST(pair_uuid AS VARCHAR) AS pair_uuid, status,
+                           CAST(label AS VARCHAR) AS label
+                    FROM {view}
+                    WHERE source = 'EST' AND pair_uuid IS NOT NULL AND frame_index IS NOT NULL
+                      AND CAST(t4dataset_id AS VARCHAR) = '{did}'
+                      AND {fc}
+                    ORDER BY frame_index, pair_uuid
+                    LIMIT 10
+                """
+                try:
+                    sample_df = con.execute(sample_q).df()
+                    lines.append(f"**{label}** ({len(sample_df)} sample rows):")
+                    if sample_df.empty:
+                        lines.append("  (no rows)")
+                    else:
+                        for _, sr in sample_df.iterrows():
+                            fi = str(sr["frame_index"])
+                            pu = str(sr["pair_uuid"])
+                            st = str(sr["status"])
+                            lb = str(sr["label"])
+                            lines.append(f"  - frame=`{fi}` pair_uuid=`{pu}` status=`{st}` label=`{lb}`")
+                except Exception as e:
+                    lines.append(f"  ⚠️ query failed: {e}")
+            lines.append("")
+
+            # Also show a quick JOIN check
+            join_check_q = f"""
+                SELECT COUNT(*) AS match_cnt
+                FROM (
+                    SELECT DISTINCT frame_index, CAST(pair_uuid AS VARCHAR) AS pu
+                    FROM {base_view}
+                    WHERE source = 'EST' AND pair_uuid IS NOT NULL AND frame_index IS NOT NULL
+                      AND CAST(t4dataset_id AS VARCHAR) = '{did}'
+                      AND {base_filter}
+                ) b
+                INNER JOIN (
+                    SELECT DISTINCT frame_index, CAST(pair_uuid AS VARCHAR) AS pu
+                    FROM {cand_view}
+                    WHERE source = 'EST' AND pair_uuid IS NOT NULL AND frame_index IS NOT NULL
+                      AND CAST(t4dataset_id AS VARCHAR) = '{did}'
+                      AND {cand_filter}
+                ) c
+                    ON b.frame_index = c.frame_index AND b.pu = c.pu
+            """
+            try:
+                match_cnt = con.execute(join_check_q).fetchone()[0]
+                lines.append(f"  🔗 Matching (frame_index, pair_uuid) tuples: **{match_cnt}**")
+            except Exception as e:
+                lines.append(f"  ⚠️ join check failed: {e}")
+
+        lines.append("")
+        lines.append("---")
+        lines.append("If matching tuple count is 0 for overlapping datasets, pair_uuid values differ between runs.")
+        lines.append("This means EST→GT matching is not deterministic across evaluation runs.")
+    except Exception as e:
+        lines.append(f"⚠️ pair_uuid debug query failed: {e}")
+    return "\n".join(lines)
 
 
 def list_parquets_in_run(run_path) -> List[str]:
@@ -2422,6 +2548,56 @@ def render_detection_report(report_html: str, report_md: str, tables: Dict[str, 
                 st.dataframe(df.head(100), width="stretch", hide_index=True)
 
 
+# Topic names that are semantically equivalent across different versions.
+# e.g. "perception.object_recognition.objects" (older) and
+#      "perception.object_recognition.tracking.objects" (newer) refer to the same data.
+_TOPIC_EQUIVALENCE_GROUPS: List[List[str]] = [
+    [
+        "perception.object_recognition.objects",
+        "perception.object_recognition.tracking.objects",
+        "perception.object_recognition.detection.bevfusion.objects",
+    ],
+]
+
+
+def _equivalent_topics(topic: str) -> set:
+    """Return the set of all topic names equivalent to *topic* (including itself)."""
+    for group in _TOPIC_EQUIVALENCE_GROUPS:
+        if topic in group:
+            return set(group)
+    return {topic}
+
+
+def _map_topic_to_run(selected_topic: str, run_topics: set) -> str:
+    """Map a selected topic to the equivalent topic name used by a specific run.
+
+    If the run has an equivalent topic (e.g. selected="perception.object_recognition.objects"
+    but run has "perception.object_recognition.tracking.objects"), return the run's version.
+    Otherwise return the selected topic as-is (which may not exist in the run).
+    """
+    if selected_topic == "__all__":
+        return "__all__"
+    equiv = _equivalent_topics(selected_topic)
+    for rt in run_topics:
+        if rt in equiv:
+            return rt
+    return selected_topic
+
+
+def _all_equivalent_topics_in_run(selected_topic: str, run_topics: set) -> List[str]:
+    """Return ALL equivalent topic names that exist in the run.
+
+    When comparing runs with different topic names, a single run may have multiple
+    topics that are equivalent (e.g. both 'perception.object_recognition.objects'
+    and 'perception.object_recognition.detection.bevfusion.objects'). This returns
+    all of them so the filter includes all relevant data.
+    """
+    if selected_topic == "__all__":
+        return ["__all__"]
+    equiv = _equivalent_topics(selected_topic)
+    return sorted([rt for rt in run_topics if rt in equiv])
+
+
 def build_filter_clause(filters: dict,*, enable_dist_h: bool = True) -> str:
     """Build WHERE clause from filters.
 
@@ -2432,8 +2608,17 @@ def build_filter_clause(filters: dict,*, enable_dist_h: bool = True) -> str:
     """
     conditions = []
     
-    if filters.get('topic_name') and filters['topic_name'] != '__all__':
-        conditions.append(f"topic_name = '{filters['topic_name']}'")
+    topic_val = filters.get('topic_name')
+    if topic_val and topic_val != '__all__':
+        if isinstance(topic_val, list):
+            if len(topic_val) == 1:
+                conditions.append(f"topic_name = '{topic_val[0]}'")
+            elif len(topic_val) > 1:
+                topics_escaped = [str(t).replace("'", "''") for t in topic_val]
+                topics_str = "', '".join(topics_escaped)
+                conditions.append(f"topic_name IN ('{topics_str}')")
+        else:
+            conditions.append(f"topic_name = '{topic_val}'")
     
     lbl = filters.get('label')
     if lbl is not None:
@@ -2576,16 +2761,45 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
             st.error(f"Error creating views: {e}")
             st.stop()
 
-        # Filter options from first file (applied to all runs)
-        target_file = cached_target_files[0]
-        topics = list_values(con, target_file, "topic_name")
-        labels = list_values(con, target_file, "label")
-        try:
-            suite_options = list_values(con, target_file, "COALESCE(CAST(suite_name AS VARCHAR), '')")
-        except Exception:
-            suite_options = []
-        vis_options = list_values(con, target_file, "COALESCE(CAST(visibility AS VARCHAR), 'not available') AS visibility")
-        schema = schema_flags(con, target_file)
+        # Collect filter options from ALL runs (not just the first).
+        # Suite names may differ between runs (e.g. one has UUID suffix, the other doesn't),
+        # so we merge and deduplicate them to offer a complete dropdown.
+        all_topics: set = set()
+        all_labels: set = set()
+        all_suite_options: set = set()
+        all_vis_options: set = set()
+        per_run_suite_lookup: List[Dict[str, List[str]]] = []  # maps each run: display_suite_name -> [actual_suite_names]
+        per_run_topics: List[set] = []  # topic_names per run, for cross-run topic mismatch detection
+        for i, path in enumerate(cached_target_files):
+            run_topics = list_values(con, path, "topic_name")
+            all_topics.update(run_topics)
+            per_run_topics.append(set(run_topics))
+            run_labels = list_values(con, path, "label")
+            all_labels.update(run_labels)
+            try:
+                run_suites = list_values(con, path, "COALESCE(CAST(suite_name AS VARCHAR), '')")
+            except Exception:
+                run_suites = []
+            all_suite_options.update(run_suites)
+            try:
+                run_vis = list_values(con, path, "COALESCE(CAST(visibility AS VARCHAR), 'not available') AS visibility")
+            except Exception:
+                run_vis = []
+            all_vis_options.update(run_vis)
+            # Build a lookup: for each suite in this run, map display_name -> [actual suite names]
+            # In compare mode, suites from different runs may differ (e.g. UUID suffix).
+            # We store the mapping so we can later resolve the filter per run.
+            suite_map: Dict[str, List[str]] = {}
+            for s in run_suites:
+                s_str = str(s)
+                suite_map.setdefault(s_str, []).append(s_str)
+            per_run_suite_lookup.append(suite_map)
+
+        topics = sorted(all_topics)
+        labels = sorted(all_labels)
+        suite_options = sorted(all_suite_options)
+        vis_options = sorted(all_vis_options)
+        schema = schema_flags(con, cached_target_files[0])
         st.session_state["_ds_parquet_fp"] = fp
         st.session_state["_ds_filter_opts"] = {
             "topics": topics,
@@ -2595,6 +2809,8 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
             "schema": schema,
             "cached_target_files": list(cached_target_files),
             "cache_rebuild_notes": list(cache_rebuild_notes),
+            "per_run_suite_lookup": per_run_suite_lookup,
+            "per_run_topics": [list(t) for t in per_run_topics],
         }
     else:
         opts = st.session_state["_ds_filter_opts"]
@@ -2606,6 +2822,8 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
         target_file = target_files[0]
         cached_target_files = opts.get("cached_target_files", list(target_files))
         cache_rebuild_notes = opts.get("cache_rebuild_notes", [])
+        per_run_suite_lookup = opts.get("per_run_suite_lookup", [])
+        per_run_topics = [set(t) for t in opts.get("per_run_topics", [])]
         for i, path in enumerate(cached_target_files):
             v_flat = "view_eval_flat" if i == 0 else f"view_eval_flat_{i}"
             create_view_eval_flat(con, path, v_flat)
@@ -2613,7 +2831,44 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
 ds_debug_log_memory("after_duckdb_validate_views")
 
 with st.sidebar:
-    topic_name = st.selectbox("Topic Name", ["__all__"] + topics, key="topic_name") if topics else "__all__"
+    # Smart default: prefer the primary perception topic over __all__
+    _PRIMARY_TOPICS = [
+        "perception.object_recognition.objects",
+        "perception.object_recognition.tracking.objects",
+        "perception.object_recognition.detection.bevfusion.objects",
+    ]
+    _default_topic = "__all__"
+    if topics:
+        for pt in _PRIMARY_TOPICS:
+            if pt in topics:
+                _default_topic = pt
+                break
+    # Use session_state key with index so default only applies on first load
+    if "ds_topic_name" not in st.session_state:
+        st.session_state["ds_topic_name"] = _default_topic
+    topic_name = st.selectbox("Topic Name", ["__all__"] + topics, key="ds_topic_name") if topics else "__all__"
+
+    # In compare mode, map topic to each run's equivalent topic name.
+    # e.g. if user selects "perception.object_recognition.objects" but run B has
+    # "perception.object_recognition.tracking.objects", we map to the latter.
+    _topic_per_run: List[str] = []
+    if not single_mode and topic_name != "__all__" and per_run_topics:
+        missing_runs = []
+        for i, run_topics in enumerate(per_run_topics):
+            mapped = _map_topic_to_run(topic_name, run_topics)
+            _topic_per_run.append(mapped)
+            lbl = run_labels_list[i] if i < len(run_labels_list) else f"Run {i}"
+            if mapped not in run_topics:
+                missing_runs.append((lbl, mapped))
+        if missing_runs:
+            missing_str = ", ".join(f"{lbl} (mapped to '{m}')" for l, m in missing_runs)
+            st.warning(
+                f"⚠️ Topic **'{topic_name}'** could not be found in: {missing_str}. "
+                f"Those runs will have no data in comparisons. "
+                f"Consider selecting **__all__** instead.",
+            )
+    else:
+        _topic_per_run = [topic_name] * len(runs)
     # Widget keys: avoid generic "labels"/"visibility" (session_state collisions, ambiguous with run_labels).
     if "ds_filter_class_labels" not in st.session_state and "labels" in st.session_state:
         st.session_state["ds_filter_class_labels"] = st.session_state["labels"]
@@ -2653,6 +2908,9 @@ with st.sidebar:
     max_eval_range = st.selectbox("Max Evaluation Range [m]", [50, 80, 100, 120, 150], index=0, key="max_eval_range")
 
 # Build filters (same values for all runs). None = dimension unused (no suite/visibility column in UI).
+# When comparing runs with different suite name formats (e.g. one has UUID suffix, the other
+# doesn't), we map selected suites to each run's actual suite names via prefix matching.
+# Topic names are also mapped per-run via _topic_per_run (equivalence mapping).
 filters_base = {
     'topic_name': topic_name,
     'label': selected_labels,
@@ -2660,7 +2918,38 @@ filters_base = {
     'visibility': selected_visibility if vis_options else None,
     'max_eval_range': max_eval_range
 }
-filters_list = [filters_base] * len(runs)
+filters_list = [dict(filters_base) for _ in range(len(runs))]
+
+# Apply per-run topic mapping (handles equivalent topic names across different versions).
+# Use _all_equivalent_topics_in_run to include ALL equivalent topics that exist in each run,
+# not just the first match. This is critical when a run has multiple topic names that are
+# equivalent (e.g. both 'perception.object_recognition.objects' and
+# 'perception.object_recognition.detection.bevfusion.objects').
+if topic_name != "__all__" and per_run_topics:
+    for run_idx in range(len(runs)):
+        if run_idx < len(per_run_topics):
+            equivalent = _all_equivalent_topics_in_run(topic_name, per_run_topics[run_idx])
+            if equivalent:
+                filters_list[run_idx]['topic_name'] = equivalent if len(equivalent) > 1 else equivalent[0]
+
+# Map selected suites to each run's actual suite names (prefix matching for cross-run compare)
+if selected_suites and len(runs) > 1 and per_run_suite_lookup:
+    for run_idx in range(len(runs)):
+        if run_idx < len(per_run_suite_lookup) and per_run_suite_lookup[run_idx]:
+            run_suites_mapped = set()
+            for sel_suite in selected_suites:
+                sel_str = str(sel_suite)
+                # Direct match first
+                if sel_str in per_run_suite_lookup[run_idx]:
+                    run_suites_mapped.add(sel_str)
+                else:
+                    # Prefix match: selected suite may be a prefix of this run's suite names
+                    # e.g. sel="FullPerformance_V1_Fujiyoshida_PDD" matches
+                    #      "FullPerformance_V1_Fujiyoshida_PDD_5df54148-..."
+                    for actual_suite in per_run_suite_lookup[run_idx]:
+                        if actual_suite.startswith(sel_str):
+                            run_suites_mapped.add(actual_suite)
+            filters_list[run_idx]['suites'] = sorted(run_suites_mapped) if run_suites_mapped else selected_suites
 
 try:
     _fcl_preview = build_filter_clause(filters_base)
@@ -4183,8 +4472,15 @@ try:
         improved: pd.Series,
         degraded: pd.Series,
         root_title: str,
+        side_labels: Optional[tuple] = None,
     ) -> pd.DataFrame:
-        """Rows for px.treemap path root → Improved|Degraded → item (area = n)."""
+        """Rows for px.treemap path root → side1|side2 → item (area = n).
+        
+        side_labels: optional (improved_label, degraded_label) tuple.
+                     Defaults to ("Improved", "Degraded").
+        """
+        if side_labels is None:
+            side_labels = ("Improved", "Degraded")
         rows = []
         for i in range(len(names)):
             nm = str(names.iloc[i]).strip() or "—"
@@ -4194,11 +4490,11 @@ try:
             dg = float(degraded.iloc[i]) if pd.notna(degraded.iloc[i]) else 0.0
             if ip > 0:
                 rows.append(
-                    {"root": root_title, "side": "Improved", "item": nm, "n": ip}
+                    {"root": root_title, "side": side_labels[0], "item": nm, "n": ip}
                 )
             if dg > 0:
                 rows.append(
-                    {"root": root_title, "side": "Degraded", "item": nm, "n": dg}
+                    {"root": root_title, "side": side_labels[1], "item": nm, "n": dg}
                 )
         return pd.DataFrame(rows)
     
@@ -4246,17 +4542,24 @@ try:
         df: pd.DataFrame,
         levels: List[str],
         root_title: str,
+        side_labels: Optional[tuple] = None,
     ) -> pd.DataFrame:
-        """Rows for px.treemap where Improved/Degraded contain nested focus levels."""
+        """Rows for px.treemap where two sides contain nested focus levels.
+        
+        side_labels: optional (improved_label, degraded_label) tuple.
+                     Defaults to ("Improved", "Degraded").
+        """
         if df is None or df.empty:
             return pd.DataFrame()
+        if side_labels is None:
+            side_labels = ("Improved", "Degraded")
         rows = []
         for _, row in df.iterrows():
             path_values: Dict[str, str] = {}
             for level in levels:
                 value = str(row.get(level, "")).strip()
                 path_values[level] = value or "-"
-            for side, col in (("Improved", "improved_cnt"), ("Degraded", "degraded_cnt")):
+            for side, col in zip(side_labels, ("improved_cnt", "degraded_cnt")):
                 n = pd.to_numeric(pd.Series([row.get(col)]), errors="coerce").fillna(0).iloc[0]
                 if float(n) <= 0:
                     continue
@@ -4556,6 +4859,13 @@ try:
                                 "where both baseline A and the candidate have GT objects after the active filters."
                             ),
                         )
+                    # --- Dataset name debug ---
+                    with st.expander("🔍 Debug: unique dataset names (t4dataset_id / t4dataset_name)"):
+                        debug_summary = _dataset_name_debug_summary(
+                            con, "view_eval_flat", filter_clause_base,
+                            comp_flat, filter_clause_comp_p5,
+                        )
+                        st.markdown(debug_summary)
                     df_improved_skipped = pd.DataFrame()
                     df_by_frame_skipped = pd.DataFrame()
                     df_by_object_skipped = pd.DataFrame()
@@ -5317,7 +5627,9 @@ try:
         st.markdown(
             section_header_html(
                 "Perception diff: False Positives (vs baseline A)",
-                "Per-EST-object comparison vs baseline A: FP improved = was FP on A and TP on candidate; FP degraded = was TP on A and FP on candidate. Hotspots prioritize regressions (new FPs).",
+                "Aggregate FP count comparison vs baseline A (per dataset / frame / label). "
+                "Compares total FP counts between runs. Negative net delta = fewer FPs in candidate (improvement). "
+                "Hotspots prioritize regressions (more FPs in candidate).",
             ),
             unsafe_allow_html=True,
         )
@@ -5329,140 +5641,113 @@ try:
                 filter_clause_comp_fp = build_filter_clause(filters_list[idx], enable_dist_h=False)
                 comp_flat = _flat_view(idx)
                 # --- Per-dataset FP query ---
+                # Aggregate FP/TP counts per dataset (no pair_uuid matching needed).
+                # This avoids the issue where pair_uuid values differ between runs
+                # because EST→GT matching is not deterministic across evaluations.
                 query_fp = f"""
-                WITH base_est AS (
+                WITH base_stats AS (
                     SELECT
                         t4dataset_id,
-                        frame_index,
-                        uuid AS est_uuid,
-                        COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base,
+                        COUNT(*) AS total_est_base,
+                        COUNT(*) FILTER (WHERE status = 'FP') AS fp_base,
+                        COUNT(*) FILTER (WHERE status = 'TP') AS tp_base,
                         COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
                         COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
                         COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
                     FROM view_eval_flat
-                    WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                    WHERE source = 'EST' AND frame_index IS NOT NULL
                         AND {filter_clause_base}
-                    GROUP BY 1,2,3
+                    GROUP BY 1
                 ),
-                comp_est AS (
+                comp_stats AS (
                     SELECT
                         t4dataset_id,
-                        frame_index,
-                        uuid AS est_uuid,
-                        COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp,
+                        COUNT(*) AS total_est_comp,
+                        COUNT(*) FILTER (WHERE status = 'FP') AS fp_comp,
+                        COUNT(*) FILTER (WHERE status = 'TP') AS tp_comp,
                         COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
                         COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
                         COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
                     FROM {comp_flat}
-                    WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                    WHERE source = 'EST' AND frame_index IS NOT NULL
                         AND {filter_clause_comp_fp}
-                    GROUP BY 1,2,3
-                ),
-                joined AS (
-                    SELECT
-                        COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
-                        COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
-                        COALESCE(b.est_uuid, c.est_uuid) AS est_uuid,
-                        b.est_uuid IS NOT NULL AS has_base_est,
-                        c.est_uuid IS NOT NULL AS has_candidate_est,
-                        COALESCE(b.fp_base, FALSE) AS fp_base,
-                        COALESCE(c.fp_comp, FALSE) AS fp_comp,
-                        COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
-                        COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
-                        COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
-                    FROM base_est b
-                    FULL OUTER JOIN comp_est c
-                        ON b.t4dataset_id = c.t4dataset_id
-                       AND b.frame_index = c.frame_index
-                       AND b.est_uuid = c.est_uuid
+                    GROUP BY 1
                 )
                 SELECT
-                    t4dataset_id,
-                    CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_est,
-                    CAST(COUNT(*) FILTER (WHERE has_base_est) AS DOUBLE) AS base_est_cnt,
-                    CAST(COUNT(*) FILTER (WHERE has_candidate_est) AS DOUBLE) AS candidate_est_cnt,
-                    CAST(COUNT(*) FILTER (WHERE NOT has_base_est AND has_candidate_est) AS DOUBLE) AS missing_in_base_cnt,
-                    CAST(COUNT(*) FILTER (WHERE has_base_est AND NOT has_candidate_est) AS DOUBLE) AS missing_in_candidate_cnt,
-                    CAST(COUNT(*) FILTER (WHERE fp_base AND NOT fp_comp) AS DOUBLE) AS fp_improved_cnt,
-                    CAST(COUNT(*) FILTER (WHERE NOT fp_base AND fp_comp) AS DOUBLE) AS fp_degraded_cnt,
-                    CAST(COUNT(*) FILTER (WHERE fp_base AND fp_comp) AS DOUBLE) AS both_fp_cnt,
-                    CAST(COUNT(*) FILTER (WHERE NOT fp_base AND NOT fp_comp) AS DOUBLE) AS both_tp_cnt,
-                    CAST(SUM((CASE WHEN NOT fp_comp THEN 1 ELSE 0 END) - (CASE WHEN NOT fp_base THEN 1 ELSE 0 END)) AS DOUBLE) AS net_fp_delta,
-                    suite_name,
-                    scenario_name,
-                    t4dataset_name
-                FROM joined
-                GROUP BY t4dataset_id, suite_name, scenario_name, t4dataset_name
+                    COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
+                    CAST(COALESCE(b.total_est_base, 0) + COALESCE(c.total_est_comp, 0) AS DOUBLE) AS total_est,
+                    CAST(COALESCE(b.total_est_base, 0) AS DOUBLE) AS base_est_cnt,
+                    CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
+                    CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
+                    CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
+                    CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_improved_cnt,
+                    CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS fp_degraded_cnt,
+                    CAST(0 AS DOUBLE) AS both_fp_cnt,
+                    CAST(0 AS DOUBLE) AS both_tp_cnt,
+                    CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS net_fp_delta,
+                    COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+                    COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+                    COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
+                FROM base_stats b
+                FULL OUTER JOIN comp_stats c
+                    ON CAST(b.t4dataset_id AS VARCHAR) = CAST(c.t4dataset_id AS VARCHAR)
                 ORDER BY net_fp_delta DESC
                 """
                 df_fp = con.execute(query_fp).df()
                 if not df_fp.empty:
                     # --- Per-frame FP query ---
+                    # Aggregate FP/TP counts per frame (no pair_uuid matching needed).
                     query_fp_frame = f"""
-                    WITH base_est AS (
+                    WITH base_stats AS (
                         SELECT
                             t4dataset_id,
                             frame_index,
-                            uuid AS est_uuid,
-                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base,
+                            COUNT(*) AS total_est_base,
+                            COUNT(*) FILTER (WHERE status = 'FP') AS fp_base,
+                            COUNT(*) FILTER (WHERE status = 'TP') AS tp_base,
                             COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
                             COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
                             COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
                         FROM view_eval_flat
-                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                        WHERE source = 'EST' AND frame_index IS NOT NULL
                             AND {filter_clause_base}
-                        GROUP BY 1, 2, 3
+                        GROUP BY 1, 2
                     ),
-                    comp_est AS (
+                    comp_stats AS (
                         SELECT
                             t4dataset_id,
                             frame_index,
-                            uuid AS est_uuid,
-                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp,
+                            COUNT(*) AS total_est_comp,
+                            COUNT(*) FILTER (WHERE status = 'FP') AS fp_comp,
+                            COUNT(*) FILTER (WHERE status = 'TP') AS tp_comp,
                             COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
                             COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
                             COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
                         FROM {comp_flat}
-                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                        WHERE source = 'EST' AND frame_index IS NOT NULL
                             AND {filter_clause_comp_fp}
-                        GROUP BY 1, 2, 3
-                    ),
-                    joined AS (
-                        SELECT
-                            COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
-                            COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
-                            COALESCE(b.est_uuid, c.est_uuid) AS est_uuid,
-                            b.est_uuid IS NOT NULL AS has_base_est,
-                            c.est_uuid IS NOT NULL AS has_candidate_est,
-                            COALESCE(b.fp_base, FALSE) AS fp_base,
-                            COALESCE(c.fp_comp, FALSE) AS fp_comp,
-                            COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
-                            COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
-                            COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
-                        FROM base_est b
-                        FULL OUTER JOIN comp_est c
-                            ON b.t4dataset_id = c.t4dataset_id
-                           AND b.frame_index = c.frame_index
-                           AND b.est_uuid = c.est_uuid
+                        GROUP BY 1, 2
                     )
                     SELECT
-                        t4dataset_id,
-                        frame_index,
-                        scenario_name,
-                        suite_name,
-                        t4dataset_name,
-                        CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_est,
-                        CAST(COUNT(*) FILTER (WHERE has_base_est) AS DOUBLE) AS base_est_cnt,
-                        CAST(COUNT(*) FILTER (WHERE has_candidate_est) AS DOUBLE) AS candidate_est_cnt,
-                        CAST(COUNT(*) FILTER (WHERE NOT has_base_est AND has_candidate_est) AS DOUBLE) AS missing_in_base_cnt,
-                        CAST(COUNT(*) FILTER (WHERE has_base_est AND NOT has_candidate_est) AS DOUBLE) AS missing_in_candidate_cnt,
-                        CAST(COUNT(*) FILTER (WHERE fp_base AND NOT fp_comp) AS DOUBLE) AS fp_improved_cnt,
-                        CAST(COUNT(*) FILTER (WHERE NOT fp_base AND fp_comp) AS DOUBLE) AS fp_degraded_cnt,
-                        CAST(COUNT(*) FILTER (WHERE fp_base AND fp_comp) AS DOUBLE) AS both_fp_cnt,
-                        CAST(COUNT(*) FILTER (WHERE NOT fp_base AND NOT fp_comp) AS DOUBLE) AS both_tp_cnt,
-                        CAST(SUM((CASE WHEN NOT fp_comp THEN 1 ELSE 0 END) - (CASE WHEN NOT fp_base THEN 1 ELSE 0 END)) AS DOUBLE) AS net_fp_delta
-                    FROM joined
-                    GROUP BY t4dataset_id, frame_index, suite_name, scenario_name, t4dataset_name
+                        COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
+                        COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
+                        COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+                        COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+                        COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name,
+                        CAST(COALESCE(b.total_est_base, 0) + COALESCE(c.total_est_comp, 0) AS DOUBLE) AS total_est,
+                        CAST(COALESCE(b.total_est_base, 0) AS DOUBLE) AS base_est_cnt,
+                        CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
+                        CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
+                        CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
+                        CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_improved_cnt,
+                        CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS fp_degraded_cnt,
+                        CAST(0 AS DOUBLE) AS both_fp_cnt,
+                        CAST(0 AS DOUBLE) AS both_tp_cnt,
+                        CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS net_fp_delta
+                    FROM base_stats b
+                    FULL OUTER JOIN comp_stats c
+                        ON CAST(b.t4dataset_id AS VARCHAR) = CAST(c.t4dataset_id AS VARCHAR)
+                       AND CAST(b.frame_index AS VARCHAR) = CAST(c.frame_index AS VARCHAR)
                     ORDER BY net_fp_delta DESC
                     """
                     try:
@@ -5471,94 +5756,118 @@ try:
                         df_fp_frame = pd.DataFrame()
 
                     # --- Per-object FP query ---
+                    # List individual EST detections from both runs side-by-side
+                    # per (t4dataset_id, frame_index).  We cannot join on pair_uuid
+                    # because EST→GT matching is not deterministic across runs.
+                    # Instead we list all EST objects from each run with their FP/TP
+                    # status, grouped by frame so users can compare manually.
                     query_fp_object = f"""
-                    WITH base_est AS (
+                    WITH base_objs AS (
                         SELECT
-                            t4dataset_id,
-                            frame_index,
-                            uuid AS est_uuid,
-                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base,
-                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
-                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
-                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                            CAST(t4dataset_id AS VARCHAR) AS t4dataset_id,
+                            CAST(frame_index AS VARCHAR) AS frame_index,
+                            CAST(uuid AS VARCHAR) AS est_uuid,
+                            CAST(pair_uuid AS VARCHAR) AS est_gt_uuid,
+                            CAST(status AS VARCHAR) AS status,
+                            COALESCE(CAST(label AS VARCHAR), '') AS label,
+                            dist_h,
+                            COALESCE(CAST(suite_name AS VARCHAR), '') AS suite_name,
+                            COALESCE(CAST(scenario_name AS VARCHAR), '') AS scenario_name,
+                            COALESCE(CAST(t4dataset_name AS VARCHAR), '') AS t4dataset_name
                         FROM view_eval_flat
-                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                        WHERE source = 'EST' AND frame_index IS NOT NULL
                             AND {filter_clause_base}
-                        GROUP BY 1, 2, 3
                     ),
-                    comp_est AS (
+                    comp_objs AS (
                         SELECT
-                            t4dataset_id,
-                            frame_index,
-                            uuid AS est_uuid,
-                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp,
-                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
-                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
-                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                            CAST(t4dataset_id AS VARCHAR) AS t4dataset_id,
+                            CAST(frame_index AS VARCHAR) AS frame_index,
+                            CAST(uuid AS VARCHAR) AS est_uuid,
+                            CAST(pair_uuid AS VARCHAR) AS est_gt_uuid,
+                            CAST(status AS VARCHAR) AS status,
+                            COALESCE(CAST(label AS VARCHAR), '') AS label,
+                            dist_h,
+                            COALESCE(CAST(suite_name AS VARCHAR), '') AS suite_name,
+                            COALESCE(CAST(scenario_name AS VARCHAR), '') AS scenario_name,
+                            COALESCE(CAST(t4dataset_name AS VARCHAR), '') AS t4dataset_name
                         FROM {comp_flat}
-                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                        WHERE source = 'EST' AND frame_index IS NOT NULL
                             AND {filter_clause_comp_fp}
-                        GROUP BY 1, 2, 3
                     ),
-                    joined AS (
+                    -- Per-frame FP/TP counts for change type classification
+                    frame_stats AS (
                         SELECT
-                            COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
-                            COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
-                            COALESCE(b.est_uuid, c.est_uuid) AS est_uuid,
-                            b.est_uuid IS NOT NULL AS has_base_est,
-                            c.est_uuid IS NOT NULL AS has_candidate_est,
-                            COALESCE(b.fp_base, FALSE) AS fp_base,
-                            COALESCE(c.fp_comp, FALSE) AS fp_comp,
-                            COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
-                            COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
-                            COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
-                        FROM base_est b
-                        FULL OUTER JOIN comp_est c
+                            COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,
+                            COALESCE(b.frame_index, c.frame_index) AS frame_index,
+                            COALESCE(b.fp_cnt, 0) AS fp_base,
+                            COALESCE(c.fp_cnt, 0) AS fp_comp,
+                            COALESCE(b.tp_cnt, 0) AS tp_base,
+                            COALESCE(c.tp_cnt, 0) AS tp_comp,
+                            COALESCE(b.total_cnt, 0) AS total_base,
+                            COALESCE(c.total_cnt, 0) AS total_comp
+                        FROM (
+                            SELECT CAST(t4dataset_id AS VARCHAR) AS t4dataset_id,
+                                   CAST(frame_index AS VARCHAR) AS frame_index,
+                                   COUNT(*) AS total_cnt,
+                                   COUNT(*) FILTER (WHERE status = 'FP') AS fp_cnt,
+                                   COUNT(*) FILTER (WHERE status = 'TP') AS tp_cnt
+                            FROM view_eval_flat
+                            WHERE source = 'EST' AND frame_index IS NOT NULL
+                                AND {filter_clause_base}
+                            GROUP BY 1, 2
+                        ) b
+                        FULL OUTER JOIN (
+                            SELECT CAST(t4dataset_id AS VARCHAR) AS t4dataset_id,
+                                   CAST(frame_index AS VARCHAR) AS frame_index,
+                                   COUNT(*) AS total_cnt,
+                                   COUNT(*) FILTER (WHERE status = 'FP') AS fp_cnt,
+                                   COUNT(*) FILTER (WHERE status = 'TP') AS tp_cnt
+                            FROM {comp_flat}
+                            WHERE source = 'EST' AND frame_index IS NOT NULL
+                                AND {filter_clause_comp_fp}
+                            GROUP BY 1, 2
+                        ) c
                             ON b.t4dataset_id = c.t4dataset_id
                            AND b.frame_index = c.frame_index
-                           AND b.est_uuid = c.est_uuid
                     ),
-                    obj_attrs AS (
-                        SELECT
-                            t4dataset_id,
-                            frame_index,
-                            uuid,
-                            MAX(CAST(label AS VARCHAR)) AS label,
-                            MAX(dist_h) AS dist_h
-                        FROM view_eval_flat
-                        WHERE source = 'EST'
-                        GROUP BY 1, 2, 3
+                    -- Union all EST objects from both runs, tagged with source
+                    all_objs AS (
+                        SELECT *, 'base' AS run_source FROM base_objs
+                        UNION ALL
+                        SELECT *, 'comp' AS run_source FROM comp_objs
                     )
                     SELECT
-                        j.t4dataset_id,
-                        j.frame_index,
-                        j.est_uuid,
-                        j.has_base_est,
-                        j.has_candidate_est,
-                        CAST(CASE WHEN j.has_base_est THEN 1 ELSE 0 END AS DOUBLE) AS base_est_cnt,
-                        CAST(CASE WHEN j.has_candidate_est THEN 1 ELSE 0 END AS DOUBLE) AS candidate_est_cnt,
-                        CAST(CASE WHEN NOT j.has_base_est AND j.has_candidate_est THEN 1 ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
-                        CAST(CASE WHEN j.has_base_est AND NOT j.has_candidate_est THEN 1 ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
-                        COALESCE(e.label, '') AS label,
-                        COALESCE(e.dist_h, 0.0) AS dist_h,
-                        {_DIST_BIN_CASE.replace("dist_h", "COALESCE(e.dist_h, 0.0)")} AS distance_bin,
-                        j.suite_name,
-                        j.scenario_name,
-                        j.t4dataset_name,
+                        o.t4dataset_id,
+                        o.frame_index,
+                        o.est_uuid,
+                        o.est_gt_uuid,
+                        TRUE AS has_base_est,
+                        TRUE AS has_candidate_est,
+                        CAST(1 AS DOUBLE) AS base_est_cnt,
+                        CAST(1 AS DOUBLE) AS candidate_est_cnt,
+                        CAST(0 AS DOUBLE) AS missing_in_base_cnt,
+                        CAST(0 AS DOUBLE) AS missing_in_candidate_cnt,
+                        o.label,
+                        COALESCE(o.dist_h, 0.0) AS dist_h,
+                        {_DIST_BIN_CASE.replace("dist_h", "COALESCE(o.dist_h, 0.0)")} AS distance_bin,
+                        o.suite_name,
+                        o.scenario_name,
+                        o.t4dataset_name,
                         CASE
-                            WHEN j.fp_base AND NOT j.fp_comp THEN 'fp_improved'
-                            WHEN NOT j.fp_base AND j.fp_comp THEN 'fp_degraded'
-                            WHEN j.fp_base AND j.fp_comp THEN 'both_fp'
+                            WHEN fs.fp_base > fs.fp_comp THEN 'fp_improved'
+                            WHEN fs.fp_comp > fs.fp_base THEN 'fp_degraded'
+                            WHEN fs.fp_base > 0 AND fs.fp_comp > 0 THEN 'both_fp'
                             ELSE 'both_tp'
                         END AS change_type,
-                        j.fp_base,
-                        j.fp_comp
-                    FROM joined j
-                    LEFT JOIN obj_attrs e
-                        ON CAST(j.t4dataset_id AS VARCHAR) = CAST(e.t4dataset_id AS VARCHAR)
-                       AND j.frame_index = CAST(e.frame_index AS VARCHAR)
-                       AND j.est_uuid = e.uuid
-                    ORDER BY change_type, j.t4dataset_id, j.frame_index
+                        (fs.fp_base > 0) AS fp_base,
+                        (fs.fp_comp > 0) AS fp_comp,
+                        o.status,
+                        o.run_source
+                    FROM all_objs o
+                    LEFT JOIN frame_stats fs
+                        ON o.t4dataset_id = fs.t4dataset_id
+                       AND o.frame_index = fs.frame_index
+                    ORDER BY change_type, o.t4dataset_id, o.frame_index, o.run_source
                     """
                     try:
                         df_fp_object = con.execute(query_fp_object).df()
@@ -5592,6 +5901,21 @@ try:
                                 "where both baseline A and the candidate have EST objects after the active filters."
                             ),
                         )
+                    # --- Dataset name debug ---
+                    with st.expander("🔍 Debug: unique dataset names (t4dataset_id / t4dataset_name, EST side)"):
+                        debug_summary_fp = _dataset_name_debug_summary(
+                            con, "view_eval_flat", filter_clause_base,
+                            comp_flat, filter_clause_comp_fp,
+                            source="EST",
+                        )
+                        st.markdown(debug_summary_fp)
+                    # --- Pair UUID debug: sample pair_uuid values for overlapping datasets ---
+                    with st.expander("🔍 Debug: pair_uuid samples for overlapping datasets (EST side)"):
+                        pair_uuid_debug = _fp_pair_uuid_debug(
+                            con, "view_eval_flat", filter_clause_base,
+                            comp_flat, filter_clause_comp_fp,
+                        )
+                        st.markdown(pair_uuid_debug)
                     df_fp_skipped = pd.DataFrame()
                     df_fp_frame_skipped = pd.DataFrame()
                     df_fp_object_skipped = pd.DataFrame()
@@ -5614,20 +5938,22 @@ try:
                             continue
 
                     # --- KPI summary ---
-                    tot_fp_imp = float(df_fp["fp_improved_cnt"].sum())
-                    tot_fp_deg = float(df_fp["fp_degraded_cnt"].sum())
-                    tot_fp_net = tot_fp_imp - tot_fp_deg
-                    net_fp_s = f"+{int(tot_fp_net)}" if tot_fp_net > 0 else str(int(tot_fp_net))
+                    # fp_improved_cnt = baseline FP count, fp_degraded_cnt = candidate FP count
+                    # net_fp_delta = candidate_FP - baseline_FP (negative = improvement)
+                    tot_fp_base = float(df_fp["fp_improved_cnt"].sum())
+                    tot_fp_comp = float(df_fp["fp_degraded_cnt"].sum())
+                    tot_fp_net = tot_fp_comp - tot_fp_base
+                    net_fp_s = f"{int(tot_fp_net):+d}"
 
                     with st.expander(f"FP diff · Run {lbl} vs A", expanded=(len(runs) == 2)):
                         c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("FP improved (FP→TP)", int(tot_fp_imp))
-                        c2.metric("FP degraded (TP→FP)", int(tot_fp_deg))
+                        c1.metric("FP count (baseline A)", int(tot_fp_base))
+                        c2.metric("FP count (candidate)", int(tot_fp_comp))
                         c3.metric("Net FP delta", net_fp_s)
-                        c4.caption("Negative net = more new FPs on candidate. Start with scenarios and frames with the most **FP degraded** counts.")
+                        c4.caption("Negative = fewer FPs in candidate (improvement). Positive = more FPs in candidate (degradation).")
                         st.markdown(
-                            f"**FP Summary:** Net **{net_fp_s}** FP vs baseline A — "
-                            f"**{int(tot_fp_deg)}** degraded (new FPs) vs **{int(tot_fp_imp)}** improved (resolved FPs)."
+                            f"**FP Summary:** Baseline A had **{int(tot_fp_base)}** FPs, candidate has **{int(tot_fp_comp)}** FPs — "
+                            f"net delta **{net_fp_s}**."
                         )
                         skipped_total_fp = (
                             len(df_fp_skipped) + len(df_fp_frame_skipped) + len(df_fp_object_skipped)
@@ -5825,95 +6151,55 @@ try:
 
                         # --- Comparison lens: label / scenario / dataset / frame ---
                         query_fp_label = f"""
-                        WITH base_est AS (
+                        WITH base_stats AS (
                             SELECT
-                                t4dataset_id,
-                                frame_index,
-                                uuid AS est_uuid,
                                 COALESCE(MAX(try_cast(label AS VARCHAR)), '') AS label,
-                                COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base
+                                COUNT(*) AS total_est_base,
+                                COUNT(*) FILTER (WHERE status = 'FP') AS fp_base,
+                                COUNT(*) FILTER (WHERE status = 'TP') AS tp_base
                             FROM view_eval_flat
-                            WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                            WHERE source = 'EST' AND frame_index IS NOT NULL
                                 AND {filter_clause_base}
-                            GROUP BY 1, 2, 3
+                            GROUP BY label
                         ),
-                        comp_est AS (
+                        comp_stats AS (
                             SELECT
-                                t4dataset_id,
-                                frame_index,
-                                uuid AS est_uuid,
                                 COALESCE(MAX(try_cast(label AS VARCHAR)), '') AS label,
-                                COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp
+                                COUNT(*) AS total_est_comp,
+                                COUNT(*) FILTER (WHERE status = 'FP') AS fp_comp,
+                                COUNT(*) FILTER (WHERE status = 'TP') AS tp_comp
                             FROM {comp_flat}
-                            WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                            WHERE source = 'EST' AND frame_index IS NOT NULL
                                 AND {filter_clause_comp_fp}
-                            GROUP BY 1, 2, 3
-                        ),
-                        joined AS (
-                            SELECT
-                                COALESCE(b.label, c.label) AS label,
-                                b.est_uuid IS NOT NULL AS has_base_est,
-                                c.est_uuid IS NOT NULL AS has_candidate_est,
-                                COALESCE(b.fp_base, FALSE) AS fp_base,
-                                COALESCE(c.fp_comp, FALSE) AS fp_comp
-                            FROM base_est b
-                            FULL OUTER JOIN comp_est c
-                                ON b.t4dataset_id = c.t4dataset_id
-                               AND b.frame_index = c.frame_index
-                               AND b.est_uuid = c.est_uuid
+                            GROUP BY label
                         )
                         SELECT
-                            label,
-                            CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_est,
-                            CAST(COUNT(*) FILTER (WHERE has_base_est) AS DOUBLE) AS base_est_cnt,
-                            CAST(COUNT(*) FILTER (WHERE has_candidate_est) AS DOUBLE) AS candidate_est_cnt,
-                            CAST(COUNT(*) FILTER (WHERE NOT has_base_est AND has_candidate_est) AS DOUBLE) AS missing_in_base_cnt,
-                            CAST(COUNT(*) FILTER (WHERE has_base_est AND NOT has_candidate_est) AS DOUBLE) AS missing_in_candidate_cnt,
-                            CAST(COUNT(*) FILTER (WHERE fp_base AND NOT fp_comp) AS DOUBLE) AS fp_improved_cnt,
-                            CAST(COUNT(*) FILTER (WHERE NOT fp_base AND fp_comp) AS DOUBLE) AS fp_degraded_cnt,
-                            CAST(COUNT(*) FILTER (WHERE fp_base AND fp_comp) AS DOUBLE) AS both_fp_cnt,
-                            CAST(COUNT(*) FILTER (WHERE NOT fp_base AND NOT fp_comp) AS DOUBLE) AS both_tp_cnt,
-                            CAST(SUM((CASE WHEN NOT fp_comp THEN 1 ELSE 0 END) - (CASE WHEN NOT fp_base THEN 1 ELSE 0 END)) AS DOUBLE) AS net_fp_delta
-                        FROM joined
-                        GROUP BY label
+                            COALESCE(b.label, c.label) AS label,
+                            CAST(COALESCE(b.total_est_base, 0) + COALESCE(c.total_est_comp, 0) AS DOUBLE) AS total_est,
+                            CAST(COALESCE(b.total_est_base, 0) AS DOUBLE) AS base_est_cnt,
+                            CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
+                            CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
+                            CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
+                            CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_improved_cnt,
+                            CAST(COALESCE(c.fp_comp, 0) AS DOUBLE) AS fp_degraded_cnt,
+                            CAST(0 AS DOUBLE) AS both_fp_cnt,
+                            CAST(0 AS DOUBLE) AS both_tp_cnt,
+                            CAST(COALESCE(c.fp_comp, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS net_fp_delta
+                        FROM base_stats b
+                        FULL OUTER JOIN comp_stats c
+                            ON b.label = c.label
                         ORDER BY net_fp_delta DESC
                         """
                         df_fp_label = pd.DataFrame()
                         try:
                             df_fp_label = con.execute(query_fp_label).df()
-                            if skip_incomplete_compare_fp:
-                                if df_fp_object.empty:
-                                    df_fp_label = pd.DataFrame()
-                                else:
-                                    df_fp_label = (
-                                        df_fp_object.groupby("label", dropna=False)
-                                        .agg(
-                                            total_est=("est_uuid", "count"),
-                                            base_est_cnt=("base_est_cnt", "sum"),
-                                            candidate_est_cnt=("candidate_est_cnt", "sum"),
-                                            missing_in_base_cnt=("missing_in_base_cnt", "sum"),
-                                            missing_in_candidate_cnt=("missing_in_candidate_cnt", "sum"),
-                                            fp_improved_cnt=(
-                                                "change_type",
-                                                lambda s: float((s == "fp_improved").sum()),
-                                            ),
-                                            fp_degraded_cnt=(
-                                                "change_type",
-                                                lambda s: float((s == "fp_degraded").sum()),
-                                            ),
-                                            both_fp_cnt=(
-                                                "change_type",
-                                                lambda s: float((s == "both_fp").sum()),
-                                            ),
-                                            both_tp_cnt=(
-                                                "change_type",
-                                                lambda s: float((s == "both_tp").sum()),
-                                            ),
-                                        )
-                                        .reset_index()
-                                    )
-                                    df_fp_label["net_fp_delta"] = df_fp_label["fp_improved_cnt"] - df_fp_label["fp_degraded_cnt"]
-                                    df_fp_label = df_fp_label.sort_values("net_fp_delta", ascending=False)
+                            # net_fp_delta is already computed in the query as candidate_FP - baseline_FP
+                            # The query does a FULL OUTER JOIN on label, so it correctly shows
+                            # labels from both runs with one-sided indicators.
+                            if skip_incomplete_compare_fp and not df_fp_label.empty:
+                                df_fp_label = df_fp_label[
+                                    _compare_availability_mask_fp(df_fp_label)
+                                ].copy()
                         except Exception as e_fp_label:
                             st.caption(f"FP Label query: {e_fp_label}")
 
@@ -5958,14 +6244,18 @@ try:
                                 df_fp_dataset_sorted["t4dataset_id"].fillna("").astype(str),
                             )
                             if fp_frame_sort_mode == "FP improved first":
+                                # fp_improved_cnt = baseline FP, fp_degraded_cnt = candidate FP
+                                # Sort by largest baseline FP first (potential improvement)
                                 df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
                                     by=["fp_improved_cnt", "fp_degraded_cnt"],
                                     ascending=[False, True],
                                 )
                             elif fp_frame_sort_mode == "Largest net change":
+                                # net_fp_delta = candidate_FP - baseline_FP (from query)
+                                # For "largest net change", sort by absolute delta
                                 df_fp_dataset_sorted["net_fp_delta"] = (
-                                    pd.to_numeric(df_fp_dataset_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
-                                    - pd.to_numeric(df_fp_dataset_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
+                                    pd.to_numeric(df_fp_dataset_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
+                                    - pd.to_numeric(df_fp_dataset_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
                                 )
                                 df_fp_dataset_sorted["_abs_net_fp_delta"] = (
                                     df_fp_dataset_sorted["net_fp_delta"].abs()
@@ -6000,6 +6290,7 @@ try:
                             if fp_frame_sort_mode == "FP improved first":
                                 fp_frame_caption_metric = "fp improved"
                                 fp_frame_sort_desc = "fp_improved desc"
+                                # fp_improved_cnt = baseline FP, fp_degraded_cnt = candidate FP
                                 df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
                                     by=["fp_improved_cnt", "fp_degraded_cnt"],
                                     ascending=[False, True],
@@ -6007,9 +6298,10 @@ try:
                             elif fp_frame_sort_mode == "Largest net change":
                                 fp_frame_caption_metric = "absolute net change"
                                 fp_frame_sort_desc = "largest |net FP delta|"
+                                # net_fp_delta = candidate_FP - baseline_FP
                                 df_fp_frame_sorted["net_fp_delta"] = (
-                                    pd.to_numeric(df_fp_frame_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
-                                    - pd.to_numeric(df_fp_frame_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
+                                    pd.to_numeric(df_fp_frame_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
+                                    - pd.to_numeric(df_fp_frame_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
                                 )
                                 df_fp_frame_sorted["_abs_net_fp_delta"] = (
                                     df_fp_frame_sorted["net_fp_delta"].abs()
@@ -6036,6 +6328,7 @@ try:
                                 df_fp_label["fp_improved_cnt"],
                                 df_fp_label["fp_degraded_cnt"],
                                 root_lens_fp,
+                                side_labels=("Baseline FP", "Candidate FP"),
                             )
                             _plot_comparison_lens_treemap(
                                 tdf_fp_l,
@@ -6055,13 +6348,14 @@ try:
                                 ds_top_renamed,
                                 ["_scenario_focus", "_dataset_focus"],
                                 root_lens_fp,
+                                side_labels=("Baseline FP", "Candidate FP"),
                             )
                             rest = df_fp_dataset_sorted.iloc[ds_cap:]
                             if not rest.empty:
                                 io = float(rest["fp_improved_cnt"].sum())
                                 do = float(rest["fp_degraded_cnt"].sum())
                                 other_rows = []
-                                for side, value in (("Improved", io), ("Degraded", do)):
+                                for side, value in (("Baseline FP", io), ("Candidate FP", do)):
                                     if value > 0:
                                         other_rows.append(
                                             {
@@ -6175,7 +6469,7 @@ try:
                                     fk = f"{rw['t4dataset_id']}|{rw['frame_index']}"
                                     fp_frame_key_labels[fk] = (
                                         f"{str(rw.get('scenario_name', ''))[:36]} | "
-                                        f"f{rw['frame_index']} | FP deg {int(rw['fp_degraded_cnt'])} | FP imp {int(rw['fp_improved_cnt'])}"
+                                        f"f{rw['frame_index']} | candidate FP {int(rw['fp_degraded_cnt'])} | baseline FP {int(rw['fp_improved_cnt'])}"
                                     )
                             with pr2:
                                 if st.button(
