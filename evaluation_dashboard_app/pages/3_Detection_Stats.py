@@ -437,6 +437,62 @@ def _compare_availability_reason(df: pd.DataFrame) -> pd.Series:
     )
 
 
+# --- FP-side availability helpers (use base_est_cnt / candidate_est_cnt) ---
+
+
+def _compare_availability_mask_fp(df: pd.DataFrame) -> pd.Series:
+    """Rows where both compared runs have EST objects for the same compare key."""
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    if "base_est_cnt" not in df.columns or "candidate_est_cnt" not in df.columns:
+        return pd.Series(True, index=df.index)
+    return (pd.to_numeric(df["base_est_cnt"], errors="coerce").fillna(0) > 0) & (
+        pd.to_numeric(df["candidate_est_cnt"], errors="coerce").fillna(0) > 0
+    )
+
+
+def _compare_availability_summary_fp(df: pd.DataFrame, *, unit: str) -> str:
+    if df is None or df.empty or "base_est_cnt" not in df.columns or "candidate_est_cnt" not in df.columns:
+        return ""
+    base_cnt = pd.to_numeric(df["base_est_cnt"], errors="coerce").fillna(0)
+    cand_cnt = pd.to_numeric(df["candidate_est_cnt"], errors="coerce").fillna(0)
+    missing_base = int(((base_cnt <= 0) & (cand_cnt > 0)).sum())
+    missing_candidate = int(((base_cnt > 0) & (cand_cnt <= 0)).sum())
+    if missing_base == 0 and missing_candidate == 0:
+        return ""
+    parts = []
+    if missing_base:
+        parts.append(f"{missing_base} {unit} only in candidate")
+    if missing_candidate:
+        parts.append(f"{missing_candidate} {unit} only in baseline A")
+    return ", ".join(parts)
+
+
+def _compare_availability_reason_fp(df: pd.DataFrame) -> pd.Series:
+    """Human-readable reason for one-sided FP compare rows."""
+    if df is None or df.empty:
+        return pd.Series(dtype="object")
+    if "base_est_cnt" not in df.columns or "candidate_est_cnt" not in df.columns:
+        return pd.Series("available in both", index=df.index, dtype="object")
+    base_cnt = pd.to_numeric(df["base_est_cnt"], errors="coerce").fillna(0)
+    cand_cnt = pd.to_numeric(df["candidate_est_cnt"], errors="coerce").fillna(0)
+    return pd.Series(
+        np.select(
+            [
+                (base_cnt <= 0) & (cand_cnt > 0),
+                (base_cnt > 0) & (cand_cnt <= 0),
+            ],
+            [
+                "Only in candidate",
+                "Only in baseline A",
+            ],
+            default="Available in both",
+        ),
+        index=df.index,
+        dtype="object",
+    )
+
+
 def list_parquets_in_run(run_path) -> List[str]:
     """Return sorted list of absolute paths to .parquet files in the run directory."""
     p = Path(run_path)
@@ -5251,6 +5307,1046 @@ try:
                 st.error(f"Error (Run {lbl} vs A): {e}")
             finally:
                 _pd_slot.empty()
+
+    # =============================
+    # Compare mode: Perception diff — False Positives (EST-side)
+    # =============================
+    if not single_mode:
+        ds_dlog("section: Perception_FP_diff_start")
+        st.divider()
+        st.markdown(
+            section_header_html(
+                "Perception diff: False Positives (vs baseline A)",
+                "Per-EST-object comparison vs baseline A: FP improved = was FP on A and TP on candidate; FP degraded = was TP on A and FP on candidate. Hotspots prioritize regressions (new FPs).",
+            ),
+            unsafe_allow_html=True,
+        )
+        for idx in range(1, len(runs)):
+            lbl = run_labels_list[idx]
+            _fp_slot = st.empty()
+            _fp_slot.markdown(ds_spot_loading_markup(f"FP diff · run {lbl}"), unsafe_allow_html=True)
+            try:
+                filter_clause_comp_fp = build_filter_clause(filters_list[idx], enable_dist_h=False)
+                comp_flat = _flat_view(idx)
+                # --- Per-dataset FP query ---
+                query_fp = f"""
+                WITH base_est AS (
+                    SELECT
+                        t4dataset_id,
+                        frame_index,
+                        uuid AS est_uuid,
+                        COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base,
+                        COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                        COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                        COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                    FROM view_eval_flat
+                    WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                        AND {filter_clause_base}
+                    GROUP BY 1,2,3
+                ),
+                comp_est AS (
+                    SELECT
+                        t4dataset_id,
+                        frame_index,
+                        uuid AS est_uuid,
+                        COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp,
+                        COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                        COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                        COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                    FROM {comp_flat}
+                    WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                        AND {filter_clause_comp_fp}
+                    GROUP BY 1,2,3
+                ),
+                joined AS (
+                    SELECT
+                        COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
+                        COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
+                        COALESCE(b.est_uuid, c.est_uuid) AS est_uuid,
+                        b.est_uuid IS NOT NULL AS has_base_est,
+                        c.est_uuid IS NOT NULL AS has_candidate_est,
+                        COALESCE(b.fp_base, FALSE) AS fp_base,
+                        COALESCE(c.fp_comp, FALSE) AS fp_comp,
+                        COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+                        COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+                        COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
+                    FROM base_est b
+                    FULL OUTER JOIN comp_est c
+                        ON b.t4dataset_id = c.t4dataset_id
+                       AND b.frame_index = c.frame_index
+                       AND b.est_uuid = c.est_uuid
+                )
+                SELECT
+                    t4dataset_id,
+                    CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_est,
+                    CAST(COUNT(*) FILTER (WHERE has_base_est) AS DOUBLE) AS base_est_cnt,
+                    CAST(COUNT(*) FILTER (WHERE has_candidate_est) AS DOUBLE) AS candidate_est_cnt,
+                    CAST(COUNT(*) FILTER (WHERE NOT has_base_est AND has_candidate_est) AS DOUBLE) AS missing_in_base_cnt,
+                    CAST(COUNT(*) FILTER (WHERE has_base_est AND NOT has_candidate_est) AS DOUBLE) AS missing_in_candidate_cnt,
+                    CAST(COUNT(*) FILTER (WHERE fp_base AND NOT fp_comp) AS DOUBLE) AS fp_improved_cnt,
+                    CAST(COUNT(*) FILTER (WHERE NOT fp_base AND fp_comp) AS DOUBLE) AS fp_degraded_cnt,
+                    CAST(COUNT(*) FILTER (WHERE fp_base AND fp_comp) AS DOUBLE) AS both_fp_cnt,
+                    CAST(COUNT(*) FILTER (WHERE NOT fp_base AND NOT fp_comp) AS DOUBLE) AS both_tp_cnt,
+                    CAST(SUM((CASE WHEN NOT fp_comp THEN 1 ELSE 0 END) - (CASE WHEN NOT fp_base THEN 1 ELSE 0 END)) AS DOUBLE) AS net_fp_delta,
+                    suite_name,
+                    scenario_name,
+                    t4dataset_name
+                FROM joined
+                GROUP BY t4dataset_id, suite_name, scenario_name, t4dataset_name
+                ORDER BY net_fp_delta DESC
+                """
+                df_fp = con.execute(query_fp).df()
+                if not df_fp.empty:
+                    # --- Per-frame FP query ---
+                    query_fp_frame = f"""
+                    WITH base_est AS (
+                        SELECT
+                            t4dataset_id,
+                            frame_index,
+                            uuid AS est_uuid,
+                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base,
+                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                        FROM view_eval_flat
+                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                            AND {filter_clause_base}
+                        GROUP BY 1, 2, 3
+                    ),
+                    comp_est AS (
+                        SELECT
+                            t4dataset_id,
+                            frame_index,
+                            uuid AS est_uuid,
+                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp,
+                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                        FROM {comp_flat}
+                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                            AND {filter_clause_comp_fp}
+                        GROUP BY 1, 2, 3
+                    ),
+                    joined AS (
+                        SELECT
+                            COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
+                            COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
+                            COALESCE(b.est_uuid, c.est_uuid) AS est_uuid,
+                            b.est_uuid IS NOT NULL AS has_base_est,
+                            c.est_uuid IS NOT NULL AS has_candidate_est,
+                            COALESCE(b.fp_base, FALSE) AS fp_base,
+                            COALESCE(c.fp_comp, FALSE) AS fp_comp,
+                            COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+                            COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+                            COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
+                        FROM base_est b
+                        FULL OUTER JOIN comp_est c
+                            ON b.t4dataset_id = c.t4dataset_id
+                           AND b.frame_index = c.frame_index
+                           AND b.est_uuid = c.est_uuid
+                    )
+                    SELECT
+                        t4dataset_id,
+                        frame_index,
+                        scenario_name,
+                        suite_name,
+                        t4dataset_name,
+                        CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_est,
+                        CAST(COUNT(*) FILTER (WHERE has_base_est) AS DOUBLE) AS base_est_cnt,
+                        CAST(COUNT(*) FILTER (WHERE has_candidate_est) AS DOUBLE) AS candidate_est_cnt,
+                        CAST(COUNT(*) FILTER (WHERE NOT has_base_est AND has_candidate_est) AS DOUBLE) AS missing_in_base_cnt,
+                        CAST(COUNT(*) FILTER (WHERE has_base_est AND NOT has_candidate_est) AS DOUBLE) AS missing_in_candidate_cnt,
+                        CAST(COUNT(*) FILTER (WHERE fp_base AND NOT fp_comp) AS DOUBLE) AS fp_improved_cnt,
+                        CAST(COUNT(*) FILTER (WHERE NOT fp_base AND fp_comp) AS DOUBLE) AS fp_degraded_cnt,
+                        CAST(COUNT(*) FILTER (WHERE fp_base AND fp_comp) AS DOUBLE) AS both_fp_cnt,
+                        CAST(COUNT(*) FILTER (WHERE NOT fp_base AND NOT fp_comp) AS DOUBLE) AS both_tp_cnt,
+                        CAST(SUM((CASE WHEN NOT fp_comp THEN 1 ELSE 0 END) - (CASE WHEN NOT fp_base THEN 1 ELSE 0 END)) AS DOUBLE) AS net_fp_delta
+                    FROM joined
+                    GROUP BY t4dataset_id, frame_index, suite_name, scenario_name, t4dataset_name
+                    ORDER BY net_fp_delta DESC
+                    """
+                    try:
+                        df_fp_frame = con.execute(query_fp_frame).df()
+                    except Exception:
+                        df_fp_frame = pd.DataFrame()
+
+                    # --- Per-object FP query ---
+                    query_fp_object = f"""
+                    WITH base_est AS (
+                        SELECT
+                            t4dataset_id,
+                            frame_index,
+                            uuid AS est_uuid,
+                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base,
+                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                        FROM view_eval_flat
+                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                            AND {filter_clause_base}
+                        GROUP BY 1, 2, 3
+                    ),
+                    comp_est AS (
+                        SELECT
+                            t4dataset_id,
+                            frame_index,
+                            uuid AS est_uuid,
+                            COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp,
+                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                        FROM {comp_flat}
+                        WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                            AND {filter_clause_comp_fp}
+                        GROUP BY 1, 2, 3
+                    ),
+                    joined AS (
+                        SELECT
+                            COALESCE(CAST(b.t4dataset_id AS VARCHAR), CAST(c.t4dataset_id AS VARCHAR)) AS t4dataset_id,
+                            COALESCE(CAST(b.frame_index AS VARCHAR), CAST(c.frame_index AS VARCHAR)) AS frame_index,
+                            COALESCE(b.est_uuid, c.est_uuid) AS est_uuid,
+                            b.est_uuid IS NOT NULL AS has_base_est,
+                            c.est_uuid IS NOT NULL AS has_candidate_est,
+                            COALESCE(b.fp_base, FALSE) AS fp_base,
+                            COALESCE(c.fp_comp, FALSE) AS fp_comp,
+                            COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+                            COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+                            COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
+                        FROM base_est b
+                        FULL OUTER JOIN comp_est c
+                            ON b.t4dataset_id = c.t4dataset_id
+                           AND b.frame_index = c.frame_index
+                           AND b.est_uuid = c.est_uuid
+                    ),
+                    obj_attrs AS (
+                        SELECT
+                            t4dataset_id,
+                            frame_index,
+                            uuid,
+                            MAX(CAST(label AS VARCHAR)) AS label,
+                            MAX(dist_h) AS dist_h
+                        FROM view_eval_flat
+                        WHERE source = 'EST'
+                        GROUP BY 1, 2, 3
+                    )
+                    SELECT
+                        j.t4dataset_id,
+                        j.frame_index,
+                        j.est_uuid,
+                        j.has_base_est,
+                        j.has_candidate_est,
+                        CAST(CASE WHEN j.has_base_est THEN 1 ELSE 0 END AS DOUBLE) AS base_est_cnt,
+                        CAST(CASE WHEN j.has_candidate_est THEN 1 ELSE 0 END AS DOUBLE) AS candidate_est_cnt,
+                        CAST(CASE WHEN NOT j.has_base_est AND j.has_candidate_est THEN 1 ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
+                        CAST(CASE WHEN j.has_base_est AND NOT j.has_candidate_est THEN 1 ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
+                        COALESCE(e.label, '') AS label,
+                        COALESCE(e.dist_h, 0.0) AS dist_h,
+                        {_DIST_BIN_CASE.replace("dist_h", "COALESCE(e.dist_h, 0.0)")} AS distance_bin,
+                        j.suite_name,
+                        j.scenario_name,
+                        j.t4dataset_name,
+                        CASE
+                            WHEN j.fp_base AND NOT j.fp_comp THEN 'fp_improved'
+                            WHEN NOT j.fp_base AND j.fp_comp THEN 'fp_degraded'
+                            WHEN j.fp_base AND j.fp_comp THEN 'both_fp'
+                            ELSE 'both_tp'
+                        END AS change_type,
+                        j.fp_base,
+                        j.fp_comp
+                    FROM joined j
+                    LEFT JOIN obj_attrs e
+                        ON CAST(j.t4dataset_id AS VARCHAR) = CAST(e.t4dataset_id AS VARCHAR)
+                       AND j.frame_index = CAST(e.frame_index AS VARCHAR)
+                       AND j.est_uuid = e.uuid
+                    ORDER BY change_type, j.t4dataset_id, j.frame_index
+                    """
+                    try:
+                        df_fp_object = con.execute(query_fp_object).df()
+                    except Exception:
+                        df_fp_object = pd.DataFrame()
+
+                    # --- Availability check ---
+                    availability_messages_fp = [
+                        msg
+                        for msg in [
+                            _compare_availability_summary_fp(df_fp, unit="dataset rows"),
+                            _compare_availability_summary_fp(df_fp_frame, unit="frames"),
+                        ]
+                        if msg
+                    ]
+                    skip_incomplete_key_fp = f"p5fp_skip_incomplete_{lbl}_{idx}"
+                    skip_incomplete_compare_fp = True
+                    if availability_messages_fp:
+                        st.warning(
+                            "Some compare keys have EST data on only one side. "
+                            + "; ".join(availability_messages_fp)
+                            + ". These can create artificial large improvements/degradations.",
+                            icon="⚠️",
+                        )
+                        skip_incomplete_compare_fp = st.checkbox(
+                            "Skip one-sided compare cases in FP diff hotspots",
+                            value=True,
+                            key=skip_incomplete_key_fp,
+                            help=(
+                                "When enabled, FP diff charts/tables only use dataset/frame/object keys "
+                                "where both baseline A and the candidate have EST objects after the active filters."
+                            ),
+                        )
+                    df_fp_skipped = pd.DataFrame()
+                    df_fp_frame_skipped = pd.DataFrame()
+                    df_fp_object_skipped = pd.DataFrame()
+                    if skip_incomplete_compare_fp:
+                        df_fp_skipped = df_fp[~_compare_availability_mask_fp(df_fp)].copy()
+                        df_fp_frame_skipped = df_fp_frame[~_compare_availability_mask_fp(df_fp_frame)].copy()
+                        df_fp_object_skipped = df_fp_object[
+                            ~_compare_availability_mask_fp(df_fp_object)
+                        ].copy()
+                        df_fp = df_fp[_compare_availability_mask_fp(df_fp)].copy()
+                        df_fp_frame = df_fp_frame[_compare_availability_mask_fp(df_fp_frame)].copy()
+                        df_fp_object = df_fp_object[
+                            _compare_availability_mask_fp(df_fp_object)
+                        ].copy()
+                        if df_fp.empty:
+                            st.info(
+                                "All FP diff rows for this slice are one-sided after the active filters. "
+                                "Disable the skip option above to inspect them."
+                            )
+                            continue
+
+                    # --- KPI summary ---
+                    tot_fp_imp = float(df_fp["fp_improved_cnt"].sum())
+                    tot_fp_deg = float(df_fp["fp_degraded_cnt"].sum())
+                    tot_fp_net = tot_fp_imp - tot_fp_deg
+                    net_fp_s = f"+{int(tot_fp_net)}" if tot_fp_net > 0 else str(int(tot_fp_net))
+
+                    with st.expander(f"FP diff · Run {lbl} vs A", expanded=(len(runs) == 2)):
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("FP improved (FP→TP)", int(tot_fp_imp))
+                        c2.metric("FP degraded (TP→FP)", int(tot_fp_deg))
+                        c3.metric("Net FP delta", net_fp_s)
+                        c4.caption("Negative net = more new FPs on candidate. Start with scenarios and frames with the most **FP degraded** counts.")
+                        st.markdown(
+                            f"**FP Summary:** Net **{net_fp_s}** FP vs baseline A — "
+                            f"**{int(tot_fp_deg)}** degraded (new FPs) vs **{int(tot_fp_imp)}** improved (resolved FPs)."
+                        )
+                        skipped_total_fp = (
+                            len(df_fp_skipped) + len(df_fp_frame_skipped) + len(df_fp_object_skipped)
+                        )
+                        if skipped_total_fp > 0:
+                            with st.expander("Skipped one-sided FP compare cases"):
+                                st.caption(
+                                    "These rows were excluded from the FP diff hotspots because the EST objects exist "
+                                    "on only one side after the active filters."
+                                )
+                                if not df_fp_skipped.empty:
+                                    skipped_fp_dataset = df_fp_skipped.copy()
+                                    skipped_fp_dataset["skip_reason"] = _compare_availability_reason_fp(
+                                        skipped_fp_dataset
+                                    )
+                                    st.markdown("**Per dataset row**")
+                                    st.download_button(
+                                        label="Download skipped FP dataset rows (CSV)",
+                                        data=skipped_fp_dataset.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_dataset_rows.csv",
+                                        mime="text/csv",
+                                        key=f"p5fp_dl_skip_dataset_{lbl}_{idx}",
+                                    )
+                                    st.dataframe(
+                                        skipped_fp_dataset.head(200),
+                                        width='stretch',
+                                        hide_index=True,
+                                    )
+                                if not df_fp_frame_skipped.empty:
+                                    skipped_fp_frames = df_fp_frame_skipped.copy()
+                                    skipped_fp_frames["skip_reason"] = _compare_availability_reason_fp(
+                                        skipped_fp_frames
+                                    )
+                                    st.markdown("**Per frame**")
+                                    skipped_fp_frames = _with_t4_viewer_links(
+                                        skipped_fp_frames,
+                                        _run_share_names_for_links(),
+                                    )
+                                    st.download_button(
+                                        label="Download skipped FP frames (CSV)",
+                                        data=skipped_fp_frames.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_frames.csv",
+                                        mime="text/csv",
+                                        key=f"p5fp_dl_skip_frames_{lbl}_{idx}",
+                                    )
+                                    st.dataframe(
+                                        skipped_fp_frames.head(200),
+                                        width='stretch',
+                                        hide_index=True,
+                                        column_config=_t4_viewer_link_column_config(),
+                                    )
+                                if not df_fp_object_skipped.empty:
+                                    skipped_fp_objects = df_fp_object_skipped.copy()
+                                    skipped_fp_objects["skip_reason"] = _compare_availability_reason_fp(
+                                        skipped_fp_objects
+                                    )
+                                    st.markdown("**Per object**")
+                                    skipped_fp_objects = _with_t4_viewer_links(
+                                        skipped_fp_objects,
+                                        _run_share_names_for_links(),
+                                    )
+                                    st.download_button(
+                                        label="Download skipped FP objects (CSV)",
+                                        data=skipped_fp_objects.to_csv(index=False).encode("utf-8"),
+                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_objects.csv",
+                                        mime="text/csv",
+                                        key=f"p5fp_dl_skip_objects_{lbl}_{idx}",
+                                    )
+                                    st.dataframe(
+                                        skipped_fp_objects.head(200),
+                                        width='stretch',
+                                        hide_index=True,
+                                        column_config=_t4_viewer_link_column_config(),
+                                    )
+
+                        # --- Hierarchy charts (Sunburst/Treemap) ---
+                        fp_b_key = f"p5fp_baobab_{lbl}_{idx}"
+                        c1b, c2b, c3b, c4b = st.columns([1, 1, 1, 1])
+                        with c1b:
+                            fp_baobab_viz = st.radio(
+                                "Chart type",
+                                ["Sunburst", "Treemap"],
+                                horizontal=True,
+                                key=f"{fp_b_key}_viz",
+                            )
+                        with c2b:
+                            fp_baobab_ns = st.slider(
+                                "Max scenarios",
+                                min_value=5,
+                                max_value=25,
+                                value=15,
+                                key=f"{fp_b_key}_ns",
+                            )
+                        with c3b:
+                            fp_baobab_nd = st.slider(
+                                "Max datasets / scenario",
+                                min_value=5,
+                                max_value=30,
+                                value=12,
+                                key=f"{fp_b_key}_nd",
+                            )
+                        with c4b:
+                            fp_baobab_nf = st.slider(
+                                "Max frames / dataset",
+                                min_value=5,
+                                max_value=20,
+                                value=10,
+                                key=f"{fp_b_key}_nf",
+                            )
+                        if df_fp_object.empty:
+                            st.caption("No object-level rows for FP hierarchy.")
+                        else:
+                            treemap_path_cols = ["root", "scen_g", "dataset_display", "fr_display", "label"]
+                            sunburst_path_cols = ["root", "scen_g", "dataset_display", "label"]
+                            h_fp_imp = _baobab_hierarchy_from_objects(
+                                df_fp_object,
+                                "fp_improved",
+                                f"FP improved ({lbl} vs A)",
+                                fp_baobab_ns,
+                                fp_baobab_nd,
+                                fp_baobab_nf,
+                            )
+                            h_fp_deg = _baobab_hierarchy_from_objects(
+                                df_fp_object,
+                                "fp_degraded",
+                                f"FP degraded ({lbl} vs A)",
+                                fp_baobab_ns,
+                                fp_baobab_nd,
+                                fp_baobab_nf,
+                            )
+                            fp_pair_both = (not h_fp_imp.empty) and (not h_fp_deg.empty)
+                            fp_plot_entries = []
+                            for ct, hdf, cmap in (
+                                ("fp_improved", h_fp_imp, IMPROVED_SCALE),
+                                ("fp_degraded", h_fp_deg, DEGRADED_SCALE),
+                            ):
+                                if hdf.empty:
+                                    fp_plot_entries.append((ct, None))
+                                    continue
+                                title = f"{fp_baobab_viz}: FP {ct.replace('fp_', '')} (n = {int(hdf['n'].sum())} EST objects)"
+                                if fp_baobab_viz == "Sunburst":
+                                    hdf_plot = _sunburst_without_frame_layer(hdf)
+                                    fig_b = px.sunburst(
+                                        hdf_plot,
+                                        path=sunburst_path_cols,
+                                        values="n",
+                                        color="n",
+                                        color_continuous_scale=cmap,
+                                        title=title,
+                                    )
+                                    h_sb = 480 if fp_pair_both else 620
+                                    apply_chart_theme(fig_b, height=h_sb, margin=dict(t=36, l=4, r=4, b=4))
+                                else:
+                                    fig_b = px.treemap(
+                                        hdf,
+                                        path=treemap_path_cols,
+                                        values="n",
+                                        color="n",
+                                        color_continuous_scale=cmap,
+                                        title=title,
+                                    )
+                                    h_tr = 440 if fp_pair_both else 520
+                                    apply_chart_theme(fig_b, height=h_tr, margin=dict(t=40, l=4, r=4, b=4))
+                                fp_plot_entries.append((ct, fig_b))
+
+                            fp_two_up = (
+                                len(fp_plot_entries) == 2
+                                and fp_plot_entries[0][1] is not None
+                                and fp_plot_entries[1][1] is not None
+                            )
+                            if fp_two_up:
+                                bc1, bc2 = st.columns(2, gap="small")
+                                with bc1:
+                                    st.plotly_chart(
+                                        fp_plot_entries[0][1],
+                                        width='stretch',
+                                        key=f"{fp_b_key}_fig_{fp_plot_entries[0][0]}",
+                                    )
+                                with bc2:
+                                    st.plotly_chart(
+                                        fp_plot_entries[1][1],
+                                        width='stretch',
+                                        key=f"{fp_b_key}_fig_{fp_plot_entries[1][0]}",
+                                    )
+                            else:
+                                for ct, fig_b in fp_plot_entries:
+                                    if fig_b is not None:
+                                        st.plotly_chart(
+                                            fig_b,
+                                            width='stretch',
+                                            key=f"{fp_b_key}_fig_{ct}",
+                                        )
+                                    else:
+                                        st.caption(f"No **{ct}** objects to chart.")
+
+                        # --- Comparison lens: label / scenario / dataset / frame ---
+                        query_fp_label = f"""
+                        WITH base_est AS (
+                            SELECT
+                                t4dataset_id,
+                                frame_index,
+                                uuid AS est_uuid,
+                                COALESCE(MAX(try_cast(label AS VARCHAR)), '') AS label,
+                                COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_base
+                            FROM view_eval_flat
+                            WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                                AND {filter_clause_base}
+                            GROUP BY 1, 2, 3
+                        ),
+                        comp_est AS (
+                            SELECT
+                                t4dataset_id,
+                                frame_index,
+                                uuid AS est_uuid,
+                                COALESCE(MAX(try_cast(label AS VARCHAR)), '') AS label,
+                                COUNT(*) FILTER (WHERE status = 'FP') > 0 AS fp_comp
+                            FROM {comp_flat}
+                            WHERE source = 'EST' AND uuid IS NOT NULL AND frame_index IS NOT NULL
+                                AND {filter_clause_comp_fp}
+                            GROUP BY 1, 2, 3
+                        ),
+                        joined AS (
+                            SELECT
+                                COALESCE(b.label, c.label) AS label,
+                                b.est_uuid IS NOT NULL AS has_base_est,
+                                c.est_uuid IS NOT NULL AS has_candidate_est,
+                                COALESCE(b.fp_base, FALSE) AS fp_base,
+                                COALESCE(c.fp_comp, FALSE) AS fp_comp
+                            FROM base_est b
+                            FULL OUTER JOIN comp_est c
+                                ON b.t4dataset_id = c.t4dataset_id
+                               AND b.frame_index = c.frame_index
+                               AND b.est_uuid = c.est_uuid
+                        )
+                        SELECT
+                            label,
+                            CAST(COUNT(*) FILTER (WHERE TRUE) AS DOUBLE) AS total_est,
+                            CAST(COUNT(*) FILTER (WHERE has_base_est) AS DOUBLE) AS base_est_cnt,
+                            CAST(COUNT(*) FILTER (WHERE has_candidate_est) AS DOUBLE) AS candidate_est_cnt,
+                            CAST(COUNT(*) FILTER (WHERE NOT has_base_est AND has_candidate_est) AS DOUBLE) AS missing_in_base_cnt,
+                            CAST(COUNT(*) FILTER (WHERE has_base_est AND NOT has_candidate_est) AS DOUBLE) AS missing_in_candidate_cnt,
+                            CAST(COUNT(*) FILTER (WHERE fp_base AND NOT fp_comp) AS DOUBLE) AS fp_improved_cnt,
+                            CAST(COUNT(*) FILTER (WHERE NOT fp_base AND fp_comp) AS DOUBLE) AS fp_degraded_cnt,
+                            CAST(COUNT(*) FILTER (WHERE fp_base AND fp_comp) AS DOUBLE) AS both_fp_cnt,
+                            CAST(COUNT(*) FILTER (WHERE NOT fp_base AND NOT fp_comp) AS DOUBLE) AS both_tp_cnt,
+                            CAST(SUM((CASE WHEN NOT fp_comp THEN 1 ELSE 0 END) - (CASE WHEN NOT fp_base THEN 1 ELSE 0 END)) AS DOUBLE) AS net_fp_delta
+                        FROM joined
+                        GROUP BY label
+                        ORDER BY net_fp_delta DESC
+                        """
+                        df_fp_label = pd.DataFrame()
+                        try:
+                            df_fp_label = con.execute(query_fp_label).df()
+                            if skip_incomplete_compare_fp:
+                                if df_fp_object.empty:
+                                    df_fp_label = pd.DataFrame()
+                                else:
+                                    df_fp_label = (
+                                        df_fp_object.groupby("label", dropna=False)
+                                        .agg(
+                                            total_est=("est_uuid", "count"),
+                                            base_est_cnt=("base_est_cnt", "sum"),
+                                            candidate_est_cnt=("candidate_est_cnt", "sum"),
+                                            missing_in_base_cnt=("missing_in_base_cnt", "sum"),
+                                            missing_in_candidate_cnt=("missing_in_candidate_cnt", "sum"),
+                                            fp_improved_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "fp_improved").sum()),
+                                            ),
+                                            fp_degraded_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "fp_degraded").sum()),
+                                            ),
+                                            both_fp_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "both_fp").sum()),
+                                            ),
+                                            both_tp_cnt=(
+                                                "change_type",
+                                                lambda s: float((s == "both_tp").sum()),
+                                            ),
+                                        )
+                                        .reset_index()
+                                    )
+                                    df_fp_label["net_fp_delta"] = df_fp_label["fp_improved_cnt"] - df_fp_label["fp_degraded_cnt"]
+                                    df_fp_label = df_fp_label.sort_values("net_fp_delta", ascending=False)
+                        except Exception as e_fp_label:
+                            st.caption(f"FP Label query: {e_fp_label}")
+
+                        fp_scen_agg = pd.DataFrame()
+                        if not df_fp.empty:
+                            fp_scen_agg = (
+                                df_fp.groupby("scenario_name", dropna=False)
+                                .agg(
+                                    fp_improved_cnt=("fp_improved_cnt", "sum"),
+                                    fp_degraded_cnt=("fp_degraded_cnt", "sum"),
+                                )
+                                .reset_index()
+                            )
+                            fp_scen_agg = fp_scen_agg.sort_values(
+                                by=["fp_degraded_cnt", "fp_improved_cnt"],
+                                ascending=[False, True],
+                            )
+
+                        fp_frame_sort_mode = st.radio(
+                            "Dataset/frame focus",
+                            ["FP degraded first", "FP improved first", "Largest net change"],
+                            horizontal=True,
+                            key=f"p5fp_frame_focus_{lbl}_{idx}",
+                            help="Choose whether dataset and frame views prioritize new FPs, resolved FPs, or the biggest overall swings.",
+                        )
+                        df_fp_dataset_sorted = pd.DataFrame()
+                        df_fp_frame_sorted = pd.DataFrame()
+                        fp_frame_caption_metric = "fp degraded"
+                        fp_frame_sort_desc = "fp_degraded desc"
+                        if not df_fp.empty:
+                            df_fp_dataset_sorted = df_fp.copy()
+                            dataset_name = df_fp_dataset_sorted.get(
+                                "t4dataset_name",
+                                df_fp_dataset_sorted["t4dataset_id"],
+                            )
+                            df_fp_dataset_sorted["_scenario_focus"] = (
+                                df_fp_dataset_sorted["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
+                            )
+                            df_fp_dataset_sorted["_dataset_focus"] = dataset_name.fillna("").astype(str)
+                            df_fp_dataset_sorted["_dataset_focus"] = df_fp_dataset_sorted["_dataset_focus"].where(
+                                df_fp_dataset_sorted["_dataset_focus"].str.strip() != "",
+                                df_fp_dataset_sorted["t4dataset_id"].fillna("").astype(str),
+                            )
+                            if fp_frame_sort_mode == "FP improved first":
+                                df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
+                                    by=["fp_improved_cnt", "fp_degraded_cnt"],
+                                    ascending=[False, True],
+                                )
+                            elif fp_frame_sort_mode == "Largest net change":
+                                df_fp_dataset_sorted["net_fp_delta"] = (
+                                    pd.to_numeric(df_fp_dataset_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
+                                    - pd.to_numeric(df_fp_dataset_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
+                                )
+                                df_fp_dataset_sorted["_abs_net_fp_delta"] = (
+                                    df_fp_dataset_sorted["net_fp_delta"].abs()
+                                )
+                                df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
+                                    by=["_abs_net_fp_delta", "fp_degraded_cnt", "fp_improved_cnt"],
+                                    ascending=[False, False, False],
+                                )
+                            else:
+                                df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
+                                    by=["fp_degraded_cnt", "fp_improved_cnt"],
+                                    ascending=[False, True],
+                                )
+                            df_fp_dataset_sorted = df_fp_dataset_sorted.drop(
+                                columns=["_abs_net_fp_delta"],
+                                errors="ignore",
+                            ).reset_index(drop=True)
+                        if not df_fp_frame.empty:
+                            df_fp_frame_sorted = df_fp_frame.copy()
+                            frame_dataset_name = df_fp_frame_sorted.get(
+                                "t4dataset_name",
+                                df_fp_frame_sorted["t4dataset_id"],
+                            )
+                            df_fp_frame_sorted["_scenario_focus"] = (
+                                df_fp_frame_sorted["scenario_name"].fillna("").astype(str).replace("", "(no scenario)")
+                            )
+                            df_fp_frame_sorted["_dataset_focus"] = frame_dataset_name.fillna("").astype(str)
+                            df_fp_frame_sorted["_dataset_focus"] = df_fp_frame_sorted["_dataset_focus"].where(
+                                df_fp_frame_sorted["_dataset_focus"].str.strip() != "",
+                                df_fp_frame_sorted["t4dataset_id"].fillna("").astype(str),
+                            )
+                            if fp_frame_sort_mode == "FP improved first":
+                                fp_frame_caption_metric = "fp improved"
+                                fp_frame_sort_desc = "fp_improved desc"
+                                df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
+                                    by=["fp_improved_cnt", "fp_degraded_cnt"],
+                                    ascending=[False, True],
+                                )
+                            elif fp_frame_sort_mode == "Largest net change":
+                                fp_frame_caption_metric = "absolute net change"
+                                fp_frame_sort_desc = "largest |net FP delta|"
+                                df_fp_frame_sorted["net_fp_delta"] = (
+                                    pd.to_numeric(df_fp_frame_sorted["fp_improved_cnt"], errors="coerce").fillna(0)
+                                    - pd.to_numeric(df_fp_frame_sorted["fp_degraded_cnt"], errors="coerce").fillna(0)
+                                )
+                                df_fp_frame_sorted["_abs_net_fp_delta"] = (
+                                    df_fp_frame_sorted["net_fp_delta"].abs()
+                                )
+                                df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
+                                    by=["_abs_net_fp_delta", "fp_degraded_cnt", "fp_improved_cnt"],
+                                    ascending=[False, False, False],
+                                )
+                            else:
+                                df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
+                                    by=["fp_degraded_cnt", "fp_improved_cnt"],
+                                    ascending=[False, True],
+                                )
+                            df_fp_frame_sorted = df_fp_frame_sorted.drop(
+                                columns=["_abs_net_fp_delta"],
+                                errors="ignore",
+                            ).reset_index(drop=True)
+                        _t4_link_run_names = _run_share_names_for_links()
+
+                        root_lens_fp = f"FP {lbl} vs A"
+                        if not df_fp_label.empty:
+                            tdf_fp_l = _comparison_lens_treemap_df(
+                                df_fp_label["label"],
+                                df_fp_label["fp_improved_cnt"],
+                                df_fp_label["fp_degraded_cnt"],
+                                root_lens_fp,
+                            )
+                            _plot_comparison_lens_treemap(
+                                tdf_fp_l,
+                                f"p5fp_lens_lab_{lbl}_{idx}",
+                                "By class (FP)",
+                            )
+                        else:
+                            st.caption("_No FP label data._")
+                        if not df_fp_dataset_sorted.empty:
+                            ds_cap = 36
+                            ds_top = df_fp_dataset_sorted.head(ds_cap).copy()
+                            # _comparison_lens_nested_treemap_df expects improved_cnt / degraded_cnt columns
+                            ds_top_renamed = ds_top.rename(
+                                columns={"fp_improved_cnt": "improved_cnt", "fp_degraded_cnt": "degraded_cnt"}
+                            )
+                            tdf_fp_d = _comparison_lens_nested_treemap_df(
+                                ds_top_renamed,
+                                ["_scenario_focus", "_dataset_focus"],
+                                root_lens_fp,
+                            )
+                            rest = df_fp_dataset_sorted.iloc[ds_cap:]
+                            if not rest.empty:
+                                io = float(rest["fp_improved_cnt"].sum())
+                                do = float(rest["fp_degraded_cnt"].sum())
+                                other_rows = []
+                                for side, value in (("Improved", io), ("Degraded", do)):
+                                    if value > 0:
+                                        other_rows.append(
+                                            {
+                                                "root": root_lens_fp,
+                                                "side": side,
+                                                "_scenario_focus": "Other scenarios",
+                                                "_dataset_focus": f"Other datasets ({len(rest)})",
+                                                "n": value,
+                                            }
+                                        )
+                                if other_rows:
+                                    tdf_fp_d = pd.concat([tdf_fp_d, pd.DataFrame(other_rows)], ignore_index=True)
+                            _plot_comparison_lens_treemap(
+                                tdf_fp_d,
+                                f"p5fp_lens_scen_ds_{lbl}_{idx}",
+                                "By scenario (FP)",
+                                path=["root", "side", "_scenario_focus", "_dataset_focus"],
+                            )
+                            st.caption(
+                                f"Scenario view with top **{ds_cap}** datasets by {fp_frame_caption_metric}, plus **Other datasets**."
+                            )
+                        else:
+                            st.caption("_No FP scenario/dataset data._")
+                        with st.expander("Tables behind the FP lens (label / scenario / dataset / frame)"):
+                            if not df_fp_label.empty:
+                                st.markdown("**Per label (FP)**")
+                                st.dataframe(
+                                    df_fp_label,
+                                    width='stretch',
+                                    hide_index=True,
+                                )
+                            if not fp_scen_agg.empty:
+                                st.markdown("**Per scenario (FP)**")
+                                st.dataframe(fp_scen_agg, width='stretch', hide_index=True)
+                            if not df_fp_dataset_sorted.empty:
+                                st.markdown(f"**Per dataset (FP)** (sorted by {fp_frame_caption_metric})")
+                                st.dataframe(
+                                    _with_t4_viewer_links(
+                                        df_fp_dataset_sorted.head(200),
+                                        _t4_link_run_names,
+                                    ),
+                                    width='stretch',
+                                    hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
+                                )
+                            if not df_fp_frame_sorted.empty:
+                                st.markdown(f"**Per frame (FP)** (sorted by {fp_frame_caption_metric})")
+                                st.dataframe(
+                                    _with_t4_viewer_links(
+                                        df_fp_frame_sorted.head(200),
+                                        _t4_link_run_names,
+                                    ),
+                                    width='stretch',
+                                    hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
+                                )
+
+                        # --- FP Drill-down: filters + objects ---
+                        with st.expander("Drill-down: FP objects"):
+                            fp_scen_key = f"p5fp_scen_{lbl}_{idx}"
+                            fp_t4_key = f"p5fp_t4_{lbl}_{idx}"
+                            fp_lab_key = f"p5fp_lab_{lbl}_{idx}"
+                            for k, default in ((fp_scen_key, []), (fp_t4_key, []), (fp_lab_key, [])):
+                                if k not in st.session_state:
+                                    st.session_state[k] = default
+
+                            fp_scenarios_all = sorted(
+                                df_fp["scenario_name"].dropna().astype(str).unique().tolist()
+                            )
+                            fp_t4_all = sorted(
+                                df_fp["t4dataset_name"].dropna().astype(str).unique().tolist()
+                            )
+                            fp_labels_all = (
+                                sorted(df_fp_object["label"].dropna().astype(str).unique().tolist())
+                                if not df_fp_object.empty
+                                else []
+                            )
+                            fp_scenarios_opts = sorted(
+                                set(fp_scenarios_all) | set(st.session_state.get(fp_scen_key, []) or [])
+                            )
+                            fp_t4_opts = sorted(set(fp_t4_all) | set(st.session_state.get(fp_t4_key, []) or []))
+                            fp_labels_opts = sorted(
+                                set(fp_labels_all) | set(st.session_state.get(fp_lab_key, []) or [])
+                            )
+
+                            pr1, pr2 = st.columns(2)
+                            with pr1:
+                                if st.button(
+                                    "Preset: top 5 FP degraded scenarios",
+                                    key=f"p5fp_pre_scen_{lbl}_{idx}",
+                                ):
+                                    if not df_fp.empty:
+                                        sa = (
+                                            df_fp.groupby("scenario_name", dropna=False)[
+                                                "fp_degraded_cnt"
+                                            ]
+                                            .sum()
+                                            .sort_values(ascending=False)
+                                            .head(5)
+                                        )
+                                        st.session_state[fp_scen_key] = [
+                                            str(x) for x in sa.index.tolist()
+                                        ]
+                                        st.rerun()
+                            fp_fr_multiselect_key = f"p5fp_frkeys_{lbl}_{idx}"
+                            if fp_fr_multiselect_key not in st.session_state:
+                                st.session_state[fp_fr_multiselect_key] = []
+                            fp_frame_key_labels = {}
+                            if not df_fp_frame_sorted.empty:
+                                for _, rw in df_fp_frame_sorted.head(40).iterrows():
+                                    fk = f"{rw['t4dataset_id']}|{rw['frame_index']}"
+                                    fp_frame_key_labels[fk] = (
+                                        f"{str(rw.get('scenario_name', ''))[:36]} | "
+                                        f"f{rw['frame_index']} | FP deg {int(rw['fp_degraded_cnt'])} | FP imp {int(rw['fp_improved_cnt'])}"
+                                    )
+                            with pr2:
+                                if st.button(
+                                    f"Preset: top 10 {fp_frame_caption_metric} frames (FP object filter)",
+                                    key=f"p5fp_pre_fr_{lbl}_{idx}",
+                                ):
+                                    if fp_frame_key_labels:
+                                        topk = list(fp_frame_key_labels.keys())[:10]
+                                        st.session_state[fp_fr_multiselect_key] = topk
+                                        st.rerun()
+
+                            colf1, colf2, colf3 = st.columns(3)
+                            with colf1:
+                                if fp_scenarios_opts:
+                                    st.multiselect(
+                                        "Filter scenario_name",
+                                        fp_scenarios_opts,
+                                        key=fp_scen_key,
+                                    )
+                                else:
+                                    st.caption("No scenarios.")
+                            with colf2:
+                                if fp_t4_opts:
+                                    st.multiselect(
+                                        "Filter t4dataset_name",
+                                        fp_t4_opts,
+                                        key=fp_t4_key,
+                                    )
+                                else:
+                                    st.caption("No t4dataset_name.")
+                            with colf3:
+                                if fp_labels_opts:
+                                    st.multiselect(
+                                        "Filter label",
+                                        fp_labels_opts,
+                                        key=fp_lab_key,
+                                    )
+                                else:
+                                    st.caption("No labels.")
+
+                            prev_fr_fp = st.session_state.get(fp_fr_multiselect_key) or []
+                            base_fp_frame_keys = list(fp_frame_key_labels.keys())
+                            for k in prev_fr_fp:
+                                if k not in fp_frame_key_labels:
+                                    fp_frame_key_labels[k] = f"(selected) frame {str(k).split('|')[-1]}"
+                            fp_frame_opts_keys = base_fp_frame_keys + [
+                                k for k in prev_fr_fp if k not in base_fp_frame_keys
+                            ]
+                            if fp_frame_opts_keys:
+                                st.multiselect(
+                                    "Limit objects to frames (optional)",
+                                    options=fp_frame_opts_keys,
+                                    format_func=lambda k: fp_frame_key_labels.get(k, k),
+                                    key=fp_fr_multiselect_key,
+                                )
+
+                            fp_change_type_filter = st.selectbox(
+                                "Change type",
+                                ["fp_degraded", "fp_improved", "all", "both_fp", "both_tp"],
+                                key=f"fp_change_type_{lbl}_{idx}",
+                                help="Filter EST objects by FP change between runs.",
+                            )
+                            fp_sort_obj = st.selectbox(
+                                "Sort objects by",
+                                [
+                                    "fp_degraded_priority_then_dist",
+                                    "frame_then_uuid",
+                                    "label_then_dist",
+                                ],
+                                key=f"p5fp_sort_{lbl}_{idx}",
+                            )
+
+                            df_fp_obj_show = (
+                                df_fp_object.copy()
+                                if not df_fp_object.empty
+                                else pd.DataFrame()
+                            )
+                            if not df_fp_obj_show.empty:
+                                ss = st.session_state.get(fp_scen_key) or []
+                                if ss:
+                                    df_fp_obj_show = df_fp_obj_show[
+                                        df_fp_obj_show["scenario_name"].astype(str).isin(ss)
+                                    ]
+                                tt = st.session_state.get(fp_t4_key) or []
+                                if tt:
+                                    df_fp_obj_show = df_fp_obj_show[
+                                        df_fp_obj_show["t4dataset_name"].astype(str).isin(tt)
+                                    ]
+                                ll = st.session_state.get(fp_lab_key) or []
+                                if ll:
+                                    df_fp_obj_show = df_fp_obj_show[
+                                        df_fp_obj_show["label"].astype(str).isin(ll)
+                                    ]
+                                fk_sel = st.session_state.get(fp_fr_multiselect_key) or []
+                                if fk_sel:
+                                    fk_set = set(fk_sel)
+                                    df_fp_obj_show = df_fp_obj_show[
+                                        (
+                                            df_fp_obj_show["t4dataset_id"].astype(str)
+                                            + "|"
+                                            + df_fp_obj_show["frame_index"].astype(str)
+                                        ).isin(fk_set)
+                                    ]
+                                if fp_change_type_filter != "all":
+                                    df_fp_obj_show = df_fp_obj_show[
+                                        df_fp_obj_show["change_type"] == fp_change_type_filter
+                                    ]
+                                if fp_sort_obj == "fp_degraded_priority_then_dist":
+                                    df_fp_obj_show = df_fp_obj_show.copy()
+                                    df_fp_obj_show["_prio"] = df_fp_obj_show["change_type"].map(
+                                        {
+                                            "fp_degraded": 0,
+                                            "fp_improved": 1,
+                                            "both_fp": 2,
+                                            "both_tp": 3,
+                                        }
+                                    )
+                                    df_fp_obj_show = df_fp_obj_show.sort_values(
+                                        by=["_prio", "dist_h"],
+                                        ascending=[True, True],
+                                    ).drop(columns=["_prio"], errors="ignore")
+                                elif fp_sort_obj == "frame_then_uuid":
+                                    df_fp_obj_show = df_fp_obj_show.sort_values(
+                                        by=["t4dataset_id", "frame_index", "est_uuid"]
+                                    )
+                                else:
+                                    df_fp_obj_show = df_fp_obj_show.sort_values(
+                                        by=["label", "dist_h", "t4dataset_id", "frame_index"]
+                                    )
+
+                            n_show = 200
+                            st.caption(
+                                f"Showing up to {n_show} rows; use **Download CSV** for the full filtered list."
+                            )
+                            if not df_fp_obj_show.empty:
+                                df_fp_obj_show_linked = _with_t4_viewer_links(
+                                    df_fp_obj_show,
+                                    _t4_link_run_names,
+                                )
+                                st.download_button(
+                                    label="Download filtered FP objects (CSV)",
+                                    data=df_fp_obj_show_linked.to_csv(index=False).encode("utf-8"),
+                                    file_name=f"fp_diff_{lbl}_vs_A_objects.csv",
+                                    mime="text/csv",
+                                    key=f"p5fp_dl_{lbl}_{idx}",
+                                )
+                                st.dataframe(
+                                    df_fp_obj_show_linked.head(n_show),
+                                    width='stretch',
+                                    hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
+                                )
+                            else:
+                                st.caption("No FP objects match filters.")
+
+                        with st.expander(f"Full FP frame table (sort: {fp_frame_sort_desc})"):
+                            if not df_fp_frame_sorted.empty:
+                                st.dataframe(
+                                    _with_t4_viewer_links(df_fp_frame_sorted, _t4_link_run_names),
+                                    width='stretch',
+                                    hide_index=True,
+                                    column_config=_t4_viewer_link_column_config(),
+                                )
+                            else:
+                                st.caption("No FP frame breakdown.")
+                else:
+                    st.caption(f"FP diff · Run {lbl} vs A: No data.")
+            except Exception as e:
+                st.error(f"Error (FP diff · Run {lbl} vs A): {e}")
+            finally:
+                _fp_slot.empty()
     
     # =============================
     # Single mode: Frame / Object level — Where are the misses?
