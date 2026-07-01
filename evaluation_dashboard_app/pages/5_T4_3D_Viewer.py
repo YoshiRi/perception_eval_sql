@@ -285,16 +285,22 @@ with st.sidebar:
         ).df()["v"].dropna().astype(str).tolist()
     has_multiple_t4dataset = len(t4dataset_list) > 1
     selected_t4dataset = None
+    _linked_t4dataset = None
+    if "bbox_viewer_link_t4dataset" in st.session_state:
+        _lt4 = st.session_state.pop("bbox_viewer_link_t4dataset", None)
+        if _lt4 is not None and str(_lt4) in t4dataset_list:
+            _linked_t4dataset = str(_lt4)
+            st.session_state["bbox_viewer_t4dataset"] = _linked_t4dataset
     if has_multiple_t4dataset and t4dataset_list:
-        if "bbox_viewer_link_t4dataset" in st.session_state:
-            _lt4 = st.session_state.pop("bbox_viewer_link_t4dataset", None)
-            if _lt4 is not None and str(_lt4) in t4dataset_list:
-                st.session_state["bbox_viewer_t4dataset"] = str(_lt4)
         selected_t4dataset = st.selectbox(
             "t4dataset_name",
             t4dataset_list,
             key="bbox_viewer_t4dataset",
         )
+    elif _linked_t4dataset is not None:
+        selected_t4dataset = _linked_t4dataset
+    elif len(t4dataset_list) == 1:
+        selected_t4dataset = t4dataset_list[0]
 
 if selected_suite is not None:
     scene_where = "suite_name = ?"
@@ -429,10 +435,11 @@ _select_cols = [
 _select_cols.extend(c for c in _renderer_optional_cols if c in cols and c not in _select_cols)
 
 files_to_load: List[tuple] = [(selected_files[lbl], lbl) for lbl in runs_to_show if lbl in selected_files]
+_load_entry_frame_raw = st.session_state.get("bbox_viewer_link_frame", None)
 try:
-    _load_entry_frame_hint = int(float(str(st.session_state.get("bbox_viewer_link_frame", 0))))
+    _load_entry_frame_hint = int(float(str(_load_entry_frame_raw)))
 except (TypeError, ValueError):
-    _load_entry_frame_hint = 0
+    _load_entry_frame_hint = None
 
 
 def _duckdb_like_prefix(text: str) -> str:
@@ -453,6 +460,42 @@ def _label_visibility_filters() -> tuple[list[str], list[Any]]:
         filters.append(f"COALESCE(visibility,'UNKNOWN') IN ({','.join(['?'] * len(selected_visibility))})")
         params_out.extend(selected_visibility)
     return filters, params_out
+
+
+def _first_available_reference_frame() -> int:
+    """Frame used to map modern dataset names to legacy suffixed B-side scenarios."""
+    if selected_suite is None or selected_scenario is None:
+        return 0
+    where_parts = [
+        "suite_name = ?",
+        "scenario_name = ?",
+        "topic_name = ?",
+        "source = 'GT'",
+    ]
+    params_tail: List[Any] = [selected_suite, selected_scenario, selected_topic]
+    if selected_t4dataset is not None:
+        where_parts.append("t4dataset_name = ?")
+        params_tail.append(selected_t4dataset)
+    label_filters, label_params = _label_visibility_filters()
+    try:
+        value = con.execute(
+            f"""
+            SELECT MIN(TRY_CAST(frame_index AS INTEGER)) AS frame_index
+            FROM parquet_scan(?)
+            WHERE {" AND ".join(where_parts + label_filters)}
+            """,
+            [filter_file] + params_tail + label_params,
+        ).fetchone()[0]
+    except Exception:
+        value = None
+    try:
+        return int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+if _load_entry_frame_hint is None:
+    _load_entry_frame_hint = _first_available_reference_frame()
 
 
 def _reference_geometry_df() -> pd.DataFrame:
