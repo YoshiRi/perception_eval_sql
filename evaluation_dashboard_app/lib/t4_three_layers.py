@@ -9,6 +9,7 @@ import struct
 from urllib.parse import urlencode
 from typing import TYPE_CHECKING
 
+import pandas as pd
 import streamlit.components.v1 as components
 
 if TYPE_CHECKING:
@@ -206,9 +207,76 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
     if df_frame is None or df_frame.empty:
         return {"gt": [], "pred": [], "matched_pairs": []}
 
-    def _row_to_box(row: "pd.Series") -> dict:
+    def _dedupe_eval_rows(rows: "pd.DataFrame") -> "pd.DataFrame":
+        if rows.empty or "uuid" not in rows.columns:
+            return rows
+        work = rows.copy()
+        uuid_text = work["uuid"].map(_as_text)
+        if "pair_uuid" in work.columns:
+            pair_text = work["pair_uuid"].map(_as_text)
+        else:
+            pair_text = pd.Series([""] * len(work), index=work.index)
+        if "status" in work.columns:
+            status_text = work["status"].map(_as_text)
+        else:
+            status_text = pd.Series([""] * len(work), index=work.index)
+        identity = uuid_text.where(uuid_text != "", pair_text)
+        identity = identity.where(~((status_text == "TP") & (pair_text != "")), pair_text)
+        work["_dedupe_identity"] = identity
+        work["_dedupe_has_identity"] = identity != ""
+
+        sort_cols = ["_dedupe_has_identity", "_dedupe_identity"]
+        ascending = [False, True]
+        if "status" in work.columns:
+            sort_cols.append("status")
+            ascending.append(True)
+        if "label" in work.columns:
+            sort_cols.append("label")
+            ascending.append(True)
+        if "run" in work.columns:
+            sort_cols.append("run")
+            ascending.append(True)
+        if "pair_dt_sec" in work.columns:
+            work["_dedupe_abs_pair_dt"] = pd.to_numeric(work["pair_dt_sec"], errors="coerce").abs()
+            sort_cols.append("_dedupe_abs_pair_dt")
+            ascending.append(True)
+        if "center_distance" in work.columns:
+            work["_dedupe_center_distance"] = pd.to_numeric(work["center_distance"], errors="coerce")
+            sort_cols.append("_dedupe_center_distance")
+            ascending.append(True)
+        if "confidence" in work.columns:
+            work["_dedupe_confidence"] = pd.to_numeric(work["confidence"], errors="coerce")
+            sort_cols.append("_dedupe_confidence")
+            ascending.append(False)
+        if "unix_time" in work.columns:
+            work["_dedupe_unix_time"] = pd.to_numeric(work["unix_time"], errors="coerce")
+            sort_cols.append("_dedupe_unix_time")
+            ascending.append(True)
+
+        with_identity = work[work["_dedupe_has_identity"]].copy()
+        without_identity = work[~work["_dedupe_has_identity"]].copy()
+        group_cols = ["_dedupe_identity"]
+        if "status" in with_identity.columns:
+            group_cols.append("status")
+        if "label" in with_identity.columns:
+            group_cols.append("label")
+        if "run" in with_identity.columns:
+            group_cols.append("run")
+        if not with_identity.empty:
+            with_identity = (
+                with_identity.sort_values(sort_cols, ascending=ascending, na_position="last")
+                .groupby(group_cols, sort=False, dropna=False)
+                .head(1)
+            )
+        deduped = pd.concat([with_identity, without_identity], axis=0).sort_index()
+        return deduped.drop(columns=[c for c in deduped.columns if c.startswith("_dedupe_")])
+
+    def _row_to_box(row: "pd.Series") -> dict | None:
         length = _as_float(row.get("length"), 0.0)
         width = _as_float(row.get("width"), 0.0)
+        # Skip boxes with invalid dimensions (zero or negative length/width)
+        if length <= 0 or width <= 0:
+            return None
         if swap_length_width:
             length, width = width, length
         box = {
@@ -223,6 +291,9 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
             "uuid": _as_text(row.get("uuid")),
             "status": _as_text(row.get("status")),
         }
+        # Skip boxes with invalid height
+        if box["height"] <= 0:
+            return None
         corners = _box_corners_from_pose(box)
         if corners is not None:
             box["corners"] = corners
@@ -238,27 +309,33 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
                     box[field] = _as_text(value)
         return box
 
-    gt_df = df_frame[df_frame["source"] == "GT"].copy()
-    pred_df = df_frame[df_frame["source"] == "EST"].copy()
-    gt_boxes = [_row_to_box(r) for _, r in gt_df.iterrows()]
+    gt_df = _dedupe_eval_rows(df_frame[df_frame["source"] == "GT"].copy())
+    pred_df = _dedupe_eval_rows(df_frame[df_frame["source"] == "EST"].copy())
+    gt_boxes = [b for _, r in gt_df.iterrows() if (b := _row_to_box(r)) is not None]
     for box in gt_boxes:
         box["force_wireframe"] = True
-    pred_boxes = [_row_to_box(r) for _, r in pred_df.iterrows()]
+    pred_boxes = [b for _, r in pred_df.iterrows() if (b := _row_to_box(r)) is not None]
 
     gt_tp_idx: dict[str, int] = {}
     for i, b in enumerate(gt_boxes):
-        match_key = str(b.get("pair_uuid") or b.get("uuid") or "")
-        if b["status"] == "TP" and match_key:
-            gt_tp_idx.setdefault(match_key, i)
+        if b["status"] != "TP":
+            continue
+        for match_key in (str(b.get("pair_uuid") or ""), str(b.get("uuid") or "")):
+            if match_key:
+                gt_tp_idx.setdefault(match_key, i)
     pred_tp_idx: dict[str, int] = {}
     for i, b in enumerate(pred_boxes):
-        match_key = str(b.get("pair_uuid") or b.get("uuid") or "")
-        if b["status"] == "TP" and match_key:
-            pred_tp_idx.setdefault(match_key, i)
+        if b["status"] != "TP":
+            continue
+        for match_key in (str(b.get("pair_uuid") or ""), str(b.get("uuid") or "")):
+            if match_key:
+                pred_tp_idx.setdefault(match_key, i)
     matched_pairs = []
+    seen_pair_indexes: set[tuple[int, int]] = set()
     for match_key, gi in gt_tp_idx.items():
         pi = pred_tp_idx.get(match_key)
-        if pi is not None:
+        if pi is not None and (gi, pi) not in seen_pair_indexes:
+            seen_pair_indexes.add((gi, pi))
             matched_pairs.append({"gt_idx": int(gi), "pred_idx": int(pi), "pair_uuid": match_key})
 
     return {
