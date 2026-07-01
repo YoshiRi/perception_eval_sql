@@ -6,11 +6,15 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import os
+import re
 from pathlib import Path
 from typing import Any, List
 
 DEFAULT_OBJECTS_TOPIC = "perception.object_recognition.objects"
 DEFAULT_TRACKING_OBJECTS_TOPIC = "perception.object_recognition.tracking.objects"
+UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 from lib.path_utils import path_display
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
@@ -52,6 +56,83 @@ def _query_param_text(*names: str) -> str:
     return ""
 
 
+def _clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in {"none", "nan", "<na>"} else text
+
+
+def _candidate_annotation_dataset_roots() -> list[Path]:
+    roots: list[Path] = []
+    for env_name in ("T4DATASET_ROOT", "T4_DATASET_ROOT", "T4_VISUALIZER_DATA_DIR", "T4_VISUALIZER_DATA_ROOT"):
+        text = _clean_text(os.environ.get(env_name))
+        if text:
+            roots.append(Path(text))
+    roots.extend(
+        [
+            Path.home() / ".webauto/data/data/annotation_dataset",
+            Path("/home/leigu/.webauto/data/data/annotation_dataset"),
+            Path("/mnt/qnapdata/internal/t4datasets"),
+            Path("/home/leigu/evaluator_result_parser/t4datasets"),
+        ]
+    )
+    out: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            seen.add(key)
+            out.append(root)
+    return out
+
+
+def _resolve_annotation_dataset_id_from_name(t4dataset_name: str) -> str:
+    """Resolve a DB/bag-style dataset name to the local annotation dataset UUID when cached."""
+    target = _clean_text(t4dataset_name)
+    if not target:
+        return ""
+    if UUID_RE.match(target):
+        return target
+    for root in _candidate_annotation_dataset_roots():
+        if not root.exists() or not root.is_dir():
+            continue
+        try:
+            dataset_dirs = sorted(p for p in root.iterdir() if p.is_dir() and UUID_RE.match(p.name))
+        except OSError:
+            continue
+        for dataset_dir in dataset_dirs:
+            try:
+                version_dirs = sorted(p for p in dataset_dir.iterdir() if p.is_dir())
+            except OSError:
+                continue
+            for version_dir in version_dirs:
+                input_bag = version_dir / "input_bag"
+                if not input_bag.is_dir():
+                    continue
+                try:
+                    for bag_path in input_bag.iterdir():
+                        if bag_path.is_file() and target in bag_path.name:
+                            return dataset_dir.name
+                except OSError:
+                    continue
+    return ""
+
+
+def _legacy_prefixed_match(options: list[str], base_name: str, suffix_prefix: str = "") -> str:
+    base = _clean_text(base_name)
+    if not base:
+        return ""
+    if base in options:
+        return base
+    if suffix_prefix:
+        wanted = f"{base}_{suffix_prefix}"
+        if wanted in options:
+            return wanted
+    matches = [opt for opt in options if opt.startswith(f"{base}_")]
+    return matches[0] if len(matches) == 1 else ""
+
+
 def _prime_viewer_state_from_query_params() -> None:
     """Map share-link query params onto existing sidebar deep-link session keys."""
     mapping = {
@@ -73,6 +154,11 @@ _prime_viewer_state_from_query_params()
 _viewer_compare_mode = _query_param_text("viewer_compare", "compare_view", "compare_mode")
 if _viewer_compare_mode not in {"side_by_side", "side-by-side", "sidebyside", "curtain", "overlay"}:
     _viewer_compare_mode = ""
+_viewer_link_suite = _query_param_text("viewer_suite", "suite_name")
+_viewer_link_scenario = _query_param_text("viewer_scenario", "scenario_name")
+_viewer_link_t4dataset = _query_param_text("viewer_t4dataset", "t4dataset_name", "t4dataset_id")
+_viewer_link_dataset_id = _resolve_annotation_dataset_id_from_name(_viewer_link_t4dataset)
+_viewer_link_dataset_prefix = _viewer_link_dataset_id.split("-", 1)[0] if _viewer_link_dataset_id else ""
 
 # =============================
 # Session state from Overview (run path)
@@ -235,8 +321,9 @@ else:
 
 if "bbox_viewer_link_suite" in st.session_state:
     _lsu = st.session_state.pop("bbox_viewer_link_suite", None)
-    if suite_list and _lsu is not None and str(_lsu) in suite_list:
-        st.session_state["bbox_viewer_suite"] = str(_lsu)
+    _suite_hit = _legacy_prefixed_match(suite_list, str(_lsu), "") if suite_list and _lsu is not None else ""
+    if _suite_hit:
+        st.session_state["bbox_viewer_suite"] = _suite_hit
 
 with st.sidebar:
     selected_suite = None
@@ -261,8 +348,13 @@ with st.sidebar:
         if scenario_list:
             if "bbox_viewer_link_scenario" in st.session_state:
                 _lsc = st.session_state.pop("bbox_viewer_link_scenario", None)
-                if _lsc is not None and str(_lsc) in scenario_list:
-                    st.session_state["bbox_viewer_scenario"] = str(_lsc)
+                _scenario_hit = (
+                    _legacy_prefixed_match(scenario_list, str(_lsc), _viewer_link_dataset_prefix)
+                    if _lsc is not None
+                    else ""
+                )
+                if _scenario_hit:
+                    st.session_state["bbox_viewer_scenario"] = _scenario_hit
             selected_scenario = st.selectbox(
                 "Scenario name",
                 scenario_list,
@@ -876,6 +968,10 @@ _ds_t4 = resolve_t4_dataset_id(df_frame)
 if not _ds_t4 and selected_t4dataset is not None:
     _ds_t4 = str(selected_t4dataset)
 _sc_t4 = resolve_t4_scenario(df_frame, selected_scenario)
+if _viewer_link_dataset_id:
+    _ds_t4 = _viewer_link_dataset_id
+    if _viewer_link_t4dataset:
+        _sc_t4 = _viewer_link_t4dataset
 
 if not _ds_t4:
     for _k in (
