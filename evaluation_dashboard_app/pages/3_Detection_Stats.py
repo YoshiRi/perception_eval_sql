@@ -2553,12 +2553,12 @@ _TOPIC_EQUIVALENCE_GROUPS: List[List[str]] = [
 ]
 
 
-def _equivalent_topics(topic: str) -> set:
-    """Return the set of all topic names equivalent to *topic* (including itself)."""
+def _equivalent_topic_order(topic: str) -> List[str]:
+    """Return equivalent topic names in a stable preference order."""
     for group in _TOPIC_EQUIVALENCE_GROUPS:
         if topic in group:
-            return set(group)
-    return {topic}
+            return [topic] + [candidate for candidate in group if candidate != topic]
+    return [topic]
 
 
 def _map_topic_to_run(selected_topic: str, run_topics: set) -> str:
@@ -2570,25 +2570,10 @@ def _map_topic_to_run(selected_topic: str, run_topics: set) -> str:
     """
     if selected_topic == "__all__":
         return "__all__"
-    equiv = _equivalent_topics(selected_topic)
-    for rt in run_topics:
-        if rt in equiv:
-            return rt
+    for candidate in _equivalent_topic_order(selected_topic):
+        if candidate in run_topics:
+            return candidate
     return selected_topic
-
-
-def _all_equivalent_topics_in_run(selected_topic: str, run_topics: set) -> List[str]:
-    """Return ALL equivalent topic names that exist in the run.
-
-    When comparing runs with different topic names, a single run may have multiple
-    topics that are equivalent (e.g. both 'perception.object_recognition.objects'
-    and 'perception.object_recognition.detection.bevfusion.objects'). This returns
-    all of them so the filter includes all relevant data.
-    """
-    if selected_topic == "__all__":
-        return ["__all__"]
-    equiv = _equivalent_topics(selected_topic)
-    return sorted([rt for rt in run_topics if rt in equiv])
 
 
 def build_filter_clause(filters: dict,*, enable_dist_h: bool = True) -> str:
@@ -2914,16 +2899,13 @@ filters_base = {
 filters_list = [dict(filters_base) for _ in range(len(runs))]
 
 # Apply per-run topic mapping (handles equivalent topic names across different versions).
-# Use _all_equivalent_topics_in_run to include ALL equivalent topics that exist in each run,
-# not just the first match. This is critical when a run has multiple topic names that are
-# equivalent (e.g. both 'perception.object_recognition.objects' and
-# 'perception.object_recognition.detection.bevfusion.objects').
+# Keep the comparison to one output topic per run. Some releases contain multiple object
+# recognition topics for the same dataset; combining them would mix different outputs on
+# one side and distort TP/FP deltas.
 if topic_name != "__all__" and per_run_topics:
     for run_idx in range(len(runs)):
         if run_idx < len(per_run_topics):
-            equivalent = _all_equivalent_topics_in_run(topic_name, per_run_topics[run_idx])
-            if equivalent:
-                filters_list[run_idx]['topic_name'] = equivalent if len(equivalent) > 1 else equivalent[0]
+            filters_list[run_idx]['topic_name'] = _map_topic_to_run(topic_name, per_run_topics[run_idx])
 
 # Map selected suites to each run's actual suite names (prefix matching for cross-run compare)
 if selected_suites and len(runs) > 1 and per_run_suite_lookup:
@@ -3941,7 +3923,9 @@ try:
         key="tp_fp_rate_by_dist_style",
     )
     
-    filter_clause_base = build_filter_clause(filters_base, enable_dist_h=False)
+    # In compare mode, use the per-run mapped baseline topic so old/new equivalent topic
+    # names can still be compared without combining multiple outputs from the same run.
+    filter_clause_base = build_filter_clause(filters_list[0] if filters_list else filters_base, enable_dist_h=False)
     ds_dlog(
         "distance: filter_clause_base (no dist_h) len=%s preview=%s",
         len(filter_clause_base),
@@ -5094,19 +5078,19 @@ try:
             "Distance performance summary",
             locals().get("distance_summary_lines", []),
         )
-        ds_dlog("section: Perception_diff_start")
+        ds_dlog("section: Perception_TP_FN_diff_start")
         st.divider()
         st.markdown(
             section_header_html(
-                "Perception diff (vs baseline A)",
-                "Per-GT-object comparison vs baseline A: degraded = was TP on A and FN on candidate; improved = was FN on A and TP on candidate. Hotspots prioritize regressions.",
+                "Perception diff: GT TP/FN changes (vs baseline A)",
+                "Per-GT-object comparison vs baseline A: recovered = was FN on A and TP on candidate; lost = was TP on A and FN on candidate.",
             ),
             unsafe_allow_html=True,
         )
         for idx in range(1, len(runs)):
             lbl = run_labels_list[idx]
             _pd_slot = st.empty()
-            _pd_slot.markdown(ds_spot_loading_markup(f"Perception diff · run {lbl}"), unsafe_allow_html=True)
+            _pd_slot.markdown(ds_spot_loading_markup(f"GT TP/FN diff · run {lbl}"), unsafe_allow_html=True)
             try:
                 filter_clause_comp_p5 = build_filter_clause(filters_list[idx], enable_dist_h=False)
                 comp_flat = _flat_view(idx)
@@ -5178,6 +5162,50 @@ try:
                 """
                 df_improved = con.execute(query).df()
                 if not df_improved.empty:
+                    query_output_availability_p5 = f"""
+                    WITH base_output AS (
+                        SELECT
+                            CAST(t4dataset_id AS VARCHAR) AS t4dataset_id,
+                            COUNT(*) AS total_est_base,
+                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                        FROM view_eval_flat
+                        WHERE source = 'EST' AND frame_index IS NOT NULL
+                            AND {filter_clause_base}
+                        GROUP BY 1
+                    ),
+                    comp_output AS (
+                        SELECT
+                            CAST(t4dataset_id AS VARCHAR) AS t4dataset_id,
+                            COUNT(*) AS total_est_comp,
+                            COALESCE(MAX(try_cast(suite_name AS VARCHAR)), '') AS suite_name,
+                            COALESCE(MAX(try_cast(scenario_name AS VARCHAR)), '') AS scenario_name,
+                            COALESCE(MAX(try_cast(t4dataset_name AS VARCHAR)), '') AS t4dataset_name
+                        FROM {comp_flat}
+                        WHERE source = 'EST' AND frame_index IS NOT NULL
+                            AND {filter_clause_comp_p5}
+                        GROUP BY 1
+                    )
+                    SELECT
+                        COALESCE(b.t4dataset_id, c.t4dataset_id) AS t4dataset_id,
+                        CAST(COALESCE(b.total_est_base, 0) + COALESCE(c.total_est_comp, 0) AS DOUBLE) AS total_est,
+                        CAST(COALESCE(b.total_est_base, 0) AS DOUBLE) AS base_est_cnt,
+                        CAST(COALESCE(c.total_est_comp, 0) AS DOUBLE) AS candidate_est_cnt,
+                        CAST(CASE WHEN b.total_est_base IS NULL AND c.total_est_comp IS NOT NULL THEN c.total_est_comp ELSE 0 END AS DOUBLE) AS missing_in_base_cnt,
+                        CAST(CASE WHEN b.total_est_base IS NOT NULL AND c.total_est_comp IS NULL THEN b.total_est_base ELSE 0 END AS DOUBLE) AS missing_in_candidate_cnt,
+                        COALESCE(b.suite_name, c.suite_name, '') AS suite_name,
+                        COALESCE(b.scenario_name, c.scenario_name, '') AS scenario_name,
+                        COALESCE(b.t4dataset_name, c.t4dataset_name, '') AS t4dataset_name
+                    FROM base_output b
+                    FULL OUTER JOIN comp_output c
+                        ON b.t4dataset_id = c.t4dataset_id
+                    ORDER BY t4dataset_id
+                    """
+                    try:
+                        df_output_availability = con.execute(query_output_availability_p5).df()
+                    except Exception:
+                        df_output_availability = pd.DataFrame()
                     query_frame_p5 = f"""
                             WITH base_gt AS (
                                 SELECT
@@ -5346,8 +5374,7 @@ try:
                     availability_messages = [
                         msg
                         for msg in [
-                            _compare_availability_summary(df_improved, unit="dataset rows"),
-                            _compare_availability_summary(df_by_frame, unit="frames"),
+                            _compare_availability_summary_fp(df_output_availability, unit="datasets"),
                         ]
                         if msg
                     ]
@@ -5355,20 +5382,19 @@ try:
                     skip_dataset_compare = True
                     if availability_messages:
                         st.warning(
-                            "Some compare keys have GT data on only one side. "
+                            "Some datasets have output rows on only one side. "
                             + "; ".join(availability_messages)
-                            + ". Dataset-level one-sided cases can create artificial large improvements/degradations; "
-                            "one-sided frames inside otherwise valid datasets remain included.",
+                            + ". These whole datasets can create artificial large improvements/degradations.",
                             icon="⚠️",
                         )
                         skip_dataset_compare = st.checkbox(
-                            "Skip datasets with GT data on only one side",
+                            "Skip datasets with output rows on only one side",
                             value=True,
                             key=skip_incomplete_key,
                             help=(
                                 "When enabled, Perception diff charts/tables remove whole datasets where either "
-                                "baseline A or the candidate has no GT objects after the active filters. "
-                                "Frames with output on only one side inside a valid dataset are still shown."
+                                "baseline A or the candidate has no EST/output rows after the active filters. "
+                                "Frame-level one-sided differences inside a valid dataset are still compared."
                             ),
                         )
                     # --- Dataset name debug ---
@@ -5379,20 +5405,15 @@ try:
                         )
                         st.markdown(debug_summary)
                     df_improved_skipped = pd.DataFrame()
-                    df_by_frame_skipped = pd.DataFrame()
-                    df_by_object_skipped = pd.DataFrame()
                     if skip_dataset_compare:
-                        df_improved_skipped = df_improved[~_compare_availability_mask(df_improved)].copy()
+                        df_improved_skipped = df_output_availability[
+                            ~_compare_availability_mask_fp(df_output_availability)
+                        ].copy()
                         skipped_dataset_ids = set(df_improved_skipped["t4dataset_id"].dropna().astype(str))
                         if skipped_dataset_ids:
-                            df_by_frame_skipped = df_by_frame[
-                                df_by_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
+                            df_improved = df_improved[
+                                ~df_improved["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
                             ].copy()
-                            df_by_object_skipped = df_by_object_full[
-                                df_by_object_full["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
-                            ].copy()
-                        df_improved = df_improved[_compare_availability_mask(df_improved)].copy()
-                        if skipped_dataset_ids:
                             df_by_frame = df_by_frame[
                                 ~df_by_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
                             ].copy()
@@ -5401,7 +5422,7 @@ try:
                             ].copy()
                         if df_improved.empty:
                             st.info(
-                                "All dataset rows for this slice are one-sided after the active filters. "
+                                "All datasets for this slice have output rows on only one side after the active filters. "
                                 "Disable the skip option above to inspect them."
                             )
                             continue
@@ -5413,86 +5434,45 @@ try:
     
                     with st.expander(f"Run {lbl} vs A", expanded=(len(runs) == 2)):
                         c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("Improved (FN→TP)", int(tot_imp))
-                        c2.metric("Degraded (TP→FN)", int(tot_deg))
+                        c1.metric("Recovered GT (FN->TP)", int(tot_imp))
+                        c2.metric("Lost GT (TP->FN)", int(tot_deg))
                         c3.metric("Net TP delta", net_s)
-                        c4.caption("Start with scenarios and frames with the most **degraded** counts.")
+                        c4.caption("Start with scenarios and frames with the most lost GT objects.")
                         st.markdown(
                             f"**Summary:** Net **{net_s}** TP vs baseline A — "
-                            f"**{int(tot_deg)}** degraded vs **{int(tot_imp)}** improved."
+                            f"**{int(tot_deg)}** lost vs **{int(tot_imp)}** recovered GT objects."
                         )
-                        skipped_total = (
-                            len(df_improved_skipped) + len(df_by_frame_skipped) + len(df_by_object_skipped)
-                        )
+                        skipped_total = len(df_improved_skipped)
                         if skipped_total > 0:
                             with st.expander("Skipped one-sided datasets"):
                                 st.caption(
-                                    "These rows were excluded from the diff hotspots because the dataset has GT objects "
-                                    "on only one side after the active filters. One-sided frames in valid datasets are included."
+                                    "These whole datasets were excluded because EST/output rows exist on only one side "
+                                    "after the active filters. Frames and objects are not skipped independently; they are removed "
+                                    "only when their parent dataset is skipped."
                                 )
                                 if not df_improved_skipped.empty:
                                     skipped_dataset_rows = df_improved_skipped.copy()
-                                    skipped_dataset_rows["skip_reason"] = _compare_availability_reason(
+                                    skipped_dataset_rows["skip_reason"] = _compare_availability_reason_fp(
                                         skipped_dataset_rows
                                     )
-                                    st.markdown("**Per dataset row**")
+                                    skipped_dataset_rows = skipped_dataset_rows.rename(
+                                        columns={
+                                            "base_est_cnt": "baseline_output_rows",
+                                            "candidate_est_cnt": "candidate_output_rows",
+                                        }
+                                    )
+                                    st.markdown("**Skipped datasets**")
                                     st.download_button(
-                                        label="Download skipped dataset rows (CSV)",
+                                        label="Download skipped datasets (CSV)",
                                         data=skipped_dataset_rows.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
-                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_dataset_rows.csv",
+                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_datasets.csv",
                                         mime="text/csv",
                                         key=f"p5_dl_skip_dataset_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_dataset_rows.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
+                                        skipped_dataset_rows.head(200).drop(columns=["total_est", "missing_in_base_cnt", "missing_in_candidate_cnt"], errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
-                                    )
-                                if not df_by_frame_skipped.empty:
-                                    skipped_frames = df_by_frame_skipped.copy()
-                                    skipped_frames["skip_reason"] = _compare_availability_reason(
-                                        skipped_frames
-                                    )
-                                    st.markdown("**Per frame**")
-                                    skipped_frames = _with_t4_viewer_links(
-                                        skipped_frames,
-                                        _run_share_names_for_links(),
-                                    )
-                                    st.download_button(
-                                        label="Download skipped frames (CSV)",
-                                        data=skipped_frames.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
-                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_frames.csv",
-                                        mime="text/csv",
-                                        key=f"p5_dl_skip_frames_{lbl}_{idx}",
-                                    )
-                                    st.dataframe(
-                                        skipped_frames.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
-                                        width='stretch',
-                                        hide_index=True,
-                                        column_config=_t4_viewer_link_column_config(),
-                                    )
-                                if not df_by_object_skipped.empty:
-                                    skipped_objects = df_by_object_skipped.copy()
-                                    skipped_objects["skip_reason"] = _compare_availability_reason(
-                                        skipped_objects
-                                    )
-                                    st.markdown("**Per object**")
-                                    skipped_objects = _with_t4_viewer_links(
-                                        skipped_objects,
-                                        _run_share_names_for_links(),
-                                    )
-                                    st.download_button(
-                                        label="Download skipped objects (CSV)",
-                                        data=skipped_objects.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
-                                        file_name=f"perception_diff_{lbl}_vs_A_skipped_objects.csv",
-                                        mime="text/csv",
-                                        key=f"p5_dl_skip_objects_{lbl}_{idx}",
-                                    )
-                                    st.dataframe(
-                                        skipped_objects.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
-                                        width='stretch',
-                                        hide_index=True,
-                                        column_config=_t4_viewer_link_column_config(),
                                     )
 
                         b_key = f"p5_baobab_{lbl}_{idx}"
@@ -6149,10 +6129,10 @@ try:
         st.markdown(
             section_header_html(
                 "Perception diff: False Positives (vs baseline A)",
-                "Compares total FP counts between runs (per dataset / frame / label). "
-                "Shows Baseline FP, Candidate FP, and FP Delta (candidate − baseline). "
-                "Negative delta = fewer FPs in candidate (improvement). "
-                "Positive delta = more FPs in candidate (degradation).",
+                "Compares FP counts between runs (per dataset / frame / label). "
+                "FP objects are EST-side detections and are not identity-matched across runs. "
+                "Shows Baseline FP, Candidate FP, and Net FP change (candidate − baseline). "
+                "Negative delta = FP reduced in candidate. Positive delta = FP increased in candidate.",
             ),
             unsafe_allow_html=True,
         )
@@ -6397,8 +6377,7 @@ try:
                     availability_messages_fp = [
                         msg
                         for msg in [
-                            _compare_availability_summary_fp(df_fp, unit="dataset rows"),
-                            _compare_availability_summary_fp(df_fp_frame, unit="frames"),
+                            _compare_availability_summary_fp(df_fp, unit="datasets"),
                         ]
                         if msg
                     ]
@@ -6406,10 +6385,9 @@ try:
                     skip_dataset_compare_fp = True
                     if availability_messages_fp:
                         st.warning(
-                            "Some compare keys have EST data on only one side. "
+                            "Some datasets have EST result rows on only one side. "
                             + "; ".join(availability_messages_fp)
-                            + ". Dataset-level one-sided cases can create artificial large improvements/degradations; "
-                            "one-sided frames inside otherwise valid datasets remain included.",
+                            + ". These whole datasets can create artificial large improvements/degradations.",
                             icon="⚠️",
                         )
                         skip_dataset_compare_fp = st.checkbox(
@@ -6418,8 +6396,8 @@ try:
                             key=skip_incomplete_key_fp,
                             help=(
                                 "When enabled, FP diff charts/tables remove whole datasets where either baseline A "
-                                "or the candidate has no EST objects after the active filters. Frames with output "
-                                "on only one side inside a valid dataset are still shown."
+                                "or the candidate has no EST rows after the active filters. Frame-level one-sided "
+                                "differences inside a valid dataset are still compared."
                             ),
                         )
                     # --- Dataset name debug ---
@@ -6438,18 +6416,9 @@ try:
                         )
                         st.markdown(pair_uuid_debug)
                     df_fp_skipped = pd.DataFrame()
-                    df_fp_frame_skipped = pd.DataFrame()
-                    df_fp_object_skipped = pd.DataFrame()
                     if skip_dataset_compare_fp:
                         df_fp_skipped = df_fp[~_compare_availability_mask_fp(df_fp)].copy()
                         skipped_dataset_ids_fp = set(df_fp_skipped["t4dataset_id"].dropna().astype(str))
-                        if skipped_dataset_ids_fp:
-                            df_fp_frame_skipped = df_fp_frame[
-                                df_fp_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids_fp)
-                            ].copy()
-                            df_fp_object_skipped = df_fp_object[
-                                df_fp_object["t4dataset_id"].astype(str).isin(skipped_dataset_ids_fp)
-                            ].copy()
                         df_fp = df_fp[_compare_availability_mask_fp(df_fp)].copy()
                         if skipped_dataset_ids_fp:
                             df_fp_frame = df_fp_frame[
@@ -6460,14 +6429,14 @@ try:
                             ].copy()
                         if df_fp.empty:
                             st.info(
-                                "All FP dataset rows for this slice are one-sided after the active filters. "
+                                "All FP datasets for this slice are one-sided after the active filters. "
                                 "Disable the skip option above to inspect them."
                             )
                             continue
 
                     # --- KPI summary ---
                     # baseline_fp = baseline FP count, candidate_fp = candidate FP count
-                    # fp_delta = candidate_FP - baseline_FP (negative = improvement)
+                    # fp_delta = candidate_FP - baseline_FP (negative = FP reduced)
                     tot_fp_base = float(df_fp["baseline_fp"].sum())
                     tot_fp_comp = float(df_fp["candidate_fp"].sum())
                     tot_fp_net = tot_fp_comp - tot_fp_base
@@ -6477,31 +6446,33 @@ try:
                         c1, c2, c3, c4 = st.columns(4)
                         c1.metric("Baseline FP", int(tot_fp_base))
                         c2.metric("Candidate FP", int(tot_fp_comp))
-                        c3.metric("FP Delta", net_fp_s, delta_color="inverse")
-                        c4.caption("Negative = fewer FPs in candidate (improvement). Positive = more FPs in candidate (degradation).")
+                        c3.metric("Net FP change", net_fp_s, delta_color="inverse")
+                        c4.caption("Negative = FP reduced in candidate. Positive = FP increased in candidate.")
                         st.markdown(
                             f"**FP Summary:** Baseline A had **{int(tot_fp_base)}** FPs, candidate has **{int(tot_fp_comp)}** FPs — "
                             f"delta **{net_fp_s}**."
                         )
-                        skipped_total_fp = (
-                            len(df_fp_skipped) + len(df_fp_frame_skipped) + len(df_fp_object_skipped)
+                        st.caption(
+                            "This is an aggregate FP count comparison, not a same-object state transition."
                         )
+                        skipped_total_fp = len(df_fp_skipped)
                         if skipped_total_fp > 0:
                             with st.expander("Skipped one-sided FP datasets"):
                                 st.caption(
-                                    "These rows were excluded from the FP diff hotspots because the dataset has EST objects "
-                                    "on only one side after the active filters. One-sided frames in valid datasets are included."
+                                    "These whole datasets were excluded because EST result rows exist on only one side "
+                                    "after the active filters. Frames and objects are not skipped independently; they are removed "
+                                    "only when their parent dataset is skipped."
                                 )
                                 if not df_fp_skipped.empty:
                                     skipped_fp_dataset = df_fp_skipped.copy()
                                     skipped_fp_dataset["skip_reason"] = _compare_availability_reason_fp(
                                         skipped_fp_dataset
                                     )
-                                    st.markdown("**Per dataset row**")
+                                    st.markdown("**Skipped FP datasets**")
                                     st.download_button(
-                                        label="Download skipped FP dataset rows (CSV)",
+                                        label="Download skipped FP datasets (CSV)",
                                         data=skipped_fp_dataset.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
-                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_dataset_rows.csv",
+                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_datasets.csv",
                                         mime="text/csv",
                                         key=f"p5fp_dl_skip_dataset_{lbl}_{idx}",
                                     )
@@ -6509,52 +6480,6 @@ try:
                                         skipped_fp_dataset.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
-                                    )
-                                if not df_fp_frame_skipped.empty:
-                                    skipped_fp_frames = df_fp_frame_skipped.copy()
-                                    skipped_fp_frames["skip_reason"] = _compare_availability_reason_fp(
-                                        skipped_fp_frames
-                                    )
-                                    st.markdown("**Per frame**")
-                                    skipped_fp_frames = _with_t4_viewer_links(
-                                        skipped_fp_frames,
-                                        _run_share_names_for_links(),
-                                    )
-                                    st.download_button(
-                                        label="Download skipped FP frames (CSV)",
-                                        data=skipped_fp_frames.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
-                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_frames.csv",
-                                        mime="text/csv",
-                                        key=f"p5fp_dl_skip_frames_{lbl}_{idx}",
-                                    )
-                                    st.dataframe(
-                                        skipped_fp_frames.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
-                                        width='stretch',
-                                        hide_index=True,
-                                        column_config=_t4_viewer_link_column_config(),
-                                    )
-                                if not df_fp_object_skipped.empty:
-                                    skipped_fp_objects = df_fp_object_skipped.copy()
-                                    skipped_fp_objects["skip_reason"] = _compare_availability_reason_fp(
-                                        skipped_fp_objects
-                                    )
-                                    st.markdown("**Per object**")
-                                    skipped_fp_objects = _with_t4_viewer_links(
-                                        skipped_fp_objects,
-                                        _run_share_names_for_links(),
-                                    )
-                                    st.download_button(
-                                        label="Download skipped FP objects (CSV)",
-                                        data=skipped_fp_objects.drop(columns=_FP_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
-                                        file_name=f"fp_diff_{lbl}_vs_A_skipped_objects.csv",
-                                        mime="text/csv",
-                                        key=f"p5fp_dl_skip_objects_{lbl}_{idx}",
-                                    )
-                                    st.dataframe(
-                                        skipped_fp_objects.head(200).drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
-                                        width='stretch',
-                                        hide_index=True,
-                                        column_config=_t4_viewer_link_column_config(),
                                     )
 
                         # --- Hierarchy charts (Sunburst/Treemap) ---
@@ -6599,7 +6524,7 @@ try:
                             h_fp_imp = _baobab_hierarchy_from_objects(
                                 df_fp_object,
                                 "fp_improved",
-                                f"FP improved ({lbl} vs A)",
+                                f"FP reduced ({lbl} vs A)",
                                 fp_baobab_ns,
                                 fp_baobab_nd,
                                 fp_baobab_nf,
@@ -6607,7 +6532,7 @@ try:
                             h_fp_deg = _baobab_hierarchy_from_objects(
                                 df_fp_object,
                                 "fp_degraded",
-                                f"FP degraded ({lbl} vs A)",
+                                f"FP increased ({lbl} vs A)",
                                 fp_baobab_ns,
                                 fp_baobab_nd,
                                 fp_baobab_nf,
@@ -6621,7 +6546,8 @@ try:
                                 if hdf.empty:
                                     fp_plot_entries.append((ct, None))
                                     continue
-                                title = f"{fp_baobab_viz}: FP {ct.replace('fp_', '')} (n = {int(hdf['n'].sum())} EST objects)"
+                                fp_change_label = "reduced" if ct == "fp_improved" else "increased"
+                                title = f"{fp_baobab_viz}: FP {fp_change_label} frames (n = {int(hdf['n'].sum())} EST rows)"
                                 if fp_baobab_viz == "Sunburst":
                                     hdf_plot = _sunburst_without_frame_layer(hdf)
                                     fig_b = px.sunburst(
@@ -6675,7 +6601,8 @@ try:
                                             key=f"{fp_b_key}_fig_{ct}",
                                         )
                                     else:
-                                        st.caption(f"No **{ct}** objects to chart.")
+                                        fp_missing_label = "FP reduced" if ct == "fp_improved" else "FP increased"
+                                        st.caption(f"No **{fp_missing_label}** frames to chart.")
 
                         # --- Comparison lens: label / scenario / dataset / frame ---
                         query_fp_label = f"""
@@ -6743,15 +6670,15 @@ try:
 
                         fp_frame_sort_mode = st.radio(
                             "Dataset/frame focus",
-                            ["FP degraded first", "FP improved first", "Largest net change"],
+                            ["FP increased first", "FP reduced first", "Largest net change"],
                             horizontal=True,
                             key=f"p5fp_frame_focus_{lbl}_{idx}",
                             help="Choose whether dataset and frame views prioritize new FPs, resolved FPs, or the biggest overall swings.",
                         )
                         df_fp_dataset_sorted = pd.DataFrame()
                         df_fp_frame_sorted = pd.DataFrame()
-                        fp_frame_caption_metric = "fp degraded"
-                        fp_frame_sort_desc = "fp_degraded desc"
+                        fp_frame_caption_metric = "FP increased"
+                        fp_frame_sort_desc = "candidate_fp desc"
                         if not df_fp.empty:
                             df_fp_dataset_sorted = df_fp.copy()
                             dataset_name = df_fp_dataset_sorted.get(
@@ -6766,9 +6693,9 @@ try:
                                 df_fp_dataset_sorted["_dataset_focus"].str.strip() != "",
                                 df_fp_dataset_sorted["t4dataset_id"].fillna("").astype(str),
                             )
-                            if fp_frame_sort_mode == "FP improved first":
+                            if fp_frame_sort_mode == "FP reduced first":
                                 # baseline_fp = baseline FP, candidate_fp = candidate FP
-                                # Sort by largest baseline FP first (potential improvement)
+                                # Sort by largest baseline FP first (potential FP reduction)
                                 df_fp_dataset_sorted = df_fp_dataset_sorted.sort_values(
                                     by=["baseline_fp", "candidate_fp"],
                                     ascending=[False, True],
@@ -6806,8 +6733,8 @@ try:
                                 df_fp_frame_sorted["_dataset_focus"].str.strip() != "",
                                 df_fp_frame_sorted["t4dataset_id"].fillna("").astype(str),
                             )
-                            if fp_frame_sort_mode == "FP improved first":
-                                fp_frame_caption_metric = "fp improved"
+                            if fp_frame_sort_mode == "FP reduced first":
+                                fp_frame_caption_metric = "FP reduced"
                                 fp_frame_sort_desc = "baseline_fp desc"
                                 df_fp_frame_sorted = df_fp_frame_sorted.sort_values(
                                     by=["baseline_fp", "candidate_fp"],
@@ -6957,7 +6884,7 @@ try:
                             pr1, pr2 = st.columns(2)
                             with pr1:
                                 if st.button(
-                                    "Preset: top 5 FP degraded scenarios",
+                                    "Preset: top 5 FP increased scenarios",
                                     key=f"p5fp_pre_scen_{lbl}_{idx}",
                                 ):
                                     if not df_fp.empty:
@@ -7044,6 +6971,13 @@ try:
                                 ["fp_degraded", "fp_improved", "all", "both_fp", "both_tp"],
                                 key=f"fp_change_type_{lbl}_{idx}",
                                 help="Filter EST objects by FP change between runs.",
+                                format_func=lambda v: {
+                                    "fp_degraded": "FP increased",
+                                    "fp_improved": "FP reduced",
+                                    "both_fp": "FP exists in both runs",
+                                    "both_tp": "No FP in frame",
+                                    "all": "All",
+                                }.get(v, v),
                             )
                             fp_sort_obj = st.selectbox(
                                 "Sort objects by",
@@ -7053,6 +6987,11 @@ try:
                                     "label_then_dist",
                                 ],
                                 key=f"p5fp_sort_{lbl}_{idx}",
+                                format_func=lambda v: {
+                                    "fp_degraded_priority_then_dist": "FP increased first, then distance",
+                                    "frame_then_uuid": "Frame, then EST uuid",
+                                    "label_then_dist": "Label, then distance",
+                                }.get(v, v),
                             )
 
                             df_fp_obj_show = (
