@@ -1712,7 +1712,7 @@ def _report_distance_phrases(df_dist: pd.DataFrame, *, compare_base: Optional[pd
         worst_fp = d.sort_values("fpr", ascending=False).head(1)
         if not worst_fp.empty:
             r = worst_fp.iloc[0]
-            phrases.append(f"highest FP pressure at {r['distance_bin']} ({_report_pct(r['fpr'])})")
+            phrases.append(f"highest FP rate at {r['distance_bin']} ({_report_pct(r['fpr'])})")
     return phrases
 
 
@@ -1882,17 +1882,6 @@ def _report_human_pp(v: Any, *, sign: bool = True) -> str:
 
 
 def _report_class_label_jp(label: str) -> str:
-    s = str(label).lower()
-    if "pedestrian" in s:
-        return "歩行者"
-    if "car" in s:
-        return "car"
-    if "truck" in s:
-        return "truck"
-    if "bus" in s:
-        return "bus"
-    if "bicycle" in s or "bike" in s or "cyclist" in s:
-        return "二輪/自転車"
     return str(label)
 
 
@@ -2308,7 +2297,7 @@ def build_compare_detection_report(
         badge, badge_tone = "Release risk", "risk"
         lead = "Candidateはactive filter上でRecall regressionを示しています。主なrelease riskはデグレhotspotです。"
     elif fp_delta > 0:
-        verdict = "Mixed: Recallは概ね維持されていますが、FP pressureが増加しています。"
+        verdict = "Mixed: Recallは概ね維持されていますが、FPが増加しています。"
         badge, badge_tone = "Mixed", "mixed"
         lead = "Recallは概ね維持されていますが、CandidateはFalse Positiveを増やしています。純粋な改善ではなくtrade-offとして扱うべき結果です。"
     else:
@@ -3423,6 +3412,492 @@ try:
         if m:
             return (int(m.group(1)), f"{m.group(1)}+ m")
         return (0, s)
+
+    def _distance_summary_jp_line(line: str) -> str:
+        """Lightweight Japanese rendering for the generated distance report prose."""
+        s = str(line)
+        replacements = {
+            "near distance": "近距離",
+            "middle distance": "中距離",
+            "far distance": "遠距離",
+            "Detection quality is consistent across distance ranges": "距離レンジ全体で検出品質は安定しています",
+            "show similar recall, so there is no obvious range-specific drop": "のRecallは近く、明確な距離依存の低下は見られません",
+            "Detection is strongest in": "検出性能が最も良いのは",
+            "and weakest in": "で、最も弱いのは",
+            "The": "",
+            "result looks strong": "の結果は良好です",
+            "result looks acceptable but not yet strong": "の結果は許容範囲ですが、まだ強いとは言えません",
+            "result looks weak": "の結果は弱めです",
+            "so this range should be treated as the main recall limitation": "この距離レンジが主なRecall制約と考えられます",
+            "False positives are not concentrated in a particular distance range": "FPは特定の距離レンジに集中していません",
+            "FP behavior is broadly even across the selected scope": "FP傾向は概ね均一です",
+            "False positives are mainly a": "FPは主に",
+            "issue": "の課題です",
+            "FP rate there is low": "この範囲のFP rateは低いです",
+            "FP rate there is moderate": "この範囲のFP rateは中程度です",
+            "FP rate there is high": "この範囲のFP rateは高いです",
+            "while": "一方で",
+            "is comparatively cleaner": "は比較的クリーンです",
+            "The main performance concern is": "主な性能上の懸念は",
+            "where missed detections and false positives are both relatively concentrated": "で、未検出とFPの両方が相対的に集中しています",
+            "The main recall concern is": "主なRecall上の懸念は",
+            "FP behavior is not necessarily concentrated in the same range": "FPは必ずしも同じ距離レンジに集中していません",
+            "The main precision concern is": "主なPrecision上の懸念は",
+            "recall is not necessarily the limiting factor in that same range": "同じ距離レンジでRecallが制約とは限りません",
+            "candidate is a clear improvement over baseline by distance": "Candidateは距離別ではBaselineに対して明確な改善傾向です",
+            "improving recall without adding FPs in the dominant pattern": "主な傾向としてFPを増やさずRecallが改善しています",
+            "candidate improves recall but pays for it with more false positives": "CandidateはRecallを改善していますが、FP増加とのトレードオフがあります",
+            "candidate is more conservative": "Candidateはより保守的です",
+            "it reduces false positives but gives up some recall": "FPは減りますが、一部Recallを失っています",
+            "candidate shows a risky distance-level regression because recall drops while FPs increase": "CandidateはRecall低下とFP増加が同時に見られるため、距離別ではリスクの高いデグレ傾向です",
+            "candidate is largely unchanged from baseline across distance": "Candidateは距離別ではBaselineから大きな変化はありません",
+            "Range detail:": "距離別には、",
+            "shows both recall gain and FP increase": "ではRecall改善とFP増加が同時に見られます",
+            "shows recall weakness and FP increase": "ではRecall低下とFP増加が同時に見られます",
+            "shows recall gain": "ではRecall改善が見られます",
+            "shows recall weakness": "ではRecall低下が見られます",
+            "shows FP increase": "ではFP増加が見られます",
+            "shows fewer FPs": "ではFPが改善しています",
+            "while": "一方、",
+            "look stable or improved across distance": "は距離方向で安定または改善傾向です",
+            "Recall regression is mainly associated with": "Recall低下は主に",
+            "False-positive increase is mainly associated with": "FP増加は主に",
+            "Main points to review are": "主な確認ポイントは",
+            "driven by": "要因は",
+            "both recall regression and FP increase": "Recall低下とFP増加の両方",
+            "recall regression": "Recall低下",
+            "FP increase": "FP増加",
+            "work well across distance": "は距離方向で良好に動作しています",
+            "Recall is weaker for": "Recallが弱めなのは",
+            "so these classes need closer review": "これらのclassは追加確認が必要です",
+            "False positives are more visible for": "FPが目立つのは",
+            "At far distance, the main class-level concerns are": "遠距離でclass別に主な懸念があるのは",
+        }
+        for src, dst in replacements.items():
+            s = s.replace(src, dst)
+        s = s.replace(", 一方、", "。一方、")
+        s = s.replace("、 ", "、")
+        s = s.replace(": ", "：")
+        return s
+
+    def _distance_report_note_bilingual(title: str, lines: List[str]) -> None:
+        """Render one combined bilingual section-level summary for distance charts."""
+        clean_lines = [str(line).strip() for line in lines if str(line).strip()]
+        if not clean_lines:
+            return
+        st.markdown(f"**{title}**")
+        col_en, col_ja = st.columns(2)
+        with col_en:
+            st.markdown("\n".join(f"- {line}" for line in clean_lines))
+        with col_ja:
+            st.markdown("\n".join(f"- {_distance_summary_jp_line(line)}" for line in clean_lines))
+
+    def _rate_level_text(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return "n/a"
+        return _report_pct(value)
+
+    def _distance_zone_name(bin_order: Any) -> str:
+        try:
+            order = float(bin_order)
+        except Exception:
+            return "unknown range"
+        if order < 50:
+            return "near distance"
+        if order < 100:
+            return "middle distance"
+        return "far distance"
+
+    def _report_join_words(items: List[str], limit: int = 4) -> str:
+        clean = [str(x).strip() for x in items if str(x).strip()]
+        if not clean:
+            return ""
+        clean = clean[:limit]
+        if len(clean) == 1:
+            return clean[0]
+        if len(clean) == 2:
+            return f"{clean[0]} and {clean[1]}"
+        return ", ".join(clean[:-1]) + f", and {clean[-1]}"
+
+    def _display_label_name(label: Any) -> str:
+        s = str(label).strip()
+        return s if s else "(no label)"
+
+    def _recall_quality(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return "unclear"
+        v = float(value)
+        if v >= 0.8:
+            return "strong"
+        if v >= 0.6:
+            return "acceptable but not yet strong"
+        return "weak"
+
+    def _fp_quality(value: Any) -> str:
+        if value is None or pd.isna(value):
+            return "unclear"
+        v = float(value)
+        if v <= 0.1:
+            return "low"
+        if v <= 0.25:
+            return "moderate"
+        return "high"
+
+    def _zone_metric_summary(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty or "bin_order" not in df.columns:
+            return pd.DataFrame()
+        d = df.copy()
+        d["zone"] = d["bin_order"].map(_distance_zone_name)
+        return (
+            d.groupby("zone", as_index=False)
+            .agg(
+                tpr=("tpr", "mean"),
+                fpr=("fpr", "mean"),
+                min_bin=("bin_order", "min"),
+            )
+            .sort_values("min_bin")
+        )
+
+    def _range_detail_sentence(
+        *,
+        recall_gain_zone: Optional[str] = None,
+        recall_loss_zone: Optional[str] = None,
+        fp_rise_zone: Optional[str] = None,
+        fp_drop_zone: Optional[str] = None,
+    ) -> str:
+        observations: List[str] = []
+        if recall_gain_zone and recall_gain_zone == fp_rise_zone:
+            observations.append(f"{recall_gain_zone} shows both recall gain and FP increase")
+            fp_rise_zone = None
+        elif recall_loss_zone and recall_loss_zone == fp_rise_zone:
+            observations.append(f"{recall_loss_zone} shows recall weakness and FP increase")
+            fp_rise_zone = None
+        elif recall_gain_zone:
+            observations.append(f"{recall_gain_zone} shows recall gain")
+        if recall_loss_zone and recall_loss_zone != recall_gain_zone:
+            observations.append(f"{recall_loss_zone} shows recall weakness")
+        if fp_rise_zone:
+            observations.append(f"{fp_rise_zone} shows FP increase")
+        if fp_drop_zone:
+            observations.append(f"{fp_drop_zone} shows fewer FPs")
+        if not observations:
+            return ""
+        if len(observations) == 1:
+            return f"Range detail: {observations[0]}."
+        return f"Range detail: {observations[0]}, while " + "; ".join(observations[1:]) + "."
+
+    def _distance_single_result_lines(df_rates: pd.DataFrame) -> List[str]:
+        if df_rates is None or df_rates.empty:
+            return []
+        d = df_rates.copy()
+        d["tpr"] = pd.to_numeric(d["tpr"], errors="coerce")
+        d["fpr"] = pd.to_numeric(d["fpr"], errors="coerce")
+        d = d.dropna(subset=["bin_label"])
+        if d.empty:
+            return []
+
+        lines = []
+        tpr_valid = d.dropna(subset=["tpr"])
+        fpr_valid = d.dropna(subset=["fpr"])
+        zone_summary = _zone_metric_summary(d)
+        if not zone_summary.empty and not tpr_valid.empty:
+            best_zone = zone_summary.sort_values("tpr", ascending=False).iloc[0]
+            weak_zone = zone_summary.sort_values("tpr", ascending=True).iloc[0]
+            spread = float(zone_summary["tpr"].max() - zone_summary["tpr"].min())
+            if spread < 0.03:
+                lines.append(
+                    f"Detection quality is consistent across distance ranges; {best_zone['zone']} and "
+                    f"{weak_zone['zone']} show similar recall, so there is no obvious range-specific drop."
+                )
+            else:
+                lines.append(
+                    f"Detection is strongest in {best_zone['zone']} and weakest in {weak_zone['zone']}. "
+                    f"The {weak_zone['zone']} result looks {_recall_quality(weak_zone['tpr'])}, so this range should be treated as the main recall limitation."
+                )
+        if not zone_summary.empty and not fpr_valid.empty:
+            high_fp_zone = zone_summary.sort_values("fpr", ascending=False).iloc[0]
+            low_fp_zone = zone_summary.sort_values("fpr", ascending=True).iloc[0]
+            spread = float(zone_summary["fpr"].max() - zone_summary["fpr"].min())
+            if spread < 0.03:
+                lines.append(
+                    "False positives are not concentrated in a particular distance range; FP behavior is broadly even across the selected scope."
+                )
+            else:
+                lines.append(
+                    f"False positives are mainly a {high_fp_zone['zone']} issue. FP rate there is {_fp_quality(high_fp_zone['fpr'])}, "
+                    f"while {low_fp_zone['zone']} is comparatively cleaner."
+                )
+        if not zone_summary.empty and len(zone_summary) >= 2:
+            weak_zone = zone_summary.sort_values("tpr", ascending=True).iloc[0]
+            high_fp_zone = zone_summary.sort_values("fpr", ascending=False).iloc[0]
+            if weak_zone["zone"] == high_fp_zone["zone"] and (
+                _recall_quality(weak_zone["tpr"]) == "weak" or _fp_quality(high_fp_zone["fpr"]) == "high"
+            ):
+                lines.append(
+                    f"The main performance concern is {weak_zone['zone']}, where missed detections and false positives are both relatively concentrated."
+                )
+            elif _recall_quality(weak_zone["tpr"]) == "weak":
+                lines.append(
+                    f"The main recall concern is {weak_zone['zone']}; FP behavior is not necessarily concentrated in the same range."
+                )
+            elif _fp_quality(high_fp_zone["fpr"]) == "high":
+                lines.append(
+                    f"The main precision concern is {high_fp_zone['zone']}; recall is not necessarily the limiting factor in that same range."
+                )
+        return lines
+
+    def _distance_compare_result_lines(
+        df_tpr: pd.DataFrame,
+        df_fpr: pd.DataFrame,
+        run_order: List[str],
+    ) -> List[str]:
+        if not run_order or len(run_order) < 2:
+            return []
+        base_run = run_order[0]
+        lines = []
+        tpr_pivot = pd.DataFrame()
+        fpr_pivot = pd.DataFrame()
+        if df_tpr is not None and not df_tpr.empty:
+            tpr_pivot = df_tpr.pivot_table(index="bin_label", columns="run", values="tpr", aggfunc="first")
+        if df_fpr is not None and not df_fpr.empty:
+            fpr_pivot = df_fpr.pivot_table(index="bin_label", columns="run", values="fpr", aggfunc="first")
+        bin_meta_parts = []
+        for df_src in (df_tpr, df_fpr):
+            if df_src is not None and not df_src.empty and {"bin_label", "bin_order"}.issubset(df_src.columns):
+                bin_meta_parts.append(df_src[["bin_label", "bin_order"]])
+        if bin_meta_parts:
+            bin_meta = pd.concat(bin_meta_parts, ignore_index=True).drop_duplicates("bin_label")
+        else:
+            bin_meta = pd.DataFrame(columns=["bin_label", "bin_order"])
+
+        for compare_run in run_order[1:]:
+            if base_run not in tpr_pivot.columns and base_run not in fpr_pivot.columns:
+                continue
+            tpr_delta = pd.Series(dtype="float64")
+            fpr_delta = pd.Series(dtype="float64")
+            if base_run in tpr_pivot.columns and compare_run in tpr_pivot.columns:
+                tpr_delta = (tpr_pivot[compare_run] - tpr_pivot[base_run]).dropna()
+            if base_run in fpr_pivot.columns and compare_run in fpr_pivot.columns:
+                fpr_delta = (fpr_pivot[compare_run] - fpr_pivot[base_run]).dropna()
+            if tpr_delta.empty and fpr_delta.empty:
+                continue
+
+            overlap_bins = sorted(set(tpr_delta.index).intersection(set(fpr_delta.index)))
+            tradeoff_counts = {"clear": 0, "recall_tradeoff": 0, "conservative": 0, "regression": 0, "flat": 0}
+            if overlap_bins:
+                for bin_label in overlap_bins:
+                    dt = float(tpr_delta.loc[bin_label])
+                    dfp = float(fpr_delta.loc[bin_label])
+                    if abs(dt) < 0.001 and abs(dfp) < 0.001:
+                        tradeoff_counts["flat"] += 1
+                    elif dt >= 0.001 and dfp <= -0.001:
+                        tradeoff_counts["clear"] += 1
+                    elif dt >= 0.001 and dfp > 0.001:
+                        tradeoff_counts["recall_tradeoff"] += 1
+                    elif dt < -0.001 and dfp <= -0.001:
+                        tradeoff_counts["conservative"] += 1
+                    else:
+                        tradeoff_counts["regression"] += 1
+
+            dominant_case = max(tradeoff_counts, key=tradeoff_counts.get) if overlap_bins else "flat"
+            case_text = {
+                "clear": "is a clear improvement over baseline by distance, improving recall without adding FPs in the dominant pattern",
+                "recall_tradeoff": "improves recall but pays for it with more false positives",
+                "conservative": "is more conservative: it reduces false positives but gives up some recall",
+                "regression": "shows a risky distance-level regression because recall drops while FPs increase",
+                "flat": "is largely unchanged from baseline across distance",
+            }[dominant_case]
+
+            recall_gain_zone = None
+            recall_loss_zone = None
+            fp_rise_zone = None
+            fp_drop_zone = None
+            if not tpr_delta.empty and not bin_meta.empty:
+                tpr_df = tpr_delta.rename("tpr_delta").reset_index().merge(bin_meta, on="bin_label", how="left")
+                tpr_df["zone"] = tpr_df["bin_order"].map(_distance_zone_name)
+                tpr_zone = tpr_df.groupby("zone")["tpr_delta"].mean().dropna()
+                if not tpr_zone.empty:
+                    best_recall_zone = tpr_zone.sort_values(ascending=False).index[0]
+                    weakest_recall_zone = tpr_zone.sort_values().index[0]
+                    if float(tpr_zone.loc[best_recall_zone]) > 0.01:
+                        recall_gain_zone = str(best_recall_zone)
+                    if float(tpr_zone.loc[weakest_recall_zone]) < -0.01:
+                        recall_loss_zone = str(weakest_recall_zone)
+            if not fpr_delta.empty and not bin_meta.empty:
+                fpr_df = fpr_delta.rename("fpr_delta").reset_index().merge(bin_meta, on="bin_label", how="left")
+                fpr_df["zone"] = fpr_df["bin_order"].map(_distance_zone_name)
+                fpr_zone = fpr_df.groupby("zone")["fpr_delta"].mean().dropna()
+                if not fpr_zone.empty:
+                    highest_fp_zone = fpr_zone.sort_values(ascending=False).index[0]
+                    lowest_fp_zone = fpr_zone.sort_values().index[0]
+                    if float(fpr_zone.loc[highest_fp_zone]) > 0.01:
+                        fp_rise_zone = str(highest_fp_zone)
+                    if float(fpr_zone.loc[lowest_fp_zone]) < -0.01:
+                        fp_drop_zone = str(lowest_fp_zone)
+            range_detail = _range_detail_sentence(
+                recall_gain_zone=recall_gain_zone,
+                recall_loss_zone=recall_loss_zone,
+                fp_rise_zone=fp_rise_zone,
+                fp_drop_zone=fp_drop_zone,
+            )
+            if range_detail:
+                lines.append(f"{compare_run} vs {base_run}: candidate {case_text}. {range_detail}")
+            else:
+                lines.append(f"{compare_run} vs {base_run}: candidate {case_text}.")
+        return lines
+
+    def _distance_label_result_lines(
+        df_label_dist: pd.DataFrame,
+        label_order: List[str],
+        bin_order: Optional[List[str]],
+        run_order: List[str],
+    ) -> List[str]:
+        if df_label_dist is None or df_label_dist.empty:
+            return []
+        df_label_dist = df_label_dist.copy()
+        if "label_str" not in df_label_dist.columns and "label" in df_label_dist.columns:
+            df_label_dist["label_str"] = df_label_dist["label"].astype(str)
+        if {"bin_label", "bin_order"}.issubset(df_label_dist.columns):
+            bin_order_by_label = (
+                df_label_dist[["bin_label", "bin_order"]]
+                .drop_duplicates("bin_label")
+                .set_index("bin_label")["bin_order"]
+                .to_dict()
+            )
+        else:
+            bin_order_by_label = {}
+        lines = []
+        if len(run_order) >= 2:
+            base_run = run_order[0]
+            compare_run = run_order[1]
+            pivot = df_label_dist.pivot_table(
+                index=["label_str", "bin_label"],
+                columns="run",
+                values=["tpr", "fpr"],
+                aggfunc="first",
+            )
+            if ("tpr", base_run) in pivot.columns and ("tpr", compare_run) in pivot.columns:
+                tpr_delta = (pivot[("tpr", compare_run)] - pivot[("tpr", base_run)]).dropna()
+            else:
+                tpr_delta = pd.Series(dtype="float64")
+            if ("fpr", base_run) in pivot.columns and ("fpr", compare_run) in pivot.columns:
+                fpr_delta = (pivot[("fpr", compare_run)] - pivot[("fpr", base_run)]).dropna()
+            else:
+                fpr_delta = pd.Series(dtype="float64")
+
+            label_rows = []
+            labels_for_delta = sorted(
+                set([idx[0] for idx in tpr_delta.index]).union(set([idx[0] for idx in fpr_delta.index]))
+            )
+            for lab in labels_for_delta:
+                lab_tpr = tpr_delta.loc[lab] if lab in tpr_delta.index.get_level_values(0) else pd.Series(dtype="float64")
+                lab_fpr = fpr_delta.loc[lab] if lab in fpr_delta.index.get_level_values(0) else pd.Series(dtype="float64")
+                label_rows.append(
+                    {
+                        "label": lab,
+                        "tpr_delta": float(lab_tpr.mean()) if len(lab_tpr) else np.nan,
+                        "fpr_delta": float(lab_fpr.mean()) if len(lab_fpr) else np.nan,
+                    }
+                )
+            label_delta = pd.DataFrame(label_rows)
+            if not label_delta.empty:
+                stable = label_delta[
+                    (label_delta["tpr_delta"].fillna(0) >= -0.01)
+                    & (label_delta["fpr_delta"].fillna(0) <= 0.01)
+                ].sort_values(["tpr_delta", "fpr_delta"], ascending=[False, True])
+                if not stable.empty:
+                    stable_labels = [_display_label_name(x) for x in stable["label"].head(4).tolist()]
+                    lines.append(
+                        f"{_report_join_words(stable_labels)} look stable or improved across distance."
+                    )
+                recall_risk = label_delta[label_delta["tpr_delta"] < -0.01].sort_values("tpr_delta").head(3)
+                if not recall_risk.empty:
+                    risk_labels = [_display_label_name(x) for x in recall_risk["label"].tolist()]
+                    lines.append(
+                        f"Recall regression is mainly associated with {_report_join_words(risk_labels)}."
+                    )
+                fp_risk = label_delta[label_delta["fpr_delta"] > 0.01].sort_values("fpr_delta", ascending=False).head(3)
+                if not fp_risk.empty:
+                    fp_labels = [_display_label_name(x) for x in fp_risk["label"].tolist()]
+                    lines.append(
+                        f"False-positive increase is mainly associated with {_report_join_words(fp_labels)}."
+                    )
+
+            paired = []
+            for key in sorted(set(tpr_delta.index).intersection(set(fpr_delta.index))):
+                dt = float(tpr_delta.loc[key])
+                dfp = float(fpr_delta.loc[key])
+                zone_text = _distance_zone_name(bin_order_by_label.get(key[1], 0))
+                if dt < -0.001 and dfp > 0.001:
+                    paired.append((abs(dt) + abs(dfp), key, zone_text, "both recall regression and FP increase"))
+                elif dt < -0.001:
+                    paired.append((abs(dt), key, zone_text, "recall regression"))
+                elif dfp > 0.001:
+                    paired.append((abs(dfp), key, zone_text, "FP increase"))
+            if paired:
+                paired = sorted(paired, reverse=True)[:3]
+                focus = [
+                    f"{_display_label_name(key[0])} in {zone_text}"
+                    for _, key, zone_text, reason in paired
+                ]
+                reasons = sorted(set(reason for _, _, _, reason in paired))
+                lines.append(
+                    f"Main points to review are {_report_join_words(focus, limit=3)}, driven by {_report_join_words(reasons, limit=3)}."
+                )
+        else:
+            d = df_label_dist.copy()
+            d["tpr"] = pd.to_numeric(d["tpr"], errors="coerce")
+            d["fpr"] = pd.to_numeric(d["fpr"], errors="coerce")
+            if "bin_order" in d.columns:
+                d["zone"] = d["bin_order"].map(_distance_zone_name)
+            else:
+                d["zone"] = "selected range"
+            label_summary = (
+                d.groupby("label_str", as_index=False)
+                .agg(tpr=("tpr", "mean"), fpr=("fpr", "mean"))
+                .dropna(subset=["tpr", "fpr"], how="all")
+            )
+            if not label_summary.empty:
+                strong = label_summary[
+                    (label_summary["tpr"].fillna(0) >= 0.75)
+                    & (label_summary["fpr"].fillna(1) <= 0.25)
+                ].sort_values(["tpr", "fpr"], ascending=[False, True])
+                if not strong.empty:
+                    strong_labels = [_display_label_name(x) for x in strong["label_str"].head(4).tolist()]
+                    lines.append(
+                        f"{_report_join_words(strong_labels)} work well across distance."
+                    )
+                weak = label_summary[label_summary["tpr"].fillna(1) < 0.6].sort_values("tpr").head(3)
+                if not weak.empty:
+                    weak_labels = [_display_label_name(x) for x in weak["label_str"].tolist()]
+                    lines.append(
+                        f"Recall is weaker for {_report_join_words(weak_labels)}, so these classes need closer review."
+                    )
+                noisy = label_summary[label_summary["fpr"].fillna(0) > 0.25].sort_values("fpr", ascending=False).head(3)
+                if not noisy.empty:
+                    noisy_labels = [_display_label_name(x) for x in noisy["label_str"].tolist()]
+                    lines.append(
+                        f"False positives are more visible for {_report_join_words(noisy_labels)}."
+                    )
+            zone_label_summary = (
+                d.groupby(["label_str", "zone"], as_index=False)
+                .agg(tpr=("tpr", "mean"), fpr=("fpr", "mean"))
+                .dropna(subset=["tpr", "fpr"], how="all")
+            )
+            if not zone_label_summary.empty:
+                far_or_weak = zone_label_summary[
+                    (zone_label_summary["zone"] == "far distance")
+                    & (
+                        (zone_label_summary["tpr"].fillna(1) < 0.65)
+                        | (zone_label_summary["fpr"].fillna(0) > 0.25)
+                    )
+                ].sort_values(["tpr", "fpr"], ascending=[True, False]).head(3)
+                if not far_or_weak.empty:
+                    labels = [_display_label_name(x) for x in far_or_weak["label_str"].tolist()]
+                    lines.append(
+                        f"At far distance, the main class-level concerns are {_report_join_words(labels)}."
+                    )
+        return lines
     
     
     # Same 10 m bins as eval_flat / TPR-FPR stats (used for object-count alignment)
@@ -3479,6 +3954,7 @@ try:
         ds_debug_log_memory("distance_inner_try_start")
         use_line_chart = rate_by_dist_style == "Line chart (trend)"
         rate_bin_labels_order: Optional[List[str]] = None
+        distance_summary_lines: List[str] = []
     
         if single_mode:
             # Inline stats from view_eval_flat (avoid nested TPR/FPR view — DuckDB can SIGSEGV on that plan).
@@ -3576,6 +4052,8 @@ try:
                     fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
                     st.plotly_chart(fig, width='stretch')
 
+                distance_summary_lines.extend(_distance_single_result_lines(df_both))
+
                 query_label_rates = sql_distance_bin_label_rates_from_eval_flat(
                     "view_eval_flat", filter_clause_base
                 )
@@ -3640,6 +4118,14 @@ try:
                         )
                         fig_label.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
                         st.plotly_chart(fig_label, width='stretch')
+                    distance_summary_lines.extend(
+                        _distance_label_result_lines(
+                            df_label_rates,
+                            label_order,
+                            rate_bin_labels_order,
+                            run_labels_list,
+                        )
+                    )
             else:
                 st.info("No distance-bin data available.")
         else:
@@ -3806,6 +4292,8 @@ try:
                 else:
                     st.info("No FP rate by distance data.")
 
+            distance_summary_lines.extend(_distance_compare_result_lines(df_tpr_dist, df_fpr_dist, run_labels_list))
+
             dfs_label_rates = []
             for i in range(len(runs)):
                 fc = build_filter_clause(filters_list[i], enable_dist_h=False)
@@ -3842,6 +4330,14 @@ try:
                         index=0,
                         horizontal=True,
                         key="distance_label_compare_view",
+                    )
+                    distance_summary_lines.extend(
+                        _distance_label_result_lines(
+                            df_label_dist,
+                            label_order,
+                            rate_bin_labels_order,
+                            run_labels_list,
+                        )
                     )
 
                     def _render_distance_delta_matrix(
@@ -4191,6 +4687,12 @@ try:
                     st.plotly_chart(fig_oc, width='stretch')
         except Exception as e_oc:
             st.error(f"Error (object count by distance bin): {e_oc}")
+
+        if single_mode:
+            _distance_report_note_bilingual(
+                "Distance performance summary",
+                distance_summary_lines,
+            )
     
     except Exception as e:
         st.error(f"Error: {e}")
@@ -4588,6 +5090,10 @@ try:
     
     
     if not single_mode:
+        _distance_report_note_bilingual(
+            "Distance performance summary",
+            locals().get("distance_summary_lines", []),
+        )
         ds_dlog("section: Perception_diff_start")
         st.divider()
         st.markdown(
