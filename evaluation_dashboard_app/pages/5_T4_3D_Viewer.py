@@ -148,7 +148,37 @@ def _prime_viewer_state_from_query_params() -> None:
             st.session_state[state_key] = value
 
 
+def _viewer_deep_link_signature() -> tuple[str, ...] | None:
+    keys = (
+        "mode",
+        "run_a",
+        "run_b",
+        "run_c",
+        "run_d",
+        "run_e",
+        "viewer_suite",
+        "viewer_scenario",
+        "viewer_t4dataset",
+        "viewer_topic",
+        "viewer_frame",
+        "viewer_compare",
+    )
+    values = tuple(_query_param_text(k) for k in keys)
+    return values if any(values) else None
+
+
+def _reset_viewer_widget_state_for_new_deep_link() -> None:
+    sig = _viewer_deep_link_signature()
+    if sig is None or st.session_state.get("_t4_viewer_deep_link_sig") == sig:
+        return
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("bbox_viewer_"):
+            st.session_state.pop(key, None)
+    st.session_state["_t4_viewer_deep_link_sig"] = sig
+
+
 try_hydrate_session_from_overview_query_params()
+_reset_viewer_widget_state_for_new_deep_link()
 _prime_viewer_state_from_query_params()
 
 _viewer_compare_mode = _query_param_text("viewer_compare", "compare_view", "compare_mode")
@@ -273,33 +303,6 @@ with st.sidebar:
     filter_file = selected_files.get(first_shown) or parquet_lists[run_labels_list.index(first_shown)][0]
 
 con = duckdb.connect()
-
-# Debug: show all parquet files found per run
-with st.expander("Parquet files debug", expanded=True):
-    for i, (r, pl) in enumerate(zip(runs, parquet_lists)):
-        lbl = run_labels_list[i] if i < len(run_labels_list) else str(i)
-        st.write(f"Run **{lbl}** path: {r['path']}")
-        st.write(f"  Parquet files ({len(pl)}): {[os.path.basename(p) for p in pl]}")
-        # Quick peek at each parquet: row count and source distribution
-        for pf in pl:
-            try:
-                _cnt = con.execute("SELECT COUNT(*) AS cnt FROM parquet_scan(?)", [pf]).fetchone()[0]
-                _cols = con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [pf]).df()["column_name"].tolist()
-                st.write(f"  {os.path.basename(pf)}: {_cnt} rows, columns={_cols}")
-                if "source" in _cols:
-                    _src = con.execute("SELECT source, COUNT(*) AS cnt FROM parquet_scan(?) GROUP BY source", [pf]).df()
-                    st.write(f"    source dist: {dict(zip(_src['source'], _src['cnt']))}")
-                if "suite_name" in _cols:
-                    _suites = con.execute("SELECT DISTINCT suite_name FROM parquet_scan(?)", [pf]).df()["suite_name"].tolist()
-                    st.write(f"    suites: {_suites}")
-                if "scenario_name" in _cols:
-                    _scenarios = con.execute("SELECT DISTINCT scenario_name FROM parquet_scan(?)", [pf]).df()["scenario_name"].tolist()
-                    st.write(f"    scenarios: {_scenarios}")
-                if "t4dataset_name" in _cols:
-                    _t4ds = con.execute("SELECT DISTINCT t4dataset_name FROM parquet_scan(?)", [pf]).df()["t4dataset_name"].tolist()
-                    st.write(f"    t4dataset_names: {_t4ds}")
-            except Exception as _e:
-                st.write(f"  {os.path.basename(pf)}: ERROR - {_e}")
 
 cols = con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [filter_file]).df()["column_name"].tolist()
 has_visibility = "visibility" in cols
@@ -863,9 +866,8 @@ def _resolve_load_filter_for_file(file_path: str) -> tuple[str, list[Any], dict]
     }
 
 dfs = []
-_load_debug_entries = []
 for file_path, run_label in files_to_load:
-    run_where, run_params, run_debug = _resolve_load_filter_for_file(file_path)
+    run_where, run_params, _ = _resolve_load_filter_for_file(file_path)
     sql = f"""
 SELECT {", ".join(_select_cols)}
 FROM parquet_scan(?)
@@ -874,16 +876,6 @@ ORDER BY frame_index
 """
     qparams = [file_path] + run_params
     df_part = con.execute(sql, qparams).df()
-    _load_debug_entries.append(
-        {
-            "run": run_label,
-            "file": os.path.basename(file_path),
-            "where": run_where,
-            "params": run_params,
-            "resolved": run_debug,
-            "rows": int(len(df_part)),
-        }
-    )
     if not df_part.empty:
         df_part = df_part.copy()
         df_part["run"] = run_label
@@ -894,33 +886,6 @@ if not dfs:
     st.stop()
 
 df = pd.concat(dfs, ignore_index=True)
-
-# Debug: show loaded data summary per run and source
-with st.expander("Data load debug", expanded=True):
-    st.write(f"**files_to_load**: {files_to_load}")
-    st.write(f"**per-run load filters**: {_load_debug_entries}")
-    st.write(f"**scene_where** (original): {scene_where}")
-    st.write(f"**scene_params** (original): {scene_params}")
-    st.write(f"**selected_t4dataset**: {selected_t4dataset}")
-    for _rn in df["run"].unique() if "run" in df.columns else ["(single)"]:
-        _rdf = df[df["run"] == _rn] if "run" in df.columns else df
-        _gt = int((_rdf["source"] == "GT").sum()) if "source" in _rdf.columns else 0
-        _est = int((_rdf["source"] == "EST").sum()) if "source" in _rdf.columns else 0
-        _src_vals = _rdf["source"].unique().tolist() if "source" in _rdf.columns else []
-        st.write(f"Run **{_rn}**: {len(_rdf)} rows, GT={_gt}, EST={_est}, source_values={_src_vals}, frames={_rdf['frame_index'].nunique() if 'frame_index' in _rdf.columns else 'N/A'}")
-        # Show sample EST box dimensions
-        _est_df = _rdf[_rdf["source"] == "EST"] if "source" in _rdf.columns else _rdf
-        if not _est_df.empty:
-            _sample = _est_df.head(5)
-            st.write(f"Sample EST boxes (first 5):")
-            _show_cols = [c for c in ["x", "y", "z", "length", "width", "height", "yaw", "label", "uuid", "frame_index"] if c in _sample.columns]
-            st.dataframe(_sample[_show_cols])
-            # Check for extreme values
-            for col in ["x", "y", "length", "width"]:
-                if col in _est_df.columns:
-                    _vals = pd.to_numeric(_est_df[col], errors="coerce").dropna()
-                    if len(_vals) > 0:
-                        st.write(f"  {col}: min={_vals.min():.2f}, max={_vals.max():.2f}, mean={_vals.mean():.2f}")
 
 if len(files_to_load) == 1:
     df["run"] = df["run"].iloc[0]

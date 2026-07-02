@@ -449,6 +449,7 @@ def _compare_availability_reason(df: pd.DataFrame) -> pd.Series:
 
 
 # Internal columns kept for availability filtering but hidden from display tables
+_DIFF_INTERNAL_COLS = ["missing_in_base_cnt", "missing_in_candidate_cnt"]
 _FP_INTERNAL_COLS = ["total_est", "base_est_cnt", "candidate_est_cnt", "missing_in_base_cnt", "missing_in_candidate_cnt"]
 
 # --- FP-side availability helpers (use base_est_cnt / candidate_est_cnt) ---
@@ -2908,7 +2909,7 @@ with st.sidebar:
         )
     else:
         selected_visibility = []
-    max_eval_range = st.selectbox("Max Evaluation Range [m]", [50, 80, 100, 120, 150], index=0, key="max_eval_range")
+    max_eval_range = st.selectbox("Max Evaluation Range [m]", [50, 80, 100, 120, 150], index=4, key="max_eval_range")
 
 # Build filters (same values for all runs). None = dimension unused (no suite/visibility column in UI).
 # When comparing runs with different suite name formats (e.g. one has UUID suffix, the other
@@ -4292,9 +4293,9 @@ try:
                     "Topic / label / suite / visibility filters still apply. "
                     "Other chart types and the rest of the page use the sidebar **Max Evaluation Range**."
                 )
-                fb_all = {**filters_base, "max_eval_range": None}
                 label_union: set = set()
                 for i in range(len(runs)):
+                    fb_all = {**filters_list[i], "max_eval_range": None}
                     fc_a = build_filter_clause(fb_all)
                     q_a = _tpr_query.format(view=_flat_view(i), filter_clause=fc_a)
                     dfa = con.execute(q_a).df()
@@ -4309,9 +4310,9 @@ try:
                         row_ranges = TPR_COMPARE_SPIDER_RANGES[row_start : row_start + 3]
                         cols = st.columns(len(row_ranges))
                         for col, (max_r, cap_lbl) in zip(cols, row_ranges):
-                            fb = {**filters_base, "max_eval_range": max_r}
                             dfs_slice = []
                             for i in range(len(runs)):
+                                fb = {**filters_list[i], "max_eval_range": max_r}
                                 fc = build_filter_clause(fb)
                                 q = _tpr_query.format(view=_flat_view(i), filter_clause=fc)
                                 dfi = con.execute(q).df()
@@ -4845,21 +4846,23 @@ try:
                         if msg
                     ]
                     skip_incomplete_key = f"p5_skip_incomplete_{lbl}_{idx}"
-                    skip_incomplete_compare = True
+                    skip_dataset_compare = True
                     if availability_messages:
                         st.warning(
                             "Some compare keys have GT data on only one side. "
                             + "; ".join(availability_messages)
-                            + ". These can create artificial large improvements/degradations.",
+                            + ". Dataset-level one-sided cases can create artificial large improvements/degradations; "
+                            "one-sided frames inside otherwise valid datasets remain included.",
                             icon="⚠️",
                         )
-                        skip_incomplete_compare = st.checkbox(
-                            "Skip one-sided compare cases in diff hotspots",
+                        skip_dataset_compare = st.checkbox(
+                            "Skip datasets with GT data on only one side",
                             value=True,
                             key=skip_incomplete_key,
                             help=(
-                                "When enabled, Perception diff charts/tables only use dataset/frame/object keys "
-                                "where both baseline A and the candidate have GT objects after the active filters."
+                                "When enabled, Perception diff charts/tables remove whole datasets where either "
+                                "baseline A or the candidate has no GT objects after the active filters. "
+                                "Frames with output on only one side inside a valid dataset are still shown."
                             ),
                         )
                     # --- Dataset name debug ---
@@ -4872,20 +4875,27 @@ try:
                     df_improved_skipped = pd.DataFrame()
                     df_by_frame_skipped = pd.DataFrame()
                     df_by_object_skipped = pd.DataFrame()
-                    if skip_incomplete_compare:
+                    if skip_dataset_compare:
                         df_improved_skipped = df_improved[~_compare_availability_mask(df_improved)].copy()
-                        df_by_frame_skipped = df_by_frame[~_compare_availability_mask(df_by_frame)].copy()
-                        df_by_object_skipped = df_by_object_full[
-                            ~_compare_availability_mask(df_by_object_full)
-                        ].copy()
+                        skipped_dataset_ids = set(df_improved_skipped["t4dataset_id"].dropna().astype(str))
+                        if skipped_dataset_ids:
+                            df_by_frame_skipped = df_by_frame[
+                                df_by_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
+                            ].copy()
+                            df_by_object_skipped = df_by_object_full[
+                                df_by_object_full["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
+                            ].copy()
                         df_improved = df_improved[_compare_availability_mask(df_improved)].copy()
-                        df_by_frame = df_by_frame[_compare_availability_mask(df_by_frame)].copy()
-                        df_by_object_full = df_by_object_full[
-                            _compare_availability_mask(df_by_object_full)
-                        ].copy()
+                        if skipped_dataset_ids:
+                            df_by_frame = df_by_frame[
+                                ~df_by_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
+                            ].copy()
+                            df_by_object_full = df_by_object_full[
+                                ~df_by_object_full["t4dataset_id"].astype(str).isin(skipped_dataset_ids)
+                            ].copy()
                         if df_improved.empty:
                             st.info(
-                                "All diff rows for this slice are one-sided after the active filters. "
+                                "All dataset rows for this slice are one-sided after the active filters. "
                                 "Disable the skip option above to inspect them."
                             )
                             continue
@@ -4909,10 +4919,10 @@ try:
                             len(df_improved_skipped) + len(df_by_frame_skipped) + len(df_by_object_skipped)
                         )
                         if skipped_total > 0:
-                            with st.expander("Skipped one-sided compare cases"):
+                            with st.expander("Skipped one-sided datasets"):
                                 st.caption(
-                                    "These rows were excluded from the diff hotspots because the GT objects exist "
-                                    "on only one side after the active filters."
+                                    "These rows were excluded from the diff hotspots because the dataset has GT objects "
+                                    "on only one side after the active filters. One-sided frames in valid datasets are included."
                                 )
                                 if not df_improved_skipped.empty:
                                     skipped_dataset_rows = df_improved_skipped.copy()
@@ -4922,13 +4932,13 @@ try:
                                     st.markdown("**Per dataset row**")
                                     st.download_button(
                                         label="Download skipped dataset rows (CSV)",
-                                        data=skipped_dataset_rows.to_csv(index=False).encode("utf-8"),
+                                        data=skipped_dataset_rows.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                         file_name=f"perception_diff_{lbl}_vs_A_skipped_dataset_rows.csv",
                                         mime="text/csv",
                                         key=f"p5_dl_skip_dataset_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_dataset_rows.head(200),
+                                        skipped_dataset_rows.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
                                     )
@@ -4944,13 +4954,13 @@ try:
                                     )
                                     st.download_button(
                                         label="Download skipped frames (CSV)",
-                                        data=skipped_frames.to_csv(index=False).encode("utf-8"),
+                                        data=skipped_frames.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                         file_name=f"perception_diff_{lbl}_vs_A_skipped_frames.csv",
                                         mime="text/csv",
                                         key=f"p5_dl_skip_frames_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_frames.head(200),
+                                        skipped_frames.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
                                         column_config=_t4_viewer_link_column_config(),
@@ -4967,13 +4977,13 @@ try:
                                     )
                                     st.download_button(
                                         label="Download skipped objects (CSV)",
-                                        data=skipped_objects.to_csv(index=False).encode("utf-8"),
+                                        data=skipped_objects.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                         file_name=f"perception_diff_{lbl}_vs_A_skipped_objects.csv",
                                         mime="text/csv",
                                         key=f"p5_dl_skip_objects_{lbl}_{idx}",
                                     )
                                     st.dataframe(
-                                        skipped_objects.head(200),
+                                        skipped_objects.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                         width='stretch',
                                         hide_index=True,
                                         column_config=_t4_viewer_link_column_config(),
@@ -5156,7 +5166,7 @@ try:
                         df_by_label = pd.DataFrame()
                         try:
                             df_by_label = con.execute(query_label).df()
-                            if skip_incomplete_compare:
+                            if skip_dataset_compare:
                                 if df_by_object_full.empty:
                                     df_by_label = pd.DataFrame()
                                 else:
@@ -5360,7 +5370,7 @@ try:
                             if not df_by_label.empty:
                                 st.markdown("**Per label**")
                                 st.dataframe(
-                                    df_by_label,
+                                    df_by_label.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                     width='stretch',
                                     hide_index=True,
                                 )
@@ -5371,7 +5381,7 @@ try:
                                 st.markdown(f"**Per dataset** (sorted by {frame_caption_metric})")
                                 st.dataframe(
                                     _with_t4_viewer_links(
-                                        df_dataset_sorted.head(200),
+                                        df_dataset_sorted.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                         _t4_link_run_names,
                                     ),
                                     width='stretch',
@@ -5382,7 +5392,7 @@ try:
                                 st.markdown(f"**Per frame** (sorted by {frame_caption_metric})")
                                 st.dataframe(
                                     _with_t4_viewer_links(
-                                        df_frame_sorted.head(200),
+                                        df_frame_sorted.head(200).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                         _t4_link_run_names,
                                     ),
                                     width='stretch',
@@ -5590,13 +5600,13 @@ try:
                                 )
                                 st.download_button(
                                     label="Download filtered objects (CSV)",
-                                    data=df_obj_show_linked.to_csv(index=False).encode("utf-8"),
+                                    data=df_obj_show_linked.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore").to_csv(index=False).encode("utf-8"),
                                     file_name=f"perception_diff_{lbl}_vs_A_objects.csv",
                                     mime="text/csv",
                                     key=f"p5_dl_{lbl}_{idx}",
                                 )
                                 st.dataframe(
-                                    df_obj_show_linked.head(n_show),
+                                    df_obj_show_linked.head(n_show).drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
                                     width='stretch',
                                     hide_index=True,
                                     column_config=_t4_viewer_link_column_config(),
@@ -5607,7 +5617,10 @@ try:
                         with st.expander(f"Full frame table (sort: {frame_sort_desc})"):
                             if not df_frame_sorted.empty:
                                 st.dataframe(
-                                    _with_t4_viewer_links(df_frame_sorted, _t4_link_run_names),
+                                    _with_t4_viewer_links(
+                                        df_frame_sorted.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
+                                        _t4_link_run_names,
+                                    ),
                                     width='stretch',
                                     hide_index=True,
                                     column_config=_t4_viewer_link_column_config(),
@@ -5884,21 +5897,23 @@ try:
                         if msg
                     ]
                     skip_incomplete_key_fp = f"p5fp_skip_incomplete_{lbl}_{idx}"
-                    skip_incomplete_compare_fp = True
+                    skip_dataset_compare_fp = True
                     if availability_messages_fp:
                         st.warning(
                             "Some compare keys have EST data on only one side. "
                             + "; ".join(availability_messages_fp)
-                            + ". These can create artificial large improvements/degradations.",
+                            + ". Dataset-level one-sided cases can create artificial large improvements/degradations; "
+                            "one-sided frames inside otherwise valid datasets remain included.",
                             icon="⚠️",
                         )
-                        skip_incomplete_compare_fp = st.checkbox(
-                            "Skip one-sided compare cases in FP diff hotspots",
+                        skip_dataset_compare_fp = st.checkbox(
+                            "Skip datasets with EST data on only one side",
                             value=True,
                             key=skip_incomplete_key_fp,
                             help=(
-                                "When enabled, FP diff charts/tables only use dataset/frame/object keys "
-                                "where both baseline A and the candidate have EST objects after the active filters."
+                                "When enabled, FP diff charts/tables remove whole datasets where either baseline A "
+                                "or the candidate has no EST objects after the active filters. Frames with output "
+                                "on only one side inside a valid dataset are still shown."
                             ),
                         )
                     # --- Dataset name debug ---
@@ -5919,20 +5934,27 @@ try:
                     df_fp_skipped = pd.DataFrame()
                     df_fp_frame_skipped = pd.DataFrame()
                     df_fp_object_skipped = pd.DataFrame()
-                    if skip_incomplete_compare_fp:
+                    if skip_dataset_compare_fp:
                         df_fp_skipped = df_fp[~_compare_availability_mask_fp(df_fp)].copy()
-                        df_fp_frame_skipped = df_fp_frame[~_compare_availability_mask_fp(df_fp_frame)].copy()
-                        df_fp_object_skipped = df_fp_object[
-                            ~_compare_availability_mask_fp(df_fp_object)
-                        ].copy()
+                        skipped_dataset_ids_fp = set(df_fp_skipped["t4dataset_id"].dropna().astype(str))
+                        if skipped_dataset_ids_fp:
+                            df_fp_frame_skipped = df_fp_frame[
+                                df_fp_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids_fp)
+                            ].copy()
+                            df_fp_object_skipped = df_fp_object[
+                                df_fp_object["t4dataset_id"].astype(str).isin(skipped_dataset_ids_fp)
+                            ].copy()
                         df_fp = df_fp[_compare_availability_mask_fp(df_fp)].copy()
-                        df_fp_frame = df_fp_frame[_compare_availability_mask_fp(df_fp_frame)].copy()
-                        df_fp_object = df_fp_object[
-                            _compare_availability_mask_fp(df_fp_object)
-                        ].copy()
+                        if skipped_dataset_ids_fp:
+                            df_fp_frame = df_fp_frame[
+                                ~df_fp_frame["t4dataset_id"].astype(str).isin(skipped_dataset_ids_fp)
+                            ].copy()
+                            df_fp_object = df_fp_object[
+                                ~df_fp_object["t4dataset_id"].astype(str).isin(skipped_dataset_ids_fp)
+                            ].copy()
                         if df_fp.empty:
                             st.info(
-                                "All FP diff rows for this slice are one-sided after the active filters. "
+                                "All FP dataset rows for this slice are one-sided after the active filters. "
                                 "Disable the skip option above to inspect them."
                             )
                             continue
@@ -5959,10 +5981,10 @@ try:
                             len(df_fp_skipped) + len(df_fp_frame_skipped) + len(df_fp_object_skipped)
                         )
                         if skipped_total_fp > 0:
-                            with st.expander("Skipped one-sided FP compare cases"):
+                            with st.expander("Skipped one-sided FP datasets"):
                                 st.caption(
-                                    "These rows were excluded from the FP diff hotspots because the EST objects exist "
-                                    "on only one side after the active filters."
+                                    "These rows were excluded from the FP diff hotspots because the dataset has EST objects "
+                                    "on only one side after the active filters. One-sided frames in valid datasets are included."
                                 )
                                 if not df_fp_skipped.empty:
                                     skipped_fp_dataset = df_fp_skipped.copy()
@@ -6194,10 +6216,6 @@ try:
                             # fp_delta is already computed in the query as candidate_FP - baseline_FP
                             # The query does a FULL OUTER JOIN on label, so it correctly shows
                             # labels from both runs with one-sided indicators.
-                            if skip_incomplete_compare_fp and not df_fp_label.empty:
-                                df_fp_label = df_fp_label[
-                                    _compare_availability_mask_fp(df_fp_label)
-                                ].copy()
                         except Exception as e_fp_label:
                             st.caption(f"FP Label query: {e_fp_label}")
 

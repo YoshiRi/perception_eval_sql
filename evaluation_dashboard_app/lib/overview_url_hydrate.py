@@ -1,10 +1,12 @@
 """
-Rehydrate session_state from Overview URL query params when server-side session is empty.
+Rehydrate session_state from Overview URL query params.
 
 Overview syncs `mode`, `run_a`, `run_b`, ... via `st.query_params`. After a load-balancer hop to a
 different Streamlit replica, `st.session_state` may not contain `runA` even though the user already
 used Overview — the URL still encodes the selection. This module rebuilds `runA` / compare state
 from that URL so multipage analysis works without requiring Overview to run again on the same box.
+It also refreshes stale in-browser Streamlit sessions when a direct URL points at a different run
+selection than the one already stored in `st.session_state`.
 """
 
 from __future__ import annotations
@@ -15,17 +17,34 @@ from lib.path_utils import get_data_root, get_run_display_name, get_run_storage_
 from lib.run_loader import load_run
 
 
-def try_hydrate_session_from_overview_query_params() -> bool:
-    """
-    If `runA` is missing but the URL has Overview-style params (`run_a`, optional `mode` / `run_b`…),
-    load runs and populate `session_state`. Returns True if `runA` is present afterward.
-    """
-    if "runA" in st.session_state:
-        return True
-    params = st.query_params
+def _url_run_signature(params) -> tuple[str, ...] | None:
     run_a_name = params.get("run_a")
     if not run_a_name:
-        return False
+        return None
+    mode_param = (params.get("mode") or "single").lower()
+    compare_names = tuple(
+        params.get(k)
+        for k in ("run_b", "run_c", "run_d", "run_e")
+        if params.get(k)
+    )
+    return (mode_param, run_a_name, *compare_names)
+
+
+def try_hydrate_session_from_overview_query_params() -> bool:
+    """
+    If the URL has Overview-style params (`run_a`, optional `mode` / `run_b`…), load runs and populate
+    `session_state` when state is missing or stale. Returns True if `runA` is present afterward.
+    """
+    params = st.query_params
+    url_sig = _url_run_signature(params)
+    if url_sig is None:
+        return "runA" in st.session_state
+    if (
+        "runA" in st.session_state
+        and st.session_state.get("_overview_url_hydrate_sig") == url_sig
+    ):
+        return True
+    run_a_name = params.get("run_a")
     root = get_data_root()
     if not root.exists() or not root.is_dir():
         return False
@@ -57,6 +76,7 @@ def try_hydrate_session_from_overview_query_params() -> bool:
                     "all_runs": all_runs,
                     "run_labels": run_labels,
                     "df_cmp": None,
+                    "_overview_url_hydrate_sig": url_sig,
                 }
             )
             if len(all_runs) >= 2:
@@ -67,6 +87,7 @@ def try_hydrate_session_from_overview_query_params() -> bool:
         run_a = load_run(name_to_dir[run_a_name])
         st.session_state["runA"] = run_a
         st.session_state["mode"] = "Single Mode"
+        st.session_state["_overview_url_hydrate_sig"] = url_sig
         for key in ("all_runs", "run_labels", "runB", "df_cmp"):
             st.session_state.pop(key, None)
         return True
