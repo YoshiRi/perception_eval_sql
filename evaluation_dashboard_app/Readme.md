@@ -153,7 +153,7 @@ evaluation_dashboard_app/
   deploy/            # 本番: compose, nginx, 番号付きシェル手順
     docker-compose.yml
     .env.example
-    01_SETUP_ENV.sh ... 09_RESTART_WORKER.sh
+    01_SETUP_ENV.sh ... 10_RESTART_STREAMLIT.sh
     configs/
       autoware_evaluator_dl_config.json   # compose 時はコンテナ内 /app/docker_config にマウント
     nginx/
@@ -311,6 +311,7 @@ flowchart LR
   | `07_LOGS.sh` | `docker compose logs -f`（省略時は全サービス、例: `./07_LOGS.sh worker`） |
   | `08_REBUILD_AND_START.sh` | ビルド後に `04_START.sh` と同じ起動（worker 既定本数あり） |
   | `09_RESTART_WORKER.sh` | ワーカー再起動（コード変更を worker に反映） |
+  | `10_RESTART_STREAMLIT.sh` | 起動中の Streamlit サービスのみ再起動。worker とキュー中タスクはそのまま |
 
 - **手動でも同じことは可能**: `cd deploy && cp .env.example .env` → `.env` を編集 → `docker compose --env-file .env up -d`。初回のみ `docker compose --env-file .env run --rm init_db`（`03_INIT_DB.sh` と同等）。
 - **アクセス**: 本番 compose では **Nginx がポート 80**、Streamlit はプロキシ経由（`docker-compose.yml` / `nginx/nginx.conf` 参照）。ソースや `lib/` はマウントされているため **Streamlit はファイル変更でリロード**しやすい一方、**ワーカーは Python 変更後に再起動**が必要です。

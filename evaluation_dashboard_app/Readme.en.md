@@ -153,7 +153,7 @@ evaluation_dashboard_app/
   deploy/            # Production: compose, nginx, numbered shell steps
     docker-compose.yml
     .env.example
-    01_SETUP_ENV.sh ... 09_RESTART_WORKER.sh
+    01_SETUP_ENV.sh ... 10_RESTART_STREAMLIT.sh
     configs/
       autoware_evaluator_dl_config.json   # Mounted inside the container at /app/docker_config during compose runs
     nginx/
@@ -311,6 +311,7 @@ flowchart LR
   | `07_LOGS.sh` | Run `docker compose logs -f`. Without arguments it shows all services; for example `./07_LOGS.sh worker`. |
   | `08_REBUILD_AND_START.sh` | Build and then start the stack, same startup behavior as `04_START.sh`. |
   | `09_RESTART_WORKER.sh` | Restart workers so code changes are reflected on the worker side. |
+  | `10_RESTART_STREAMLIT.sh` | Restart only running Streamlit services, leaving workers and queued tasks alone. |
 
 - **Manual setup is also possible**: `cd deploy && cp .env.example .env` -> edit `.env` -> `docker compose --env-file .env up -d`. For first-time setup only, run `docker compose --env-file .env run --rm init_db` (equivalent to `03_INIT_DB.sh`).
 - **Access**: In production compose, **Nginx listens on port 80**, and Streamlit is accessed through the proxy (see `docker-compose.yml` / `nginx/nginx.conf`). Since the source code and `lib/` are mounted, **Streamlit reloads easily when files change**, but **workers must be restarted after Python code changes**.
