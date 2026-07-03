@@ -267,7 +267,7 @@ def _metric_cell(label: str, value: str, delta_str: str = "", delta_positive: bo
 
 
 def render_kpi_card(title: str, kpi: dict, css_id: str = "", deltas: dict | None = None) -> str:
-    """deltas: optional dict with keys tp, fp, fn, tpr, fpr, precision, recall, f1 (B - A). Shown inline in card."""
+    """deltas: optional dict with KPI keys (B - A). Shown inline in card."""
     if not kpi:
         return f'<div class="kpi-card" id="{css_id}"><div class="kpi-title">{title}</div><div class="kpi-empty">No data</div></div>'
     d = deltas or {}
@@ -286,16 +286,16 @@ def render_kpi_card(title: str, kpi: dict, css_id: str = "", deltas: dict | None
         return _metric_cell(label, val, delta_str, good)
 
     row1 = "".join([
-        _cell("TP", str(kpi["tp"]), "tp"),
-        _cell("FP", str(kpi["fp"]), "fp", lower_is_better=True),
-        _cell("FN", str(kpi["fn"]), "fn", lower_is_better=True),
+        _cell("GT", str(kpi.get("gt", "—")), "gt"),
+        _cell("TP", str(kpi.get("tp", "—")), "tp"),
+        _cell("FP", str(kpi.get("fp", "—")), "fp", lower_is_better=True),
+        _cell("FN", str(kpi.get("fn", "—")), "fn", lower_is_better=True),
     ])
     f1_val = f"{kpi['f1']:.3f}" if kpi.get("f1") is not None else "—"
     row2 = "".join([
-        _cell("TPR", _pct_str(kpi.get("tpr")), "tpr"),
-        _cell("FPR", _pct_str(kpi.get("fpr")), "fpr", lower_is_better=True),
+        _cell("Recall / TP rate", _pct_str(kpi.get("recall", kpi.get("tpr"))), "recall"),
+        _cell("FP rate", _pct_str(kpi.get("fpr")), "fpr", lower_is_better=True),
         _cell("Precision", _pct_str(kpi.get("precision")), "precision"),
-        _cell("Recall", _pct_str(kpi.get("recall")), "recall"),
         _cell("F1", f1_val, "f1"),
     ])
     return f'''<div class="kpi-card" id="{css_id}">
@@ -337,4 +337,3 @@ def detection_stats_page_loading_banner_markup() -> str:
       </div>
     </div>
     """
-

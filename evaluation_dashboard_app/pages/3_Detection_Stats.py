@@ -1720,6 +1720,7 @@ def _report_kpi_compare_table(base_kpi: Optional[Dict[str, Any]], candidate_kpi:
     base = base_kpi or {}
     cand = candidate_kpi or {}
     rows = [
+        ("GT", _report_int(base.get("gt")), _report_int(cand.get("gt")), _report_num_delta(cand.get("gt", 0) - base.get("gt", 0))),
         ("TP", _report_int(base.get("tp")), _report_int(cand.get("tp")), _report_num_delta(cand.get("tp", 0) - base.get("tp", 0))),
         ("FP", _report_int(base.get("fp")), _report_int(cand.get("fp")), _report_num_delta(cand.get("fp", 0) - base.get("fp", 0), lower_is_better=True)),
         ("FN", _report_int(base.get("fn")), _report_int(cand.get("fn")), _report_num_delta(cand.get("fn", 0) - base.get("fn", 0), lower_is_better=True)),
@@ -2945,13 +2946,13 @@ try:
     # =============================
     
     # -----------------------------
-    # KPI strip (TP, FP, FN, TPR, FPR, Precision, Recall, F1)
+    # KPI strip (GT, TP, FP, FN, Recall / TP rate, FP rate, Precision, F1)
     # -----------------------------
     def _flat_view(i: int) -> str:
         return "view_eval_flat" if i == 0 else f"view_eval_flat_{i}"
     
     def _kpi_row_for_view(con, view: str, filter_clause: str):
-        """Return dict with tp_gt, fn, tp_est, fp and derived TPR, FPR, Precision, Recall, F1."""
+        """Return global KPI values within the active filters."""
         q = f"""
         SELECT
             COUNT(*) FILTER (WHERE source = 'GT' AND status = 'TP') AS tp_gt,
@@ -2976,7 +2977,7 @@ try:
         else:
             f1 = None
         return {
-            "tp": tp_gt, "fp": fp, "fn": fn,
+            "gt": gt_total, "tp": tp_gt, "fp": fp, "fn": fn,
             "tpr": tpr, "fpr": fpr, "precision": precision, "recall": recall, "f1": f1,
         }
     
@@ -3009,6 +3010,7 @@ try:
             deltas = None
             if baseline and kpi and lbl != run_labels_list[0]:
                 deltas = {
+                    "gt": kpi["gt"] - baseline["gt"],
                     "tp": kpi["tp"] - baseline["tp"],
                     "fp": kpi["fp"] - baseline["fp"],
                     "fn": kpi["fn"] - baseline["fn"],
@@ -4345,11 +4347,9 @@ try:
                         )
                         matrix_rows = []
                         hover_rows = []
-                        sort_scores = {}
                         for lab in label_order:
                             row_vals = []
                             hover_vals = []
-                            deltas_for_sort = []
                             for bin_label in rate_bin_labels_order or []:
                                 base_val = np.nan
                                 compare_val = np.nan
@@ -4359,8 +4359,6 @@ try:
                                     compare_val = pivot.loc[lab, (bin_label, compare_run)]
                                 display_delta = compare_val - base_val
                                 row_vals.append(display_delta)
-                                if pd.notna(display_delta):
-                                    deltas_for_sort.append(-display_delta if fp_better_lower else display_delta)
                                 if pd.isna(base_val) or pd.isna(compare_val):
                                     hover_vals.append(f"{lab}<br>{bin_label}<br>No paired data")
                                 else:
@@ -4371,13 +4369,10 @@ try:
                                         f"{delta_label}: {display_delta:+.1%}"
                                     )
                             matrix_rows.append(row_vals)
-                            sort_scores[lab] = min(deltas_for_sort) if deltas_for_sort else 0.0
                             hover_rows.append(hover_vals)
 
-                        sorted_labels = sorted(label_order, key=lambda lab: sort_scores.get(lab, 0.0))
-                        sort_index = [label_order.index(lab) for lab in sorted_labels]
-                        matrix_sorted = [matrix_rows[i] for i in sort_index]
-                        hover_sorted = [hover_rows[i] for i in sort_index]
+                        matrix_sorted = matrix_rows
+                        hover_sorted = hover_rows
                         max_abs_delta = max(
                             [
                                 abs(float(v))
@@ -4391,7 +4386,7 @@ try:
                         fig_matrix = px.imshow(
                             matrix_sorted,
                             x=rate_bin_labels_order,
-                            y=sorted_labels,
+                            y=label_order,
                             labels=dict(x="Distance bin", y="Label", color=color_label),
                             color_continuous_scale=[
                                 [0.0, IMPROVED_COLOR if fp_better_lower else DEGRADED_COLOR],
@@ -4406,7 +4401,7 @@ try:
                             customdata=hover_sorted,
                             hovertemplate="%{customdata}<extra></extra>",
                         )
-                        apply_chart_theme(fig_matrix, height=max(360, 92 + 24 * len(sorted_labels)))
+                        apply_chart_theme(fig_matrix, height=max(360, 92 + 24 * len(label_order)))
                         fig_matrix.update_layout(
                             title=title,
                             xaxis_side="top",

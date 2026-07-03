@@ -65,11 +65,20 @@ def t4_dashboard_query_params(
 ) -> str:
     """Query string for opening the dashboard T4 3D Viewer with run and scene context."""
 
+    placeholder_dataset_ids = {
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-0000-0000-000000000001",
+    }
+
     def _clean(value: Optional[Any]) -> str:
         if value is None:
             return ""
         text = str(value).strip()
-        return "" if text.lower() in {"none", "nan", "<na>"} else text
+        if text.lower() in {"none", "nan", "<na>"}:
+            return ""
+        if text in placeholder_dataset_ids:
+            return ""
+        return text
 
     query: dict[str, str] = {
         "mode": "compare" if str(mode).lower().startswith("compare") else "single",
