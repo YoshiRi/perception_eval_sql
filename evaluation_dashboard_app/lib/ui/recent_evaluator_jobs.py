@@ -363,6 +363,8 @@ def _extract_suite_rows(suite_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     """Normalize suite summary rows for display tables."""
     rows = [
         {
+            "Suite ID": row.get("suite_id", ""),
+            "Suite Report ID": row.get("suite_report_id", ""),
             "Suite": row.get("name", ""),
             "Total": int(row.get("all", 0) or 0),
             "Success": int(row.get("success", 0) or 0),
@@ -382,11 +384,7 @@ def _extract_suite_selection_options(suite_rows: List[Dict[str, Any]]) -> List[D
     options: List[Dict[str, str]] = []
     seen_ids = set()
     for row in suite_rows or []:
-        report_url = str(row.get("url") or row.get("Report") or "").strip()
-        suite_id = ""
-        if "/tests/" in report_url:
-            tail = report_url.split("/tests/", 1)[1]
-            suite_id = tail.split("?", 1)[0].split("/", 1)[0].strip()
+        suite_id = str(row.get("suite_id") or row.get("Suite ID") or "").strip()
         if not suite_id or suite_id in seen_ids:
             continue
         seen_ids.add(suite_id)

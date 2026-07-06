@@ -600,9 +600,12 @@ class EvaluationRunAPI:
 
             result = suite_report[mode]
             cancellation_count = result.get("cancellation_count", 0)
+            suite = suite_report.get("suite") or {}
             summaries.append(
                 {
-                    "name": suite_report["suite"]["display_name"],
+                    "suite_id": suite.get("id", ""),
+                    "suite_report_id": suite_report.get("id", ""),
+                    "name": suite.get("display_name", ""),
                     "all": result["total_count"] + cancellation_count,
                     "success": result["success_count"],
                     "fail": result["failure_count"] + cancellation_count,
