@@ -50,6 +50,10 @@ STATUS_COLORS = {
     "FP": "#E86A33",
     "TN": "#4A90D9",
 }
+DETECTION_STATS_SKIP_INITIAL_FRAMES = 3
+DETECTION_STATS_INITIAL_FRAME_FILTER = (
+    f"(frame_index IS NULL OR TRY_CAST(frame_index AS BIGINT) >= {DETECTION_STATS_SKIP_INITIAL_FRAMES})"
+)
 
 # Unified Plotly layout theme for all charts
 PLOTLY_LAYOUT_THEME = dict(
@@ -2585,7 +2589,7 @@ def build_filter_clause(filters: dict,*, enable_dist_h: bool = True) -> str:
     Using ``if filters.get('label')`` would treat ``[]`` as falsy and accidentally drop the filter,
     causing full scans (very slow on large Parquet).
     """
-    conditions = []
+    conditions = [DETECTION_STATS_INITIAL_FRAME_FILTER]
     
     topic_val = filters.get('topic_name')
     if topic_val and topic_val != '__all__':
@@ -2667,7 +2671,8 @@ render_page_hero(
     title="Detection evaluation dashboard",
     description=(
         "Parquet-driven analytics: filters, hierarchical views, scenario breakdowns, "
-        "and multi-run compare when you load several runs from Overview."
+        "and multi-run compare when you load several runs from Overview. "
+        f"Frames 0-{DETECTION_STATS_SKIP_INITIAL_FRAMES - 1} are excluded from statistics."
     ),
     mode=mode,
 )
@@ -3116,20 +3121,34 @@ try:
                 query_base = f"""
                 SELECT COUNT(DISTINCT t4dataset_id) AS id_num, '{os.path.basename(target_file)}' AS series
                 FROM view_eval_flat
+                WHERE {DETECTION_STATS_INITIAL_FRAME_FILTER}
                 """
                 df_summary = con.execute(query_base).df()
-                query_status = """
+                query_status = f"""
                 SELECT label, status, COUNT(*) AS num
                 FROM view_eval_flat
+                WHERE {DETECTION_STATS_INITIAL_FRAME_FILTER}
                 GROUP BY label, status
                 ORDER BY label, status
                 """
                 df_status = con.execute(query_status).df()
             else:
-                parts = [f"SELECT COUNT(DISTINCT t4dataset_id) AS id_num, '{run_labels_list[i]}' AS series FROM {_flat_view(i)}" for i in range(len(runs))]
+                parts = [
+                    (
+                        f"SELECT COUNT(DISTINCT t4dataset_id) AS id_num, '{run_labels_list[i]}' AS series "
+                        f"FROM {_flat_view(i)} WHERE {DETECTION_STATS_INITIAL_FRAME_FILTER}"
+                    )
+                    for i in range(len(runs))
+                ]
                 query_base = " UNION ALL ".join(parts)
                 df_summary = con.execute(query_base).df()
-                parts_status = [f"SELECT '{run_labels_list[i]}' AS dataset, label, status, COUNT(*) AS num FROM {_flat_view(i)} GROUP BY label, status" for i in range(len(runs))]
+                parts_status = [
+                    (
+                        f"SELECT '{run_labels_list[i]}' AS dataset, label, status, COUNT(*) AS num "
+                        f"FROM {_flat_view(i)} WHERE {DETECTION_STATS_INITIAL_FRAME_FILTER} GROUP BY label, status"
+                    )
+                    for i in range(len(runs))
+                ]
                 query_status = " UNION ALL ".join(parts_status) + " ORDER BY dataset, label, status"
                 df_status = con.execute(query_status).df()
     

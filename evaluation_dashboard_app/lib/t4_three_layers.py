@@ -211,6 +211,21 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
         if rows.empty or "uuid" not in rows.columns:
             return rows
         work = rows.copy()
+        if "shape_type" in work.columns:
+            shape_text = work["shape_type"].map(_as_text).str.lower()
+            length_num = pd.to_numeric(work["length"], errors="coerce") if "length" in work.columns else pd.Series(1.0, index=work.index)
+            width_num = pd.to_numeric(work["width"], errors="coerce") if "width" in work.columns else pd.Series(1.0, index=work.index)
+            height_num = pd.to_numeric(work["height"], errors="coerce") if "height" in work.columns else pd.Series(1.0, index=work.index)
+            marker_mask = (
+                (shape_text == "invalid_polygon_marker")
+                | ((shape_text == "polygon") & ((length_num <= 0) | (width_num <= 0)) & (height_num > 0))
+            )
+            marker_rows = work[marker_mask].copy()
+            work = work[~marker_mask].copy()
+            if work.empty:
+                return marker_rows
+        else:
+            marker_rows = pd.DataFrame()
         uuid_text = work["uuid"].map(_as_text)
         if "pair_uuid" in work.columns:
             pair_text = work["pair_uuid"].map(_as_text)
@@ -268,14 +283,17 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
                 .groupby(group_cols, sort=False, dropna=False)
                 .head(1)
             )
-        deduped = pd.concat([with_identity, without_identity], axis=0).sort_index()
+        deduped = pd.concat([with_identity, without_identity, marker_rows], axis=0).sort_index()
         return deduped.drop(columns=[c for c in deduped.columns if c.startswith("_dedupe_")])
 
     def _row_to_box(row: "pd.Series") -> dict | None:
         length = _as_float(row.get("length"), 0.0)
         width = _as_float(row.get("width"), 0.0)
-        # Skip boxes with invalid dimensions (zero or negative length/width)
-        if length <= 0 or width <= 0:
+        height = _as_float(row.get("height"), 1.5)
+        shape_type = _as_text(row.get("shape_type")).lower()
+        is_invalid_polygon_marker = shape_type == "polygon" and (length <= 0 or width <= 0) and height > 0
+        # Skip boxes with invalid dimensions, except polygon detections that can still be shown as point markers.
+        if (length <= 0 or width <= 0) and not is_invalid_polygon_marker:
             return None
         if swap_length_width:
             length, width = width, length
@@ -285,16 +303,20 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
             "z": _as_float(row.get("z"), 0.0),
             "width": width,
             "length": length,
-            "height": _as_float(row.get("height"), 1.5),
+            "height": height,
             "yaw": _as_float(row.get("yaw"), 0.0),
             "label": _as_text(row.get("label")),
             "uuid": _as_text(row.get("uuid")),
             "status": _as_text(row.get("status")),
         }
+        if is_invalid_polygon_marker:
+            box["shape_type"] = "invalid_polygon_marker"
+            box["width"] = 0.0
+            box["length"] = 0.0
         # Skip boxes with invalid height
         if box["height"] <= 0:
             return None
-        corners = _box_corners_from_pose(box)
+        corners = None if is_invalid_polygon_marker else _box_corners_from_pose(box)
         if corners is not None:
             box["corners"] = corners
         for field in _OPTIONAL_NUMERIC_FIELDS:
@@ -306,6 +328,8 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
             if field in row.index:
                 value = row.get(field)
                 if not _is_missing(value):
+                    if is_invalid_polygon_marker and field == "shape_type":
+                        continue
                     box[field] = _as_text(value)
         return box
 
