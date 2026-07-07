@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 import pandas as pd
+from pandas.errors import EmptyDataError
 import yaml
 
 from lib.path_utils import get_data_root
@@ -322,10 +323,72 @@ def _patch_block_generation_progress(
         specsheet_blocks.tqdm = original_tqdm
 
 
-def _copy_parquet_to_csv(parquet_path: Path, csv_path: Path) -> Path:
+_CURRENT_REQUIRED_COLUMNS = {"frame_index"}
+_FUTURE_REQUIRED_COLUMNS = {"frame_index"}
+
+
+def _parquet_columns(path: Path) -> set[str]:
+    try:
+        import pyarrow.parquet as pq
+
+        return set(pq.ParquetFile(path).schema_arrow.names)
+    except Exception:
+        try:
+            return set(pd.read_parquet(path, columns=[]).columns)
+        except Exception:
+            return set()
+
+
+def _csv_columns(path: Path) -> set[str]:
+    try:
+        return set(pd.read_csv(path, nrows=0).columns)
+    except (EmptyDataError, FileNotFoundError):
+        return set()
+    except Exception:
+        return set()
+
+
+def _has_required_columns(path: Path, required_columns: set[str]) -> bool:
+    if not path.exists():
+        return False
+    if path.suffix.lower() == ".parquet":
+        columns = _parquet_columns(path)
+    elif path.suffix.lower() == ".csv":
+        columns = _csv_columns(path)
+    else:
+        columns = set()
+    return required_columns.issubset(columns)
+
+
+def _has_pkl_sources(run_dir: str | Path) -> bool:
+    run_path = Path(run_dir)
+    return any(run_path.rglob("scene_result.pkl")) or any(run_path.rglob("*.pkl.z"))
+
+
+def _copy_parquet_to_csv(
+    parquet_path: Path,
+    csv_path: Path,
+    *,
+    required_columns: set[str] | None = None,
+) -> Path:
+    required_columns = required_columns or set()
+    if required_columns and not _has_required_columns(parquet_path, required_columns):
+        columns = sorted(_parquet_columns(parquet_path))
+        columns_text = ", ".join(columns) if columns else "none"
+        required_text = ", ".join(f"`{column}`" for column in sorted(required_columns))
+        raise ValueError(
+            f"Cannot convert {parquet_path.name}: missing required column(s) "
+            f"{required_text} (columns: {columns_text})."
+        )
     frame = pd.read_parquet(parquet_path)
     frame.to_csv(csv_path, index=False)
     return csv_path
+
+
+def build_scene_dataframe_from_pkl_dir(*args, **kwargs):
+    from lib.perception_catalog_io import build_scene_dataframe_from_pkl_dir as build_func
+
+    return build_func(*args, **kwargs)
 
 
 def _prefer_cjk_font_stack(html_lines: Sequence[str]) -> list[str]:
@@ -1828,18 +1891,42 @@ def ensure_specsheet_csvs(
     current_parquet = paths["current_parquet"]
     future_parquet = paths["future_parquet"]
 
-    if not current_csv.exists():
-        if current_parquet.exists():
-            _notify(progress_callback, f"Converting {current_parquet.name} -> {current_csv.name}")
-            _copy_parquet_to_csv(current_parquet, current_csv)
-        elif list_specsheet_source_parquets(run_dir):
-            fallback = list_specsheet_source_parquets(run_dir)[0]
-            _notify(progress_callback, f"Converting {fallback.name} -> {current_csv.name}")
-            _copy_parquet_to_csv(fallback, current_csv)
-        else:
-            _notify(progress_callback, "No CSV found. Building CSV from pkl / pkl.z files")
-            from lib.perception_catalog_io import build_scene_dataframe_from_pkl_dir
+    current_csv_valid = _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS)
+    current_parquet_valid = _has_required_columns(current_parquet, _CURRENT_REQUIRED_COLUMNS)
 
+    if not current_csv_valid:
+        if current_parquet_valid:
+            _notify(progress_callback, f"Converting {current_parquet.name} -> {current_csv.name}")
+            _copy_parquet_to_csv(
+                current_parquet,
+                current_csv,
+                required_columns=_CURRENT_REQUIRED_COLUMNS,
+            )
+        elif list_specsheet_source_parquets(run_dir):
+            fallback = next(
+                (
+                    path
+                    for path in list_specsheet_source_parquets(run_dir)
+                    if _has_required_columns(path, _CURRENT_REQUIRED_COLUMNS)
+                ),
+                None,
+            )
+            if fallback is not None:
+                _notify(progress_callback, f"Converting {fallback.name} -> {current_csv.name}")
+                _copy_parquet_to_csv(
+                    fallback,
+                    current_csv,
+                    required_columns=_CURRENT_REQUIRED_COLUMNS,
+                )
+            elif not _has_pkl_sources(run_dir):
+                source_names = ", ".join(path.name for path in list_specsheet_source_parquets(run_dir))
+                raise ValueError(
+                    "No usable current specsheet data found. Existing parquet file(s) "
+                    f"do not include required column `frame_index`: {source_names or 'none'}. "
+                    "Re-download or regenerate the run with evaluator result data."
+                )
+        if not current_csv.exists() or not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
+            _notify(progress_callback, "No valid CSV found. Building CSV from pkl / pkl.z files")
             skip_counts: dict[str, int] = {}
 
             def _on_progress(done: int, total: int) -> None:
@@ -1859,12 +1946,18 @@ def ensure_specsheet_csvs(
                 )
                 _notify(progress_callback, f"Skipped pkl files: {details}")
             df.to_csv(run_dir)
-            if not current_csv.exists():
-                raise FileNotFoundError(f"Failed to generate {current_csv}")
+            if not current_csv.exists() or not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
+                raise FileNotFoundError(
+                    f"Failed to generate usable {current_csv}; required column `frame_index` is missing."
+                )
 
     if not future_csv.exists() and future_parquet.exists():
         _notify(progress_callback, f"Converting {future_parquet.name} -> {future_csv.name}")
-        _copy_parquet_to_csv(future_parquet, future_csv)
+        _copy_parquet_to_csv(
+            future_parquet,
+            future_csv,
+            required_columns=_FUTURE_REQUIRED_COLUMNS,
+        )
 
     return {
         "current_csv": current_csv if current_csv.exists() else None,
