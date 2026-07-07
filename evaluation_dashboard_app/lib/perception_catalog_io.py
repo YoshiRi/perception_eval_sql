@@ -90,7 +90,7 @@ def _scenarios_to_df_local(
             elif not hasattr(first, "frame_results") and hasattr(first, "pass_fail_result"):
                 print("[scenarios_to_df] first looks like a single frame (has pass_fail_result, no frame_results)")
 
-    output = SceneDataFrame(current=pd.DataFrame())
+    output = _empty_scene_dataframe()
 
     for sc_idx, sc in enumerate(scenarios):
         if debug:
@@ -123,7 +123,7 @@ def _scenarios_to_df_local(
         if debug:
             print("[scenarios_to_df] topics_this_scenario =", topics_this_scenario)
 
-        scenario_df = SceneDataFrame(current=pd.DataFrame())
+        scenario_df = _empty_scene_dataframe()
 
         for topic_name in topics_this_scenario:
             if topic_name not in frame_results_dict:
@@ -137,7 +137,7 @@ def _scenarios_to_df_local(
             if debug and sc_idx == 0:
                 print(f"[scenarios_to_df] parser returned current shape = {getattr(getattr(df_, 'current', None), 'shape', None)}, future = {getattr(df_, 'future', None) is not None}")
             df_["topic_name"] = topic_name
-            scenario_df = scenario_df.concatenate(df_, ignore_index=True)
+            scenario_df = _concatenate_scene_dataframe(scenario_df, df_, ignore_index=True)
 
         if scenario_df.empty():
             if debug:
@@ -147,7 +147,7 @@ def _scenarios_to_df_local(
         scenario_df["suite_name"] = suite_name
         scenario_df["scenario_name"] = scenario_name
         scenario_df["t4dataset_name"] = getattr(sc, "t4dataset_name", None)
-        output = output.concatenate(scenario_df)
+        output = _concatenate_scene_dataframe(output, scenario_df)
 
     if debug:
         print("[scenarios_to_df] output.current shape =", getattr(output.current, "shape", None), " output.future =", output.future is not None)
@@ -265,6 +265,56 @@ def _require_analyzer() -> None:
         ) from _IMPORT_ERROR
 
 
+def _empty_scene_dataframe() -> SceneDataFrame:
+    """Create an empty SceneDataFrame across pandas and Polars analyzer versions."""
+    try:
+        return SceneDataFrame()
+    except TypeError:
+        return SceneDataFrame(current=pd.DataFrame())
+
+
+def _concatenate_scene_dataframe(left: SceneDataFrame, right: SceneDataFrame, *, ignore_index: bool = False) -> SceneDataFrame:
+    try:
+        return left.concatenate(right, ignore_index=ignore_index)
+    except TypeError as exc:
+        if "ignore_index" not in str(exc):
+            raise
+        return left.concatenate(right)
+
+
+def _frame_column_names(frame: Any) -> list[str]:
+    try:
+        schema = frame.collect_schema()
+    except AttributeError:
+        return list(getattr(frame, "columns", []) or [])
+    try:
+        return list(schema.names())
+    except AttributeError:
+        return list(schema)
+
+
+def _frame_dtype_name(frame: Any, column: str) -> str | None:
+    try:
+        schema = frame.collect_schema()
+    except AttributeError:
+        try:
+            return str(frame[column].dtype)
+        except Exception:
+            return None
+    try:
+        dtype = schema[column]
+    except Exception:
+        try:
+            dtype = schema.get(column)
+        except Exception:
+            return None
+    return str(dtype) if dtype is not None else None
+
+
+def _is_float64_dtype_name(dtype_name: str | None) -> bool:
+    return dtype_name in {"float64", "Float64"}
+
+
 def download_scene_results_to_pkl(
     project_id: str,
     job_id: str,
@@ -337,7 +387,7 @@ def build_scene_dataframe_from_pkl_dir(
         pkl_files = pkl_files[:max_files]
 
     total = len(pkl_files)
-    df = SceneDataFrame(current=pd.DataFrame())
+    df = _empty_scene_dataframe()
 
     def _report_progress(done: int) -> None:
         if on_progress:
@@ -382,15 +432,16 @@ def build_scene_dataframe_from_pkl_dir(
                 gc.collect()
                 _report_progress(i + 1)
                 continue
-        if skip_bad_dtype and hasattr(df_, "current") and "x_error" in getattr(df_.current, "columns", []):
-            if df_.current["x_error"].dtype != "float64":
+        if skip_bad_dtype and hasattr(df_, "current") and "x_error" in _frame_column_names(df_.current):
+            x_error_dtype = _frame_dtype_name(df_.current, "x_error")
+            if not _is_float64_dtype_name(x_error_dtype):
                 if on_skip:
-                    on_skip(pkl_file, f"bad dtype x_error={df_.current['x_error'].dtype}")
+                    on_skip(pkl_file, f"bad dtype x_error={x_error_dtype}")
                 del df_
                 gc.collect()
                 _report_progress(i + 1)
                 continue
-        df = df.concatenate(df_)
+        df = _concatenate_scene_dataframe(df, df_)
         del df_
         gc.collect()
         _report_progress(i + 1)
@@ -407,6 +458,19 @@ def _default_parquet_compression() -> Any:
         return "snappy"
 
 
+def _is_collect_schema_compat_error(exc: BaseException) -> bool:
+    return isinstance(exc, AttributeError) and "collect_schema" in str(exc)
+
+
+def _write_parquet_with_legacy_retry(df: Any, save_dir: Path, compression: Any) -> None:
+    try:
+        df.to_parquet(save_dir, compression=compression)
+    except AttributeError as exc:
+        if not _is_collect_schema_compat_error(exc):
+            raise
+        df.to_parquet(save_dir)
+
+
 def _scene_dataframe_to_parquet_compat(df: Any, save_dir: Path) -> None:
     """Call SceneDataFrame.to_parquet across analyzer versions."""
     compression = _default_parquet_compression()
@@ -414,7 +478,7 @@ def _scene_dataframe_to_parquet_compat(df: Any, save_dir: Path) -> None:
         parameters = inspect.signature(df.to_parquet).parameters
     except (TypeError, ValueError):
         try:
-            df.to_parquet(save_dir, compression=compression)
+            _write_parquet_with_legacy_retry(df, save_dir, compression)
         except TypeError as exc:
             if "compression" not in str(exc):
                 raise
@@ -425,7 +489,7 @@ def _scene_dataframe_to_parquet_compat(df: Any, save_dir: Path) -> None:
         param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
     )
     if accepts_kwargs or "compression" in parameters:
-        df.to_parquet(save_dir, compression=compression)
+        _write_parquet_with_legacy_retry(df, save_dir, compression)
     else:
         df.to_parquet(save_dir)
 
