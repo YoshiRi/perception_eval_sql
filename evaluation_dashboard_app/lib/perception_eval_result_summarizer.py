@@ -259,11 +259,13 @@ def calc_score_group(df, result_directory):
             return df.loc[(i, "estimation"), "frame"]
 
     print("result_directory", result_directory)
+    res, obj_group, criteria_max_dist = get_option_and_object_group(result_directory)
     total_row_num = int(df.shape[0] / 2)
     if total_row_num == 0:
-        return {}
+        with open(result_directory + "score.json", "w") as file:
+            file.write(json.dumps(res, indent=4))
+        return [], [res["criteria" + str(i)]["MAX_DIST_THRESH"] for i in range(len(criteria_max_dist))]
     found_gt, pos = False, []
-    res, obj_group, criteria_max_dist = get_option_and_object_group(result_directory)
     (
         act_rect_list,
         act_mio_rect,
@@ -493,11 +495,13 @@ def calc_score_group(df, result_directory):
 
 def calc_score_single(df, result_directory):
     print("result_directory", result_directory)
+    res, obj_group, criteria_max_dist = get_option_and_object_group(result_directory)
     total_row_num = int(df.shape[0] / 2)
     if total_row_num == 0:
-        return {}
+        with open(result_directory + "score.json", "w") as file:
+            file.write(json.dumps(res, indent=4))
+        return [], [res["criteria" + str(i)]["MAX_DIST_THRESH"] for i in range(len(criteria_max_dist))]
     found_gt, pos, prev_frame, uuid_list, obj_idx = False, [], -1, [], 0
-    res, obj_group, criteria_max_dist = get_option_and_object_group(result_directory)
 
     frame_data = {}
     for i in range(total_row_num):
@@ -854,6 +858,19 @@ def summarize_eval_result(result_root: str) -> dict:
     analyzer = PerceptionAnalyzer3D.from_scenario(result_directory, scenario_name)
     analyzer.add_from_pkl(pickle_path)
 
+    df = analyzer.df
+    if df.empty or not isinstance(df.index, pd.MultiIndex):
+        return {
+            "result_root": result_root,
+            "test_id": test_id,
+            "scenario_name": scenario_name,
+            "num_ground_truth": 0,
+            "num_ground_truth_tp": 0,
+            "summary_ratio": pd.DataFrame(),
+            "summary_error": pd.DataFrame(),
+            "frame_table": df,
+        }
+
     sum_rat = analyzer.summarize_ratio()
     sum_err = analyzer.summarize_error()
 
@@ -911,11 +928,18 @@ def generate_score_json(result_root: str) -> str:
     analyzer = PerceptionAnalyzer3D.from_scenario(result_directory, scenario_name)
     analyzer.add_from_pkl(pickle_path)
 
+    df = analyzer.df
+    if df.empty or not isinstance(df.index, pd.MultiIndex):
+        res, _, _ = get_option_and_object_group(result_directory)
+        with open(result_directory + "score.json", "w") as file:
+            file.write(json.dumps(res, indent=4))
+        return os.path.join(result_directory, "score.json")
+
     # Score generation only; skip all plots.
     if "pedestrians_with_umbrella" in test_id:
-        calc_score_group(analyzer.df, result_directory)
+        calc_score_group(df, result_directory)
     else:
-        calc_score_single(analyzer.df, result_directory)
+        calc_score_single(df, result_directory)
 
     return os.path.join(result_directory, "score.json")
 
