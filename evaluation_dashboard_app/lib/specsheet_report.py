@@ -1733,16 +1733,46 @@ _FUTURE_NUMERIC_COLUMNS = {
     "visibility",
     "relative_time",
     "pair_dt_sec",
+    "frame_index",
 }
 
 
-def _coerce_numeric_columns(frame: pd.DataFrame, columns: set[str]) -> pd.DataFrame:
+def _coerce_numeric_columns(frame: Any, columns: set[str]) -> Any:
+    if _is_polars_frame(frame):
+        return _coerce_polars_numeric_columns(frame, columns)
     if frame.empty:
         return frame
     coerced = frame.copy()
     for column in sorted(columns.intersection(coerced.columns)):
         coerced[column] = pd.to_numeric(coerced[column], errors="coerce")
     return coerced
+
+
+def _is_polars_frame(frame: Any) -> bool:
+    return frame.__class__.__module__.startswith("polars.")
+
+
+def _polars_column_names(frame: Any) -> set[str]:
+    collect_schema = getattr(frame, "collect_schema", None)
+    if callable(collect_schema):
+        try:
+            return set(collect_schema().names())
+        except Exception:
+            pass
+    return set(getattr(frame, "columns", []) or [])
+
+
+def _coerce_polars_numeric_columns(frame: Any, columns: set[str]) -> Any:
+    import polars as pl
+
+    available_columns = columns.intersection(_polars_column_names(frame))
+    if not available_columns:
+        return frame
+    expressions = []
+    for column in sorted(available_columns):
+        dtype = pl.Int64 if column == "frame_index" else pl.Float64
+        expressions.append(pl.col(column).cast(dtype, strict=False).alias(column))
+    return frame.with_columns(expressions)
 
 
 def _coerce_specsheet_scene_numeric_columns(df):
@@ -1794,6 +1824,7 @@ def _get_blocks_compat(
     analyzer_evaluation_type = _coerce_analyzer_evaluation_type(evaluation_type)
     semantic_kwargs = {
         "df": df,
+        "scene_data_frame": df,
         "labels": list(labels),
         "metrics": list(metrics),
         "resource_path": outdir,
