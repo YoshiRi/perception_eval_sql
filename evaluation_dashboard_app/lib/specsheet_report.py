@@ -18,7 +18,7 @@ import yaml
 from lib.path_utils import get_data_root
 from lib.run_metadata import read_run_metadata
 
-DEFAULT_SPECSHEET_TOPIC = "perception.object_recognition.tracking.objects"
+DEFAULT_SPECSHEET_TOPIC = "perception.object_recognition.objects"
 DEFAULT_TREND_TOPIC = "perception.object_recognition.objects"
 DETECTION_TREND_TOPIC_BY_MODEL = {
     "bevfusion": "perception.object_recognition.detection.bevfusion.objects",

@@ -2658,7 +2658,7 @@ with st.sidebar:
         phase = st.text_input(
             "Phase to extract",
             value=get_config_value(
-                "phase", "perception.object_recognition.tracking.objects"
+                "phase", "perception.object_recognition.objects"
             ),
             help="Enter the phase name to extract from archives",
         )

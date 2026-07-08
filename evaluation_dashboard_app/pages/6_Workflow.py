@@ -94,7 +94,7 @@ _RELEASE_LARGE_FILE_MB = 50.0
 _DEFAULT_MAX_WAIT_HOURS = 48
 _WORKFLOW_KIND_PERCEPTION = "Perception"
 _WORKFLOW_KIND_TLR = "TLR"
-_DEFAULT_PERCEPTION_PHASE = "perception.object_recognition.tracking.objects"
+_DEFAULT_PERCEPTION_PHASE = "perception.object_recognition.objects"
 _TLR_DOWNLOAD_TYPE = "Result JSON"
 _RELEASE_TREND_TOPIC_OPTIONS = {
     "Prediction / object recognition": DEFAULT_TREND_TOPIC,
@@ -1544,7 +1544,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                             request_environment,
                             dialog_job,
                             output_path_default="",
-                            phase_default=str(request_meta.get("phase") or "perception.object_recognition.tracking.objects"),
+                            phase_default=str(request_meta.get("phase") or "perception.object_recognition.objects"),
                         )
 
                     _workflow_local_run_retest_dialog()
@@ -1565,7 +1565,7 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                     request_environment,
                     dialog_job,
                     output_path_default="",
-                    phase_default=str(request_meta.get("phase") or "perception.object_recognition.tracking.objects"),
+                    phase_default=str(request_meta.get("phase") or "perception.object_recognition.objects"),
                 )
 
 
@@ -2829,7 +2829,7 @@ def _render_workflow_launcher_section(
                             "optional_catalog_id": dialog_payload.get("optional_catalog_id", ""),
                             "optional_job_id": dialog_payload.get("optional_job_id", ""),
                             "force_redownload_roles": list(dialog_payload.get("force_redownload_roles") or []),
-                            "analysis_phase": "perception.object_recognition.tracking.objects",
+                            "analysis_phase": "perception.object_recognition.objects",
                             "skip_large_file": _RELEASE_SKIP_LARGE_FILE,
                             "large_file_mb": _RELEASE_LARGE_FILE_MB,
                             "run_eval": bool(dialog_payload.get("run_eval", False)),

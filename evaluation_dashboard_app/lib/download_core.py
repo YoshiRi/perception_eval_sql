@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 # Default environment for evaluator API
 DEFAULT_ENVIRONMENT = "default"
 API_BASE_URL = "https://evaluation.ci.web.auto/v3"
+OBJECT_RECOGNITION_TOPIC = "perception.object_recognition.objects"
+TRACKING_OBJECT_RECOGNITION_TOPIC = "perception.object_recognition.tracking.objects"
+OBJECT_RECOGNITION_PHASE_ALIASES = (
+    OBJECT_RECOGNITION_TOPIC,
+    TRACKING_OBJECT_RECOGNITION_TOPIC,
+)
 
 
 def _compact_eval_path(path: Any, *, parts: int = 2) -> str:
@@ -36,6 +42,58 @@ def _compact_eval_path(path: Any, *, parts: int = 2) -> str:
         return "/".join(tail) if tail else text
     except Exception:
         return text
+
+
+def _candidate_archive_phase_dirs(dir_path: str | Path) -> Dict[str, Path]:
+    """Return top-level extracted phase dirs that contain scene_result.pkl."""
+    root = Path(dir_path)
+    candidates: Dict[str, Path] = {}
+    if not root.is_dir():
+        return candidates
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        if (child / "scene_result.pkl").is_file():
+            candidates[child.name] = child
+    return candidates
+
+
+def _resolve_extracted_phase(
+    dir_path: str | Path,
+    requested_phase: str,
+) -> tuple[str | None, Dict[str, Path]]:
+    """Resolve the extracted phase to keep, accepting old/new object-recognition names."""
+    requested = str(requested_phase or "").strip()
+    candidates = _candidate_archive_phase_dirs(dir_path)
+    if not candidates:
+        return None, candidates
+    if requested in candidates:
+        return requested, candidates
+    if requested in OBJECT_RECOGNITION_PHASE_ALIASES:
+        for alias in OBJECT_RECOGNITION_PHASE_ALIASES:
+            if alias in candidates:
+                return alias, candidates
+    if len(candidates) == 1:
+        return next(iter(candidates)), candidates
+    return None, candidates
+
+
+def _record_extracted_phase(dir_path: str | Path, phase: str) -> None:
+    """Persist selected archive phase so plain PKL parquet keeps the proper topic."""
+    sidecar = Path(dir_path) / "t4_metadata.json"
+    data: Dict[str, Any] = {}
+    if sidecar.is_file():
+        try:
+            with sidecar.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data["phase"] = phase
+    data["topic_name"] = phase
+    with sidecar.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=0)
 
 
 def _make_evaluator_session(environment: str = DEFAULT_ENVIRONMENT):
@@ -299,7 +357,7 @@ def extract_archives(
     *,
     on_warning: Optional[Callable[[str], None]] = None,
 ) -> None:
-    """Extract zip archives under output_path, keep only the given phase and scene_result.pkl.
+    """Extract zip archives under output_path, keep the requested/detected phase scene_result.pkl.
     Skips corrupt or incomplete zip files (e.g. from interrupted download) so one bad file
     does not fail the whole job.
     """
@@ -325,17 +383,36 @@ def extract_archives(
             # Empty extraction directory, skip further processing
             logger.warning(f"No files found after extracting {os.path.basename(archive_path)}")
         else:
+            resolved_phase, phase_dirs = _resolve_extracted_phase(dir_path, phase)
+            if resolved_phase is None:
+                detected = ", ".join(sorted(phase_dirs)) if phase_dirs else "none"
+                msg = (
+                    f"No scene_result.pkl phase matched {phase!r} in {os.path.basename(archive_path)} "
+                    f"(detected phases: {detected})"
+                )
+                logger.warning("%s", msg)
+                if on_warning:
+                    on_warning(msg)
+            elif resolved_phase != phase:
+                msg = (
+                    f"Using detected phase {resolved_phase!r} instead of requested {phase!r} "
+                    f"for {os.path.basename(archive_path)}"
+                )
+                logger.warning("%s", msg)
+                if on_warning:
+                    on_warning(msg)
             for sub_dir_path in os.listdir(dir_path):
                 if Path(sub_dir_path).name == "scenario.yaml":
                     continue
                 full_path = os.path.join(dir_path, sub_dir_path)
-                if Path(sub_dir_path).name != phase:
+                if Path(sub_dir_path).name != resolved_phase:
                     if os.path.isdir(full_path):
                         shutil.rmtree(full_path)
                 else:
                     result_file = os.path.join(full_path, "scene_result.pkl")
                     if os.path.exists(result_file):
                         shutil.move(result_file, os.path.join(dir_path, "scene_result.pkl"))
+                        _record_extracted_phase(dir_path, resolved_phase)
                     shutil.rmtree(full_path)
 
 
@@ -552,7 +629,7 @@ def run_download_and_eval(
     suite_id: Optional[str],
     output_path: str,
     download_type: str = "archives",
-    phase: str = "perception.object_recognition.tracking.objects",
+    phase: str = OBJECT_RECOGNITION_TOPIC,
     *,
     skip_large_file: bool = False,
     large_file_mb: float = 50.0,

@@ -204,6 +204,9 @@ def _load_t4_metadata_sidecar(pkl_file: str | Path | None) -> dict:
             out["t4dataset_id"] = data["t4_dataset_id"]
         if data.get("t4_dataset_version_id"):
             out["t4dataset_version_id"] = data.get("t4_dataset_version_id")
+        topic_name = str(data.get("topic_name") or data.get("phase") or "").strip()
+        if topic_name:
+            out["topic_name"] = topic_name
         return out
     except (OSError, json.JSONDecodeError):
         return {}
@@ -252,7 +255,7 @@ def _normalize_loaded_pkl(
                 suite_report_id=meta.get("suite_report_id"),
                 spec_report_id=meta.get("spec_report_id"),
                 test_case_report_id=meta.get("test_case_report_id"),
-                frame_results={PKLZ_FRAME_RESULTS_TOPIC: data},
+                frame_results={meta.get("topic_name") or PKLZ_FRAME_RESULTS_TOPIC: data},
             )
     return data
 
@@ -279,7 +282,41 @@ def _concatenate_scene_dataframe(left: SceneDataFrame, right: SceneDataFrame, *,
     except TypeError as exc:
         if "ignore_index" not in str(exc):
             raise
-        return left.concatenate(right)
+        try:
+            return left.concatenate(right)
+        except ValueError as value_exc:
+            if "Incompatible future flags" not in str(value_exc):
+                raise
+            return _concatenate_mixed_future_scene_dataframe(left, right)
+    except ValueError as exc:
+        if "Incompatible future flags" not in str(exc):
+            raise
+        return _concatenate_mixed_future_scene_dataframe(left, right)
+
+
+def _concat_tabular_frames(frames: list[Any], *, ignore_index: bool = False) -> Any:
+    frames = [frame for frame in frames if frame is not None]
+    if not frames:
+        return pd.DataFrame()
+    if len(frames) == 1:
+        return frames[0]
+    if any(hasattr(frame, "collect_schema") for frame in frames):
+        import polars as pl
+
+        return pl.concat(frames, how="diagonal_relaxed")
+    return pd.concat(frames, ignore_index=ignore_index)
+
+
+def _concatenate_mixed_future_scene_dataframe(left: SceneDataFrame, right: SceneDataFrame) -> SceneDataFrame:
+    """Concatenate SceneDataFrame values when only one side has future rows."""
+    current = _concat_tabular_frames([left.current, right.current])
+    future_frames = [
+        frame
+        for frame in (getattr(left, "future", None), getattr(right, "future", None))
+        if frame is not None
+    ]
+    future = _concat_tabular_frames(future_frames) if future_frames else None
+    return SceneDataFrame(current=current, future=future)
 
 
 def _frame_column_names(frame: Any) -> list[str]:
