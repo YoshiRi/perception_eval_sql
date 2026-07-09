@@ -130,6 +130,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      secrets:
+        - ssh
     image: evaluation-dashboard
     entrypoint: []
     command: ["python3", "-m", "worker.run_worker"]
@@ -200,6 +202,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      secrets:
+        - ssh
     image: evaluation-dashboard
     entrypoint: []
     command: ["python3", "-m", "worker.init_db"]

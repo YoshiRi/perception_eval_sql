@@ -1268,7 +1268,12 @@ def _build_devops_trend_summary_from_suites(rows: list[dict[str, Any]]) -> Dict[
         return {"DevOps": {}}
 
     try:
-        from perception_catalog_analyzer.path import DEVOPS_MAPPING_PATH
+        try:
+            from perception_catalog_analyzer.path import DEVOPS_MAPPING_PATH
+        except ImportError:
+            from perception_catalog_analyzer.constants import (
+                USECASE_DEVOPS_MAPPING_PATH as DEVOPS_MAPPING_PATH,
+            )
 
         with Path(DEVOPS_MAPPING_PATH).open("r", encoding="utf-8") as fh:
             category_mapping = yaml.safe_load(fh) or {}

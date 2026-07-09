@@ -83,6 +83,41 @@ def _parse_r_upper_bound(label: object) -> float:
         return float("inf")
 
 
+def _bin_polar_for_pandas(df: pd.DataFrame) -> pd.DataFrame:
+    """Assign analyzer-compatible polar bins for pandas inputs."""
+    if df.empty:
+        return df
+    if not {"x", "y"}.issubset(df.columns):
+        raise KeyError("Columns 'x' and 'y' are required.")
+    try:
+        from perception_catalog_analyzer.constants import (
+            R_EDGES,
+            R_LABELS,
+            THETA_EDGES_DEG,
+            THETA_INI,
+            THETA_LABELS,
+        )
+    except Exception:
+        r_edges = np.arange(0, 220, 20)
+        r_labels = [f"{i}-{i + 20}" for i in range(0, 200, 20)]
+        theta_ini = -60
+        theta_edges_deg = np.arange(theta_ini, theta_ini + 360 + 60, 60)
+        theta_labels = [f"{i}-{i + 60}" for i in range(theta_ini, theta_ini + 360, 60)]
+    else:
+        r_edges = R_EDGES
+        r_labels = R_LABELS
+        theta_ini = THETA_INI
+        theta_edges_deg = THETA_EDGES_DEG
+        theta_labels = THETA_LABELS
+
+    out = df.copy()
+    out["r_val"] = np.sqrt(out["x"].pow(2) + out["y"].pow(2))
+    out["theta_val"] = ((np.degrees(np.arctan2(out["y"], out["x"])) - theta_ini) % 360) + theta_ini
+    out["r"] = pd.cut(out["r_val"], bins=r_edges, labels=r_labels, right=False)
+    out["theta"] = pd.cut(out["theta_val"], bins=theta_edges_deg, labels=theta_labels, right=False)
+    return out
+
+
 def prepare_future_matched_df(
     future_df: pd.DataFrame,
     *,
@@ -428,12 +463,15 @@ def build_specsheet_aligned_prediction_artifacts(
     max_error_m: float = 100.0,
     progress_callback: Callable[[float, str], None] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    from perception_catalog_analyzer.specsheet.blocks import bin_polar
     from perception_catalog_analyzer.specsheet.metrics import load_metrics
-    from perception_catalog_analyzer.specsheet.metrics.functional import FUTURE_ARRAY_CACHE
+    try:
+        from perception_catalog_analyzer.specsheet.metrics.functional import FUTURE_ARRAY_CACHE
+    except ImportError:
+        FUTURE_ARRAY_CACHE = None
 
     report = progress_callback or _noop_progress
-    FUTURE_ARRAY_CACHE.clear()
+    if FUTURE_ARRAY_CACHE is not None:
+        FUTURE_ARRAY_CACHE.clear()
     metric_order = [_metric_label(prefix, checkpoint) for prefix in ("minADE", "minFDE") for checkpoint in checkpoints]
     metric_map = {metric.name: metric for metric in load_metrics(metric_order)}
 
@@ -451,7 +489,7 @@ def build_specsheet_aligned_prediction_artifacts(
         kind="stable",
     ).reset_index(drop=True)
 
-    binned_future = bin_polar(normalized_future.copy())
+    binned_future = _bin_polar_for_pandas(normalized_future)
     if binned_future.empty:
         report(0.9, "No future rows were available after binning.")
         empty = pd.DataFrame()

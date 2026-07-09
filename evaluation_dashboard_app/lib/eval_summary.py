@@ -15,6 +15,10 @@ from typing import Any, Dict, List
 from lib.perception_eval_result_summarizer import run_eval_result, generate_score_json
 
 
+EVAL_SUBPROCESS_TIMEOUT_ENV = "EVAL_SUBPROCESS_TIMEOUT_SECONDS"
+DEFAULT_EVAL_SUBPROCESS_TIMEOUT_SECONDS = 30 * 60
+
+
 def _write_text_atomic(path: str, content: str) -> None:
     """Write text by replacing the target, so read-only existing files do not block writable dirs."""
     target = Path(path)
@@ -126,6 +130,10 @@ def _run_eval_result_for_dir_subprocess(result_dir: str, overwrite: bool = False
     """Run one scenario eval in a child Python process so native crashes are contained."""
     env = os.environ.copy()
     env.setdefault("PYTHONFAULTHANDLER", "1")
+    try:
+        timeout = float(os.environ.get(EVAL_SUBPROCESS_TIMEOUT_ENV, DEFAULT_EVAL_SUBPROCESS_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        timeout = DEFAULT_EVAL_SUBPROCESS_TIMEOUT_SECONDS
     cmd = [
         sys.executable,
         "-m",
@@ -134,13 +142,26 @@ def _run_eval_result_for_dir_subprocess(result_dir: str, overwrite: bool = False
         result_dir,
         "1" if overwrite else "0",
     ]
-    completed = subprocess.run(
-        cmd,
-        cwd=os.fspath(Path(__file__).resolve().parents[1]),
-        env=env,
-        text=True,
-        capture_output=True,
-    )
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=os.fspath(Path(__file__).resolve().parents[1]),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        detail = f"eval subprocess timed out after {timeout:g}s"
+        _write_eval_subprocess_failure(
+            result_dir,
+            detail,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        return {"path": result_dir, "status": "failed", "detail": detail}
     if completed.returncode == 0:
         for line in reversed(completed.stdout.splitlines()):
             if line.startswith("__EVAL_RESULT_JSON__"):

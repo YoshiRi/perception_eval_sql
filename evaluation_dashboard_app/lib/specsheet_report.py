@@ -1223,7 +1223,7 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
                 rows.append(
                     {
                         "major_category": major_category,
-                        "mid_category": mid_category,
+                        "mid_category": major_category,
                         "minor_category": mid_category,
                         "case_name": mid_category,
                         "passed": passed,

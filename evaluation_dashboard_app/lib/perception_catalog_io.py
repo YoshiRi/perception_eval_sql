@@ -379,12 +379,20 @@ def download_scene_results_to_pkl(
     archive_outdir = out_dir / "archive"
     archive_outdir.mkdir(parents=True, exist_ok=True)
     archive_str = os.fspath(archive_outdir)
-    pkl_files = export_scene_results_to_pkl(
-        project_id=project_id,
-        job_id=job_id,
-        out_dir=archive_str,
-        overwrite=overwrite,
-    )
+    export_kwargs = {
+        "project_id": project_id,
+        "job_id": job_id,
+        "overwrite": overwrite,
+    }
+    try:
+        export_params = inspect.signature(export_scene_results_to_pkl).parameters
+    except (TypeError, ValueError):
+        export_params = {}
+    if "out_dir" in export_params:
+        export_kwargs["out_dir"] = archive_str
+    else:
+        export_kwargs["path"] = archive_outdir
+    pkl_files = export_scene_results_to_pkl(**export_kwargs)
     return pkl_files
 
 

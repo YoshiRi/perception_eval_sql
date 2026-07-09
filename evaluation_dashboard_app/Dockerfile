@@ -6,12 +6,14 @@
 # Match ROS distro at build: --build-arg ROS_DISTRO=humble (or iron, jazzy, etc.)
 ARG ROS_DISTRO=humble
 ARG WEBAUTOAUTHCLI_COMMIT=204629123fa58ab0be0966c795703324e34851ec
+ARG PERCEPTION_CATALOG_ANALYZER_COMMIT=0.1.0
 FROM ros:${ROS_DISTRO}
 
 WORKDIR /app
 
 # Make ROS_DISTRO available inside the container at runtime (for entrypoint sourcing)
 ENV ROS_DISTRO=${ROS_DISTRO}
+ARG PERCEPTION_CATALOG_ANALYZER_COMMIT
 
 # Install needed system packages: python, geos, git/ssh (for pip install from private repos), pipx,
 # Docker CLI/buildx for local evaluator build jobs, OpenGL for matplotlib, and Chrome for Kaleido static image export.
@@ -67,7 +69,9 @@ RUN --mount=type=secret,id=ssh,dst=/tmp/ssh_key \
       "tabulate>=0.9.0" \
       "typer>=0.16.0" \
       "weasyprint>=65.1" \
- && git clone --depth 1 git@github.com:tier4/perception_catalog_analyzer.git /opt/perception_catalog_analyzer \
+ && git clone git@github.com:tier4/perception_catalog_analyzer.git /opt/perception_catalog_analyzer \
+ && cd /opt/perception_catalog_analyzer \
+ && git checkout "$PERCEPTION_CATALOG_ANALYZER_COMMIT" \
  && python3 -m pip install --no-cache-dir --no-deps -e /opt/perception_catalog_analyzer \
  && rm -rf /root/.ssh # Clean up private key ASAP for security
 
