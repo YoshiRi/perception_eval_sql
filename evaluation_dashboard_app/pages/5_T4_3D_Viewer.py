@@ -630,18 +630,23 @@ _geometry_reference_df = _reference_geometry_df()
 
 def _candidate_topics_for_file(file_path: str) -> list[str]:
     topics = [str(selected_topic)]
-    if str(selected_topic) == DEFAULT_OBJECTS_TOPIC:
+    topic_aliases = {
+        DEFAULT_OBJECTS_TOPIC: DEFAULT_TRACKING_OBJECTS_TOPIC,
+        DEFAULT_TRACKING_OBJECTS_TOPIC: DEFAULT_OBJECTS_TOPIC,
+    }
+    fallback_topic = topic_aliases.get(str(selected_topic))
+    if fallback_topic:
         try:
-            has_tracking_topic = bool(
+            has_fallback_topic = bool(
                 con.execute(
                     "SELECT COUNT(*) > 0 FROM parquet_scan(?) WHERE topic_name = ?",
-                    [file_path, DEFAULT_TRACKING_OBJECTS_TOPIC],
+                    [file_path, fallback_topic],
                 ).fetchone()[0]
             )
         except Exception:
-            has_tracking_topic = False
-        if has_tracking_topic and DEFAULT_TRACKING_OBJECTS_TOPIC not in topics:
-            topics.append(DEFAULT_TRACKING_OBJECTS_TOPIC)
+            has_fallback_topic = False
+        if has_fallback_topic and fallback_topic not in topics:
+            topics.append(fallback_topic)
     return topics
 
 
