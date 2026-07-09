@@ -1087,7 +1087,7 @@ def job_download_and_eval(task_id: str, parameters: Dict[str, Any]) -> None:
         suite_id = parameters.get("suite_id")
         suite_ids = parameters.get("suite_ids")
         download_type = parameters.get("download_type", "archives")
-        phase = parameters.get("phase", "perception.object_recognition.tracking.objects")
+        phase = parameters.get("phase", "perception.object_recognition.objects")
         skip_large_file = parameters.get("skip_large_file", False)
         large_file_mb = float(parameters.get("large_file_mb", 50.0))
         keep_zip_files = parameters.get("keep_zip_files", False)
@@ -1593,7 +1593,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
         max_wait_seconds = _normalize_max_wait_seconds(parameters.get("max_wait_seconds", 0.0))
         analysis_phase = str(
             parameters.get("analysis_phase")
-            or "perception.object_recognition.tracking.objects"
+            or "perception.object_recognition.objects"
         ).strip()
         skip_large_file = _RELEASE_SKIP_LARGE_FILE
         large_file_mb = float(parameters.get("large_file_mb") or _RELEASE_LARGE_FILE_MB)
@@ -2027,7 +2027,7 @@ def job_run_evaluator_and_process(task_id: str, parameters: Dict[str, Any]) -> N
         
         # Download options
         download_type = parameters.get("download_type", "archives")
-        phase = parameters.get("phase", "perception.object_recognition.tracking.objects")
+        phase = parameters.get("phase", "perception.object_recognition.objects")
         skip_large_file = parameters.get("skip_large_file", False)
         large_file_mb = float(parameters.get("large_file_mb", 50.0))
         keep_zip_files = parameters.get("keep_zip_files", False)
