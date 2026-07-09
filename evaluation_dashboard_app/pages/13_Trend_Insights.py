@@ -12,10 +12,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
+import yaml
 
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
 from lib.path_utils import get_data_root, path_display, resolve_under_data_root
 from lib.release_specsheet_library import discover_release_specsheet_inventory
+from lib.run_metadata import read_run_metadata, upsert_run_metadata
 from lib.specsheet_report import (
     DEFAULT_TREND_METADATA_TEXT,
     TREND_METADATA_FILENAME,
@@ -41,6 +43,272 @@ def _parse_data_count(value: Any) -> int | None:
         return int(text)
     except ValueError:
         return None
+
+
+HISTORY_TYPE_RELEASE = "Release"
+HISTORY_TYPE_PERIODIC = "Periodic Evaluation"
+HISTORY_TYPE_OTHER = "Other"
+HISTORY_TYPE_ORDER = (HISTORY_TYPE_RELEASE, HISTORY_TYPE_PERIODIC, HISTORY_TYPE_OTHER)
+
+
+def _history_type_from_text(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if any(token in text for token in ("periodic", "regular", "scheduled", "nightly", "daily", "weekly", "定期")):
+        return HISTORY_TYPE_PERIODIC
+    if any(token in text for token in ("formal_release", "official_release", "production_release", "正式")):
+        return HISTORY_TYPE_RELEASE
+    if text in {"release", "formal", "official", "production"}:
+        return HISTORY_TYPE_RELEASE
+    if text in {"periodic_evaluation", "periodic_eval", "regular_evaluation", "regular_eval", "scheduled_eval"}:
+        return HISTORY_TYPE_PERIODIC
+    return None
+
+
+def _metadata_history_type(metadata: dict[str, Any]) -> str | None:
+    for key in (
+        "history_type",
+        "run_type",
+        "release_type",
+        "evaluation_category",
+        "evaluation_kind",
+        "workflow_kind",
+    ):
+        inferred = _history_type_from_text(metadata.get(key))
+        if inferred:
+            return inferred
+    tags = metadata.get("tags")
+    if isinstance(tags, (list, tuple, set)):
+        for tag in tags:
+            inferred = _history_type_from_text(tag)
+            if inferred:
+                return inferred
+    return None
+
+
+def _infer_history_type_from_metadata(metadata: dict[str, Any], *extra_values: Any) -> str:
+    explicit = _metadata_history_type(metadata)
+    if explicit:
+        return explicit
+
+    text_parts = [
+        metadata.get("release_group"),
+        metadata.get("pilot_auto_version"),
+        metadata.get("description"),
+        metadata.get("version_abbr"),
+        *extra_values,
+    ]
+    blob = " ".join(str(part or "") for part in text_parts).lower()
+    if re.search(r"(^|[/_\-\s])eval([/_\-\s]|$)", blob) or "evaluation" in blob or "定期" in blob:
+        return HISTORY_TYPE_PERIODIC
+    return HISTORY_TYPE_RELEASE if metadata else HISTORY_TYPE_OTHER
+
+
+def _infer_group_history_type(group: TrendReleaseGroup) -> str:
+    metadata = _select_primary_metadata(group)
+    return _infer_history_type_from_metadata(metadata, group.display_name, group.group_key, group.base_dir)
+
+
+def _infer_release_inventory_history_type(release: dict[str, Any]) -> str:
+    release_dir = release.get("release_dir")
+    run_metadata = read_run_metadata(release_dir) if isinstance(release_dir, Path) else {}
+    request = run_metadata.get("request") if isinstance(run_metadata.get("request"), dict) else {}
+    parameters = request.get("parameters") if isinstance(request.get("parameters"), dict) else {}
+    release_specsheet = (
+        run_metadata.get("release_specsheet")
+        if isinstance(run_metadata.get("release_specsheet"), dict)
+        else {}
+    )
+    workflow_metadata = (
+        parameters.get("trend_metadata")
+        if isinstance(parameters.get("trend_metadata"), dict)
+        else release_specsheet.get("metadata")
+        if isinstance(release_specsheet.get("metadata"), dict)
+        else {}
+    )
+    metadata = {
+        **workflow_metadata,
+        "pilot_auto_version": workflow_metadata.get("pilot_auto_version") or release.get("pilot_auto_version"),
+        "version_abbr": workflow_metadata.get("version_abbr") or release.get("version_abbr"),
+        "description": workflow_metadata.get("description") or release.get("description"),
+        "data_count": workflow_metadata.get("data_count") or release.get("data_count"),
+        "date": workflow_metadata.get("date") or release.get("date"),
+    }
+    return _infer_history_type_from_metadata(
+        metadata,
+        release.get("release"),
+        release.get("release_dir_display"),
+        request.get("description"),
+        parameters.get("description"),
+    )
+
+
+def _history_type_counts(frame: pd.DataFrame) -> dict[str, int]:
+    if frame.empty or "history_type" not in frame.columns:
+        return {}
+    counts = frame["history_type"].fillna(HISTORY_TYPE_OTHER).value_counts().to_dict()
+    return {label: int(counts.get(label, 0)) for label in HISTORY_TYPE_ORDER if int(counts.get(label, 0)) > 0}
+
+
+def _history_filter_options(counts: dict[str, int]) -> list[str]:
+    options = [f"All ({sum(counts.values())})"]
+    options.extend(f"{label} ({counts[label]})" for label in HISTORY_TYPE_ORDER if counts.get(label, 0) > 0)
+    return options
+
+
+def _history_type_from_filter(option: str) -> str | None:
+    if option.startswith("All"):
+        return None
+    return option.rsplit(" (", 1)[0]
+
+
+def _history_metadata_value(history_type: str) -> str:
+    if history_type == HISTORY_TYPE_PERIODIC:
+        return "periodic_evaluation"
+    if history_type == HISTORY_TYPE_RELEASE:
+        return "release"
+    return "other"
+
+
+def _next_history_type(history_type: str) -> str:
+    return HISTORY_TYPE_PERIODIC if history_type == HISTORY_TYPE_RELEASE else HISTORY_TYPE_RELEASE
+
+
+def _release_token(release_dir: Path) -> str:
+    try:
+        return str(release_dir.resolve().relative_to(get_data_root().resolve()))
+    except ValueError:
+        return str(release_dir)
+
+
+def _release_dir_from_token(token: str) -> Path | None:
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    candidate = (get_data_root() / raw).resolve(strict=False)
+    try:
+        candidate.relative_to(get_data_root().resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_dir() else None
+
+
+def _update_yaml_history_type(metadata_path: Path, history_type: str) -> bool:
+    if not metadata_path.exists() or not metadata_path.is_file():
+        return False
+    try:
+        payload = yaml.safe_load(metadata_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    payload["history_type"] = _history_metadata_value(history_type)
+    with metadata_path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(payload, fh, allow_unicode=True, sort_keys=False)
+    return True
+
+
+def _set_release_history_type(release_dir: Path, history_type: str) -> int:
+    metadata_paths = sorted(
+        {
+            path
+            for path in release_dir.rglob(TREND_METADATA_FILENAME)
+            if path.is_file() and "_app_trend_history" not in path.parts
+        }
+    )
+    updated = sum(1 for path in metadata_paths if _update_yaml_history_type(path, history_type))
+    metadata_value = _history_metadata_value(history_type)
+    upsert_run_metadata(
+        release_dir,
+        {
+            "history_type": metadata_value,
+            "request": {
+                "parameters": {
+                    "trend_metadata": {
+                        "history_type": metadata_value,
+                    }
+                }
+            },
+            "release_specsheet": {
+                "metadata": {
+                    "history_type": metadata_value,
+                }
+            },
+        },
+        create_missing=False,
+    )
+    return updated
+
+
+def _consume_history_type_toggle(releases: list[dict[str, Any]]) -> None:
+    token = st.query_params.get("trend_toggle_history_type", "")
+    if isinstance(token, list):
+        token = token[0] if token else ""
+    release_dir = _release_dir_from_token(str(token))
+    if release_dir is None:
+        return
+
+    current_release = next(
+        (
+            release
+            for release in releases
+            if isinstance(release.get("release_dir"), Path)
+            and release.get("release_dir").resolve(strict=False) == release_dir.resolve(strict=False)
+        ),
+        None,
+    )
+    current_type = str((current_release or {}).get("history_type") or HISTORY_TYPE_OTHER)
+    next_type = _next_history_type(current_type)
+    updated = _set_release_history_type(release_dir, next_type)
+    st.query_params.clear()
+    st.toast(f"Updated history type to {next_type} ({updated} metadata file(s)).")
+    st.rerun()
+
+
+def _render_history_type_fallback_editor(releases: list[dict[str, Any]]) -> None:
+    editable_releases = [release for release in releases if isinstance(release.get("release_dir"), Path)]
+    if not editable_releases:
+        return
+
+    with st.expander("Change history type", expanded=False):
+        labels = []
+        label_to_release: dict[str, dict[str, Any]] = {}
+        for idx, release in enumerate(editable_releases, start=1):
+            history_type = str(release.get("history_type") or HISTORY_TYPE_OTHER)
+            label_body = " | ".join(
+                part
+                for part in (
+                    str(release.get("version") or "Unknown Version"),
+                    history_type,
+                    str(release.get("date") or ""),
+                    str(release.get("release") or ""),
+                )
+                if part
+            )
+            label = f"{idx}. {label_body}"
+            labels.append(label)
+            label_to_release[label] = release
+
+        editor_cols = st.columns([3, 1.2, 0.9])
+        selected_label = editor_cols[0].selectbox(
+            "Run",
+            options=labels,
+            key="trend_history_type_editor_run",
+        )
+        selected_release = label_to_release[selected_label]
+        current_type = str(selected_release.get("history_type") or HISTORY_TYPE_OTHER)
+        target_options = [HISTORY_TYPE_RELEASE, HISTORY_TYPE_PERIODIC]
+        target_type = editor_cols[1].selectbox(
+            "Set type",
+            options=target_options,
+            index=target_options.index(_next_history_type(current_type)) if current_type in target_options else 0,
+            key="trend_history_type_editor_target",
+        )
+        if editor_cols[2].button("Apply", key="trend_history_type_editor_apply", use_container_width=True):
+            updated = _set_release_history_type(selected_release["release_dir"], target_type)
+            st.success(f"Updated `{selected_release.get('version') or selected_release.get('release')}` to {target_type} ({updated} metadata file(s)).")
+            st.rerun()
 
 
 def _select_primary_metadata(group: TrendReleaseGroup) -> dict[str, Any]:
@@ -260,65 +528,140 @@ def _has_pdf_for_prefix(release: dict[str, Any], prefix: str) -> bool:
     return False
 
 
-def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
+def _type_cell_html(release: dict[str, Any], history_type: str, *, enable_toggle: bool) -> str:
+    css_type = escape(_safe_path_part(history_type, "other").lower(), quote=True)
+    label = escape(history_type)
+    if not enable_toggle or not isinstance(release.get("release_dir"), Path):
+        return f'<span class="type-pill type-{css_type}">{label}</span>'
+    token = escape(_release_token(release["release_dir"]), quote=True)
+    next_type = _next_history_type(history_type)
+    return (
+        f'<button class="type-pill type-toggle type-{css_type}" type="button" '
+        f'data-token="{token}" title="Switch to {escape(next_type, quote=True)}">{label}</button>'
+    )
+
+
+def _render_release_library_table(
+    releases: list[dict[str, Any]],
+    *,
+    show_type_column: bool,
+    enable_type_toggle: bool,
+) -> None:
     group_headers = [
-        ("Release", 4),
+        ("Release", 5 if show_type_column else 4),
         ("Overview", 3),
         ("Specsheet PDF", 2),
         ("Evaluator Job", 3),
         ("Folder", 1),
     ]
-    col_widths = [220, 96, 280, 92, 96, 96, 96, 128, 168, 96, 96, 96, 200]
-    headers = [
-        "Version",
-        "Date",
-        "Description",
-        "Data",
-        "Performance",
-        "Usecase",
-        "DevOps",
-        "Prediction",
-        "Detection",
-        "Performance",
-        "Usecase",
-        "DevOps",
-        "Folder",
-    ]
-    sort_types = ["text", "date", "text", "number", "text", "text", "text", "text", "text", "text", "text", "text", "text"]
-    sortable_columns = {0, 1, 2, 3, 12}
+    if show_type_column:
+        col_widths = [220, 142, 96, 280, 92, 96, 96, 96, 128, 168, 96, 96, 96, 200]
+        headers = [
+            "Version",
+            "Type",
+            "Date",
+            "Description",
+            "Data",
+            "Performance",
+            "Usecase",
+            "DevOps",
+            "Prediction",
+            "Detection",
+            "Performance",
+            "Usecase",
+            "DevOps",
+            "Folder",
+        ]
+        sort_types = [
+            "text",
+            "text",
+            "date",
+            "text",
+            "number",
+            "text",
+            "text",
+            "text",
+            "text",
+            "text",
+            "text",
+            "text",
+            "text",
+            "text",
+        ]
+        sortable_columns = {0, 1, 2, 3, 4, 13}
+        active_sort_index = 2
+        table_min_width = 2040
+        description_col = 4
+        muted_cols = (3, 5)
+        centered_from = 6
+    else:
+        col_widths = [220, 96, 280, 92, 96, 96, 96, 128, 168, 96, 96, 96, 200]
+        headers = [
+            "Version",
+            "Date",
+            "Description",
+            "Data",
+            "Performance",
+            "Usecase",
+            "DevOps",
+            "Prediction",
+            "Detection",
+            "Performance",
+            "Usecase",
+            "DevOps",
+            "Folder",
+        ]
+        sort_types = ["text", "date", "text", "number", "text", "text", "text", "text", "text", "text", "text", "text", "text"]
+        sortable_columns = {0, 1, 2, 3, 12}
+        active_sort_index = 1
+        table_min_width = 1900
+        description_col = 3
+        muted_cols = (2, 4)
+        centered_from = 5
     rows_html = []
     for release in releases:
         folder_name = str(release.get("release") or "")
-        sort_values = [
-            str(release.get("version") or ""),
-            str(_date_sort_value(release.get("date"))),
-            str(release.get("description") or ""),
-            str(_parse_data_count(release.get("data_count")) or -1),
-            "open" if _role_overview_url(release, "performance") else "",
-            "open" if _role_overview_url(release, "usecase") else "",
-            "open" if _role_overview_url(release, "devops") else "",
-            "prediction" if _has_pdf_for_prefix(release, "perception.object_recognition.objects") else "",
-            "detection" if _has_pdf_for_prefix(release, "perception.object_recognition.detection.") else "",
-            "report" if _role_evaluator_url(release, "performance") else "",
-            "report" if _role_evaluator_url(release, "usecase") else "",
-            "report" if _role_evaluator_url(release, "devops") else "",
-            folder_name,
-        ]
+        history_type = str(release.get("history_type") or HISTORY_TYPE_OTHER)
+        version_text = str(release.get("version") or "")
+        sort_values = [str(release.get("version") or "")]
         cells = [
-            escape(str(release.get("version") or "")),
-            escape(str(release.get("date") or "")),
-            escape(str(release.get("description") or "")),
-            escape(str(release.get("data_count") or "")),
-            _html_link(_role_overview_url(release, "performance"), "Open", "overview"),
-            _html_link(_role_overview_url(release, "usecase"), "Open", "overview"),
-            _html_link(_role_overview_url(release, "devops"), "Open", "overview"),
-            _pdf_links_for_prefix(release, "perception.object_recognition.objects"),
-            _pdf_links_for_prefix(release, "perception.object_recognition.detection."),
-            _html_link(_role_evaluator_url(release, "performance"), "Report", "job"),
-            _html_link(_role_evaluator_url(release, "usecase"), "Report", "job"),
-            _html_link(_role_evaluator_url(release, "devops"), "Report", "job"),
-            f'<span class="folder-cell" title="{escape(folder_name, quote=True)}">{escape(folder_name)}</span>',
+            f'<span class="version-cell" title="{escape(version_text, quote=True)}">{escape(version_text)}</span>'
         ]
+        if show_type_column:
+            sort_values.append(history_type)
+            cells.append(_type_cell_html(release, history_type, enable_toggle=enable_type_toggle))
+        sort_values.extend(
+            [
+                str(_date_sort_value(release.get("date"))),
+                str(release.get("description") or ""),
+                str(_parse_data_count(release.get("data_count")) or -1),
+                "open" if _role_overview_url(release, "performance") else "",
+                "open" if _role_overview_url(release, "usecase") else "",
+                "open" if _role_overview_url(release, "devops") else "",
+                "prediction" if _has_pdf_for_prefix(release, "perception.object_recognition.objects") else "",
+                "detection" if _has_pdf_for_prefix(release, "perception.object_recognition.detection.") else "",
+                "report" if _role_evaluator_url(release, "performance") else "",
+                "report" if _role_evaluator_url(release, "usecase") else "",
+                "report" if _role_evaluator_url(release, "devops") else "",
+                folder_name,
+            ]
+        )
+        cells.extend(
+            [
+                escape(str(release.get("date") or "")),
+                escape(str(release.get("description") or "")),
+                escape(str(release.get("data_count") or "")),
+                _html_link(_role_overview_url(release, "performance"), "Open", "overview"),
+                _html_link(_role_overview_url(release, "usecase"), "Open", "overview"),
+                _html_link(_role_overview_url(release, "devops"), "Open", "overview"),
+                _pdf_links_for_prefix(release, "perception.object_recognition.objects"),
+                _pdf_links_for_prefix(release, "perception.object_recognition.detection."),
+                _html_link(_role_evaluator_url(release, "performance"), "Report", "job"),
+                _html_link(_role_evaluator_url(release, "usecase"), "Report", "job"),
+                _html_link(_role_evaluator_url(release, "devops"), "Report", "job"),
+                f'<span class="folder-cell" title="{escape(folder_name, quote=True)}">{escape(folder_name)}</span>',
+            ]
+        )
         rows_html.append(
             "<tr>"
             + "".join(
@@ -327,6 +670,20 @@ def _render_release_library_table(releases: list[dict[str, Any]]) -> None:
             )
             + "</tr>"
         )
+    header_html = "".join(
+        (
+            f'<th><button class="sort-button" type="button" data-index="{idx}" '
+            f'data-type="{sort_types[idx]}">{escape(header)}</button>'
+            f'<span class="resize-handle" data-index="{idx}" title="Drag to resize"></span></th>'
+        )
+        if idx in sortable_columns
+        else (
+            f'<th><span class="plain-header">{escape(header)}</span>'
+            f'<span class="resize-handle" data-index="{idx}" title="Drag to resize"></span></th>'
+        )
+        for idx, header in enumerate(headers)
+    )
+
     table_html = f"""
 <!doctype html>
 <html>
@@ -359,7 +716,7 @@ body {{
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
-  min-width: 1900px;
+  min-width: {table_min_width}px;
   width: 100%;
   font-size: 0.88rem;
 }}
@@ -399,6 +756,28 @@ body {{
   font-size: 0.82rem;
   text-align: center;
   padding: 0;
+  overflow: visible;
+}}
+.resize-handle {{
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 6;
+}}
+.resize-handle::after {{
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 3px;
+  border-left: 1px solid rgba(100, 116, 139, 0.28);
+}}
+.resize-handle:hover::after,
+.resize-handle.is-resizing::after {{
+  border-left-color: #2563eb;
 }}
 .sort-button {{
   appearance: none;
@@ -433,16 +812,26 @@ body {{
 .release-library-table td:nth-child(1) {{
   font-weight: 650;
   color: #0f172a;
+  white-space: normal;
+  overflow: visible;
 }}
-.release-library-table td:nth-child(3) {{
+.version-cell {{
+  display: block;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}}
+.release-library-table td:nth-child({description_col}) {{
   color: #475569;
   text-overflow: ellipsis;
 }}
-.release-library-table td:nth-child(2),
-.release-library-table td:nth-child(4) {{
+.release-library-table td:nth-child({muted_cols[0]}),
+.release-library-table td:nth-child({muted_cols[1]}) {{
   color: #475569;
 }}
-.release-library-table td:nth-child(n+5):not(:last-child) {{
+.release-library-table td:nth-child(n+{centered_from}):not(:last-child) {{
   text-align: center;
 }}
 .release-library-table td:last-child {{
@@ -501,16 +890,50 @@ body {{
 .muted-cell {{
   color: #94a3b8;
 }}
+.type-pill {{
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 98px;
+  min-height: 22px;
+  padding: 0.08rem 0.48rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-family: inherit;
+  color: #334155;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  text-decoration: none;
+}}
+.type-release {{
+  color: #075985;
+  background: #e0f2fe;
+  border-color: #bae6fd;
+}}
+.type-periodic_evaluation {{
+  color: #854d0e;
+  background: #fef3c7;
+  border-color: #fde68a;
+}}
+.type-toggle {{
+  cursor: pointer;
+}}
+.type-toggle:hover {{
+  text-decoration: underline;
+  filter: brightness(0.98);
+}}
 </style>
 </head>
 <body>
 <div class="release-library-shell">
   <div class="release-library-table-wrapper">
     <table id="releaseLibraryTable" class="release-library-table">
-      <colgroup>{''.join(f'<col style="width:{width}px">' for width in col_widths)}</colgroup>
+      <colgroup>{''.join(f'<col data-index="{idx}" style="width:{width}px">' for idx, width in enumerate(col_widths))}</colgroup>
       <thead>
         <tr class="group-header">{''.join(f'<th colspan="{span}">{escape(header)}</th>' for header, span in group_headers)}</tr>
-        <tr class="column-header">{''.join(f'<th><button class="sort-button" type="button" data-index="{idx}" data-type="{sort_types[idx]}">{escape(header)}</button></th>' if idx in sortable_columns else f'<th><span class="plain-header">{escape(header)}</span></th>' for idx, header in enumerate(headers))}</tr>
+        <tr class="column-header">{header_html}</tr>
       </thead>
       <tbody>{''.join(rows_html)}</tbody>
     </table>
@@ -521,7 +944,26 @@ body {{
   const table = document.getElementById("releaseLibraryTable");
   const tbody = table.querySelector("tbody");
   const buttons = Array.from(table.querySelectorAll(".sort-button"));
-  let activeSort = {{ index: 1, dir: "desc", type: "date" }};
+  const cols = Array.from(table.querySelectorAll("col"));
+  const resizeHandles = Array.from(table.querySelectorAll(".resize-handle"));
+  let activeSort = {{ index: {active_sort_index}, dir: "desc", type: "date" }};
+
+  function columnWidth(index) {{
+    const col = cols[index];
+    if (!col) return 120;
+    const parsed = Number(String(col.style.width || "").replace("px", ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : col.getBoundingClientRect().width;
+  }}
+
+  function setColumnWidth(index, width) {{
+    const col = cols[index];
+    if (!col) return;
+    const minWidth = index === 0 ? 180 : 76;
+    const maxWidth = index === 0 ? 760 : 720;
+    const nextWidth = Math.max(minWidth, Math.min(maxWidth, width));
+    col.style.width = nextWidth + "px";
+    table.style.minWidth = cols.reduce((sum, item, itemIndex) => sum + columnWidth(itemIndex), 0) + "px";
+  }}
 
   function allRows() {{
     return Array.from(tbody.querySelectorAll("tr"));
@@ -562,6 +1004,46 @@ body {{
       const nextDir = activeSort.index === nextIndex && activeSort.dir === "asc" ? "desc" : "asc";
       activeSort = {{ index: nextIndex, dir: nextDir, type: nextType }};
       applySort();
+    }});
+  }});
+
+  resizeHandles.forEach((handle) => {{
+    handle.addEventListener("mousedown", (event) => {{
+      event.preventDefault();
+      event.stopPropagation();
+      const index = Number(handle.dataset.index);
+      const startX = event.clientX;
+      const startWidth = columnWidth(index);
+      handle.classList.add("is-resizing");
+
+      function onMove(moveEvent) {{
+        setColumnWidth(index, startWidth + moveEvent.clientX - startX);
+      }}
+
+      function onUp() {{
+        handle.classList.remove("is-resizing");
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }}
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    }});
+  }});
+
+  Array.from(table.querySelectorAll(".type-toggle")).forEach((button) => {{
+    button.addEventListener("click", () => {{
+      const token = button.dataset.token || "";
+      if (!token) return;
+      let nextUrl = "";
+      try {{
+        const baseUrl = new URL(document.referrer || window.location.href);
+        baseUrl.searchParams.set("trend_toggle_history_type", token);
+        nextUrl = baseUrl.toString();
+      }} catch (error) {{
+        nextUrl = "?trend_toggle_history_type=" + encodeURIComponent(token);
+      }}
+      window.open(nextUrl, "_top");
     }});
   }});
 
@@ -988,6 +1470,7 @@ def _release_performance_table(
     family: str,
     empty_message: str,
     table_mode: str,
+    show_history_type: bool,
 ) -> None:
     if frame.empty:
         st.info(empty_message)
@@ -1014,6 +1497,8 @@ def _release_performance_table(
         "devops_job_id",
         "topic_name",
     ]
+    if show_history_type:
+        columns.insert(columns.index("date"), "history_type")
     if family == "Perception Performance":
         columns.insert(columns.index("roles"), "overall_pass_rate")
     visible = [column for column in columns if column in view.columns]
@@ -1373,6 +1858,7 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
             "release_name": group.display_name,
             "topic_name": group.topic_name,
             "group_kind": group.group_kind,
+            "history_type": _infer_group_history_type(group),
             "version": version,
             "date": date,
             "description": description,
@@ -1418,6 +1904,7 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
                                 {
                                     "group_key": group.group_key,
                                     "release_name": group.display_name,
+                                    "history_type": _infer_group_history_type(group),
                                     "version": version,
                                     "date": date,
                                     "description": description,
@@ -1443,6 +1930,7 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
                         {
                             "group_key": group.group_key,
                             "release_name": group.display_name,
+                            "history_type": _infer_group_history_type(group),
                             "version": version,
                             "date": date,
                             "description": description,
@@ -1499,11 +1987,38 @@ if not release_df.empty:
 
 section_header("Release History")
 release_specsheets = discover_release_specsheet_inventory(get_data_root())
+for release in release_specsheets:
+    release["history_type"] = _infer_release_inventory_history_type(release)
+_consume_history_type_toggle(release_specsheets)
+
+history_counts = _history_type_counts(release_df)
+history_filter = st.segmented_control(
+    "History category",
+    options=_history_filter_options(history_counts),
+    default=_history_filter_options(history_counts)[0],
+    key="trend_history_category",
+)
+selected_history_type = _history_type_from_filter(history_filter)
+show_history_type_column = selected_history_type is None
+if selected_history_type:
+    release_df = release_df[release_df["history_type"] == selected_history_type].copy()
+    case_df = case_df[case_df["history_type"] == selected_history_type].copy() if not case_df.empty else case_df
+    metric_df = metric_df[metric_df["history_type"] == selected_history_type].copy() if not metric_df.empty else metric_df
+    release_specsheets = [
+        release
+        for release in release_specsheets
+        if str(release.get("history_type") or HISTORY_TYPE_OTHER) == selected_history_type
+    ]
+
 if release_specsheets:
-    workflow_count = sum(1 for row in release_specsheets if str(row.get("source_kind") or "") == "workflow")
-    imported_count = len(release_specsheets) - workflow_count
+    filtered_counts = {
+        label: sum(1 for row in release_specsheets if str(row.get("history_type") or HISTORY_TYPE_OTHER) == label)
+        for label in HISTORY_TYPE_ORDER
+    }
     st.caption(
-        f"{len(release_specsheets)} release(s): {workflow_count} workflow folder(s), {imported_count} imported library folder(s)."
+        f"{len(release_specsheets)} history item(s): "
+        + ", ".join(f"{label} {count}" for label, count in filtered_counts.items() if count)
+        + "."
     )
     release_specsheets = sorted(
         release_specsheets,
@@ -1516,9 +2031,15 @@ if release_specsheets:
         ),
         reverse=True,
     )
-    _render_release_library_table(release_specsheets)
+    if show_history_type_column:
+        _render_history_type_fallback_editor(release_specsheets)
+    _render_release_library_table(
+        release_specsheets,
+        show_type_column=show_history_type_column,
+        enable_type_toggle=show_history_type_column,
+    )
 else:
-    st.info("No release folders were found. Add workflow release output under the data root or import legacy analyzer output with `python scripts/import_catalog_analyzer_releases.py --force`.")
+    st.info("No history rows match the selected category.")
 
 section_header("Release Performance")
 top1, top2, top3, top4, top5 = st.columns(5)
@@ -1541,6 +2062,7 @@ _release_performance_table(
     family="Perception Performance",
     empty_message="No Perception Performance release rows are available.",
     table_mode=performance_table_mode,
+    show_history_type=show_history_type_column,
 )
 
 st.markdown("#### ML Model Performance")
@@ -1549,6 +2071,7 @@ _release_performance_table(
     family="ML Model Performance",
     empty_message="No ML Model Performance release rows are available.",
     table_mode=performance_table_mode,
+    show_history_type=show_history_type_column,
 )
 
 section_header("Major Performance Scores")
