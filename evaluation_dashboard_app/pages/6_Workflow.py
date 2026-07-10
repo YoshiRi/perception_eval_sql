@@ -2443,6 +2443,34 @@ def _render_start_workflow_form(
         _render_redownload_option("devops", "DevOps", devops_job_id)
         if optional_catalog_enabled:
             _render_redownload_option("planning_test", "Planning Test", optional_job_id)
+
+        def _render_release_role_plan(role: str, label: str, entered_job_id: str) -> None:
+            has_local_artifacts = _release_role_has_local_artifacts(output_path, role)
+            force_redownload = role in force_redownload_roles
+            recorded_job_id = str(recorded_job_ids.get(role) or "").strip()
+            if entered_job_id and force_redownload:
+                st.warning(
+                    f"{label}: will clear existing local artifacts and download from entered job `{entered_job_id}`."
+                )
+            elif entered_job_id:
+                if has_local_artifacts:
+                    st.info(
+                        f"{label}: will wait for entered job `{entered_job_id}`, then keep using local artifacts already in this folder."
+                    )
+                else:
+                    st.info(f"{label}: will use entered job `{entered_job_id}` for download and analysis.")
+            elif has_local_artifacts:
+                suffix = f" Recorded job: `{recorded_job_id}`." if recorded_job_id else ""
+                st.success(f"{label}: will use existing local artifacts; no new evaluator job will be scheduled.{suffix}")
+            else:
+                suffix = f" Recorded job `{recorded_job_id}` is not auto-filled." if recorded_job_id else ""
+                st.warning(f"{label}: no job ID entered and no local artifacts found; a new evaluator job will be scheduled.{suffix}")
+
+        st.markdown("**Release execution plan**")
+        _render_release_role_plan("performance", "Performance", performance_job_id)
+        _render_release_role_plan("devops", "DevOps", devops_job_id)
+        if optional_catalog_enabled:
+            _render_release_role_plan("planning_test", "Planning Test", optional_job_id)
     else:
         performance_job_id = ""
         devops_job_id = ""
