@@ -12,6 +12,7 @@ import inspect
 import json
 import os
 import pickle
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Iterable, List, Tuple
@@ -396,6 +397,232 @@ def download_scene_results_to_pkl(
     return pkl_files
 
 
+def _convert_single_pkl(
+    pkl_file: str | Path,
+    *,
+    project_id: str | None,
+    job_id: str | None,
+    skip_empty: bool,
+    skip_bad_dtype: bool,
+) -> Tuple[str, Any]:
+    """Load + normalize + convert ONE pkl and classify the result.
+
+    Returns one of:
+      ("use", SceneDataFrame)  -> frame should be concatenated
+      ("skip", reason)         -> soft skip (empty / bad dtype); never fatal
+      ("error", reason)        -> load/convert failure; fatal when no on_skip
+
+    All the native, crash-prone work (pickle/joblib load, scene2df, polars concat)
+    happens here, so this is what runs inside the isolation fork.
+    """
+    try:
+        if str(pkl_file).lower().endswith(".pkl.z"):
+            try:
+                data = joblib.load(pkl_file)
+            except NameError:
+                raise ImportError("joblib is required for .pkl.z: pip install joblib")
+        else:
+            with open(pkl_file, "rb") as f:
+                data = pickle.load(f)
+    except Exception as e:
+        return ("error", f"failed to load: {e}")
+    data = _normalize_loaded_pkl(
+        data,
+        pkl_file=pkl_file,
+        project_id=project_id,
+        job_id=job_id,
+    )
+    try:
+        df_ = _scenarios_to_df_local(data, scenario_parser_function=scene2df, debug=False)
+    except Exception as e:
+        return ("error", f"failed to convert: {e}")
+    del data
+    if df_.empty():
+        if skip_empty:
+            return ("skip", "empty")
+    if skip_bad_dtype and hasattr(df_, "current") and "x_error" in _frame_column_names(df_.current):
+        x_error_dtype = _frame_dtype_name(df_.current, "x_error")
+        if not _is_float64_dtype_name(x_error_dtype):
+            return ("skip", f"bad dtype x_error={x_error_dtype}")
+    return ("use", df_)
+
+
+def _safe_unlink(path: str | Path) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _pkl_isolation_enabled() -> bool:
+    """Whether to run each pkl's load/convert in a fresh, spawned subprocess.
+
+    On by default. Set PARQUET_PKL_ISOLATION=0 to force the legacy in-process path
+    (e.g. tests, or when the per-file spawn overhead is unwanted and a native crash
+    is not expected).
+
+    NOTE: isolation uses a *spawned* (fresh-interpreter) subprocess, not os.fork().
+    Forking a work horse that has already initialised native thread pools (polars'
+    rayon pool, pandas/pyarrow) and then doing more native work in the child is a
+    fork-safety hazard that itself SIGSEGVs. A fresh interpreter has none of that
+    inherited state, which is why a file that segfaults a forked child converts
+    cleanly in a spawned one.
+    """
+    val = os.environ.get("PARQUET_PKL_ISOLATION")
+    if val is None:
+        return True
+    return val.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _pkl_max_attempts() -> int:
+    """How many times to (re)spawn a converter before giving up on a file.
+
+    The perception_eval metric segfault (np.divide with where=/out= on degenerate
+    precision/recall) is NON-deterministic: it depends on heap/process state and
+    fires only sometimes for the same file. Retrying in a fresh process recovers
+    the files that crashed transiently; a file that crashes on every attempt is
+    genuinely bad and gets skipped. Default 3; override with PARQUET_PKL_MAX_ATTEMPTS.
+    """
+    raw = os.environ.get("PARQUET_PKL_MAX_ATTEMPTS")
+    if raw is None:
+        return 3
+    try:
+        return max(1, int(raw.strip()))
+    except (ValueError, AttributeError):
+        return 3
+
+
+# Marker prefixing the child's one-line JSON result, so we can ignore any library
+# chatter (warnings, debug prints) the converter emits on stdout.
+_PKL_CHILD_MARKER = "__PKLCONV__"
+
+# Bootstrap run by the spawned child: put the app root on sys.path, then hand off.
+_CHILD_BOOTSTRAP = (
+    "import sys; sys.path.insert(0, sys.argv[1]); "
+    "from lib.perception_catalog_io import _convert_pkl_subprocess_main as _m; _m()"
+)
+
+
+def _convert_pkl_subprocess_main() -> None:
+    """Entry point executed inside the spawned converter subprocess.
+
+    Reads a JSON request (argv[2]), converts one pkl via ``_convert_single_pkl`` in a
+    pristine interpreter, writes any produced frame to the shard path, and prints a
+    single ``_PKL_CHILD_MARKER``-tagged JSON line. A native crash here kills only this
+    process; the parent turns that into a per-file skip.
+    """
+    request = json.loads(sys.argv[2])
+    try:
+        kind, payload = _convert_single_pkl(
+            request["pkl_file"],
+            project_id=request["project_id"],
+            job_id=request["job_id"],
+            skip_empty=request["skip_empty"],
+            skip_bad_dtype=request["skip_bad_dtype"],
+        )
+        if kind == "use":
+            with open(request["shard_path"], "wb") as f:
+                pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            msg = {"kind": "use"}
+        else:
+            msg = {"kind": kind, "reason": payload}
+    except BaseException as e:  # normalize() or anything unexpected -> skippable
+        msg = {"kind": "error", "reason": f"failed: {e}"}
+    sys.stdout.write(_PKL_CHILD_MARKER + json.dumps(msg) + "\n")
+    sys.stdout.flush()
+
+
+def _run_convert_pkl_isolated(
+    pkl_file: str | Path,
+    *,
+    project_id: str | None,
+    job_id: str | None,
+    skip_empty: bool,
+    skip_bad_dtype: bool,
+) -> Tuple[str, Any]:
+    """Run ``_convert_single_pkl`` in a fresh spawned subprocess.
+
+    A SIGSEGV (or any signal death) in pickle/joblib/scene2df/polars kills only the
+    subprocess; the parent detects the signal via the return code and returns
+    ("crash", reason) so the caller skips that one file instead of losing the RQ
+    work horse. The converted frame, when present, comes back through a temp pickle
+    file; only a tiny tagged JSON line crosses stdout.
+    """
+    import subprocess
+    import tempfile
+
+    app_root = str(Path(__file__).resolve().parents[1])
+    shard = tempfile.NamedTemporaryFile(prefix="pkl_shard_", suffix=".pkl", delete=False)
+    shard_path = shard.name
+    shard.close()
+
+    request = json.dumps(
+        {
+            "pkl_file": str(pkl_file),
+            "project_id": project_id,
+            "job_id": job_id,
+            "skip_empty": skip_empty,
+            "skip_bad_dtype": skip_bad_dtype,
+            "shard_path": shard_path,
+        }
+    )
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = app_root + (os.pathsep + existing if existing else "")
+    env["PARQUET_PKL_ISOLATION"] = "0"  # never recurse isolation inside the child
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _CHILD_BOOTSTRAP, app_root, request],
+            cwd=app_root,
+            env=env,
+            capture_output=True,
+        )
+    except Exception as e:
+        _safe_unlink(shard_path)
+        return ("error", f"failed to spawn converter subprocess: {e}")
+
+    if proc.returncode != 0:
+        _safe_unlink(shard_path)
+        if proc.returncode < 0:  # killed by a signal (POSIX convention)
+            sig = -proc.returncode
+            return (
+                "crash",
+                f"native crash: converter subprocess killed by signal {sig} "
+                f"(exit {128 + sig}) during load/convert",
+            )
+        tail = (proc.stderr or b"")[-500:].decode("utf-8", "replace").strip()
+        suffix = f": {tail}" if tail else ""
+        return ("crash", f"native crash: converter subprocess exited {proc.returncode}{suffix}")
+
+    line = None
+    for raw in (proc.stdout or b"").splitlines():
+        if raw.startswith(_PKL_CHILD_MARKER.encode("utf-8")):
+            line = raw[len(_PKL_CHILD_MARKER):]
+            break
+    if line is None:
+        _safe_unlink(shard_path)
+        return ("crash", "converter subprocess produced no result line")
+    try:
+        msg = json.loads(line.decode("utf-8"))
+    except Exception as e:
+        _safe_unlink(shard_path)
+        return ("crash", f"could not parse converter subprocess result: {e}")
+
+    kind = msg.get("kind")
+    if kind == "use":
+        try:
+            with open(shard_path, "rb") as f:
+                df_ = pickle.load(f)
+        except Exception as e:
+            _safe_unlink(shard_path)
+            return ("error", f"failed to read converted frame: {e}")
+        _safe_unlink(shard_path)
+        return ("use", df_)
+    _safe_unlink(shard_path)
+    return (kind, msg.get("reason", ""))
+
+
 def build_scene_dataframe_from_pkl_dir(
     pkl_dir: str | Path,
     *,
@@ -438,57 +665,46 @@ def build_scene_dataframe_from_pkl_dir(
         if on_progress:
             on_progress(done, total)
 
+    use_isolation = _pkl_isolation_enabled()
+    max_attempts = _pkl_max_attempts() if use_isolation else 1
+
     for i, pkl_file in enumerate(pkl_files):
-        try:
-            if str(pkl_file).lower().endswith(".pkl.z"):
-                try:
-                    data = joblib.load(pkl_file)
-                except NameError:
-                    raise ImportError("joblib is required for .pkl.z: pip install joblib")
+        if use_isolation:
+            for _attempt in range(1, max_attempts + 1):
+                kind, payload = _run_convert_pkl_isolated(
+                    pkl_file,
+                    project_id=project_id,
+                    job_id=job_id,
+                    skip_empty=skip_empty,
+                    skip_bad_dtype=skip_bad_dtype,
+                )
+                if kind != "crash":
+                    break  # success or a deterministic soft/hard skip; no retry
             else:
-                with open(pkl_file, "rb") as f:
-                    data = pickle.load(f)
-        except Exception as e:
-            if on_skip:
-                on_skip(pkl_file, f"failed to load: {e}")
-                _report_progress(i + 1)
-                continue
-            raise
-        data = _normalize_loaded_pkl(
-            data,
-            pkl_file=pkl_file,
-            project_id=project_id,
-            job_id=job_id,
-        )
-        try:
-            df_ = _scenarios_to_df_local(data, scenario_parser_function=scene2df, debug=False)
-        except Exception as e:
-            if on_skip:
-                on_skip(pkl_file, f"failed to convert: {e}")
-                _report_progress(i + 1)
-                continue
-            raise
-        del data
-        if df_.empty():
-            if skip_empty:
-                if on_skip:
-                    on_skip(pkl_file, "empty")
-                del df_
-                gc.collect()
-                _report_progress(i + 1)
-                continue
-        if skip_bad_dtype and hasattr(df_, "current") and "x_error" in _frame_column_names(df_.current):
-            x_error_dtype = _frame_dtype_name(df_.current, "x_error")
-            if not _is_float64_dtype_name(x_error_dtype):
-                if on_skip:
-                    on_skip(pkl_file, f"bad dtype x_error={x_error_dtype}")
-                del df_
-                gc.collect()
-                _report_progress(i + 1)
-                continue
-        df = _concatenate_scene_dataframe(df, df_)
-        del df_
-        gc.collect()
+                # Every attempt segfaulted -> genuinely bad file. Note the retries.
+                if max_attempts > 1:
+                    payload = f"{payload} (failed all {max_attempts} attempts)"
+        else:
+            kind, payload = _convert_single_pkl(
+                pkl_file,
+                project_id=project_id,
+                job_id=job_id,
+                skip_empty=skip_empty,
+                skip_bad_dtype=skip_bad_dtype,
+            )
+
+        if kind == "use":
+            df = _concatenate_scene_dataframe(df, payload)
+            del payload
+            gc.collect()
+        else:
+            # "skip" is a soft skip (empty/bad dtype); "error"/"crash" are fatal only
+            # when the caller gave us no on_skip to route the failure to.
+            reason = payload
+            if kind in ("error", "crash") and on_skip is None:
+                raise RuntimeError(reason)
+            if on_skip is not None:
+                on_skip(pkl_file, reason)
         _report_progress(i + 1)
     return df
 
