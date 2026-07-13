@@ -2121,11 +2121,13 @@ if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any(
         else "n/a",
     )
     fig = go.Figure()
+    major_versions = perf_entries["version"].drop_duplicates().tolist()
+    major_version_order = {version: idx for idx, version in enumerate(major_versions)}
     scenario_totals = (
         perf_entries[perf_entries["topic_family"] == "Perception Performance"]
         .groupby("version", dropna=False)["data_count_num"]
         .max()
-        .reindex(perf_entries["version"].drop_duplicates().tolist())
+        .reindex(major_versions)
     )
     fig.add_bar(
         x=scenario_totals.index.tolist(),
@@ -2149,6 +2151,8 @@ if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any(
         family_df = perf_entries[perf_entries["topic_family"] == family].copy()
         if family_df.empty:
             continue
+        family_df["__version_order"] = family_df["version"].map(major_version_order).fillna(len(major_version_order))
+        family_df = family_df.sort_values(["__version_order", "version", "date_sort", "release_name"])
         for metric_col in major_metric_cols:
             metric_df_for_line = family_df.dropna(subset=[metric_col])
             if metric_df_for_line.empty:
@@ -2185,6 +2189,7 @@ if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any(
         legend_tracegroupgap=18,
         margin=dict(l=20, r=20, t=80, b=125),
     )
+    fig.update_xaxes(categoryorder="array", categoryarray=major_versions)
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No grouped major metric trend entries are available yet.")
@@ -2212,8 +2217,12 @@ if not prediction_entries.empty and prediction_entries[prediction_cols].notna().
         f"{int(latest_pred_row['data_count_num']):,}" if pd.notna(latest_pred_row["data_count_num"]) else "n/a",
     )
     pred_story = prediction_entries[
-        ["version", "date", "description", "release_name", "data_count", "data_count_num"] + prediction_cols
+        ["version", "date", "date_sort", "description", "release_name", "data_count", "data_count_num"] + prediction_cols
     ].copy()
+    pred_versions = pred_story["version"].drop_duplicates().tolist()
+    pred_version_order = {version: idx for idx, version in enumerate(pred_versions)}
+    pred_story["__version_order"] = pred_story["version"].map(pred_version_order).fillna(len(pred_version_order))
+    pred_story = pred_story.sort_values(["__version_order", "version", "date_sort", "release_name"])
     pred_fig = go.Figure()
     pred_fig.add_bar(
         x=pred_story["version"],
@@ -2263,7 +2272,7 @@ if not prediction_entries.empty and prediction_entries[prediction_cols].notna().
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
     )
-    pred_fig.update_xaxes(showgrid=False)
+    pred_fig.update_xaxes(showgrid=False, categoryorder="array", categoryarray=pred_versions)
     pred_fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
     st.plotly_chart(pred_fig, use_container_width=True)
 else:
