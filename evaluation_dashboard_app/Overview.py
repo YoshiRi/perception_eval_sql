@@ -354,26 +354,32 @@ if mode == "Compare Mode":
     new_compare_run_names = []
     for i, run_name in enumerate(compare_run_names):
         letter = chr(66 + i)  # B, C, D, ...
-        col_sel, col_rm = st.sidebar.columns([4, 1])
-        with col_sel:
-            idx = run_names.index(run_name) if run_name in run_names else 0
-            selected = st.selectbox(
+        idx = run_names.index(run_name) if run_name in run_names else 0
+        if len(compare_run_names) > 1:
+            col_sel, col_rm = st.sidebar.columns([8, 1])
+            with col_sel:
+                selected = st.selectbox(
+                    f"Candidate ({letter})",
+                    run_dirs,
+                    index=idx,
+                    format_func=get_run_display_name,
+                    key=f"compare_run_select_{i}",
+                )
+            with col_rm:
+                if st.button("✕", key=f"compare_remove_{i}", help="Remove this run"):
+                    removed_list = compare_run_names[:i] + compare_run_names[i + 1:]
+                    st.session_state["overview_compare_run_names"] = removed_list
+                    user_config.set("overview_compare_runs", removed_list)
+                    st.rerun()
+        else:
+            selected = st.sidebar.selectbox(
                 f"Candidate ({letter})",
                 run_dirs,
                 index=idx,
                 format_func=get_run_display_name,
                 key=f"compare_run_select_{i}",
             )
-            new_compare_run_names.append(get_run_display_name(selected))
-        with col_rm:
-            if len(compare_run_names) > 1:
-                if st.button("✕", key=f"compare_remove_{i}", help="Remove this run"):
-                    removed_list = compare_run_names[:i] + compare_run_names[i + 1:]
-                    st.session_state["overview_compare_run_names"] = removed_list
-                    user_config.set("overview_compare_runs", removed_list)
-                    st.rerun()
-            else:
-                st.write("")  # placeholder so layout is stable
+        new_compare_run_names.append(get_run_display_name(selected))
     compare_run_names = new_compare_run_names
     st.session_state["overview_compare_run_names"] = compare_run_names
 

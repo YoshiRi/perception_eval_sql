@@ -2700,6 +2700,7 @@ with st.sidebar:
             )
             target_files.append(tf)
 
+target_file = target_files[0] if target_files else None
 con = get_duckdb_connection()
 fp = _parquet_selection_fingerprint(target_files)
 cache_hit = st.session_state.get("_ds_parquet_fp") == fp and "_ds_filter_opts" in st.session_state
@@ -2803,7 +2804,6 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
         suite_options = opts["suite_options"]
         vis_options = opts["vis_options"]
         schema = opts["schema"]
-        target_file = target_files[0]
         cached_target_files = opts.get("cached_target_files", list(target_files))
         cache_rebuild_notes = opts.get("cache_rebuild_notes", [])
         per_run_suite_lookup = opts.get("per_run_suite_lookup", [])
