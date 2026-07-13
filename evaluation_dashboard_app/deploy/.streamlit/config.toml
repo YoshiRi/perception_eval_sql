@@ -5,6 +5,11 @@
 # Local default: open browser when running outside Docker
 headless = false
 
+# Docker bind mounts can miss inotify-style file events. Polling is slower but
+# much more reliable for picking up source edits without restarting Streamlit.
+fileWatcherType = "poll"
+runOnSave = true
+
 # Behind nginx or other proxies, per-message WebSocket compression can break or stall
 # some setups (see Streamlit troubleshooting: "App is not loading when running remotely").
 enableWebsocketCompression = false

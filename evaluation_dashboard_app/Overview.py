@@ -24,7 +24,6 @@ from lib.specsheet_report import (
     DEFAULT_SPECSHEET_PROJECT_ID,
     DEFAULT_SPECSHEET_TOPIC,
     DEFAULT_TREND_METADATA_TEXT,
-    collect_candidate_specsheet_labels,
     discover_trend_release_groups,
     generate_specsheet_pdf,
     get_release_specsheet_context,
@@ -887,18 +886,14 @@ with specsheet_cfg_col3:
         key="specsheet_topic_name",
     ).strip()
 
-_detected_specsheet_labels = []
-for run_path in selected_specsheet_run_paths:
-    _detected_specsheet_labels.extend(collect_candidate_specsheet_labels(run_path))
-specsheet_labels = list(dict.fromkeys(_detected_specsheet_labels or _default_specsheet_labels))
-if specsheet_labels:
-    st.caption(f"Labels: all detected labels ({len(specsheet_labels)})")
+specsheet_labels = list(_default_specsheet_labels)
 if not selected_specsheet_run_paths:
     st.info("Pick at least one run to build the release spec-sheet.")
 
 if _selected_trend_metadata_text and "specsheet_include_trend" not in st.session_state:
     st.session_state["specsheet_include_trend"] = True
 
+_release_trend_dir_text = ""
 _release_trend_status_text = ""
 if selected_specsheet_release_contexts:
     for release_context in selected_specsheet_release_contexts[:1]:
@@ -913,11 +908,13 @@ if selected_specsheet_release_contexts:
                 bits = []
                 bits.append("summary.json" if role_info.get("has_summary") else "no summary.json")
                 bits.append("metadata.yaml" if role_info.get("has_metadata") else "no metadata.yaml")
-                role_status.append(f"{role_name}: {', '.join(bits)}")
-        release_text = f"Release folder: `{path_display(release_dir)}`." if isinstance(release_dir, Path) else "Release folder detected."
+                if role_info.get("has_summary") and role_info.get("has_metadata"):
+                    role_status.append(f"{role_name} ready")
+                else:
+                    role_status.append(f"{role_name}: {', '.join(bits)}")
+        _release_trend_dir_text = path_display(release_dir) if isinstance(release_dir, Path) else "detected"
         if role_status:
-            release_text += " " + "; ".join(role_status) + "."
-        _release_trend_status_text = release_text
+            _release_trend_status_text = " · ".join(role_status)
 
 trend_toggle_col, trend_status_col = st.columns([1.1, 2.9])
 with trend_toggle_col:
@@ -928,12 +925,17 @@ with trend_toggle_col:
         help="Save release metadata and include available trend history.",
     )
 with trend_status_col:
-    if specsheet_trend_enabled and _selected_trend_metadata_path is not None and _selected_trend_metadata_text:
-        st.caption(f"Using saved metadata: `{path_display(_selected_trend_metadata_path)}`")
-    elif specsheet_trend_enabled:
-        st.caption("No saved metadata found. Fill in release metadata below.")
-    if specsheet_trend_enabled and _release_trend_status_text:
-        st.caption(_release_trend_status_text)
+    if specsheet_trend_enabled:
+        trend_status_parts = []
+        if _selected_trend_metadata_path is not None and _selected_trend_metadata_text:
+            trend_status_parts.append(f"Metadata `{path_display(_selected_trend_metadata_path)}`")
+        else:
+            trend_status_parts.append("Metadata not saved")
+        if _release_trend_dir_text:
+            trend_status_parts.append(f"Release `{_release_trend_dir_text}`")
+        if _release_trend_status_text:
+            trend_status_parts.append(_release_trend_status_text)
+        st.caption(" · ".join(trend_status_parts))
 
 trend_metadata_payload = None
 trend_metadata_changed = False
@@ -1231,37 +1233,47 @@ with specsheet_action_col1:
             _specsheet_status.error(f"Spec-sheet generation failed: {e}")
 with specsheet_action_col2:
     if _specsheet_ready:
-        st.success("Release spec-sheet is ready.")
-        st.download_button(
-            "Download Release Spec-sheet",
-            data=st.session_state["specsheet_pdf_report_bytes"],
-            file_name=st.session_state.get("specsheet_pdf_report_name", "specsheet.pdf"),
-            mime=st.session_state.get("specsheet_pdf_report_mime", "application/pdf"),
-            use_container_width=True,
-        )
-    elif _all_selected_specsheet_pdfs_ready:
-        st.success("Existing release spec-sheet is ready.")
-        if len(_existing_specsheet_paths) == 1:
-            _disk_pdf_path = _existing_specsheet_paths[0]
+        ready_col, download_col = st.columns([1.7, 1.0])
+        with ready_col:
+            st.caption("Ready · generated release spec-sheet")
+        with download_col:
             st.download_button(
-                "Download Release Spec-sheet",
-                data=_disk_pdf_path.read_bytes(),
-                file_name=_disk_pdf_path.name,
-                mime="application/pdf",
+                "Download PDF",
+                data=st.session_state["specsheet_pdf_report_bytes"],
+                file_name=st.session_state.get("specsheet_pdf_report_name", "specsheet.pdf"),
+                mime=st.session_state.get("specsheet_pdf_report_mime", "application/pdf"),
                 use_container_width=True,
             )
+    elif _all_selected_specsheet_pdfs_ready:
+        if len(_existing_specsheet_paths) == 1:
+            _disk_pdf_path = _existing_specsheet_paths[0]
+            ready_col, download_col = st.columns([1.7, 1.0])
+            with ready_col:
+                st.caption("Ready · existing release spec-sheet")
+            with download_col:
+                st.download_button(
+                    "Download PDF",
+                    data=_disk_pdf_path.read_bytes(),
+                    file_name=_disk_pdf_path.name,
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
         else:
             _zip_buffer = io.BytesIO()
             with zipfile.ZipFile(_zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
                 for pdf_path in _existing_specsheet_paths:
                     zf.write(pdf_path, arcname=f"{pdf_path.parent.parent.name}/{pdf_path.name}")
-            st.download_button(
-                "Download Release Spec-sheets",
-                data=_zip_buffer.getvalue(),
-                file_name="specsheet_reports.zip",
-                mime="application/zip",
-                use_container_width=True,
-            )
+            ready_col, download_col = st.columns([1.7, 1.0])
+            with ready_col:
+                st.caption("Ready · existing release spec-sheets")
+            with download_col:
+                st.download_button(
+                    "Download ZIP",
+                    data=_zip_buffer.getvalue(),
+                    file_name="specsheet_reports.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
     else:
         if len(selected_specsheet_run_paths) == 1:
             _single_paths = _active_specsheet_paths[0]

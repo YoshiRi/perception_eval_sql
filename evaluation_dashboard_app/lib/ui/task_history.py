@@ -10,6 +10,7 @@ import streamlit as st
 
 from lib.auth import get_current_user_id, is_auth_enabled
 from lib.db import delete_task, get_task
+from lib.path_utils import get_data_root_display, to_data_relative
 from lib.ui.download_ui import TaskCardMode, render_task_list_empty_state, task_list_card_markup
 from lib.ui.task_result_summary import render_task_result_summary
 
@@ -46,19 +47,30 @@ def _task_type_label(task_type: str) -> str:
     return labels.get(task_type, task_type or "Task")
 
 
+def _task_path_display(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    display = to_data_relative(text).strip()
+    for prefix in ("/app/data/", f"{get_data_root_display().rstrip('/')}/"):
+        if display.startswith(prefix):
+            return display[len(prefix):]
+    return display
+
+
 def _task_summary(t: Dict[str, Any]) -> str:
     params = t.get("parameters") or {}
     task_type = t.get("type", "")
     if task_type == "download_results":
         out = params.get("output_path") or params.get("job_id") or ""
-        return f"job_id={params.get('job_id', '')} → {out}"
+        return f"job_id={params.get('job_id', '')} → {_task_path_display(out)}"
     if task_type == "download_scenarios":
         out = params.get("output_dir") or params.get("output_path") or ""
-        return f"job_id={params.get('job_id', '')} → {out}"
+        return f"job_id={params.get('job_id', '')} → {_task_path_display(out)}"
     if task_type in ("run_eval_dirs", "generate_summary_csv"):
-        return params.get("eval_root", "")
+        return _task_path_display(params.get("eval_root", ""))
     if task_type == "build_parquet":
-        return params.get("pkl_dir", "")
+        return _task_path_display(params.get("pkl_dir", ""))
     if task_type == "download_and_eval":
         out = params.get("output_path") or params.get("job_id") or ""
         parts = ["download"]
@@ -66,15 +78,15 @@ def _task_summary(t: Dict[str, Any]) -> str:
             parts.append("eval")
         if params.get("generate_parquet"):
             parts.append("parquet")
-        return f"job_id={params.get('job_id', '')} [{'+'.join(parts)}] → {out}"
+        return f"job_id={params.get('job_id', '')} [{'+'.join(parts)}] → {_task_path_display(out)}"
     if task_type == "run_evaluator_and_process":
         target = params.get("target_name", "")
         target_type = "tag" if params.get("is_tag", False) else "branch"
-        return f"{target_type}={target} → {params.get('output_path', '')}"
+        return f"{target_type}={target} → {_task_path_display(params.get('output_path', ''))}"
     if task_type == "run_release_specsheet_workflow":
         target = params.get("target_name", "")
         target_type = "tag" if params.get("is_tag", False) else "branch"
-        return f"{target_type}={target} → {params.get('output_path', '')}"
+        return f"{target_type}={target} → {_task_path_display(params.get('output_path', ''))}"
     if task_type == "prepare_pr_test_branch":
         sub_repo = params.get("sub_repo", "universe")
         source = params.get("sub_repo_branch") or (f"PR #{params.get('pr_number')}" if params.get("pr_number") else "")
@@ -196,9 +208,7 @@ def _render_one_task_row(
     status_label = status_labels.get(status, status)
     summary = _task_summary(t)
     sid = str(task_id)
-    summary_short = (
-        (summary[:72] + "…") if mode == "history" and summary and len(summary) > 72 else (summary if mode == "history" else "—")
-    ) or "—"
+    summary_short = (summary if mode == "history" else "—") or "—"
     progress_msg = (t.get("progress_message") or "").strip()
     card = task_list_card_markup(
         task_id=sid,

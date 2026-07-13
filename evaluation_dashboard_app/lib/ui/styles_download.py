@@ -675,6 +675,14 @@ def inject_download_page_styles() -> None:
           -webkit-box-orient: vertical;
           overflow: hidden;
         }
+        .dl-task-card--history .dl-task-sum--one {
+          display: block;
+          -webkit-line-clamp: unset;
+          line-clamp: unset;
+          overflow: visible;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
         .dl-task-card {
           position: relative;
           border-radius: 16px;
