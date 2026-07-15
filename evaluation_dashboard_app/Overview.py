@@ -1137,7 +1137,7 @@ with specsheet_action_col1:
 
             stage_progress = {
                 "Using existing up-to-date spec-sheet PDF": 1.0,
-                "Loading CSV files": 0.15,
+                "Loading specsheet data": 0.15,
                 "Building abstract and detail sections": 0.2,
                 "Validating full trend summary": 0.9,
                 "Saving trend metadata": 0.9,

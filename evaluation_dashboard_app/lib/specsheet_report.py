@@ -1711,6 +1711,40 @@ def _scene_dataframe_from_dir_compat(
     return from_dir(run_path)
 
 
+def _load_scene_dataframe_for_specsheet(
+    scene_dataframe_cls,
+    run_path: Path,
+    *,
+    topic_name: str,
+    progress_callback: Callable[[str], None] | None = None,
+):
+    try:
+        return _scene_dataframe_from_dir_compat(
+            scene_dataframe_cls,
+            run_path,
+            topic_name=topic_name,
+        )
+    except Exception as exc:
+        paths = get_specsheet_artifact_paths(run_path)
+        if not _has_required_columns(paths["current_parquet"], _CURRENT_REQUIRED_COLUMNS):
+            raise
+        if _has_required_columns(paths["current_csv"], _CURRENT_REQUIRED_COLUMNS):
+            raise
+        _notify(
+            progress_callback,
+            "Parquet load failed. Converting to CSV for analyzer compatibility",
+        )
+        ensure_specsheet_csvs(run_path, progress_callback=progress_callback)
+        try:
+            return _scene_dataframe_from_dir_compat(
+                scene_dataframe_cls,
+                run_path,
+                topic_name=topic_name,
+            )
+        except Exception:
+            raise exc
+
+
 _CURRENT_NUMERIC_COLUMNS = {
     "unix_time",
     "x",
@@ -1911,76 +1945,138 @@ def _specsheet_compat(
     specsheet_func(*args, **kwargs)
 
 
-def ensure_specsheet_csvs(
+def _build_current_csv_from_available_sources(
+    run_dir: str | Path,
+    paths: dict[str, Path],
+    *,
+    progress_callback: Callable[[str], None] | None = None,
+) -> None:
+    current_csv = paths["current_csv"]
+    fallback = next(
+        (
+            path
+            for path in list_specsheet_source_parquets(run_dir)
+            if _has_required_columns(path, _CURRENT_REQUIRED_COLUMNS)
+        ),
+        None,
+    )
+    if fallback is not None:
+        _notify(progress_callback, f"Converting {fallback.name} -> {current_csv.name}")
+        _copy_parquet_to_csv(
+            fallback,
+            current_csv,
+            required_columns=_CURRENT_REQUIRED_COLUMNS,
+        )
+    elif not _has_pkl_sources(run_dir):
+        source_names = ", ".join(path.name for path in list_specsheet_source_parquets(run_dir))
+        raise ValueError(
+            "No usable current specsheet data found. Existing parquet file(s) "
+            f"do not include required column `frame_index`: {source_names or 'none'}. "
+            "Re-download or regenerate the run with evaluator result data."
+        )
+
+    if not current_csv.exists() or not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
+        _notify(progress_callback, "No valid CSV found. Building CSV from pkl / pkl.z files")
+        skip_counts: dict[str, int] = {}
+
+        def _on_progress(done: int, total: int) -> None:
+            _notify(progress_callback, f"Processing pkl files {done}/{total}")
+
+        def _on_skip(path: str | Path, reason: str) -> None:
+            skip_counts[reason] = skip_counts.get(reason, 0) + 1
+
+        df = build_scene_dataframe_from_pkl_dir(
+            run_dir,
+            on_progress=_on_progress,
+            on_skip=_on_skip,
+        )
+        if skip_counts:
+            details = ", ".join(
+                f"{count} {reason}" for reason, count in sorted(skip_counts.items())
+            )
+            _notify(progress_callback, f"Skipped pkl files: {details}")
+        df.to_csv(run_dir)
+        if not current_csv.exists() or not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
+            raise FileNotFoundError(
+                f"Failed to generate usable {current_csv}; required column `frame_index` is missing."
+            )
+
+
+def ensure_specsheet_inputs(
     run_dir: str | Path,
     *,
     progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Path | None]:
+    """Ensure the analyzer has loadable specsheet inputs, preferring parquet.
+
+    Modern perception_catalog_analyzer versions load current.parquet and
+    future.parquet directly. CSV is still accepted when it is the only available
+    source, and generated only when there is no named current parquet/csv input.
+    """
     paths = get_specsheet_artifact_paths(run_dir)
     current_csv = paths["current_csv"]
     future_csv = paths["future_csv"]
     current_parquet = paths["current_parquet"]
     future_parquet = paths["future_parquet"]
 
-    current_csv_valid = _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS)
-    current_parquet_valid = _has_required_columns(current_parquet, _CURRENT_REQUIRED_COLUMNS)
+    current_path: Path | None = None
+    future_path: Path | None = None
 
-    if not current_csv_valid:
-        if current_parquet_valid:
+    if _has_required_columns(current_parquet, _CURRENT_REQUIRED_COLUMNS):
+        current_path = current_parquet
+        _notify(progress_callback, f"Using {current_parquet.name} directly")
+    elif _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
+        current_path = current_csv
+        _notify(progress_callback, f"Using {current_csv.name}")
+    else:
+        _build_current_csv_from_available_sources(
+            run_dir,
+            paths,
+            progress_callback=progress_callback,
+        )
+        current_path = current_csv if current_csv.exists() else None
+
+    if future_parquet.exists() and _has_required_columns(future_parquet, _FUTURE_REQUIRED_COLUMNS):
+        future_path = future_parquet
+    elif future_csv.exists() and _has_required_columns(future_csv, _FUTURE_REQUIRED_COLUMNS):
+        future_path = future_csv
+
+    return {
+        "current": current_path,
+        "future": future_path,
+        "current_csv": current_csv if current_csv.exists() else None,
+        "future_csv": future_csv if future_csv.exists() else None,
+        "current_parquet": current_parquet if current_parquet.exists() else None,
+        "future_parquet": future_parquet if future_parquet.exists() else None,
+    }
+
+
+def ensure_specsheet_csvs(
+    run_dir: str | Path,
+    *,
+    progress_callback: Callable[[str], None] | None = None,
+) -> dict[str, Path | None]:
+    """Ensure current.csv/future.csv exist for older CSV-only analyzer paths."""
+    paths = get_specsheet_artifact_paths(run_dir)
+    current_csv = paths["current_csv"]
+    future_csv = paths["future_csv"]
+    current_parquet = paths["current_parquet"]
+    future_parquet = paths["future_parquet"]
+
+    if not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
+        if _has_required_columns(current_parquet, _CURRENT_REQUIRED_COLUMNS):
             _notify(progress_callback, f"Converting {current_parquet.name} -> {current_csv.name}")
             _copy_parquet_to_csv(
                 current_parquet,
                 current_csv,
                 required_columns=_CURRENT_REQUIRED_COLUMNS,
             )
-        elif list_specsheet_source_parquets(run_dir):
-            fallback = next(
-                (
-                    path
-                    for path in list_specsheet_source_parquets(run_dir)
-                    if _has_required_columns(path, _CURRENT_REQUIRED_COLUMNS)
-                ),
-                None,
-            )
-            if fallback is not None:
-                _notify(progress_callback, f"Converting {fallback.name} -> {current_csv.name}")
-                _copy_parquet_to_csv(
-                    fallback,
-                    current_csv,
-                    required_columns=_CURRENT_REQUIRED_COLUMNS,
-                )
-            elif not _has_pkl_sources(run_dir):
-                source_names = ", ".join(path.name for path in list_specsheet_source_parquets(run_dir))
-                raise ValueError(
-                    "No usable current specsheet data found. Existing parquet file(s) "
-                    f"do not include required column `frame_index`: {source_names or 'none'}. "
-                    "Re-download or regenerate the run with evaluator result data."
-                )
-        if not current_csv.exists() or not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
-            _notify(progress_callback, "No valid CSV found. Building CSV from pkl / pkl.z files")
-            skip_counts: dict[str, int] = {}
-
-            def _on_progress(done: int, total: int) -> None:
-                _notify(progress_callback, f"Processing pkl files {done}/{total}")
-
-            def _on_skip(path: str | Path, reason: str) -> None:
-                skip_counts[reason] = skip_counts.get(reason, 0) + 1
-
-            df = build_scene_dataframe_from_pkl_dir(
+        else:
+            _build_current_csv_from_available_sources(
                 run_dir,
-                on_progress=_on_progress,
-                on_skip=_on_skip,
+                paths,
+                progress_callback=progress_callback,
             )
-            if skip_counts:
-                details = ", ".join(
-                    f"{count} {reason}" for reason, count in sorted(skip_counts.items())
-                )
-                _notify(progress_callback, f"Skipped pkl files: {details}")
-            df.to_csv(run_dir)
-            if not current_csv.exists() or not _has_required_columns(current_csv, _CURRENT_REQUIRED_COLUMNS):
-                raise FileNotFoundError(
-                    f"Failed to generate usable {current_csv}; required column `frame_index` is missing."
-                )
 
     if not future_csv.exists() and future_parquet.exists():
         _notify(progress_callback, f"Converting {future_parquet.name} -> {future_csv.name}")
@@ -2017,7 +2113,7 @@ def generate_specsheet_pdf(
         _notify(progress_callback, "Using existing up-to-date spec-sheet PDF")
         return pdf_path, False
 
-    ensure_specsheet_csvs(run_dir, progress_callback=progress_callback)
+    ensure_specsheet_inputs(run_dir, progress_callback=progress_callback)
     resolved_topic, detected_topics = resolve_specsheet_topic_name(run_dir, topic_name)
     if resolved_topic != topic_name:
         detected_text = ", ".join(detected_topics) if detected_topics else "none"
@@ -2047,11 +2143,12 @@ def generate_specsheet_pdf(
     trend_asset_dir = specsheet_dir / "trend_assets"
     trend_asset_dir.mkdir(parents=True, exist_ok=True)
 
-    _notify(progress_callback, "Loading CSV files")
-    df = _scene_dataframe_from_dir_compat(
+    _notify(progress_callback, "Loading specsheet data")
+    df = _load_scene_dataframe_for_specsheet(
         SceneDataFrame,
         run_path,
         topic_name=topic_name,
+        progress_callback=progress_callback,
     )
     df = _coerce_specsheet_scene_numeric_columns(df)
     metrics = list(DEFAULT_SPECSHEET_METRICS)
@@ -2161,8 +2258,8 @@ def collect_candidate_specsheet_labels(
 
     paths = get_specsheet_artifact_paths(run_dir)
     for source in (
-        paths["current_csv"],
         paths["current_parquet"],
+        paths["current_csv"],
     ):
         if not source.exists():
             continue
