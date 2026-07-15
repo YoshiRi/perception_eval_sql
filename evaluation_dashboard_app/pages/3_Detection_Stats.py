@@ -1,4 +1,8 @@
 import html
+import io
+import json
+import re
+import zipfile
 from contextlib import contextmanager
 import hashlib
 
@@ -2063,6 +2067,92 @@ def _report_consecutive_failure_phrases(df_degraded_objects: pd.DataFrame) -> Tu
     return phrases, grouped
 
 
+def _report_fp_diff_by_group(
+    con,
+    base_view: str,
+    candidate_view: str,
+    base_filter: str,
+    candidate_filter: str,
+    *,
+    group_cols: List[str],
+) -> pd.DataFrame:
+    select_cols = ",\n                ".join(group_cols)
+    group_by = ", ".join(str(i + 1) for i in range(len(group_cols)))
+    join_cols = " AND ".join(
+        [f"COALESCE(CAST(b.{c} AS VARCHAR), '') = COALESCE(CAST(c.{c} AS VARCHAR), '')" for c in group_cols]
+    )
+    output_cols = ",\n            ".join(
+        [f"COALESCE(CAST(b.{c} AS VARCHAR), CAST(c.{c} AS VARCHAR), '') AS {c}" for c in group_cols]
+    )
+    return con.execute(
+        f"""
+        WITH base_stats AS (
+            SELECT
+                {select_cols},
+                COUNT(*) FILTER (WHERE status = 'FP') AS fp_base,
+                COUNT(*) FILTER (WHERE status = 'TP') AS tp_base,
+                COUNT(*) AS est_base
+            FROM {base_view}
+            WHERE source = 'EST' AND {base_filter}
+            GROUP BY {group_by}
+        ),
+        candidate_stats AS (
+            SELECT
+                {select_cols},
+                COUNT(*) FILTER (WHERE status = 'FP') AS fp_candidate,
+                COUNT(*) FILTER (WHERE status = 'TP') AS tp_candidate,
+                COUNT(*) AS est_candidate
+            FROM {candidate_view}
+            WHERE source = 'EST' AND {candidate_filter}
+            GROUP BY {group_by}
+        )
+        SELECT
+            {output_cols},
+            CAST(COALESCE(b.fp_base, 0) AS DOUBLE) AS baseline_fp,
+            CAST(COALESCE(c.fp_candidate, 0) AS DOUBLE) AS candidate_fp,
+            CAST(COALESCE(c.fp_candidate, 0) - COALESCE(b.fp_base, 0) AS DOUBLE) AS fp_delta,
+            CAST(COALESCE(b.tp_base, 0) AS DOUBLE) AS baseline_tp_est,
+            CAST(COALESCE(c.tp_candidate, 0) AS DOUBLE) AS candidate_tp_est,
+            CAST(COALESCE(c.tp_candidate, 0) - COALESCE(b.tp_base, 0) AS DOUBLE) AS tp_est_delta,
+            CAST(COALESCE(b.est_base, 0) AS DOUBLE) AS baseline_est_total,
+            CAST(COALESCE(c.est_candidate, 0) AS DOUBLE) AS candidate_est_total
+        FROM base_stats b
+        FULL OUTER JOIN candidate_stats c
+            ON {join_cols}
+        ORDER BY fp_delta DESC
+        """
+    ).df()
+
+
+def _report_fp_diff_tables(
+    con,
+    base_view: str,
+    candidate_view: str,
+    base_filter: str,
+    candidate_filter: str,
+) -> Dict[str, pd.DataFrame]:
+    tables: Dict[str, pd.DataFrame] = {}
+    specs = [
+        ("FP diff by label", ["label"]),
+        ("FP diff by scenario", ["suite_name", "scenario_name"]),
+        ("FP diff by dataset", ["suite_name", "scenario_name", "t4dataset_id", "t4dataset_name"]),
+        ("FP diff by frame", ["suite_name", "scenario_name", "t4dataset_id", "t4dataset_name", "frame_index"]),
+    ]
+    for name, group_cols in specs:
+        try:
+            tables[name] = _report_fp_diff_by_group(
+                con,
+                base_view,
+                candidate_view,
+                base_filter,
+                candidate_filter,
+                group_cols=group_cols,
+            )
+        except Exception:
+            tables[name] = pd.DataFrame()
+    return tables
+
+
 def build_single_detection_report(
     con,
     *,
@@ -2352,6 +2442,13 @@ def build_compare_detection_report(
             )
     else:
         df_err = pd.DataFrame()
+    fp_diff_tables = _report_fp_diff_tables(
+        con,
+        base_view,
+        candidate_view,
+        base_filter,
+        candidate_filter,
+    )
 
     metric_cards = [
         _report_metric_card("Recall差分", _report_pp_delta(tpr_delta), "Candidate vs baseline", _report_delta_tone(tpr_delta)),
@@ -2525,10 +2622,547 @@ Executive Summary:
     }
     if not df_err.empty:
         tables["Mean error comparison"] = df_err
+    tables.update(fp_diff_tables)
     return report_html, report_md, tables
 
 
-def render_detection_report(report_html: str, report_md: str, tables: Dict[str, pd.DataFrame], *, key_prefix: str) -> None:
+def _safe_export_filename(value: str, *, fallback: str = "table") -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip()).strip("._-")
+    return name[:80] or fallback
+
+
+def _brief_value(v: Any) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    if isinstance(v, (float, np.floating)):
+        return f"{float(v):.4g}"
+    return str(v)
+
+
+def _brief_table(df: pd.DataFrame, columns: List[str], *, limit: int = 12) -> str:
+    if df is None or df.empty:
+        return "(no rows)"
+    cols = [c for c in columns if c in df.columns]
+    if not cols:
+        cols = [str(c) for c in df.columns[:8]]
+    lines = ["| " + " | ".join(cols) + " |", "| " + " | ".join(["---"] * len(cols)) + " |"]
+    for _, row in df.head(limit).iterrows():
+        lines.append("| " + " | ".join(_brief_value(row.get(c)) for c in cols) + " |")
+    return "\n".join(lines)
+
+
+def _sorted_preview(df: pd.DataFrame, sort_col: str, *, ascending: bool = False, limit: int = 12) -> pd.DataFrame:
+    if df is None or df.empty or sort_col not in df.columns:
+        return pd.DataFrame()
+    out = df.copy()
+    out[sort_col] = pd.to_numeric(out[sort_col], errors="coerce")
+    return out.sort_values(sort_col, ascending=ascending).head(limit)
+
+
+def _llm_data_brief(metadata: Dict[str, Any], tables: Dict[str, pd.DataFrame]) -> str:
+    comparison = metadata.get("comparison", "")
+    scope = metadata.get("scope", "")
+    filters = metadata.get("filters", {})
+    kpis = metadata.get("kpis", {})
+
+    sections = [
+        "# Detection Analysis Data Brief",
+        "",
+        "This file is a neutral evidence brief for an LLM. The dashboard has already extracted useful metrics and tables from raw detection data.",
+        "The LLM should focus on interpretation, comparison, explanation, and report writing based on these prepared evidence tables.",
+        "",
+        "## Context",
+        f"- Comparison: {comparison}",
+        f"- Scope: {scope}",
+        f"- Filters: {json.dumps(filters, ensure_ascii=False, default=str)}",
+        f"- KPI snapshot: {json.dumps(kpis, ensure_ascii=False, default=str)}",
+        "",
+        "## Table Inventory",
+    ]
+    for name, df in tables.items():
+        rows = 0 if df is None else len(df)
+        cols = [] if df is None else [str(c) for c in df.columns]
+        sections.append(f"- {name}: {rows} rows; columns: {', '.join(cols[:30])}")
+
+    class_cmp = tables.get("Class rate comparison", pd.DataFrame())
+    if not class_cmp.empty:
+        sections.extend(
+            [
+                "",
+                "## Class-Level Signal Preview",
+                "",
+                "Largest TPR gains:",
+                _brief_table(
+                    _sorted_preview(class_cmp, "tpr_delta", ascending=False),
+                    ["label", "tpr_base", "tpr_candidate", "tpr_delta", "precision_delta", "f1_delta", "gt_total_base", "gt_total_candidate"],
+                ),
+                "",
+                "Largest TPR regressions:",
+                _brief_table(
+                    _sorted_preview(class_cmp, "tpr_delta", ascending=True),
+                    ["label", "tpr_base", "tpr_candidate", "tpr_delta", "precision_delta", "f1_delta", "gt_total_base", "gt_total_candidate"],
+                ),
+            ]
+        )
+
+    obj_diff = tables.get("Object diff by class", pd.DataFrame())
+    if not obj_diff.empty:
+        sections.extend(
+            [
+                "",
+                "## Object-Level TP/FN Change Preview",
+                "",
+                "Most recovered labels:",
+                _brief_table(
+                    _sorted_preview(obj_diff, "improved_cnt", ascending=False),
+                    ["label", "improved_cnt", "degraded_cnt", "net_tp_delta"],
+                ),
+                "",
+                "Most degraded labels:",
+                _brief_table(
+                    _sorted_preview(obj_diff, "degraded_cnt", ascending=False),
+                    ["label", "improved_cnt", "degraded_cnt", "net_tp_delta"],
+                ),
+            ]
+        )
+
+    fp_label = tables.get("FP diff by label", pd.DataFrame())
+    fp_scenario = tables.get("FP diff by scenario", pd.DataFrame())
+    fp_dataset = tables.get("FP diff by dataset", pd.DataFrame())
+    if not fp_label.empty or not fp_scenario.empty or not fp_dataset.empty:
+        sections.extend(["", "## False Positive Concentration Preview"])
+        if not fp_label.empty:
+            sections.extend(
+                [
+                    "",
+                    "Labels with largest FP increase:",
+                    _brief_table(
+                        _sorted_preview(fp_label, "fp_delta", ascending=False),
+                        ["label", "baseline_fp", "candidate_fp", "fp_delta", "baseline_tp_est", "candidate_tp_est", "tp_est_delta"],
+                    ),
+                ]
+            )
+        if not fp_scenario.empty:
+            sections.extend(
+                [
+                    "",
+                    "Scenarios with largest FP increase:",
+                    _brief_table(
+                        _sorted_preview(fp_scenario, "fp_delta", ascending=False),
+                        ["suite_name", "scenario_name", "baseline_fp", "candidate_fp", "fp_delta", "baseline_est_total", "candidate_est_total"],
+                    ),
+                ]
+            )
+        if not fp_dataset.empty:
+            sections.extend(
+                [
+                    "",
+                    "Datasets with largest FP increase:",
+                    _brief_table(
+                        _sorted_preview(fp_dataset, "fp_delta", ascending=False),
+                        ["suite_name", "scenario_name", "t4dataset_name", "baseline_fp", "candidate_fp", "fp_delta"],
+                    ),
+                ]
+            )
+
+    dist_base = tables.get("Distance rates - baseline", pd.DataFrame())
+    dist_candidate = tables.get("Distance rates - candidate", pd.DataFrame())
+    if not dist_base.empty or not dist_candidate.empty:
+        sections.extend(
+            [
+                "",
+                "## Distance Rate Tables Preview",
+                "",
+                "Baseline:",
+                _brief_table(dist_base, ["distance_bin", "tpr", "fpr"], limit=20),
+                "",
+                "Candidate:",
+                _brief_table(dist_candidate, ["distance_bin", "tpr", "fpr"], limit=20),
+            ]
+        )
+
+    scene_diff = tables.get("Object diff by scene", pd.DataFrame())
+    if not scene_diff.empty:
+        sections.extend(
+            [
+                "",
+                "## Scenario Hotspot Preview",
+                "",
+                "Largest TP/FN degraded scenarios:",
+                _brief_table(
+                    _sorted_preview(scene_diff, "degraded_cnt", ascending=False),
+                    ["suite_name", "scenario_name", "improved_cnt", "degraded_cnt", "net_tp_delta"],
+                ),
+                "",
+                "Largest TP/FN improved scenarios:",
+                _brief_table(
+                    _sorted_preview(scene_diff, "improved_cnt", ascending=False),
+                    ["suite_name", "scenario_name", "improved_cnt", "degraded_cnt", "net_tp_delta"],
+                ),
+            ]
+        )
+
+    critical = tables.get("Critical degraded cases", pd.DataFrame())
+    if not critical.empty:
+        sections.extend(
+            [
+                "",
+                "## Safety-Critical Degraded Case Preview",
+                _brief_table(
+                    critical,
+                    ["label", "dist_h", "visibility", "pointcloud_num", "scenario_name", "t4dataset_name", "frame_index", "gt_uuid"],
+                    limit=20,
+                ),
+            ]
+        )
+
+    sections.extend(
+        [
+            "",
+            "## Analysis Boundary",
+            "The app is responsible for rule-based extraction from raw data: KPI tables, class/distance/scenario aggregations, FP/TP/FN counts, and case lists.",
+            "The LLM is responsible for higher-level analysis: explaining what the prepared evidence means, connecting signals across tables, judging trade-offs, and writing a clear report.",
+            "",
+            "## Report Style Reference",
+            "Prefer a clear comparison structure:",
+            "- comparison target metadata",
+            "- overall KPI trend",
+            "- distance trend",
+            "- class trend",
+            "- TP improvement hotspots with scenario/dataset/frame evidence",
+            "- FP increase hotspots with concentration percentages",
+            "- likely causes and concrete inspection links/cases",
+            "- final judgment and recommended next checks",
+        ]
+    )
+    return "\n".join(sections)
+
+
+def _llm_report_instructions(metadata: Dict[str, Any], tables: Dict[str, pd.DataFrame]) -> str:
+    table_lines = []
+    for name, df in tables.items():
+        rows = 0 if df is None else len(df)
+        cols = [] if df is None else [str(c) for c in df.columns]
+        table_lines.append(f"- {name}: {rows} rows; columns: {', '.join(cols[:24])}")
+
+    mode_label = metadata.get("mode", "Detection Stats")
+    comparison = metadata.get("comparison", "")
+    scope = metadata.get("scope", "")
+    filters = metadata.get("filters", {})
+
+    return f"""# LLM Instructions: Detection Performance Analysis Report
+
+You are an expert autonomous-driving perception evaluation analyst. Use the attached CSV tables and `analysis_data_brief.md` to create a polished, graph-rich performance report.
+
+The dashboard app has already extracted useful structured evidence from raw detection data. Treat these tables as the primary source of truth. Do not spend the report mostly re-computing obvious table results; focus on interpreting the prepared evidence, explaining trade-offs, connecting patterns across KPI/class/distance/scenario tables, and writing a high-quality report.
+
+Do not copy or imitate any rule-based dashboard report. Build your conclusions from the CSV evidence.
+
+## Evaluation Context
+- Dashboard page: {mode_label}
+- Comparison: {comparison}
+- Scope: {scope}
+- Active filters: {json.dumps(filters, ensure_ascii=False, default=str)}
+
+## Required Output
+Create a structured report in Markdown or HTML. The report must include:
+
+1. Executive summary with a clear release/readiness judgment.
+2. KPI comparison table covering TP, FP, FN, recall/TP rate, FP rate, precision, and F1 where available.
+3. Performance comparison narrative explaining whether the candidate improved, degraded, or traded recall for precision.
+4. Many graphs, not just text. Generate charts directly from the CSV files.
+5. Class-level analysis showing top improving and degrading labels.
+6. Distance-range analysis showing where recall/FPR changes occur.
+7. Scenario/frame hotspot analysis explaining concentrated failures.
+8. Safety-critical case analysis, especially near-range TP-to-FN degradations.
+9. Localization quality analysis when mean error tables are available.
+10. Final recommendation with concrete next debugging actions.
+
+## Required Graphs
+Include at least these charts when the corresponding tables exist:
+
+- KPI delta bar chart: recall, precision, F1, FP, FN.
+- Class TPR delta bar chart sorted from largest gain to largest loss.
+- Class precision/F1 comparison chart.
+- Object diff by class chart showing improved vs degraded counts.
+- Distance-bin line chart comparing baseline and candidate TPR/FPR.
+- Label x distance heatmap for TPR/FPR deltas.
+- Scenario or frame hotspot bar chart for degraded counts.
+- Critical degraded cases table with distance, visibility, points count, scenario, dataset, and frame.
+- Mean localization error delta chart for x, y, and yaw when available.
+
+## Analysis Rules
+- Treat the first run as the baseline and each later run as a candidate.
+- Use baseline vs candidate deltas; do not judge from candidate values alone.
+- A higher recall/TP rate, precision, and F1 is better.
+- A lower FP count/rate, FN count, and localization error is better.
+- Distinguish headline KPI stability from object-level churn; stable F1 can hide many FN-to-TP and TP-to-FN swaps.
+- Prioritize near-distance, high-visibility, high-point-count degradations as safety-critical.
+- If a table is empty, say that the signal is unavailable instead of inventing data.
+- Cite the table names used for each major conclusion.
+- Where FP increases are concentrated, quantify concentration, e.g. "top 20 datasets explain X/Y FP increase", when the table supports it.
+- Use cautious language for causes. Separate evidence-backed observations from hypotheses such as annotation gaps, parked-object density, or low point count.
+- Include scenario/dataset/frame examples, especially when `open_3d` or dataset/frame columns are available.
+- Avoid filling the report with generic calculations that are already obvious from the tables. Use calculations only when they support interpretation, concentration analysis, or clearer comparison.
+
+## Available Tables
+{chr(10).join(table_lines)}
+"""
+
+
+def _llm_report_blueprint() -> str:
+    return """# Recommended Report Blueprint
+
+Use this as a structure, not as fixed wording.
+
+## 1. Comparison Target
+- Baseline model/run
+- Candidate model/run
+- Topic, labels, suites, visibility, distance scope
+- Important caveats about filters or missing tables
+
+## 2. Executive Summary
+- One-sentence verdict
+- Recall/TP rate movement
+- Precision/FP movement
+- Whether the result is clear improvement, clear regression, or recall/precision trade-off
+- Most important risk to inspect before release
+
+## 3. Overall KPI Dashboard
+Required visuals:
+- KPI table
+- Delta bar chart for TP, FP, FN, recall, precision, F1
+- Short explanation of what changed and why it matters
+
+## 4. Distance Analysis
+Required visuals:
+- TPR and FPR by distance-bin line charts
+- Optional TPR/FPR delta bar chart by distance
+Explain near, mid, and far range separately.
+
+## 5. Class Analysis
+Required visuals:
+- TPR delta by class
+- Precision/F1 delta by class
+- Improved vs degraded object counts by class
+Call out classes that improved in recall but caused FP growth.
+
+## 6. TP Improvement Hotspots
+Required visuals:
+- Top scenarios/datasets/frames by improved count
+- Table with 3D viewer links when available
+Explain whether improvements are broad or concentrated.
+
+## 7. FP Increase Hotspots
+Required visuals:
+- Top labels/scenarios/datasets/frames by FP delta
+- Concentration chart: cumulative FP delta share for top N scenarios/datasets
+Quantify concentration, such as top 20 datasets explaining X% of FP increase.
+
+## 8. Safety-Critical Regressions
+Required visuals:
+- Critical degraded cases table
+- Near-distance degraded count chart if data exists
+Prioritize close range, high visibility, high point count, and repeated failures.
+
+## 9. Localization Quality
+Required visuals:
+- Mean x/y/yaw error comparison or delta chart
+Separate detection-rate changes from localization changes.
+
+## 10. Root-Cause Hypotheses
+Separate evidence from hypotheses. Examples:
+- Dense parked-object scenes
+- Annotation gaps
+- Low point-count objects
+- Far-distance sparsity
+- Specific class confusion
+
+## 11. Recommendation
+- Release/readiness judgment
+- Must-check scenarios and viewer links
+- Suggested next experiments or data review actions
+"""
+
+
+def _llm_prompt_to_paste() -> str:
+    return """Please unzip and read this analysis package.
+
+First read:
+1. README.md
+2. llm_instructions.md
+3. recommended_report_blueprint.md
+4. analysis_data_brief.md
+5. manifest.json
+
+Then use the CSV files under tables/ to create a polished detection performance comparison report.
+
+The dashboard app already extracted the useful metrics/tables from raw detection data. Focus on analysis of the given evidence: explain what changed, why it matters, where the trade-offs are, and what should be checked next. Do not make the report mostly about re-computing obvious table values.
+
+The report should include:
+- executive summary
+- KPI comparison
+- recall / precision / FP trade-off explanation
+- distance-bin graphs
+- class-level graphs
+- TP improvement hotspots
+- FP increase concentration analysis
+- safety-critical degraded cases
+- localization error comparison if available
+- final recommendation
+
+Please generate many charts from the CSV data, not only text.
+Separate evidence-backed conclusions from hypotheses.
+
+If code execution is available, use Python/pandas with plotly or matplotlib to generate graphs from the CSV files.
+Quantify concentration such as top scenarios/datasets explaining FP increase when supported by the tables.
+Include scenario/dataset/frame examples and 3D viewer links when available.
+Output a clean HTML report if possible; otherwise output Markdown with embedded/generated charts.
+"""
+
+
+def build_llm_analysis_package(
+    *,
+    tables: Dict[str, pd.DataFrame],
+    metadata: Dict[str, Any],
+) -> bytes:
+    """Create a portable ZIP with prompt, neutral data brief, manifest, and CSV evidence tables."""
+    created_at = pd.Timestamp.now(tz="Asia/Tokyo").isoformat()
+    manifest = {
+        "created_at": created_at,
+        "package_type": "detection_stats_llm_analysis",
+        "metadata": metadata,
+        "tables": [],
+    }
+    prompt_md = _llm_report_instructions(metadata, tables)
+    data_brief_md = _llm_data_brief(metadata, tables)
+    blueprint_md = _llm_report_blueprint()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("README.md", prompt_md)
+        zf.writestr("llm_instructions.md", prompt_md)
+        zf.writestr("analysis_data_brief.md", data_brief_md)
+        zf.writestr("recommended_report_blueprint.md", blueprint_md)
+
+        for name, df in tables.items():
+            safe_name = _safe_export_filename(name)
+            file_name = f"tables/{safe_name}.csv"
+            if df is None:
+                df = pd.DataFrame()
+            zf.writestr(file_name, df.to_csv(index=False))
+            manifest["tables"].append(
+                {
+                    "name": name,
+                    "file": file_name,
+                    "rows": int(len(df)),
+                    "columns": [str(c) for c in df.columns],
+                }
+            )
+
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
+
+    return buf.getvalue()
+
+
+def build_single_llm_analysis_tables(
+    con,
+    *,
+    view: str,
+    filter_clause: str,
+) -> Dict[str, pd.DataFrame]:
+    tables = {
+        "Class metrics": _report_label_metrics(con, view, filter_clause),
+        "Scene hotspots": _report_scene_metrics(con, view, filter_clause),
+        "FN frames": _report_fn_frames(con, view, filter_clause),
+        "Distance rates": con.execute(sql_distance_bin_rates_from_eval_flat(view, filter_clause, metrics="both")).df(),
+    }
+    df_err = _report_error_metrics(con, view, filter_clause)
+    if not df_err.empty:
+        tables["Mean error by class"] = df_err
+    return tables
+
+
+def build_compare_llm_analysis_tables(
+    con,
+    *,
+    base_view: str,
+    candidate_view: str,
+    base_filter: str,
+    candidate_filter: str,
+) -> Dict[str, pd.DataFrame]:
+    df_base_label = _report_label_metrics(con, base_view, base_filter)
+    df_candidate_label = _report_label_metrics(con, candidate_view, candidate_filter)
+    df_label = df_base_label.merge(
+        df_candidate_label,
+        on="label",
+        suffixes=("_base", "_candidate"),
+        how="outer",
+    ).fillna(0)
+    for col in ["tpr", "fpr", "precision", "f1"]:
+        if f"{col}_candidate" in df_label.columns and f"{col}_base" in df_label.columns:
+            df_label[f"{col}_delta"] = df_label[f"{col}_candidate"] - df_label[f"{col}_base"]
+
+    try:
+        df_diff_label = _report_diff_by_label(con, base_view, candidate_view, base_filter, candidate_filter)
+        df_diff_scene = _report_diff_by_scene_or_frame(con, base_view, candidate_view, base_filter, candidate_filter, by_frame=False)
+        df_diff_frame = _report_diff_by_scene_or_frame(con, base_view, candidate_view, base_filter, candidate_filter, by_frame=True)
+    except Exception:
+        df_diff_label = pd.DataFrame()
+        df_diff_scene = pd.DataFrame()
+        df_diff_frame = pd.DataFrame()
+
+    df_base_dist = con.execute(sql_distance_bin_rates_from_eval_flat(base_view, base_filter, metrics="both")).df()
+    df_candidate_dist = con.execute(sql_distance_bin_rates_from_eval_flat(candidate_view, candidate_filter, metrics="both")).df()
+    try:
+        df_label_dist_delta = _report_label_distance_compare(con, base_view, candidate_view, base_filter, candidate_filter)
+    except Exception:
+        df_label_dist_delta = pd.DataFrame()
+
+    df_degraded_objects = _report_degraded_object_details(con, base_view, candidate_view, base_filter, candidate_filter)
+    _, df_critical_cases = _report_critical_case_phrases(df_degraded_objects)
+    _, df_consecutive_failures = _report_consecutive_failure_phrases(df_degraded_objects)
+
+    df_err_base = _report_error_metrics(con, base_view, base_filter)
+    df_err_candidate = _report_error_metrics(con, candidate_view, candidate_filter)
+    df_err = pd.DataFrame()
+    if not df_err_base.empty and not df_err_candidate.empty:
+        df_err = df_err_base.merge(df_err_candidate, on="label", suffixes=("_base", "_candidate"), how="inner")
+        for col in ["mean_abs_x_error", "mean_abs_y_error", "mean_abs_yaw_error"]:
+            if f"{col}_candidate" in df_err.columns and f"{col}_base" in df_err.columns:
+                df_err[f"{col}_delta"] = df_err[f"{col}_candidate"] - df_err[f"{col}_base"]
+
+    tables = {
+        "Class rate comparison": df_label.sort_values("tpr_delta", ascending=False) if "tpr_delta" in df_label.columns else df_label,
+        "Object diff by class": df_diff_label,
+        "Object diff by scene": df_diff_scene,
+        "Object diff by frame": df_diff_frame,
+        "Distance rates - baseline": df_base_dist,
+        "Distance rates - candidate": df_candidate_dist,
+        "Per-class distance deltas": df_label_dist_delta,
+        "Critical degraded cases": df_critical_cases,
+        "Consecutive degraded objects": df_consecutive_failures,
+    }
+    if not df_err.empty:
+        tables["Mean error comparison"] = df_err
+    tables.update(
+        _report_fp_diff_tables(
+            con,
+            base_view,
+            candidate_view,
+            base_filter,
+            candidate_filter,
+        )
+    )
+    return tables
+
+
+def render_detection_report(
+    report_html: str,
+    report_md: str,
+    tables: Dict[str, pd.DataFrame],
+    *,
+    key_prefix: str,
+) -> None:
     st.markdown(report_html, unsafe_allow_html=True)
     st.download_button(
         "Export report Markdown",
@@ -3034,6 +3668,135 @@ try:
                     analysis_html = _analyze_kpi_comparison(baseline, kpi, candidate_label=str(lbl))
                     st.markdown(analysis_html, unsafe_allow_html=True)
                     break  # analyze first non-baseline run
+
+    st.markdown(
+        section_header_html(
+            "LLM analysis package",
+            "",
+        ),
+        unsafe_allow_html=True,
+    )
+    llm_package_state_key = "ds_llm_analysis_packages"
+    if st.button(
+        "Prepare LLM report ZIP",
+        key="ds_prepare_llm_analysis_package",
+        help="Prepare data and prompt files for an LLM report.",
+    ):
+        packages = []
+        _llm_slot = st.empty()
+        _llm_slot.markdown(ds_spot_loading_markup("Preparing LLM analysis package"), unsafe_allow_html=True)
+        try:
+            run_share_names = _run_share_names_for_links()
+            if single_mode:
+                llm_filter = build_filter_clause(filters_base, enable_dist_h=False)
+                llm_kpi = _kpi_row_for_view(con, "view_eval_flat", llm_filter)
+                llm_tables = build_single_llm_analysis_tables(
+                    con,
+                    view="view_eval_flat",
+                    filter_clause=llm_filter,
+                )
+                llm_tables = {
+                    name: _with_t4_viewer_links(df, run_share_names) if isinstance(df, pd.DataFrame) else df
+                    for name, df in llm_tables.items()
+                }
+                metadata = {
+                    "mode": mode,
+                    "comparison": f"Single run {run_labels_list[0]}",
+                    "scope": "all available distances; current sidebar filters except max evaluation range",
+                    "filters": {**filters_base, "max_eval_range": "ignored for LLM package"},
+                    "kpis": {run_labels_list[0]: llm_kpi},
+                    "runs": [
+                        {
+                            "label": run_labels_list[0],
+                            "path": path_display(runs[0]["path"]),
+                            "parquet": os.path.basename(target_files[0]),
+                        }
+                    ],
+                }
+                packages.append(
+                    {
+                        "label": f"Run {run_labels_list[0]}",
+                        "file_name": "single_llm_detection_analysis_package.zip",
+                        "data": build_llm_analysis_package(tables=llm_tables, metadata=metadata),
+                        "tables": len(llm_tables),
+                    }
+                )
+            else:
+                base_label = run_labels_list[0]
+                base_filter = build_filter_clause(filters_list[0], enable_dist_h=False)
+                base_kpi = _kpi_row_for_view(con, "view_eval_flat", base_filter)
+                for idx in range(1, len(runs)):
+                    lbl = run_labels_list[idx]
+                    candidate_filter = build_filter_clause(filters_list[idx], enable_dist_h=False)
+                    candidate_kpi = _kpi_row_for_view(con, _flat_view(idx), candidate_filter)
+                    llm_tables = build_compare_llm_analysis_tables(
+                        con,
+                        base_view="view_eval_flat",
+                        candidate_view=_flat_view(idx),
+                        base_filter=base_filter,
+                        candidate_filter=candidate_filter,
+                    )
+                    llm_tables = {
+                        name: _with_t4_viewer_links(df, run_share_names) if isinstance(df, pd.DataFrame) else df
+                        for name, df in llm_tables.items()
+                    }
+                    safe_lbl = _safe_export_filename(str(lbl), fallback=f"run_{idx}")
+                    metadata = {
+                        "mode": mode,
+                        "comparison": f"Baseline {base_label} vs Candidate {lbl}",
+                        "scope": "all available distances; current sidebar filters except max evaluation range",
+                        "filters": {**filters_base, "max_eval_range": "ignored for LLM package"},
+                        "kpis": {
+                            base_label: base_kpi,
+                            lbl: candidate_kpi,
+                        },
+                        "runs": [
+                            {
+                                "label": base_label,
+                                "role": "baseline",
+                                "path": path_display(runs[0]["path"]),
+                                "parquet": os.path.basename(target_files[0]),
+                            },
+                            {
+                                "label": lbl,
+                                "role": "candidate",
+                                "path": path_display(runs[idx]["path"]),
+                                "parquet": os.path.basename(target_files[idx]),
+                            },
+                        ],
+                    }
+                    packages.append(
+                        {
+                            "label": f"{lbl} vs {base_label}",
+                            "file_name": f"compare_{idx}_{safe_lbl}_llm_detection_analysis_package.zip",
+                            "data": build_llm_analysis_package(tables=llm_tables, metadata=metadata),
+                            "tables": len(llm_tables),
+                        }
+                    )
+            st.session_state[llm_package_state_key] = packages
+            st.success(f"Package ready: {len(packages)} file(s).")
+        except Exception as e:
+            st.error(f"Error preparing LLM analysis package: {e}")
+        finally:
+            _llm_slot.empty()
+
+    for pkg_idx, pkg in enumerate(st.session_state.get(llm_package_state_key, []) or []):
+        st.download_button(
+            f"Download LLM analysis package (ZIP) - {pkg['label']}",
+            data=pkg["data"],
+            file_name=pkg["file_name"],
+            mime="application/zip",
+            key=f"ds_download_llm_analysis_package_{pkg_idx}",
+            help=f"{pkg['tables']} evidence tables plus prompt files.",
+        )
+    if st.session_state.get(llm_package_state_key):
+        with st.expander("Prompt to paste into LLM", expanded=False):
+            st.text_area(
+                "Prompt",
+                _llm_prompt_to_paste(),
+                height=260,
+                key="ds_llm_prompt_to_paste",
+            )
 
     if st.checkbox("Debug: Inspect Parquet (All Runs)" if not single_mode else "Debug: Inspect Parquet"):
         cols_used = st.columns(len(target_files))
@@ -7423,7 +8186,12 @@ try:
                     scope_label=report_scope_label,
                     kpi=report_kpi,
                 )
-                render_detection_report(report_html, report_md, report_tables, key_prefix="single")
+                render_detection_report(
+                    report_html,
+                    report_md,
+                    report_tables,
+                    key_prefix="single",
+                )
             else:
                 kpi_by_label = {
                     lbl: _kpi_row_for_view(con, _flat_view(i), report_filter_clause)
