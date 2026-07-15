@@ -12,6 +12,20 @@ from typing import Any, List
 
 DEFAULT_OBJECTS_TOPIC = "perception.object_recognition.objects"
 DEFAULT_TRACKING_OBJECTS_TOPIC = "perception.object_recognition.tracking.objects"
+VIEWER_DEEP_LINK_KEYS = (
+    "mode",
+    "run_a",
+    "run_b",
+    "run_c",
+    "run_d",
+    "run_e",
+    "viewer_suite",
+    "viewer_scenario",
+    "viewer_t4dataset",
+    "viewer_topic",
+    "viewer_frame",
+    "viewer_compare",
+)
 UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -135,6 +149,9 @@ def _legacy_prefixed_match(options: list[str], base_name: str, suffix_prefix: st
 
 def _prime_viewer_state_from_query_params() -> None:
     """Map share-link query params onto existing sidebar deep-link session keys."""
+    sig = _viewer_deep_link_signature()
+    if sig is None or st.session_state.get("_t4_viewer_deep_link_primed_sig") == sig:
+        return
     mapping = {
         "bbox_viewer_link_suite": ("viewer_suite", "suite_name"),
         "bbox_viewer_link_scenario": ("viewer_scenario", "scenario_name"),
@@ -146,25 +163,35 @@ def _prime_viewer_state_from_query_params() -> None:
         value = _query_param_text(*param_names)
         if value:
             st.session_state[state_key] = value
+    st.session_state["_t4_viewer_deep_link_primed_sig"] = sig
 
 
 def _viewer_deep_link_signature() -> tuple[str, ...] | None:
-    keys = (
-        "mode",
-        "run_a",
-        "run_b",
-        "run_c",
-        "run_d",
-        "run_e",
-        "viewer_suite",
-        "viewer_scenario",
-        "viewer_t4dataset",
-        "viewer_topic",
-        "viewer_frame",
-        "viewer_compare",
-    )
-    values = tuple(_query_param_text(k) for k in keys)
+    values = tuple(_query_param_text(k) for k in VIEWER_DEEP_LINK_KEYS)
     return values if any(values) else None
+
+
+def _viewer_deep_link_signature_from_values(values: dict[str, str]) -> tuple[str, ...]:
+    return tuple(str(values.get(k, "") or "").strip() for k in VIEWER_DEEP_LINK_KEYS)
+
+
+def _sync_viewer_query_params(updates: dict[str, Any]) -> None:
+    """Keep the browser URL aligned with the current viewer scene selection."""
+    clean_updates = {
+        key: str(value).strip()
+        for key, value in updates.items()
+        if value is not None and str(value).strip()
+    }
+    if not clean_updates:
+        return
+    current = {key: _query_param_text(key) for key in VIEWER_DEEP_LINK_KEYS}
+    if all(current.get(key, "") == value for key, value in clean_updates.items()):
+        return
+    merged = {**current, **clean_updates}
+    sig = _viewer_deep_link_signature_from_values(merged)
+    st.session_state["_t4_viewer_deep_link_sig"] = sig
+    st.session_state["_t4_viewer_deep_link_primed_sig"] = sig
+    st.query_params.update(clean_updates)
 
 
 def _reset_viewer_widget_state_for_new_deep_link() -> None:
@@ -438,6 +465,16 @@ elif st.session_state.get("bbox_viewer_topic") not in topic_names and DEFAULT_OB
 
 with st.sidebar:
     selected_topic = st.selectbox("topic_name (single)", topic_names, key="bbox_viewer_topic")
+
+_sync_viewer_query_params(
+    {
+        "viewer_suite": selected_suite,
+        "viewer_scenario": selected_scenario,
+        "viewer_t4dataset": selected_t4dataset,
+        "viewer_topic": selected_topic,
+        "viewer_compare": _viewer_compare_mode,
+    }
+)
 
 labels = con.execute(
     f"SELECT DISTINCT label AS v FROM parquet_scan(?) WHERE {scene_where} AND topic_name=? ORDER BY v",
@@ -938,10 +975,6 @@ _ds_t4 = resolve_t4_dataset_id(df_frame)
 if not _ds_t4 and selected_t4dataset is not None:
     _ds_t4 = str(selected_t4dataset)
 _sc_t4 = resolve_t4_scenario(df_frame, selected_scenario)
-if _viewer_link_dataset_id:
-    _ds_t4 = _viewer_link_dataset_id
-    if _viewer_link_t4dataset:
-        _sc_t4 = _viewer_link_t4dataset
 
 if not _ds_t4:
     for _k in (
