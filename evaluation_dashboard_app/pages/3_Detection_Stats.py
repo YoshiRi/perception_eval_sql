@@ -6663,8 +6663,8 @@ try:
                                     column_config=_t4_viewer_link_column_config(),
                                 )
     
-                        # --- Drill-down: filters + objects ---
-                        with st.expander("Drill-down: objects"):
+                        # Object drill-down is intentionally hidden for now; the summary charts/tables above remain.
+                        if False:
                             scen_key = f"p5_scen_{lbl}_{idx}"
                             t4_key = f"p5_t4_{lbl}_{idx}"
                             lab_key = f"p5_lab_{lbl}_{idx}"
@@ -6877,19 +6877,6 @@ try:
                             else:
                                 st.caption("No objects match filters.")
     
-                        with st.expander(f"Full frame table (sort: {frame_sort_desc})"):
-                            if not df_frame_sorted.empty:
-                                st.dataframe(
-                                    _with_t4_viewer_links(
-                                        df_frame_sorted.drop(columns=_DIFF_INTERNAL_COLS, errors="ignore"),
-                                        _t4_link_run_names,
-                                    ),
-                                    width='stretch',
-                                    hide_index=True,
-                                    column_config=_t4_viewer_link_column_config(),
-                                )
-                            else:
-                                st.caption("No frame breakdown.")
                 else:
                     st.caption(f"Run {lbl} vs A: No data.")
             except Exception as e:
@@ -7177,21 +7164,6 @@ try:
                                 "differences inside a valid dataset are still compared."
                             ),
                         )
-                    # --- Dataset name debug ---
-                    with st.expander("🔍 Debug: unique dataset names (t4dataset_id / t4dataset_name, EST side)"):
-                        debug_summary_fp = _dataset_name_debug_summary(
-                            con, "view_eval_flat", filter_clause_base,
-                            comp_flat, filter_clause_comp_fp,
-                            source="EST",
-                        )
-                        st.markdown(debug_summary_fp)
-                    # --- Pair UUID debug: sample pair_uuid values for overlapping datasets ---
-                    with st.expander("🔍 Debug: pair_uuid samples for overlapping datasets (EST side)"):
-                        pair_uuid_debug = _fp_pair_uuid_debug(
-                            con, "view_eval_flat", filter_clause_base,
-                            comp_flat, filter_clause_comp_fp,
-                        )
-                        st.markdown(pair_uuid_debug)
                     df_fp_skipped = pd.DataFrame()
                     if skip_dataset_compare_fp:
                         df_fp_skipped = df_fp[~_compare_availability_mask_fp(df_fp)].copy()
@@ -7630,8 +7602,8 @@ try:
                                     column_config=_t4_viewer_link_column_config(),
                                 )
 
-                        # --- FP Drill-down: filters + objects ---
-                        with st.expander("Drill-down: FP objects"):
+                        # FP object drill-down is intentionally hidden for now.
+                        if False:
                             fp_scen_key = f"p5fp_scen_{lbl}_{idx}"
                             fp_t4_key = f"p5fp_t4_{lbl}_{idx}"
                             fp_lab_key = f"p5fp_lab_{lbl}_{idx}"
@@ -7854,19 +7826,6 @@ try:
                             else:
                                 st.caption("No FP objects match filters.")
 
-                        with st.expander(f"Full FP frame table (sort: {fp_frame_sort_desc})"):
-                            if not df_fp_frame_sorted.empty:
-                                st.dataframe(
-                                    _with_t4_viewer_links(
-                                        df_fp_frame_sorted.drop(columns=_FP_INTERNAL_COLS, errors="ignore"),
-                                        _t4_link_run_names,
-                                    ),
-                                    width='stretch',
-                                    hide_index=True,
-                                    column_config=_t4_viewer_link_column_config(),
-                                )
-                            else:
-                                st.caption("No FP frame breakdown.")
                 else:
                     st.caption(f"FP diff · Run {lbl} vs A: No data.")
             except Exception as e:
@@ -7933,30 +7892,29 @@ try:
             _fn_slot.empty()
     
     # =============================
-    # Panel 6: Mean Error (single) / Mean Error Comparison (compare)
+    # Panel 6: Mean Error (single mode only)
     # =============================
-    ds_dlog("section: Panel6_Mean_Error_start")
-    st.divider()
-    st.markdown(
-        section_header_html(
-            "Mean Error" + (" Comparison" if not single_mode else ""),
-            "Mean absolute error on TP matches (X/Y in m, Yaw in rad)."
-            + (" Compare mode: choose grouped bars or spider charts." if not single_mode else ""),
-        ),
-        unsafe_allow_html=True,
-    )
-    
-    try:
-        sample_query = "SELECT * FROM view_eval_flat LIMIT 1"
-        sample_df = con.execute(sample_query).df()
-        has_error_cols = all(col in sample_df.columns for col in ['x_error', 'y_error', 'yaw_error'])
-    except Exception:
-        has_error_cols = False
-    
-    if not has_error_cols:
-        st.info("Error columns (x_error, y_error, yaw_error) not found in data. Skipping error analysis.")
-    else:
-        if single_mode:
+    if single_mode:
+        ds_dlog("section: Panel6_Mean_Error_start")
+        st.divider()
+        st.markdown(
+            section_header_html(
+                "Mean Error",
+                "Mean absolute error on TP matches (X/Y in m, Yaw in rad).",
+            ),
+            unsafe_allow_html=True,
+        )
+
+        try:
+            sample_query = "SELECT * FROM view_eval_flat LIMIT 1"
+            sample_df = con.execute(sample_query).df()
+            has_error_cols = all(col in sample_df.columns for col in ['x_error', 'y_error', 'yaw_error'])
+        except Exception:
+            has_error_cols = False
+
+        if not has_error_cols:
+            st.info("Error columns (x_error, y_error, yaw_error) not found in data. Skipping error analysis.")
+        else:
             try:
                 with ds_spot_loading("Mean error"):
                     query = f"""
@@ -8009,247 +7967,7 @@ try:
                     st.info("No data available")
             except Exception as e:
                 st.error(f"Error: {e}")
-        else:
-            try:
-                with ds_spot_loading("Mean error"):
-                    dfs_err = []
-                    for i in range(len(runs)):
-                        fc = build_filter_clause(filters_list[i])
-                        q = f"""
-                        SELECT
-                            label,
-                            AVG(ABS(CAST(x_error AS DOUBLE))) FILTER (WHERE status = 'TP' AND x_error IS NOT NULL) AS mean_abs_x_error,
-                            AVG(ABS(CAST(y_error AS DOUBLE))) FILTER (WHERE status = 'TP' AND y_error IS NOT NULL) AS mean_abs_y_error,
-                            AVG(ABS(CAST(yaw_error AS DOUBLE))) FILTER (WHERE status = 'TP' AND yaw_error IS NOT NULL) AS mean_abs_yaw_error
-                        FROM {_flat_view(i)}
-                        WHERE {fc}
-                        GROUP BY label
-                        ORDER BY label
-                        """
-                        df_i = con.execute(q).df()
-                        df_i["run"] = run_labels_list[i]
-                        dfs_err.append(df_i)
-                    df_err_melt = pd.concat(dfs_err, ignore_index=True)
-                if not df_err_melt.empty:
-                    mean_err_viz = st.radio(
-                        "Mean error chart style",
-                        options=["Spider chart (X, Y & Yaw)", "Grouped bar"],
-                        index=0,
-                        horizontal=True,
-                        key="mean_err_compare_viz",
-                    )
-                    if mean_err_viz == "Grouped bar":
-                        for err_type, col in [
-                            ("X Error", "mean_abs_x_error"),
-                            ("Y Error", "mean_abs_y_error"),
-                            ("Yaw Error", "mean_abs_yaw_error"),
-                        ]:
-                            fig = px.bar(
-                                df_err_melt,
-                                x="label",
-                                y=col,
-                                color="run",
-                                barmode="group",
-                                title=f"Mean {err_type} within {max_eval_range} [m] by run",
-                                labels={"label": "Label", col: err_type, "run": "Run"},
-                                color_discrete_sequence=RUN_COLORS,
-                            )
-                            apply_chart_theme(fig)
-                            st.plotly_chart(fig, width="stretch")
-                    else:
-                        st.caption(
-                            f"Three spiders: mean |error| per label per run (TP only), within **{max_eval_range} m** "
-                            "(same as sidebar max range)."
-                        )
-                        cats = sorted(df_err_melt["label"].astype(str).unique())
-                        if len(cats) > 16:
-                            st.caption("Spider charts work best with ≤16 labels; many classes may look crowded.")
-                        rcols = st.columns(3)
-                        err_specs = [
-                            (
-                                f"Mean |x error| (within {max_eval_range} m)",
-                                "mean_abs_x_error",
-                                "Mean |x error| (m)",
-                                ".3f",
-                            ),
-                            (
-                                f"Mean |y error| (within {max_eval_range} m)",
-                                "mean_abs_y_error",
-                                "Mean |y error| (m)",
-                                ".3f",
-                            ),
-                            (
-                                f"Mean |yaw error| (within {max_eval_range} m)",
-                                "mean_abs_yaw_error",
-                                "Mean |yaw error| (rad)",
-                                ".4f",
-                            ),
-                        ]
-                        for ci, (chart_title, col, hover_lbl, tfmt) in enumerate(err_specs):
-                            fig_r = _scalar_metric_spider_compare(
-                                df_err_melt,
-                                cats,
-                                chart_title,
-                                run_labels_list,
-                                col,
-                                hover_lbl,
-                                height=400,
-                                tickformat=tfmt,
-                            )
-                            with rcols[ci]:
-                                st.plotly_chart(fig_r, width='stretch')
-                else:
-                    st.info("No data available")
-            except Exception as e:
-                st.error(f"Error: {e}")
-    
-            st.markdown(section_header_html("Difference of mean absolute error (each run − Baseline A)"), unsafe_allow_html=True)
-            for idx in range(1, len(runs)):
-                lbl = run_labels_list[idx]
-                _med_slot = st.empty()
-                _med_slot.markdown(ds_spot_loading_markup(f"Mean error diff · run {lbl}"), unsafe_allow_html=True)
-                try:
-                    fc_c = build_filter_clause(filters_list[idx])
-                    query = f"""
-                    WITH topic_a AS (
-                        SELECT label,
-                            AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_a,
-                            AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_a,
-                            AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_a
-                        FROM view_eval_flat
-                        WHERE {filter_clause_base}
-                        GROUP BY label
-                    ),
-                    topic_c AS (
-                        SELECT label,
-                            AVG(ABS(x_error)) FILTER (WHERE status = 'TP') AS x_c,
-                            AVG(ABS(y_error)) FILTER (WHERE status = 'TP') AS y_c,
-                            AVG(ABS(yaw_error)) FILTER (WHERE status = 'TP') AS yaw_c
-                        FROM {_flat_view(idx)}
-                        WHERE {fc_c}
-                        GROUP BY label
-                    )
-                    SELECT a.label,
-                        (c.x_c - a.x_a) AS x_diff,
-                        (c.y_c - a.y_a) AS y_diff,
-                        (c.yaw_c - a.yaw_a) AS yaw_diff
-                    FROM topic_a a
-                    JOIN topic_c c USING (label)
-                    ORDER BY label
-                    """
-                    df_ed = con.execute(query).df()
-                    if not df_ed.empty:
-                        with st.expander(f"Run {lbl} − A", expanded=(len(runs) == 2)):
-                            fig = go.Figure()
-                            fig.add_trace(go.Bar(x=df_ed["label"], y=df_ed["x_diff"], name="X Diff", marker_color=RUN_COLORS[0]))
-                            fig.add_trace(go.Bar(x=df_ed["label"], y=df_ed["y_diff"], name="Y Diff", marker_color=RUN_COLORS[1]))
-                            fig.add_trace(go.Bar(x=df_ed["label"], y=df_ed["yaw_diff"], name="Yaw Diff", marker_color=RUN_COLORS[2]))
-                            apply_chart_theme(fig)
-                            fig.update_layout(title=f"Error diff ({lbl} − A) within {max_eval_range} [m]", xaxis_title="Label", yaxis_title="Error Difference [m] or [rad]", barmode="group")
-                            st.plotly_chart(fig, width="stretch")
-                except Exception as e:
-                    st.error(f"Error (Run {lbl} − A): {e}")
-                finally:
-                    _med_slot.empty()
 
-    # =============================
-    # Final section: perception release report
-    # =============================
-    ds_dlog("section: Manager_report_start")
-    st.divider()
-    st.markdown(
-        section_header_html(
-            "Perception release report",
-            "Optional all-distance release assessment. Disabled by default to avoid extra report queries.",
-        ),
-        unsafe_allow_html=True,
-    )
-    load_release_report = st.toggle(
-        "Load perception release report",
-        value=False,
-        key="ds_load_release_report",
-        help="Runs additional all-distance report queries only when enabled.",
-    )
-    if load_release_report:
-        _report_slot = st.empty()
-        _report_slot.markdown(ds_spot_loading_markup("Perception release report"), unsafe_allow_html=True)
-        try:
-            report_filter_clause = build_filter_clause(filters_base, enable_dist_h=False)
-            report_scope_label = "all available distances"
-            if single_mode:
-                report_kpi = _kpi_row_for_view(con, "view_eval_flat", report_filter_clause)
-                report_html, report_md, report_tables = build_single_detection_report(
-                    con,
-                    run_label=run_labels_list[0],
-                    view="view_eval_flat",
-                    filter_clause=report_filter_clause,
-                    scope_label=report_scope_label,
-                    kpi=report_kpi,
-                )
-                render_detection_report(
-                    report_html,
-                    report_md,
-                    report_tables,
-                    key_prefix="single",
-                )
-            else:
-                kpi_by_label = {
-                    lbl: _kpi_row_for_view(con, _flat_view(i), report_filter_clause)
-                    for i, lbl in enumerate(run_labels_list)
-                }
-                base_label = run_labels_list[0]
-                base_kpi = kpi_by_label.get(base_label)
-                if len(runs) == 2:
-                    for idx, lbl in enumerate(run_labels_list[1:], start=1):
-                        safe_lbl = "".join(ch if ch.isalnum() else "_" for ch in str(lbl))
-                        report_html, report_md, report_tables = build_compare_detection_report(
-                            con,
-                            base_label=base_label,
-                            candidate_label=lbl,
-                            base_view="view_eval_flat",
-                            candidate_view=_flat_view(idx),
-                            base_filter=report_filter_clause,
-                            candidate_filter=report_filter_clause,
-                            scope_label=report_scope_label,
-                            base_kpi=base_kpi,
-                            candidate_kpi=kpi_by_label.get(lbl),
-                        )
-                        render_detection_report(
-                            report_html,
-                            report_md,
-                            report_tables,
-                            key_prefix=f"compare_{idx}_{safe_lbl}",
-                        )
-                else:
-                    report_tabs = st.tabs([f"{lbl} vs {base_label}" for lbl in run_labels_list[1:]])
-                    for tab, idx, lbl in zip(report_tabs, range(1, len(runs)), run_labels_list[1:]):
-                        with tab:
-                            safe_lbl = "".join(ch if ch.isalnum() else "_" for ch in str(lbl))
-                            report_html, report_md, report_tables = build_compare_detection_report(
-                                con,
-                                base_label=base_label,
-                                candidate_label=lbl,
-                                base_view="view_eval_flat",
-                                candidate_view=_flat_view(idx),
-                                base_filter=report_filter_clause,
-                                candidate_filter=report_filter_clause,
-                                scope_label=report_scope_label,
-                                base_kpi=base_kpi,
-                                candidate_kpi=kpi_by_label.get(lbl),
-                            )
-                            render_detection_report(
-                                report_html,
-                                report_md,
-                                report_tables,
-                                key_prefix=f"compare_{idx}_{safe_lbl}",
-                            )
-        except Exception as e:
-            st.error(f"Error generating perception release report: {e}")
-        finally:
-            _report_slot.empty()
-    else:
-        st.caption("Release report is not loaded.")
-    
     ds_dlog("main_content_try_exit_ok")
     ds_debug_log_memory("main_content_end")
 
