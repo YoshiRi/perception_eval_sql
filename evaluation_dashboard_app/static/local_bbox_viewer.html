@@ -875,7 +875,8 @@
       bounds: {maxAbs: 80},
       selected: null,
       hover: null,
-      mouse: {x: -9999, y: -9999}
+      mouse: {x: -9999, y: -9999},
+      deepLink: null
     };
     const $ = (id) => document.getElementById(id);
     const els = {
@@ -906,6 +907,18 @@
     const ctx = els.canvas.getContext("2d");
     const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
     let activeViewport = null;
+    function readDeepLink() {
+      const q = new URLSearchParams(window.location.search);
+      const link = {
+        path: q.get("path") || "",
+        suite: q.get("suite") || q.get("suite_name") || "",
+        scenario: q.get("scenario") || q.get("scenario_name") || "",
+        topic: q.get("topic") || q.get("topic_name") || "",
+        frame: q.get("frame") || q.get("frame_index") || ""
+      };
+      return Object.values(link).some(Boolean) ? link : null;
+    }
+    state.deepLink = readDeepLink();
 
     async function api(route, body = {}) {
       const res = await fetch(`${API_BASE}${route}`, {
@@ -1026,6 +1039,13 @@
           return;
         }
         state.path = els.parquet.value || state.parquets[0].path;
+        if (state.deepLink && state.deepLink.path) {
+          const hit = state.parquets.find(p => p.path === state.deepLink.path || p.display === state.deepLink.path || p.path.endsWith(state.deepLink.path));
+          if (hit) {
+            els.parquet.value = hit.path;
+            state.path = hit.path;
+          }
+        }
         if (state.parquets.length > 1) {
           const next = state.parquets.find(p => p.path !== state.path);
           if (next) els.parquetB.value = next.path;
@@ -1060,8 +1080,13 @@
       for (const preferred of ["perception.object_recognition.objects", "perception.object_recognition.tracking.objects"]) {
         if (topics.includes(preferred)) { els.topic.value = preferred; break; }
       }
+      if (state.deepLink) {
+        if (state.deepLink.suite && suites.includes(state.deepLink.suite)) els.suite.value = state.deepLink.suite;
+        if (state.deepLink.topic && topics.includes(state.deepLink.topic)) els.topic.value = state.deepLink.topic;
+      }
       setOptions(els.scenario, await values("scenario_name", baseFilters()).catch(() => []));
       setOptions(els.dataset, await values("t4dataset_name", baseFilters()).catch(() => []));
+      if (state.deepLink && state.deepLink.scenario) els.scenario.value = state.deepLink.scenario;
       chipGroup(els.statuses, statuses, statuses.filter(v => ["TP","FP","FN"].includes(v)));
       chipGroup(els.sources, sources, sources);
       ensureLabelChips(labels);
@@ -1178,6 +1203,19 @@
           state.framePos = bestIdx;
         } else {
           state.framePos = 0;
+        }
+        if (state.deepLink && state.deepLink.frame !== "" && state.frames.length) {
+          const requested = Number(state.deepLink.frame);
+          if (Number.isFinite(requested)) {
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            state.frames.forEach((f, idx) => {
+              const dist = Math.abs(Number(f.frame) - requested);
+              if (dist < bestDist) { bestDist = dist; bestIdx = idx; }
+            });
+            state.framePos = bestIdx;
+          }
+          state.deepLink.frame = "";
         }
         state.selected = null;
         els.slider.max = Math.max(0, state.frames.length - 1);

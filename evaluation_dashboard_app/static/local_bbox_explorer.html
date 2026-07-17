@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dataset BBox Problem Map</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #050812;
+      --panel: rgba(8, 13, 28, .84);
+      --panel2: rgba(13, 20, 38, .92);
+      --line: rgba(148, 163, 184, .22);
+      --text: #eaf2ff;
+      --muted: #91a4bf;
+      --cyan: #38bdf8;
+      --green: #34d399;
+      --red: #fb7185;
+      --amber: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: radial-gradient(circle at 18% 8%, rgba(56,189,248,.16), transparent 32%), #050812;
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    .app {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr) 360px;
+      background:
+        linear-gradient(120deg, rgba(5,8,18,.95), rgba(9,14,28,.84)),
+        radial-gradient(circle at 70% 28%, rgba(251,113,133,.13), transparent 26%);
+    }
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      border-color: var(--line);
+      background: rgba(2, 6, 23, .68);
+      backdrop-filter: blur(18px);
+      overflow: auto;
+    }
+    .left { border-right: 1px solid var(--line); padding: 14px; display: grid; align-content: start; gap: 12px; }
+    .right { border-left: 1px solid var(--line); padding: 14px; display: grid; align-content: start; gap: 12px; }
+    .stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+    canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 16px; letter-spacing: 0; }
+    h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .sub { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .field { display: grid; gap: 6px; }
+    .field label { color: var(--muted); font-size: 11px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    input, select {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, .86);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 7px 9px;
+      outline: none;
+    }
+    button {
+      min-height: 34px;
+      border: 1px solid rgba(56,189,248,.34);
+      background: rgba(8,145,178,.22);
+      color: #ddf7ff;
+      border-radius: 7px;
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(8,145,178,.36); }
+    .icon { width: 36px; padding: 0; flex: 0 0 auto; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, .72);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 5px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .chip.active { color: #07111f; background: var(--cyan); border-color: transparent; font-weight: 800; }
+    .kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .kpi, .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 16px 50px rgba(0,0,0,.22);
+    }
+    .kpi b { display: block; font-size: 19px; line-height: 1; }
+    .kpi span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .list { display: grid; gap: 7px; max-height: 38vh; overflow: auto; padding-right: 2px; }
+    .scenario {
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, .66);
+      border-radius: 8px;
+      padding: 9px;
+      cursor: pointer;
+    }
+    .scenario:hover, .scenario.active { border-color: rgba(56,189,248,.8); background: rgba(8,47,73,.76); }
+    .scenario strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .scenario span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      top: 14px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      pointer-events: none;
+    }
+    .hud, .tools, .toast {
+      pointer-events: auto;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border-radius: 8px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.26);
+    }
+    .hud { display: flex; gap: 8px; padding: 8px; }
+    .hud .stat { min-width: 84px; }
+    .hud b { display: block; font-size: 16px; line-height: 1; }
+    .hud span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .tools { display: flex; gap: 6px; padding: 7px; align-items: center; }
+    .tools button.active { color: #07111f; background: var(--cyan); border-color: transparent; font-weight: 800; }
+    .legend {
+      position: absolute;
+      left: 16px;
+      bottom: 16px;
+      display: grid;
+      gap: 6px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 7px; border-radius: 50%; vertical-align: -1px; }
+    .curve { width: 100%; height: 170px; display: block; border-radius: 8px; background: rgba(2,6,23,.54); border: 1px solid var(--line); }
+    .curve-status { margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .toast {
+      position: absolute;
+      left: 50%;
+      top: 72px;
+      transform: translateX(-50%);
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity .16s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+    .selected-title { font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
+    .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .metric b { display: block; font-size: 18px; }
+    .metric span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    @media (max-width: 1040px) {
+      .app { grid-template-columns: 320px minmax(0, 1fr); }
+      .right { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel left">
+      <div>
+        <h1>Dataset Problem Map</h1>
+        <p class="sub">Scenario-scale triage for FP/FN clusters, label regressions, and frame hotspots.</p>
+      </div>
+      <div class="field">
+        <label>Data root or parquet</label>
+        <div class="row"><input id="rootInput" value="data" spellcheck="false"><button id="scanBtn" class="icon">↻</button></div>
+      </div>
+      <div class="field"><label>Run A parquet</label><select id="parquetSelect"></select></div>
+      <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
+      <div class="field"><label>Search scenarios / suite / label</label><input id="searchInput" placeholder="pedestrian FP, Kawasaki, PDD..." spellcheck="false"></div>
+      <div>
+        <h2>Issue Lens</h2>
+        <div class="chips" id="lensChips">
+          <span class="chip" data-lens="count">Count</span>
+          <span class="chip active" data-lens="fp">FP</span>
+          <span class="chip" data-lens="fn">FN</span>
+          <span class="chip" data-lens="fpr">FPR</span>
+          <span class="chip" data-lens="fnr">FNR</span>
+          <span class="chip" data-lens="error">TP error</span>
+        </div>
+      </div>
+      <div>
+        <h2>Object Label</h2>
+        <div class="chips" id="labelChips"><span class="chip active" data-label="">All labels</span></div>
+      </div>
+      <div>
+        <h2>Ego Range</h2>
+        <div class="chips" id="rangeChips">
+          <span class="chip active" data-range="">All range</span>
+          <span class="chip" data-range="20">&lt;20m</span>
+          <span class="chip" data-range="30">&lt;30m</span>
+          <span class="chip" data-range="40">&lt;40m</span>
+          <span class="chip" data-range="60">&lt;60m</span>
+          <span class="chip" data-range="100">&lt;100m</span>
+        </div>
+      </div>
+      <div>
+        <h2>Shortcuts</h2>
+        <div class="chips">
+          <span class="chip" id="nearPedBtn">Nearby pedestrian</span>
+          <span class="chip" id="nearPedFpBtn">Nearby pedestrian FP</span>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><b id="kScenario">0</b><span>scenarios</span></div>
+        <div class="kpi"><b id="kFp">0</b><span>FP</span></div>
+        <div class="kpi"><b id="kFn">0</b><span>FN</span></div>
+      </div>
+      <div>
+        <h2>Top Offenders</h2>
+        <div class="list" id="scenarioList"></div>
+      </div>
+    </aside>
+    <main class="stage">
+      <canvas id="mapCanvas"></canvas>
+      <div class="topbar">
+        <div class="hud">
+          <div class="stat"><b id="hudLens">FP</b><span>lens</span></div>
+          <div class="stat"><b id="hudMax">0</b><span>max issue</span></div>
+          <div class="stat"><b id="hudLabel">All</b><span>label</span></div>
+          <div class="stat"><b id="hudRange">All</b><span>range</span></div>
+        </div>
+        <div class="tools">
+          <button id="layoutGalaxy" class="active">Galaxy</button>
+          <button id="layoutGrid">Grid</button>
+          <button id="resetView">Reset</button>
+        </div>
+      </div>
+      <div class="legend">
+        <div><i style="background:#38bdf8"></i>low issue density</div>
+        <div><i style="background:#fbbf24"></i>medium hotspot</div>
+        <div><i style="background:#fb7185"></i>critical hotspot</div>
+        <div>click node → inspect scenario curve</div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </main>
+    <aside class="panel right">
+      <div class="card">
+        <h2>Selected Scenario</h2>
+        <div class="selected-title" id="selTitle">No scenario selected</div>
+        <p class="sub" id="selMeta">Click a node or list item.</p>
+      </div>
+      <div class="card metric-grid">
+        <div class="metric"><b id="selFp">0</b><span>FP</span></div>
+        <div class="metric"><b id="selFn">0</b><span>FN</span></div>
+        <div class="metric"><b id="selPrecision">-</b><span>precision</span></div>
+        <div class="metric"><b id="selRecall">-</b><span>recall</span></div>
+      </div>
+      <div class="card">
+        <h2>Frame Curve</h2>
+        <canvas class="curve" id="curveCanvas"></canvas>
+        <div class="curve-status" id="curveStatus">Select a scenario to load the frame curve.</div>
+      </div>
+      <div class="card">
+        <h2>Scenario Actions</h2>
+        <div class="row">
+          <button id="openViewerBtn">Open BBox Viewer</button>
+          <button id="focusWorstBtn">Worst Frame</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Top Labels In Scenario</h2>
+        <div class="list" id="labelBreakdown"></div>
+      </div>
+    </aside>
+  </div>
+  <script>
+    const API_BASE_PLACEHOLDER = "__API_BASE__";
+    const API_BASE = API_BASE_PLACEHOLDER && !API_BASE_PLACEHOLDER.startsWith("__")
+      ? API_BASE_PLACEHOLDER
+      : (window.location.pathname.startsWith("/bbox-explorer") ? "/bbox-api" : "");
+    const $ = id => document.getElementById(id);
+    const state = {
+      parquets: [], path: "", scenarios: [], labels: [], selected: null, curve: [],
+      lens: "fp", label: "", rangeMax: "", layout: "galaxy", scale: 1, panX: 0, panY: 0,
+      dragging: false, lastX: 0, lastY: 0, hover: null
+    };
+    const els = {
+      root: $("rootInput"), scan: $("scanBtn"), parquet: $("parquetSelect"), topic: $("topicFilter"),
+      search: $("searchInput"), lensChips: $("lensChips"), labelChips: $("labelChips"), rangeChips: $("rangeChips"),
+      list: $("scenarioList"), canvas: $("mapCanvas"), toast: $("toast"),
+      kScenario: $("kScenario"), kFp: $("kFp"), kFn: $("kFn"), hudLens: $("hudLens"), hudMax: $("hudMax"), hudLabel: $("hudLabel"), hudRange: $("hudRange"),
+      layoutGalaxy: $("layoutGalaxy"), layoutGrid: $("layoutGrid"), resetView: $("resetView"),
+      selTitle: $("selTitle"), selMeta: $("selMeta"), selFp: $("selFp"), selFn: $("selFn"), selPrecision: $("selPrecision"), selRecall: $("selRecall"),
+      curve: $("curveCanvas"), curveStatus: $("curveStatus"), openViewer: $("openViewerBtn"), focusWorst: $("focusWorstBtn"), labelBreakdown: $("labelBreakdown"),
+      nearPed: $("nearPedBtn"), nearPedFp: $("nearPedFpBtn")
+    };
+    const ctx = els.canvas.getContext("2d");
+    const curveCtx = els.curve.getContext("2d");
+
+    async function api(route, body = {}) {
+      const res = await fetch(`${API_BASE}${route}`, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : {}; } catch (_err) { throw new Error(`Non-JSON from ${route}: ${text.slice(0, 100)}`); }
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+    function toast(msg) {
+      els.toast.textContent = msg;
+      els.toast.classList.add("show");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => els.toast.classList.remove("show"), 2600);
+    }
+    function escapeHtml(v) {
+      return String(v ?? "").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+    function rate(v) { return Number.isFinite(Number(v)) ? `${Math.round(Number(v) * 100)}%` : "-"; }
+    function fmt(n) { return Number(n || 0).toLocaleString(); }
+    function filters() {
+      const f = {};
+      if (els.topic.value) f.topic_name = els.topic.value;
+      if (state.rangeMax !== "") f.distance_max = Number(state.rangeMax);
+      return f;
+    }
+    function scenarioKey(s) { return `${s.suite_name || ""}|${s.scenario_name || ""}|${s.t4dataset_name || ""}|${s.topic_name || ""}`; }
+    function scenarioMetric(s, lens = state.lens, label = state.label) {
+      if (label) {
+        const row = (s.labels || []).find(x => x.label === label);
+        if (!row) return 0;
+        if (lens === "count") return row.rows || 0;
+        if (lens === "fp") return row.fp || 0;
+        if (lens === "fn") return row.fn || 0;
+        if (lens === "fpr") return row.fp / Math.max(1, row.rows || 0);
+        if (lens === "fnr") return row.fn / Math.max(1, row.rows || 0);
+      }
+      if (lens === "count") return s.rows || 0;
+      if (lens === "fp") return s.fp || 0;
+      if (lens === "fn") return s.fn || 0;
+      if (lens === "fpr") return s.fpr || 0;
+      if (lens === "fnr") return s.fnr || 0;
+      if (lens === "error") return s.max_tp_error || 0;
+      return s.fp || 0;
+    }
+    function scenarioName(s) {
+      const raw = s.scenario_name || s.t4dataset_name || "scenario";
+      return raw.replace(/^FullPerformance_V1_/, "");
+    }
+    async function scan() {
+      try {
+        toast("Scanning bbox parquets...");
+        const data = await api("/api/parquets", {root: els.root.value, limit: 2000, bbox_only: true});
+        state.parquets = data.items || [];
+        els.parquet.innerHTML = state.parquets.map(p => `<option value="${escapeHtml(p.path)}">${escapeHtml(p.display)}</option>`).join("");
+        if (!state.parquets.length) { toast("No bbox-compatible parquets found."); return; }
+        state.path = els.parquet.value || state.parquets[0].path;
+        await hydrate();
+        await loadSummary();
+      } catch (err) { toast(err.message); }
+    }
+    async function hydrate() {
+      state.path = els.parquet.value;
+      const [topics] = await Promise.all([api("/api/values", {path: state.path, column: "topic_name", filters: {}}).catch(() => ({values: []}))]);
+      els.topic.innerHTML = `<option value="">Any</option>` + (topics.values || []).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
+      if ((topics.values || []).includes("perception.object_recognition.objects")) els.topic.value = "perception.object_recognition.objects";
+    }
+    async function loadSummary(options = {}) {
+      if (!state.path) return;
+      toast("Building dataset problem map...");
+      const data = await api("/api/dataset_summary", {path: state.path, filters: filters(), limit: 1200});
+      state.scenarios = data.items || [];
+      state.labels = data.labels || [];
+      buildLabelChips();
+      layoutNodes();
+      renderList();
+      updateKpis();
+      render();
+      if (options.selectTop) {
+        state.selected = null;
+      } else if (state.selected) {
+        state.selected = state.scenarios.find(s => scenarioKey(s) === scenarioKey(state.selected)) || null;
+      }
+      const ranked = filteredScenarios();
+      if ((!state.selected || scenarioMetric(state.selected) <= 0) && ranked.length) {
+        const best = ranked.find(s => scenarioMetric(s) > 0) || ranked[0];
+        selectScenario(best, false);
+      } else if (state.selected) {
+        selectScenario(state.selected, false);
+      }
+      toast(`Loaded ${state.scenarios.length} scenarios.`);
+    }
+    function buildLabelChips() {
+      const labels = [...state.labels].sort((a, b) => (b.fp + b.fn) - (a.fp + a.fn)).slice(0, 18);
+      if (state.label && !labels.some(x => x.label === state.label)) {
+        const hit = state.labels.find(x => x.label === state.label) || {label: state.label, fp: 0, fn: 0, rows: 0};
+        labels.push(hit);
+      }
+      els.labelChips.innerHTML = `<span class="chip ${state.label === "" ? "active" : ""}" data-label="">All labels</span>` +
+        labels.map(x => `<span class="chip ${state.label === x.label ? "active" : ""}" data-label="${escapeHtml(x.label)}">${escapeHtml(x.label)} · ${fmt(x.fp)} FP</span>`).join("");
+      els.labelChips.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
+        state.label = chip.dataset.label || "";
+        buildLabelChips(); renderList(); updateKpis(); render();
+        const ranked = filteredScenarios();
+        if (ranked.length && (!state.selected || scenarioMetric(state.selected) <= 0)) selectScenario(ranked.find(s => scenarioMetric(s) > 0) || ranked[0]);
+        else if (state.selected) loadCurve(state.selected);
+      }));
+    }
+    function filteredScenarios() {
+      const q = els.search.value.trim().toLowerCase();
+      let arr = state.scenarios;
+      if (q) {
+        arr = arr.filter(s => [s.suite_name, s.scenario_name, s.t4dataset_name, s.topic_name, ...(s.labels || []).map(x => x.label)].join(" ").toLowerCase().includes(q));
+      }
+      return [...arr].sort((a, b) => scenarioMetric(b) - scenarioMetric(a));
+    }
+    function layoutNodes() {
+      const arr = state.scenarios;
+      const n = Math.max(1, arr.length);
+      arr.forEach((s, i) => {
+        if (state.layout === "grid") {
+          const cols = Math.ceil(Math.sqrt(n));
+          s._x = (i % cols - cols / 2) * 54;
+          s._y = (Math.floor(i / cols) - Math.ceil(n / cols) / 2) * 54;
+        } else {
+          const a = i * 2.399963;
+          const r = 18 + Math.sqrt(i + 1) * 21;
+          const severity = scenarioMetric(s);
+          s._x = Math.cos(a) * r + Math.sin(i * .31) * Math.min(90, severity * .02);
+          s._y = Math.sin(a) * r + Math.cos(i * .27) * Math.min(90, severity * .02);
+        }
+      });
+    }
+    function updateKpis() {
+      const arr = filteredScenarios();
+      const fp = arr.reduce((n, s) => n + (state.label ? ((s.labels || []).find(x => x.label === state.label)?.fp || 0) : (s.fp || 0)), 0);
+      const fn = arr.reduce((n, s) => n + (state.label ? ((s.labels || []).find(x => x.label === state.label)?.fn || 0) : (s.fn || 0)), 0);
+      const max = arr.reduce((m, s) => Math.max(m, scenarioMetric(s)), 0);
+      els.kScenario.textContent = fmt(arr.length);
+      els.kFp.textContent = fmt(fp);
+      els.kFn.textContent = fmt(fn);
+      els.hudLens.textContent = state.lens.toUpperCase();
+      els.hudMax.textContent = state.lens.endsWith("r") ? rate(max) : fmt(Math.round(max));
+      els.hudLabel.textContent = state.label || "All";
+      els.hudRange.textContent = state.rangeMax ? `<${state.rangeMax}m` : "All";
+    }
+    function renderList() {
+      const arr = filteredScenarios().slice(0, 80);
+      els.list.innerHTML = arr.map(s => {
+        const active = state.selected && scenarioKey(state.selected) === scenarioKey(s);
+        const m = scenarioMetric(s);
+        return `<div class="scenario ${active ? "active" : ""}" data-key="${escapeHtml(scenarioKey(s))}">
+          <strong>${escapeHtml(scenarioName(s))}</strong>
+          <span>${state.lens.toUpperCase()} ${state.lens.endsWith("r") ? rate(m) : fmt(Math.round(m))} · FP ${fmt(s.fp)} · FN ${fmt(s.fn)} · ${fmt(s.frames)} frames${state.rangeMax ? ` · <${state.rangeMax}m` : ""}</span>
+          <span>${escapeHtml((s.labels || []).slice(0, 4).map(x => `${x.label}:${x.fp}FP`).join(" · "))}</span>
+        </div>`;
+      }).join("");
+      els.list.querySelectorAll(".scenario").forEach(card => card.addEventListener("click", () => {
+        const s = state.scenarios.find(x => scenarioKey(x) === card.dataset.key);
+        if (s) selectScenario(s);
+      }));
+    }
+    async function selectScenario(s, flash = true) {
+      state.selected = s;
+      els.selTitle.textContent = scenarioName(s);
+      els.selMeta.textContent = `${s.suite_name || ""} · ${s.topic_name || ""} · ${fmt(s.frames)} frames`;
+      els.selFp.textContent = fmt(s.fp);
+      els.selFn.textContent = fmt(s.fn);
+      els.selPrecision.textContent = rate(s.precision);
+      els.selRecall.textContent = rate(s.recall);
+      els.labelBreakdown.innerHTML = (s.labels || []).map(x => `<div class="scenario"><strong>${escapeHtml(x.label)}</strong><span>FP ${fmt(x.fp)} · FN ${fmt(x.fn)} · TP ${fmt(x.tp)}</span></div>`).join("");
+      renderList();
+      render();
+      await loadCurve(s);
+      if (flash) toast("Scenario selected. Curve loaded.");
+    }
+    async function loadCurve(s) {
+      const f = {topic_name: s.topic_name, scenario_name: s.scenario_name};
+      if (s.suite_name) f.suite_name = s.suite_name;
+      if (state.rangeMax !== "") f.distance_max = Number(state.rangeMax);
+      els.curveStatus.textContent = `Loading frame curve${state.label ? ` for ${state.label}` : ""}${state.rangeMax ? ` within ${state.rangeMax}m` : ""}...`;
+      try {
+        const data = await api("/api/scenario_curve", {path: state.path, filters: f, label: state.label, limit: 5000});
+        state.curve = data.frames || [];
+        renderCurve();
+      } catch (err) {
+        state.curve = [];
+        renderCurve(`Curve failed: ${err.message}`);
+      }
+    }
+    function resizeCanvas(c, context) {
+      const dpr = window.devicePixelRatio || 1;
+      const r = c.getBoundingClientRect();
+      c.width = Math.max(1, Math.floor(r.width * dpr));
+      c.height = Math.max(1, Math.floor(r.height * dpr));
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return r;
+    }
+    function colorFor(v, max) {
+      const t = max > 0 ? Math.max(0, Math.min(1, v / max)) : 0;
+      if (t < .35) return `rgba(56,189,248,${.45 + t})`;
+      if (t < .68) return `rgba(251,191,36,${.52 + t * .55})`;
+      return `rgba(251,113,133,${.58 + t * .42})`;
+    }
+    function screenOf(s, rect) {
+      return [rect.width / 2 + (s._x + state.panX) * state.scale, rect.height / 2 + (s._y + state.panY) * state.scale];
+    }
+    function render() {
+      const r = resizeCanvas(els.canvas, ctx);
+      ctx.clearRect(0, 0, r.width, r.height);
+      const bg = ctx.createLinearGradient(0, 0, 0, r.height);
+      bg.addColorStop(0, "#0b1224"); bg.addColorStop(1, "#020617");
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, r.width, r.height);
+      const arr = filteredScenarios();
+      const max = Math.max(1, ...arr.map(s => scenarioMetric(s)));
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(148,163,184,.12)";
+      for (let x = (state.panX * state.scale) % 48; x < r.width; x += 48) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, r.height); ctx.stroke(); }
+      for (let y = (state.panY * state.scale) % 48; y < r.height; y += 48) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(r.width, y); ctx.stroke(); }
+      state.hover = null;
+      for (const s of arr) {
+        const [x, y] = screenOf(s, r);
+        const v = scenarioMetric(s);
+        const rad = Math.max(5, Math.min(30, 5 + Math.sqrt(v) * 1.35)) * state.scale;
+        if (x < -60 || y < -60 || x > r.width + 60 || y > r.height + 60) continue;
+        const selected = state.selected && scenarioKey(state.selected) === scenarioKey(s);
+        ctx.fillStyle = colorFor(v, max);
+        ctx.shadowColor = colorFor(v, max);
+        ctx.shadowBlur = selected ? 28 : 14;
+        ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = selected ? "#fff" : "rgba(226,232,240,.42)";
+        ctx.lineWidth = selected ? 2.5 : 1;
+        ctx.stroke();
+        if (rad > 10 || selected) {
+          ctx.fillStyle = "#eaf2ff";
+          ctx.font = "700 10px Inter, sans-serif";
+          ctx.fillText(scenarioName(s).slice(0, 22), x + rad + 5, y + 3);
+        }
+      }
+    }
+    function renderCurve(message = "") {
+      const r = resizeCanvas(els.curve, curveCtx);
+      curveCtx.clearRect(0, 0, r.width, r.height);
+      curveCtx.fillStyle = "rgba(2,6,23,.72)";
+      curveCtx.fillRect(0, 0, r.width, r.height);
+      curveCtx.strokeStyle = "rgba(148,163,184,.18)";
+      curveCtx.lineWidth = 1;
+      for (let i = 0; i < 4; i++) {
+        const y = 24 + i * (r.height - 42) / 3;
+        curveCtx.beginPath(); curveCtx.moveTo(8, y); curveCtx.lineTo(r.width - 8, y); curveCtx.stroke();
+      }
+      if (!state.curve.length) {
+        const text = message || "No frames matched the selected label/range.";
+        els.curveStatus.textContent = text;
+        curveCtx.fillStyle = "#91a4bf";
+        curveCtx.font = "12px Inter, sans-serif";
+        curveCtx.fillText(text, 12, Math.max(28, r.height / 2));
+        return;
+      }
+      const max = Math.max(1, ...state.curve.map(f => Math.max(f.fp || 0, f.fn || 0, f.tp || 0)));
+      const plot = {x: 10, y: 24, w: Math.max(1, r.width - 20), h: Math.max(1, r.height - 42)};
+      const barW = Math.max(1, plot.w / Math.max(1, state.curve.length) * .82);
+      state.curve.forEach((f, i) => {
+        const x = plot.x + i * plot.w / Math.max(1, state.curve.length - 1);
+        const fpH = ((Number(f.fp) || 0) / max) * plot.h;
+        const fnH = ((Number(f.fn) || 0) / max) * plot.h;
+        curveCtx.fillStyle = "rgba(251,113,133,.58)";
+        curveCtx.fillRect(x - barW / 2, plot.y + plot.h - fpH, barW * .48, fpH);
+        curveCtx.fillStyle = "rgba(251,191,36,.58)";
+        curveCtx.fillRect(x, plot.y + plot.h - fnH, barW * .48, fnH);
+      });
+      const draw = (key, color) => {
+        curveCtx.strokeStyle = color; curveCtx.lineWidth = key === "tp" ? 2.4 : 1.6; curveCtx.beginPath();
+        state.curve.forEach((f, i) => {
+          const x = plot.x + i * plot.w / Math.max(1, state.curve.length - 1);
+          const y = plot.y + plot.h - ((Number(f[key]) || 0) / max) * plot.h;
+          if (i === 0) curveCtx.moveTo(x, y); else curveCtx.lineTo(x, y);
+        });
+        curveCtx.stroke();
+      };
+      draw("tp", "#38bdf8");
+      draw("fp", "#fb7185");
+      draw("fn", "#fbbf24");
+      curveCtx.fillStyle = "#38bdf8"; curveCtx.font = "700 11px Inter, sans-serif";
+      curveCtx.fillText("TP", 10, 16); curveCtx.fillStyle = "#fb7185"; curveCtx.fillText("FP", 44, 16); curveCtx.fillStyle = "#fbbf24"; curveCtx.fillText("FN", 78, 16);
+      curveCtx.fillStyle = "#91a4bf"; curveCtx.fillText(`max ${Math.round(max)}`, r.width - 68, 16);
+      const peak = [...state.curve].sort((a, b) => ((b.fp || 0) + (b.fn || 0)) - ((a.fp || 0) + (a.fn || 0)))[0];
+      els.curveStatus.textContent = `${state.curve.length} frames · peak frame ${peak ? peak.frame : "-"} · max ${Math.round(max)} objects/frame`;
+    }
+    function openViewer(frame = null) {
+      if (!state.selected) return;
+      const p = new URLSearchParams();
+      p.set("path", state.path);
+      p.set("suite", state.selected.suite_name || "");
+      p.set("scenario", state.selected.scenario_name || "");
+      p.set("topic", state.selected.topic_name || "");
+      if (frame != null) p.set("frame", String(frame));
+      window.open(`/bbox-viewer/?${p.toString()}`, "_blank");
+    }
+    els.scan.addEventListener("click", scan);
+    els.parquet.addEventListener("change", async () => { state.path = els.parquet.value; await hydrate(); await loadSummary(); });
+    els.topic.addEventListener("change", loadSummary);
+    els.search.addEventListener("input", () => { renderList(); updateKpis(); render(); });
+    els.lensChips.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
+      state.lens = chip.dataset.lens;
+      els.lensChips.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c === chip));
+      renderList(); updateKpis(); render(); if (state.selected) loadCurve(state.selected);
+    }));
+    els.rangeChips.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", async () => {
+      state.rangeMax = chip.dataset.range || "";
+      els.rangeChips.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c === chip));
+      await loadSummary({selectTop: true});
+    }));
+    function setLens(value) {
+      state.lens = value;
+      els.lensChips.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", c.dataset.lens === value));
+    }
+    function setLabel(value) {
+      state.label = value;
+      buildLabelChips();
+    }
+    async function setRange(value) {
+      state.rangeMax = value;
+      els.rangeChips.querySelectorAll(".chip").forEach(c => c.classList.toggle("active", (c.dataset.range || "") === value));
+      await loadSummary({selectTop: true});
+    }
+    els.nearPed.addEventListener("click", async () => {
+      setLens("count");
+      setLabel("pedestrian");
+      await setRange("30");
+    });
+    els.nearPedFp.addEventListener("click", async () => {
+      setLens("fp");
+      setLabel("pedestrian");
+      await setRange("30");
+    });
+    els.layoutGalaxy.addEventListener("click", () => { state.layout = "galaxy"; els.layoutGalaxy.classList.add("active"); els.layoutGrid.classList.remove("active"); layoutNodes(); render(); });
+    els.layoutGrid.addEventListener("click", () => { state.layout = "grid"; els.layoutGrid.classList.add("active"); els.layoutGalaxy.classList.remove("active"); layoutNodes(); render(); });
+    els.resetView.addEventListener("click", () => { state.panX = 0; state.panY = 0; state.scale = 1; render(); });
+    els.openViewer.addEventListener("click", () => openViewer());
+    els.focusWorst.addEventListener("click", () => {
+      if (!state.curve.length) return openViewer();
+      const worst = [...state.curve].sort((a, b) => (b.fp + b.fn) - (a.fp + a.fn))[0];
+      openViewer(worst && worst.frame);
+    });
+    els.canvas.addEventListener("pointerdown", e => { state.dragging = true; state.lastX = e.clientX; state.lastY = e.clientY; els.canvas.setPointerCapture(e.pointerId); });
+    els.canvas.addEventListener("pointerup", e => {
+      const moved = Math.hypot(e.clientX - state.lastX, e.clientY - state.lastY);
+      state.dragging = false;
+      if (moved < 5) {
+        const rect = els.canvas.getBoundingClientRect();
+        const arr = filteredScenarios();
+        let best = null, bestD = 22;
+        for (const s of arr) {
+          const [x, y] = screenOf(s, rect);
+          const d = Math.hypot(e.clientX - rect.left - x, e.clientY - rect.top - y);
+          if (d < bestD) { best = s; bestD = d; }
+        }
+        if (best) selectScenario(best);
+      }
+    });
+    els.canvas.addEventListener("pointermove", e => {
+      if (!state.dragging) return;
+      state.panX += (e.clientX - state.lastX) / state.scale;
+      state.panY += (e.clientY - state.lastY) / state.scale;
+      state.lastX = e.clientX; state.lastY = e.clientY; render();
+    });
+    els.canvas.addEventListener("wheel", e => {
+      e.preventDefault();
+      state.scale = Math.max(.35, Math.min(3, state.scale * (e.deltaY > 0 ? .92 : 1.08)));
+      render();
+    }, {passive: false});
+    window.addEventListener("resize", () => { render(); renderCurve(); });
+    scan();
+  </script>
+</body>
+</html>

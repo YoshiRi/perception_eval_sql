@@ -46,10 +46,15 @@ render_page_hero(
 
 api_base = _api_base_url()
 direct_url = "/bbox-viewer/" if _running_behind_docker_nginx() else f"{api_base}/viewer"
+explorer_url = "/bbox-explorer/" if _running_behind_docker_nginx() else f"{api_base}/explorer"
 
 st.info(
     "The local bbox viewer now runs as a standalone full-window app so the viewport, "
     "fullscreen controls, and keyboard/mouse interaction are not clipped by Streamlit."
 )
-st.link_button("Open Local BBox Arena", direct_url, type="primary")
-st.caption(f"Viewer URL: `{direct_url}` · API: `{api_base}`")
+col_a, col_b = st.columns(2)
+with col_a:
+    st.link_button("Open Dataset Problem Map", explorer_url, type="primary")
+with col_b:
+    st.link_button("Open Local BBox Arena", direct_url)
+st.caption(f"Explorer URL: `{explorer_url}` · Viewer URL: `{direct_url}` · API: `{api_base}`")
