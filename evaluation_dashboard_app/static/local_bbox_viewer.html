@@ -107,6 +107,7 @@
       grid-template-columns: 1fr 1fr;
       gap: 8px;
     }
+    .is-hidden { display: none !important; }
     .filters .wide { grid-column: 1 / -1; }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip {
@@ -120,6 +121,15 @@
       user-select: none;
     }
     .chip.active { color: #07111f; background: var(--cyan); border-color: transparent; }
+    .chip.layer { display: inline-flex; align-items: center; gap: 6px; }
+    .chip.layer::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 2px;
+      background: var(--sw);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset;
+    }
     .view-controls {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -144,6 +154,120 @@
       min-height: 26px;
     }
     .view-controls input[type="checkbox"] { width: auto; min-height: 0; }
+    .viewer-controls {
+      position: absolute;
+      left: 16px;
+      top: 86px;
+      width: min(660px, calc(100% - 390px));
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border-radius: 8px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .24);
+      pointer-events: auto;
+      z-index: 4;
+    }
+    .viewer-controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+    }
+    .viewer-controls-row.labels {
+      max-height: 68px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .label-dock {
+      position: absolute;
+      left: 16px;
+      top: 208px;
+      width: min(520px, calc(100% - 390px));
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid rgba(56, 189, 248, .42);
+      background: rgba(2, 6, 23, .82);
+      backdrop-filter: blur(16px);
+      border-radius: 8px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .24);
+      pointer-events: auto;
+      z-index: 4;
+    }
+    .label-dock-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .label-dock-title {
+      color: #e5edf7;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .label-dock .chips {
+      max-height: 96px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .control-caption {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .viewer-controls label {
+      color: var(--muted);
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .viewer-controls select,
+    .viewer-controls input {
+      width: auto;
+      min-height: 30px;
+      padding: 5px 7px;
+      font-size: 11px;
+    }
+    .seg-btn.active {
+      color: #07111f;
+      background: var(--cyan);
+      border-color: transparent;
+      font-weight: 750;
+    }
+    .advanced-panel {
+      display: none;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .advanced-panel.show { display: grid; }
+    .advanced-panel label {
+      justify-content: space-between;
+      min-width: 0;
+    }
+    .cycle-btn {
+      min-height: 30px;
+      padding: 4px 9px;
+      border-color: rgba(148, 163, 184, .28);
+      background: rgba(15, 23, 42, .72);
+      color: var(--text);
+      font-size: 11px;
+    }
+    .cycle-btn.active {
+      color: #07111f;
+      background: var(--cyan);
+      border-color: transparent;
+      font-weight: 750;
+    }
     .layer-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -421,6 +545,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .compare-card.delta { grid-column: 1 / -1; }
     .split-label {
       position: absolute;
       top: 72px;
@@ -517,7 +642,7 @@
       .results { max-height: 92px; }
       .timeline { grid-template-columns: 42px minmax(90px, 110px) minmax(0, 1fr); }
       .frame-readout { grid-column: 1 / -1; text-align: left; }
-      .legend, .analysis-panel { display: none; }
+      .legend, .analysis-panel, .viewer-controls, .label-dock { display: none; }
     }
   </style>
 </head>
@@ -553,88 +678,21 @@
       </div>
       <div class="filters">
         <div class="field wide"><label>Suite</label><select id="suiteFilter"><option value="">Any</option></select></div>
-        <div class="field wide"><label>Scenario</label><select id="scenarioFilter"><option value="">Any</option></select></div>
-        <div class="field"><label>Dataset</label><select id="datasetFilter"><option value="">Any</option></select></div>
+        <div class="field wide is-hidden"><label>Scenario</label><select id="scenarioFilter"><option value="">Any</option></select></div>
+        <div class="field is-hidden"><label>Dataset</label><select id="datasetFilter"><option value="">Any</option></select></div>
         <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
-        <div class="field"><label>Frame min</label><input id="frameMin" type="number" placeholder="auto"></div>
-        <div class="field"><label>Frame max</label><input id="frameMax" type="number" placeholder="auto"></div>
+        <div class="field is-hidden"><label>Frame min</label><input id="frameMin" type="number" placeholder="auto"></div>
+        <div class="field is-hidden"><label>Frame max</label><input id="frameMax" type="number" placeholder="auto"></div>
       </div>
-      <div class="field">
+      <div class="field is-hidden">
         <label>Status</label>
         <div class="chips" id="statusChips"></div>
       </div>
-      <div class="field">
+      <div class="field is-hidden">
         <label>Source</label>
         <div class="chips" id="sourceChips"></div>
       </div>
-      <div class="field">
-        <label>Labels</label>
-        <div class="chips" id="labelChips"></div>
-      </div>
-      <div class="field">
-        <label>Eval layers</label>
-        <div class="layer-grid">
-          <label class="layer-toggle"><span class="layer-swatch" style="--sw:#00cc66"></span><input id="showGtTp" type="checkbox" checked> GT·TP <span class="layer-count" id="cntGtTp">0</span></label>
-          <label class="layer-toggle"><span class="layer-swatch" style="--sw:#ff9933"></span><input id="showGtFn" type="checkbox" checked> GT·FN <span class="layer-count" id="cntGtFn">0</span></label>
-          <label class="layer-toggle"><span class="layer-swatch" style="--sw:#66b3ff"></span><input id="showEstTp" type="checkbox" checked> EST·TP <span class="layer-count" id="cntEstTp">0</span></label>
-          <label class="layer-toggle"><span class="layer-swatch" style="--sw:#ff6666"></span><input id="showEstFp" type="checkbox" checked> EST·FP <span class="layer-count" id="cntEstFp">0</span></label>
-        </div>
-      </div>
-      <div class="view-controls">
-        <label>View
-          <select id="viewMode">
-            <option value="bev" selected>BEV pan +X up</option>
-            <option value="bev_locked">BEV locked ego</option>
-            <option value="perspective">Perspective</option>
-          </select>
-        </label>
-        <label>Color
-          <select id="colorMode">
-            <option value="status" selected>Eval layer</option>
-            <option value="run">Compare run</option>
-            <option value="source">Source</option>
-            <option value="error">TP error</option>
-            <option value="confidence">Confidence</option>
-          </select>
-        </label>
-        <label>Label
-          <select id="labelMode">
-            <option value="label_status" selected>Class + status</option>
-            <option value="label_conf">Class + confidence</option>
-            <option value="uuid">UUID short</option>
-            <option value="none">Hidden</option>
-          </select>
-        </label>
-        <label>Min conf
-          <input id="confMin" type="number" min="0" max="1" step="0.05" placeholder="off">
-        </label>
-        <label>Opacity
-          <input id="boxOpacity" type="range" min="0.2" max="1" step="0.05" value="0.9">
-        </label>
-        <label>Compare lens
-          <select id="compareLens">
-            <option value="all" selected>All loaded</option>
-            <option value="a_only">Only A</option>
-            <option value="b_only">Only B</option>
-            <option value="new_fp_b">New FP in B</option>
-            <option value="resolved_fn_b">Resolved FN in B</option>
-            <option value="worse_tp_b">B worse TP error</option>
-            <option value="better_tp_b">B better TP error</option>
-          </select>
-        </label>
-        <label>Compare view
-          <select id="compareLayout">
-            <option value="side_by_side" selected>Side by side</option>
-            <option value="curtain">Curtain wipe</option>
-            <option value="overlay">Overlay</option>
-          </select>
-        </label>
-        <label class="toggle"><input id="showVelocity" type="checkbox" checked> Velocity</label>
-        <label class="toggle"><input id="showRings" type="checkbox" checked> Range rings</label>
-        <label class="toggle"><input id="showErrors" type="checkbox" checked> Error glyphs</label>
-        <label class="toggle"><input id="dedupeRows" type="checkbox" checked> Dedupe</label>
-      </div>
-      <button id="loadBtn">Load Selected Scene</button>
+      <button id="loadBtn" class="is-hidden">Load Selected Scene</button>
       <div class="results" id="results"></div>
     </aside>
     <main class="stage">
@@ -651,11 +709,74 @@
           <button id="camTop" title="Top camera">Top</button>
           <button id="cam3d" title="Perspective camera">3D</button>
           <button id="camFollow" title="Follow-style camera">Follow</button>
+          <button id="compareSideBtn" class="seg-btn active" title="Side-by-side comparison">A|B</button>
+          <button id="compareCurtainBtn" class="seg-btn" title="Curtain comparison">Curtain</button>
           <button id="resetCamera" title="Reset camera">⌂</button>
           <button id="fitCamera" title="Fit scene">□</button>
           <button id="toggleTrails" title="Show all frame centers">⋯</button>
           <button id="fullscreenBtn" title="Fullscreen">⛶</button>
         </div>
+      </div>
+      <div class="viewer-controls">
+        <div class="viewer-controls-row" id="layerChips">
+          <span class="chip layer active" style="--sw:#00cc66" data-layer="gt_tp">GT·TP <span class="layer-count" id="cntGtTp">0</span></span>
+          <span class="chip layer active" style="--sw:#ff9933" data-layer="gt_fn">GT·FN <span class="layer-count" id="cntGtFn">0</span></span>
+          <span class="chip layer active" style="--sw:#66b3ff" data-layer="est_tp">EST·TP <span class="layer-count" id="cntEstTp">0</span></span>
+          <span class="chip layer active" style="--sw:#ff6666" data-layer="est_fp">EST·FP <span class="layer-count" id="cntEstFp">0</span></span>
+          <button id="colorCycleBtn" class="cycle-btn" title="Cycle bbox coloring">Color: Eval</button>
+          <button id="labelCycleBtn" class="cycle-btn" title="Cycle label display">Label: Class</button>
+          <button id="advancedBtn" class="cycle-btn" title="Advanced display settings">Advanced</button>
+        </div>
+        <div class="viewer-controls-row is-hidden">
+          <select id="viewMode">
+            <option value="bev" selected>BEV pan</option>
+            <option value="perspective">Perspective</option>
+          </select>
+          <select id="colorMode">
+            <option value="status" selected>Eval layer</option>
+            <option value="run">Compare run</option>
+            <option value="source">Source</option>
+            <option value="error">TP error</option>
+            <option value="confidence">Confidence</option>
+          </select>
+          <select id="labelMode">
+            <option value="label_status" selected>Class + status</option>
+            <option value="label_conf">Class + confidence</option>
+            <option value="uuid">UUID short</option>
+            <option value="none">Hidden</option>
+          </select>
+          <select id="compareLens">
+              <option value="all" selected>All loaded</option>
+              <option value="a_only">Only A</option>
+              <option value="b_only">Only B</option>
+              <option value="new_fp_b">New FP in B</option>
+              <option value="resolved_fn_b">Resolved FN in B</option>
+              <option value="worse_tp_b">B worse TP error</option>
+              <option value="better_tp_b">B better TP error</option>
+          </select>
+          <select id="compareLayout">
+            <option value="side_by_side" selected>Side by side</option>
+            <option value="curtain">Curtain wipe</option>
+          </select>
+        </div>
+        <div class="advanced-panel" id="advancedPanel">
+          <label>Min conf <input id="confMin" type="number" min="0" max="1" step="0.05" placeholder="off"></label>
+          <label>Opacity <input id="boxOpacity" type="range" min="0.2" max="1" step="0.05" value="0.9"></label>
+          <label class="toggle"><input id="showVelocity" type="checkbox" checked> Velocity</label>
+          <label class="toggle"><input id="showRings" type="checkbox" checked> Range rings</label>
+          <label class="toggle"><input id="showErrors" type="checkbox" checked> Error glyphs</label>
+          <label class="toggle"><input id="dedupeRows" type="checkbox" checked> Dedupe</label>
+        </div>
+      </div>
+      <div class="label-dock">
+        <div class="label-dock-head">
+          <span class="label-dock-title">Object Labels</span>
+          <span>
+            <button id="labelsAllBtn" class="cycle-btn" title="Show all object labels">All</button>
+            <button id="labelsNoneBtn" class="cycle-btn" title="Hide all object labels">None</button>
+          </span>
+        </div>
+        <div class="chips" id="labelChips"></div>
       </div>
       <div class="legend">
         <div><i style="background:#00cc66"></i>GT·TP filled</div>
@@ -678,6 +799,7 @@
         <div class="compare-summary" id="compareSummary">
           <div class="compare-card"><strong style="color:#60a5fa">Run A</strong><code id="compareAStats">TP 0 · FP 0 · FN 0</code></div>
           <div class="compare-card"><strong style="color:#a78bfa">Run B</strong><code id="compareBStats">TP 0 · FP 0 · FN 0</code></div>
+          <div class="compare-card delta"><strong>Delta B - A</strong><code id="compareDeltaStats">ΔTP 0 · ΔFP 0 · ΔFN 0</code></div>
         </div>
         <div class="analysis-actions">
           <button id="prevHotFrame" title="Previous frame with FP/FN or high TP error">Prev hotspot</button>
@@ -762,12 +884,14 @@
       suite: $("suiteFilter"), scenario: $("scenarioFilter"), dataset: $("datasetFilter"), topic: $("topicFilter"),
       frameMin: $("frameMin"), frameMax: $("frameMax"), statuses: $("statusChips"), sources: $("sourceChips"), labels: $("labelChips"),
       viewMode: $("viewMode"), colorMode: $("colorMode"), labelMode: $("labelMode"), confMin: $("confMin"), boxOpacity: $("boxOpacity"), compareLens: $("compareLens"), compareLayout: $("compareLayout"),
-      showGtTp: $("showGtTp"), showGtFn: $("showGtFn"), showEstTp: $("showEstTp"), showEstFp: $("showEstFp"),
+      layerChips: $("layerChips"),
+      colorCycleBtn: $("colorCycleBtn"), labelCycleBtn: $("labelCycleBtn"), advancedBtn: $("advancedBtn"), advancedPanel: $("advancedPanel"),
+      labelsAllBtn: $("labelsAllBtn"), labelsNoneBtn: $("labelsNoneBtn"),
       showVelocity: $("showVelocity"), showRings: $("showRings"), showErrors: $("showErrors"), dedupeRows: $("dedupeRows"),
       results: $("results"), load: $("loadBtn"), canvas: $("canvas"), slider: $("frameSlider"), play: $("playBtn"),
       prevFrame: $("prevFrameBtn"), nextFrame: $("nextFrameBtn"), playSpeed: $("playSpeed"),
       readout: $("frameReadout"), boxCount: $("boxCount"), frameCount: $("frameCount"), gtCount: $("gtCount"), estCount: $("estCount"),
-      toast: $("toast"), spinner: $("spinner"), camTop: $("camTop"), cam3d: $("cam3d"), camFollow: $("camFollow"), resetCamera: $("resetCamera"), fitCamera: $("fitCamera"), toggleTrails: $("toggleTrails"),
+      toast: $("toast"), spinner: $("spinner"), camTop: $("camTop"), cam3d: $("cam3d"), camFollow: $("camFollow"), compareSideBtn: $("compareSideBtn"), compareCurtainBtn: $("compareCurtainBtn"), resetCamera: $("resetCamera"), fitCamera: $("fitCamera"), toggleTrails: $("toggleTrails"),
       toggleSidebar: $("toggleSidebar"), fullscreenBtn: $("fullscreenBtn"), loadStatus: $("loadStatus"),
       inspect: $("inspectPanel"), inspectTitle: $("inspectTitle"), inspectStatus: $("inspectStatus"), inspectPos: $("inspectPos"),
       inspectSize: $("inspectSize"), inspectConf: $("inspectConf"), inspectDist: $("inspectDist"), inspectErr: $("inspectErr"),
@@ -776,7 +900,7 @@
       analysisErr: $("analysisErr"), analysisRecall: $("analysisRecall"), analysisPrecision: $("analysisPrecision"),
       analysisGt: $("analysisGt"), analysisEst: $("analysisEst"), prevHotFrame: $("prevHotFrame"), nextHotFrame: $("nextHotFrame"),
       cntGtTp: $("cntGtTp"), cntGtFn: $("cntGtFn"), cntEstTp: $("cntEstTp"), cntEstFp: $("cntEstFp"),
-      compareSummary: $("compareSummary"), compareAStats: $("compareAStats"), compareBStats: $("compareBStats"),
+      compareSummary: $("compareSummary"), compareAStats: $("compareAStats"), compareBStats: $("compareBStats"), compareDeltaStats: $("compareDeltaStats"),
       splitLabelA: $("splitLabelA"), splitLabelB: $("splitLabelB"), curtainHandle: $("curtainHandle")
     };
     const ctx = els.canvas.getContext("2d");
@@ -818,8 +942,13 @@
       return String(value ?? "").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     }
     function chipGroup(root, values, defaults = []) {
-      const selected = new Set(defaults);
-      root.innerHTML = values.slice(0, 28).map(v => `<span class="chip ${selected.has(v) ? "active" : ""}" data-v="${escapeHtml(v)}">${escapeHtml(v)}</span>`).join("");
+      const useAll = defaults === true;
+      const selected = new Set(useAll ? [] : defaults);
+      if (!values.length) {
+        root.innerHTML = `<span class="control-caption">No label values</span>`;
+        return;
+      }
+      root.innerHTML = values.slice(0, 36).map(v => `<span class="chip ${useAll || selected.has(v) ? "active" : ""}" data-v="${escapeHtml(v)}">${escapeHtml(v)}</span>`).join("");
       root.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
         chip.classList.toggle("active");
         state.selected = null;
@@ -827,8 +956,23 @@
         render();
       }));
     }
-    function selectedChips(root) {
-      return [...root.querySelectorAll(".chip.active")].map(el => el.dataset.v);
+    function activeLabelDefaults(nextLabels) {
+      const chips = [...els.labels.querySelectorAll(".chip")];
+      if (!chips.length) return true;
+      const active = new Set(chips.filter(chip => chip.classList.contains("active")).map(chip => chip.dataset.v));
+      if (!active.size && chips.length === 0) return true;
+      return nextLabels.filter(label => active.has(label));
+    }
+    function ensureLabelChips(values) {
+      const labels = [...new Set((values || []).map(v => String(v || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      chipGroup(els.labels, labels, activeLabelDefaults(labels));
+    }
+    function labelsFromFrames(frames) {
+      const labels = [];
+      for (const f of frames || []) for (const b of f.boxes || []) {
+        if (b.label != null && String(b.label).trim()) labels.push(String(b.label).trim());
+      }
+      return labels;
     }
     function clearSceneWindow() {
       els.frameMin.value = "";
@@ -845,11 +989,14 @@
       els.parquetB.disabled = !on;
       els.compareLens.disabled = !on;
       els.compareLayout.disabled = !on;
+      els.compareSideBtn.disabled = !on;
+      els.compareCurtainBtn.disabled = !on;
       if (on) {
-        els.colorMode.value = "run";
         if (els.compareLayout.value === "split") els.compareLayout.value = "side_by_side";
       }
       if (!on && els.colorMode.value === "run") els.colorMode.value = "status";
+      setCompareLayout(els.compareLayout.value === "curtain" ? "curtain" : "side_by_side", {skipRender: true});
+      syncCycleButtons();
       render();
     }
     function scheduleSceneReload(reason = "setting") {
@@ -862,10 +1009,7 @@
       const f = {};
       if (els.suite.value) f.suite_name = els.suite.value;
       if (els.scenario.value) f.scenario_name = els.scenario.value;
-      if (els.dataset.value) f.t4dataset_name = els.dataset.value;
       if (els.topic.value) f.topic_name = els.topic.value;
-      if (els.frameMin.value !== "") f.frame_min = Number(els.frameMin.value);
-      if (els.frameMax.value !== "") f.frame_max = Number(els.frameMax.value);
       return f;
     }
     async function scan() {
@@ -920,12 +1064,18 @@
       setOptions(els.dataset, await values("t4dataset_name", baseFilters()).catch(() => []));
       chipGroup(els.statuses, statuses, statuses.filter(v => ["TP","FP","FN"].includes(v)));
       chipGroup(els.sources, sources, sources);
-      chipGroup(els.labels, labels, []);
+      ensureLabelChips(labels);
     }
     async function refreshDependentFilters() {
       const current = baseFilters();
-      setOptions(els.scenario, await values("scenario_name", current).catch(() => []));
-      setOptions(els.dataset, await values("t4dataset_name", current).catch(() => []));
+      const [scenarios, datasets, labels] = await Promise.all([
+        values("scenario_name", current).catch(() => []),
+        values("t4dataset_name", current).catch(() => []),
+        values("label", current).catch(() => [])
+      ]);
+      setOptions(els.scenario, scenarios);
+      setOptions(els.dataset, datasets);
+      ensureLabelChips(labels);
       await searchScenarios();
     }
     async function searchScenarios(options = {}) {
@@ -948,10 +1098,9 @@
       if (!s) return;
       if (s.suite_name) els.suite.value = s.suite_name;
       if (s.scenario_name) els.scenario.value = s.scenario_name;
-      if (s.t4dataset_name) els.dataset.value = s.t4dataset_name;
       if (s.topic_name) els.topic.value = s.topic_name;
-      if (s.first_frame != null) els.frameMin.value = s.first_frame;
-      if (s.last_frame != null) els.frameMax.value = keepFullRange ? s.last_frame : Math.min(Number(s.last_frame), Number(s.first_frame) + 120);
+      els.frameMin.value = "";
+      els.frameMax.value = "";
       renderResults();
     }
     function renderResults() {
@@ -978,6 +1127,15 @@
       try {
         const previousFrame = options.preserveFrame && state.frames[state.framePos] ? Number(state.frames[state.framePos].frame) : null;
         let filters = baseFilters();
+        if (!filters.scenario_name) {
+          state.frames = [];
+          state.framePos = 0;
+          state.selected = null;
+          updateInspect();
+          render();
+          setStatus("<b>Select a scene.</b> Suite/topic filters only narrow the scene list; click a scenario card to load boxes.");
+          return;
+        }
         setStatus(`<b>Loading.</b> ${escapeHtml(state.path.split("/").slice(-3).join("/"))} with filters ${escapeHtml(JSON.stringify(filters))}`);
         if (els.compareEnabled.checked && els.parquetB.value === els.parquet.value) {
           const alt = state.parquets.find(p => p.path !== els.parquet.value);
@@ -991,7 +1149,6 @@
           toast("Choose a different Run B parquet to enable comparison.");
         }
         if (state.compare) {
-          els.colorMode.value = "run";
           if (!els.compareLayout.value || els.compareLayout.value === "split") els.compareLayout.value = "side_by_side";
         }
         const request = {
@@ -1008,23 +1165,9 @@
               ]
             })
           : await api("/api/frames", { ...request, path: state.path, run: "A" });
-        if ((!data.frames || !data.frames.length) && (els.frameMin.value !== "" || els.frameMax.value !== "")) {
-          els.frameMin.value = "";
-          els.frameMax.value = "";
-          filters = baseFilters();
-          const retryRequest = {...request, filters};
-          data = state.compare
-            ? await api("/api/compare_frames", {
-                ...retryRequest,
-                runs: [
-                  {label: "A", path: state.path},
-                  {label: "B", path: els.parquetB.value}
-                ]
-              })
-            : await api("/api/frames", { ...retryRequest, path: state.path, run: "A" });
-          if (data.frames && data.frames.length) toast("Cleared stale frame range and reloaded.");
-        }
         state.frames = normalizeFrames(data.frames || []);
+        const sceneLabels = labelsFromFrames(state.frames);
+        if (sceneLabels.length) ensureLabelChips(sceneLabels);
         if (previousFrame != null && state.frames.length) {
           let bestIdx = 0;
           let bestDist = Infinity;
@@ -1066,18 +1209,38 @@
     function updateStats(data = {}) {
       const boxes = state.frames.reduce((n, f) => n + f.boxes.length, 0);
       let gt = 0, est = 0, a = 0, bRun = 0;
+      const run = {A: {tp: 0, fp: 0, fn: 0}, B: {tp: 0, fp: 0, fn: 0}};
       for (const f of state.frames) for (const b of f.boxes) {
-        if (b.source === "GT") gt++;
-        if (b.source === "EST") est++;
+        const source = String(b.source || "").toUpperCase();
+        const status = String(b.status || "").toUpperCase();
+        const r = String(b.run || "");
+        if (source === "GT") gt++;
+        if (source === "EST") est++;
         if (b.run === "A") a++;
         if (b.run === "B") bRun++;
+        if (run[r]) {
+          if (source === "EST" && status === "TP") run[r].tp++;
+          if (source === "EST" && status === "FP") run[r].fp++;
+          if (source === "GT" && status === "FN") run[r].fn++;
+        }
+      }
+      if (state.compare) {
+        els.boxCount.textContent = `${a.toLocaleString()}/${bRun.toLocaleString()}`;
+        els.frameCount.textContent = state.frames.length.toLocaleString();
+        els.gtCount.textContent = fmtDelta(run.B.tp - run.A.tp);
+        els.estCount.textContent = fmtDelta(run.B.fp - run.A.fp);
+        els.boxCount.nextElementSibling.textContent = "boxes A/B";
+        els.gtCount.nextElementSibling.textContent = "ΔTP B-A";
+        els.estCount.nextElementSibling.textContent = "ΔFP B-A";
+        return;
       }
       els.boxCount.textContent = boxes.toLocaleString();
       els.frameCount.textContent = state.frames.length.toLocaleString();
-      els.gtCount.textContent = state.compare ? a.toLocaleString() : gt.toLocaleString();
-      els.estCount.textContent = state.compare ? bRun.toLocaleString() : est.toLocaleString();
-      els.gtCount.nextElementSibling.textContent = state.compare ? "Run A" : "GT";
-      els.estCount.nextElementSibling.textContent = state.compare ? "Run B" : "EST";
+      els.gtCount.textContent = gt.toLocaleString();
+      els.estCount.textContent = est.toLocaleString();
+      els.boxCount.nextElementSibling.textContent = "boxes";
+      els.gtCount.nextElementSibling.textContent = "GT";
+      els.estCount.nextElementSibling.textContent = "EST";
     }
     function fitBounds() {
       let maxAbs = 30;
@@ -1099,7 +1262,7 @@
     function setCameraPreset(kind, keepTarget = false) {
       if (!keepTarget) { state.panX = 0; state.panY = 0; }
       if (kind === "top") {
-        els.viewMode.value = "bev_locked";
+        els.viewMode.value = "bev";
         state.distance = Math.max(45, state.bounds.maxAbs * 1.45);
       } else if (kind === "follow") {
         els.viewMode.value = "perspective";
@@ -1162,10 +1325,9 @@
     }
     function project(p) {
       const vp = activeViewport || {x: 0, y: 0, w: els.canvas.clientWidth, h: els.canvas.clientHeight};
-      const lockedBev = els.viewMode.value === "bev_locked";
-      const panX = lockedBev ? 0 : state.panX;
-      const panY = lockedBev ? 0 : state.panY;
-      if (els.viewMode.value === "bev" || lockedBev) {
+      const panX = state.panX;
+      const panY = state.panY;
+      if (els.viewMode.value === "bev") {
         const scale = Math.min(vp.w, vp.h) / Math.max(20, state.distance * 2.15);
         return [
           vp.x + vp.w / 2 - (p[1] - panY) * scale,
@@ -1193,23 +1355,11 @@
     function drawGrid() {
       const m = Math.ceil(state.bounds.maxAbs / 10) * 10;
       ctx.lineWidth = 1;
-      if (els.showRings.checked && (els.viewMode.value === "bev" || els.viewMode.value === "bev_locked")) {
-        ctx.strokeStyle = "rgba(56,189,248,.16)";
-        for (let r = 20; r <= m; r += 20) {
-          const c = project([0, 0, 0]);
-          ctx.beginPath();
-          ctx.arc(c[0], c[1], r * c[2], 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillStyle = "rgba(148,163,184,.58)";
-          ctx.font = "11px Inter, sans-serif";
-          ctx.fillText(`${r}m`, c[0] + 4, c[1] - r * c[2] - 4);
-        }
-      }
-      const lockedBev = els.viewMode.value === "bev_locked";
-      const xMin = Math.floor(((lockedBev ? 0 : state.panX) - m) / 10) * 10;
-      const xMax = Math.ceil(((lockedBev ? 0 : state.panX) + m) / 10) * 10;
-      const yMin = Math.floor(((lockedBev ? 0 : state.panY) - m) / 10) * 10;
-      const yMax = Math.ceil(((lockedBev ? 0 : state.panY) + m) / 10) * 10;
+      if (els.showRings.checked) drawRangeRings(m);
+      const xMin = Math.floor((state.panX - m) / 10) * 10;
+      const xMax = Math.ceil((state.panX + m) / 10) * 10;
+      const yMin = Math.floor((state.panY - m) / 10) * 10;
+      const yMax = Math.ceil((state.panY + m) / 10) * 10;
       for (let i = xMin; i <= xMax; i += 10) {
         ctx.strokeStyle = i === 0 ? "rgba(226,232,240,.34)" : "rgba(148,163,184,.14)";
         const a = project([i, yMin, 0]), b = project([i, yMax, 0]);
@@ -1222,10 +1372,57 @@
       }
       drawEgoGlyph();
     }
+    function drawRangeRings(maxRange) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(56,189,248,.18)";
+      ctx.fillStyle = "rgba(148,163,184,.62)";
+      ctx.font = "11px Inter, sans-serif";
+      for (let r = 20; r <= maxRange; r += 20) {
+        if (els.viewMode.value === "bev") {
+          const c = project([0, 0, 0]);
+          ctx.beginPath();
+          ctx.arc(c[0], c[1], r * c[2], 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillText(`${r}m`, c[0] + 4, c[1] - r * c[2] - 4);
+        } else {
+          let first = true;
+          ctx.beginPath();
+          for (let i = 0; i <= 96; i++) {
+            const a = (i / 96) * Math.PI * 2;
+            const p = project([Math.cos(a) * r, Math.sin(a) * r, 0]);
+            if (first) { ctx.moveTo(p[0], p[1]); first = false; }
+            else ctx.lineTo(p[0], p[1]);
+          }
+          ctx.stroke();
+          const label = project([r, 0, 0]);
+          ctx.fillText(`${r}m`, label[0] + 4, label[1] - 4);
+        }
+      }
+      ctx.restore();
+    }
     function drawEgoGlyph() {
-      const p = project([0,0,0]);
-      const forward = project([8,0,0]);
-      const left = project([0,5,0]);
+      const car = [[2.35, .98, .05], [1.55, 1.08, .05], [-2.25, .92, .05], [-2.45, -.92, .05], [1.55, -1.08, .05], [2.35, -.98, .05]].map(project);
+      const cabin = [[.8, .64, .18], [-.85, .58, .18], [-.85, -.58, .18], [.8, -.64, .18]].map(project);
+      ctx.fillStyle = "rgba(15,23,42,.88)";
+      ctx.strokeStyle = "rgba(226,232,240,.78)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(car[0][0], car[0][1]);
+      for (let i = 1; i < car.length; i++) ctx.lineTo(car[i][0], car[i][1]);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "rgba(56,189,248,.22)";
+      ctx.strokeStyle = "rgba(56,189,248,.75)";
+      ctx.beginPath();
+      ctx.moveTo(cabin[0][0], cabin[0][1]);
+      for (let i = 1; i < cabin.length; i++) ctx.lineTo(cabin[i][0], cabin[i][1]);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      const p = project([0, 0, .25]);
+      const forward = project([7.5, 0, .25]);
+      const left = project([0, 4.5, .25]);
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgba(56,189,248,.95)";
       ctx.fillStyle = "rgba(56,189,248,.95)";
@@ -1375,30 +1572,43 @@
       }
     }
     function frameMetrics(frame) {
-      const out = {tp: 0, fp: 0, fn: 0, gt: 0, est: 0, a: 0, b: 0, worst: 0};
+      const out = {tp: 0, fp: 0, fn: 0, gt: 0, est: 0, a: 0, b: 0, gtTp: 0, gtFn: 0, estTp: 0, estFp: 0, worst: 0};
       for (const b of (frame && frame.boxes) || []) {
-        if (b.source === "GT") out.gt++;
-        if (b.source === "EST") out.est++;
+        const source = String(b.source || "").toUpperCase();
+        const status = String(b.status || "").toUpperCase();
+        if (source === "GT") out.gt++;
+        if (source === "EST") out.est++;
         if (b.run === "A") out.a++;
         if (b.run === "B") out.b++;
-        if (b.status === "TP") out.tp++;
-        if (b.status === "FP") out.fp++;
-        if (b.status === "FN") out.fn++;
+        if (source === "GT" && status === "TP") out.gtTp++;
+        if (source === "GT" && status === "FN") out.gtFn++;
+        if (source === "EST" && status === "TP") out.estTp++;
+        if (source === "EST" && status === "FP") out.estFp++;
         out.worst = Math.max(out.worst, Number(b.center_distance || 0), Math.abs(Number(b.yaw_error || 0)));
       }
+      out.tp = out.estTp;
+      out.fp = out.estFp;
+      out.fn = out.gtFn;
       return out;
     }
     function runMetrics(frame, run) {
-      const out = {tp: 0, fp: 0, fn: 0, gt: 0, est: 0, boxes: 0};
+      const out = {tp: 0, fp: 0, fn: 0, gt: 0, est: 0, gtTp: 0, gtFn: 0, estTp: 0, estFp: 0, boxes: 0, worst: 0};
       for (const b of (frame && frame.boxes) || []) {
         if (b.run !== run) continue;
+        const source = String(b.source || "").toUpperCase();
+        const status = String(b.status || "").toUpperCase();
         out.boxes++;
-        if (b.source === "GT") out.gt++;
-        if (b.source === "EST") out.est++;
-        if (b.status === "TP") out.tp++;
-        if (b.status === "FP") out.fp++;
-        if (b.status === "FN") out.fn++;
+        if (source === "GT") out.gt++;
+        if (source === "EST") out.est++;
+        if (source === "GT" && status === "TP") out.gtTp++;
+        if (source === "GT" && status === "FN") out.gtFn++;
+        if (source === "EST" && status === "TP") out.estTp++;
+        if (source === "EST" && status === "FP") out.estFp++;
+        out.worst = Math.max(out.worst, Number(b.center_distance || 0), Math.abs(Number(b.yaw_error || 0)));
       }
+      out.tp = out.estTp;
+      out.fp = out.estFp;
+      out.fn = out.gtFn;
       return out;
     }
     function layerCounts(frame) {
@@ -1416,25 +1626,28 @@
     function rateText(value) {
       return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "-";
     }
+    function fmtDelta(value) {
+      const n = Number(value) || 0;
+      return n > 0 ? `+${n}` : String(n);
+    }
     function hotspotScore(frame) {
       const m = frameMetrics(frame);
       return m.fp * 6 + m.fn * 8 + m.worst * 4;
     }
     function updateAnalysis(frame, visible) {
-      const visibleFrame = {...frame, boxes: visible};
-      const m = frameMetrics(visibleFrame);
-      const recall = (m.tp + m.fn) > 0 ? m.tp / (m.tp + m.fn) : NaN;
+      const m = frameMetrics(frame);
+      const recall = (m.gtTp + m.fn) > 0 ? m.gtTp / (m.gtTp + m.fn) : NaN;
       const precision = (m.tp + m.fp) > 0 ? m.tp / (m.tp + m.fp) : NaN;
       els.analysisFrame.textContent = state.frames.length ? `frame ${frame.frame}` : "frame -";
-      els.analysisTp.textContent = String(m.tp);
-      els.analysisFp.textContent = String(m.fp);
-      els.analysisFn.textContent = String(m.fn);
-      els.analysisErr.textContent = m.worst ? m.worst.toFixed(m.worst >= 10 ? 1 : 2) : "-";
-      els.analysisRecall.textContent = rateText(recall);
-      els.analysisPrecision.textContent = rateText(precision);
-      els.analysisGt.textContent = state.compare ? String(m.a) : String(m.gt);
-      els.analysisEst.textContent = state.compare ? String(m.b) : String(m.est);
-      els.analysisFrame.title = `${visible.length}/${(frame.boxes || []).length} boxes visible`;
+      els.analysisTp.nextElementSibling.textContent = state.compare ? "ΔTP B-A" : "TP";
+      els.analysisFp.nextElementSibling.textContent = state.compare ? "ΔFP B-A" : "FP";
+      els.analysisFn.nextElementSibling.textContent = state.compare ? "ΔFN B-A" : "FN";
+      els.analysisErr.nextElementSibling.textContent = state.compare ? "B max err" : "max err";
+      els.analysisRecall.nextElementSibling.textContent = state.compare ? "B recall" : "recall";
+      els.analysisPrecision.nextElementSibling.textContent = state.compare ? "B precision" : "precision";
+      els.analysisGt.nextElementSibling.textContent = state.compare ? "A boxes" : "GT";
+      els.analysisEst.nextElementSibling.textContent = state.compare ? "B boxes" : "EST";
+      els.analysisFrame.title = `${visible.length}/${(frame.boxes || []).length} boxes visible; metrics use the full current scene frame`;
       const layers = layerCounts(frame);
       els.cntGtTp.textContent = String(layers.gtTp);
       els.cntGtFn.textContent = String(layers.gtFn);
@@ -1442,10 +1655,30 @@
       els.cntEstFp.textContent = String(layers.estFp);
       els.compareSummary.classList.toggle("show", state.compare);
       if (state.compare) {
-        const a = runMetrics(visibleFrame, "A");
-        const b = runMetrics(visibleFrame, "B");
-        els.compareAStats.textContent = `TP ${a.tp} · FP ${a.fp} · FN ${a.fn} · ${a.boxes} boxes`;
-        els.compareBStats.textContent = `TP ${b.tp} · FP ${b.fp} · FN ${b.fn} · ${b.boxes} boxes`;
+        const a = runMetrics(frame, "A");
+        const b = runMetrics(frame, "B");
+        const bRecall = (b.gtTp + b.fn) > 0 ? b.gtTp / (b.gtTp + b.fn) : NaN;
+        const bPrecision = (b.tp + b.fp) > 0 ? b.tp / (b.tp + b.fp) : NaN;
+        els.analysisTp.textContent = fmtDelta(b.tp - a.tp);
+        els.analysisFp.textContent = fmtDelta(b.fp - a.fp);
+        els.analysisFn.textContent = fmtDelta(b.fn - a.fn);
+        els.analysisErr.textContent = b.worst ? b.worst.toFixed(b.worst >= 10 ? 1 : 2) : "-";
+        els.analysisRecall.textContent = rateText(bRecall);
+        els.analysisPrecision.textContent = rateText(bPrecision);
+        els.analysisGt.textContent = String(a.boxes);
+        els.analysisEst.textContent = String(b.boxes);
+        els.compareAStats.textContent = `TP ${a.tp} · FP ${a.fp} · FN ${a.fn} · R ${rateText((a.gtTp + a.fn) > 0 ? a.gtTp / (a.gtTp + a.fn) : NaN)} · P ${rateText((a.tp + a.fp) > 0 ? a.tp / (a.tp + a.fp) : NaN)}`;
+        els.compareBStats.textContent = `TP ${b.tp} · FP ${b.fp} · FN ${b.fn} · R ${rateText(bRecall)} · P ${rateText(bPrecision)}`;
+        els.compareDeltaStats.textContent = `ΔTP ${fmtDelta(b.tp - a.tp)} · ΔFP ${fmtDelta(b.fp - a.fp)} · ΔFN ${fmtDelta(b.fn - a.fn)} · boxes ${fmtDelta(b.boxes - a.boxes)}`;
+      } else {
+        els.analysisTp.textContent = String(m.tp);
+        els.analysisFp.textContent = String(m.fp);
+        els.analysisFn.textContent = String(m.fn);
+        els.analysisErr.textContent = m.worst ? m.worst.toFixed(m.worst >= 10 ? 1 : 2) : "-";
+        els.analysisRecall.textContent = rateText(recall);
+        els.analysisPrecision.textContent = rateText(precision);
+        els.analysisGt.textContent = String(m.gt);
+        els.analysisEst.textContent = String(m.est);
       }
     }
     function stepFrame(delta) {
@@ -1483,21 +1716,23 @@
       if (!active.length) return false;
       return active.includes(String(value || ""));
     }
+    function layerActive(layer) {
+      const chip = els.layerChips.querySelector(`[data-layer="${layer}"]`);
+      return !!(chip && chip.classList.contains("active"));
+    }
     function evalTupleVisible(box) {
       const source = String(box.source || "").toUpperCase();
       const status = String(box.status || "").toUpperCase();
-      if (source === "GT" && status === "TP") return els.showGtTp.checked;
-      if (source === "GT" && status === "FN") return els.showGtFn.checked;
-      if (source === "EST" && status === "TP") return els.showEstTp.checked;
-      if (source === "EST" && status === "FP") return els.showEstFp.checked;
-      if (source === "GT") return els.showGtTp.checked || els.showGtFn.checked;
-      if (source === "EST") return els.showEstTp.checked || els.showEstFp.checked;
+      if (source === "GT" && status === "TP") return layerActive("gt_tp");
+      if (source === "GT" && status === "FN") return layerActive("gt_fn");
+      if (source === "EST" && status === "TP") return layerActive("est_tp");
+      if (source === "EST" && status === "FP") return layerActive("est_fp");
+      if (source === "GT") return layerActive("gt_tp") || layerActive("gt_fn");
+      if (source === "EST") return layerActive("est_tp") || layerActive("est_fp");
       return true;
     }
     function visibleByLayerControls(box) {
       if (!evalTupleVisible(box)) return false;
-      if (!chipAllows(els.sources, box.source, false)) return false;
-      if (!chipAllows(els.statuses, box.status, false)) return false;
       if (!chipAllows(els.labels, box.label, true)) return false;
       if (els.confMin.value !== "" && box.confidence != null) {
         const minConf = Number(els.confMin.value);
@@ -1705,9 +1940,9 @@
       els.curtainHandle.classList.toggle("show", compareCurtainActive());
       els.curtainHandle.style.left = `${Math.max(2, Math.min(98, state.curtainX * 100))}%`;
       els.slider.value = String(state.framePos);
-      const m = frameMetrics({...f, boxes: visible});
+      const m = frameMetrics(f);
       updateAnalysis(f, visible);
-      els.readout.textContent = state.frames.length ? `frame ${f.frame} · ${state.framePos + 1}/${state.frames.length} · ${visible.length}/${f.boxes.length} boxes · TP ${m.tp} FP ${m.fp} FN ${m.fn}` : "no scene loaded";
+      els.readout.textContent = state.frames.length ? `frame ${f.frame} · ${state.framePos + 1}/${state.frames.length} · ${visible.length}/${f.boxes.length} visible · TP ${m.tp} FP ${m.fp} FN ${m.fn}` : "no scene loaded";
     }
     function loop() {
       const now = performance.now();
@@ -1729,13 +1964,44 @@
       }
       requestAnimationFrame(loop);
     }
+    const colorModes = [
+      ["status", "Color: Eval"],
+      ["error", "Color: Error"],
+      ["confidence", "Color: Conf"],
+      ["source", "Color: Source"],
+      ["run", "Color: Run"]
+    ];
+    const labelModes = [
+      ["label_status", "Label: Class"],
+      ["label_conf", "Label: Conf"],
+      ["uuid", "Label: UUID"],
+      ["none", "Label: Off"]
+    ];
+    function syncCycleButtons() {
+      const color = colorModes.find(([value]) => value === els.colorMode.value) || colorModes[0];
+      const label = labelModes.find(([value]) => value === els.labelMode.value) || labelModes[0];
+      els.colorCycleBtn.textContent = color[1];
+      els.labelCycleBtn.textContent = label[1];
+      els.advancedBtn.classList.toggle("active", els.advancedPanel.classList.contains("show"));
+    }
+    function cycleSelect(select, modes) {
+      const idx = Math.max(0, modes.findIndex(([value]) => value === select.value));
+      select.value = modes[(idx + 1) % modes.length][0];
+      syncCycleButtons();
+      render();
+    }
     els.scan.addEventListener("click", scan);
     els.parquet.addEventListener("change", () => { clearSceneWindow(); hydrateFilters().then(searchScenarios); });
     els.parquetB.addEventListener("change", () => { state.pathB = els.parquetB.value; if (els.compareEnabled.checked) scheduleSceneReload("Run B"); });
     els.compareEnabled.addEventListener("change", () => { updateCompareControls(); scheduleSceneReload("comparison mode"); });
     els.search.addEventListener("input", () => { clearTimeout(els.search._t); els.search._t = setTimeout(searchScenarios, 220); });
-    for (const el of [els.suite, els.topic]) el.addEventListener("change", async () => { await refreshDependentFilters(); scheduleSceneReload("filter"); });
-    for (const el of [els.scenario, els.dataset, els.frameMin, els.frameMax]) el.addEventListener("change", () => { searchScenarios(); scheduleSceneReload("filter"); });
+    for (const el of [els.suite, els.topic]) el.addEventListener("change", async () => {
+      els.scenario.value = "";
+      clearSceneWindow();
+      await refreshDependentFilters();
+      setStatus("<b>Scene list updated.</b> Click one scenario card to load its frames.");
+    });
+    els.scenario.addEventListener("change", () => { searchScenarios(); scheduleSceneReload("scene"); });
     els.load.addEventListener("click", loadScene);
     els.slider.addEventListener("input", e => { state.framePos = Number(e.target.value) || 0; render(); });
     els.prevFrame.addEventListener("click", () => stepFrame(-1));
@@ -1747,6 +2013,20 @@
     els.camTop.addEventListener("click", () => setCameraPreset("top"));
     els.cam3d.addEventListener("click", () => setCameraPreset("3d"));
     els.camFollow.addEventListener("click", () => setCameraPreset("follow"));
+    function setCompareLayout(mode, options = {}) {
+      els.compareLayout.value = mode;
+      els.compareSideBtn.classList.toggle("active", mode === "side_by_side");
+      els.compareCurtainBtn.classList.toggle("active", mode === "curtain");
+      if (!options.skipRender) render();
+    }
+    els.compareSideBtn.addEventListener("click", () => setCompareLayout("side_by_side"));
+    els.compareCurtainBtn.addEventListener("click", () => setCompareLayout("curtain"));
+    els.colorCycleBtn.addEventListener("click", () => cycleSelect(els.colorMode, colorModes));
+    els.labelCycleBtn.addEventListener("click", () => cycleSelect(els.labelMode, labelModes));
+    els.advancedBtn.addEventListener("click", () => {
+      els.advancedPanel.classList.toggle("show");
+      syncCycleButtons();
+    });
     els.resetCamera.addEventListener("click", () => { state.selected = null; updateInspect(); setCameraPreset("3d"); });
     els.fitCamera.addEventListener("click", () => { fitBounds(); render(); });
     els.toggleTrails.addEventListener("click", () => { state.trails = !state.trails; els.toggleTrails.style.background = state.trails ? "rgba(56,189,248,.36)" : ""; render(); });
@@ -1764,9 +2044,23 @@
       }
       setTimeout(render, 80);
     });
-    for (const el of [els.viewMode, els.colorMode, els.labelMode, els.compareLens, els.compareLayout, els.showVelocity, els.showRings, els.showErrors, els.showGtTp, els.showGtFn, els.showEstTp, els.showEstFp]) {
-      el.addEventListener("change", render);
+    for (const el of [els.viewMode, els.colorMode, els.labelMode, els.compareLens, els.compareLayout, els.showVelocity, els.showRings, els.showErrors]) {
+      el.addEventListener("change", () => { syncCycleButtons(); render(); });
     }
+    els.layerChips.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
+      chip.classList.toggle("active");
+      state.selected = null;
+      updateInspect();
+      render();
+    }));
+    function setAllLabelChips(active) {
+      els.labels.querySelectorAll(".chip").forEach(chip => chip.classList.toggle("active", active));
+      state.selected = null;
+      updateInspect();
+      render();
+    }
+    els.labelsAllBtn.addEventListener("click", () => setAllLabelChips(true));
+    els.labelsNoneBtn.addEventListener("click", () => setAllLabelChips(false));
     els.boxOpacity.addEventListener("input", render);
     els.confMin.addEventListener("input", () => { state.selected = null; updateInspect(); render(); });
     els.confMin.addEventListener("change", render);
@@ -1898,6 +2192,7 @@
         stepFrame(-1);
       }
     });
+    syncCycleButtons();
     updateCompareControls();
     scan().then(() => render());
     loop();
