@@ -73,6 +73,7 @@ x-streamlit-app: &streamlit-app
     - ../Readme.md:/app/Readme.md
     - ../Readme.en.md:/app/Readme.en.md
     - ../lib:/app/lib
+    - ../backend:/app/backend
     - ../worker:/app/worker
     - ../configs:/app/configs
     - ../static:/app/static
@@ -166,6 +167,7 @@ services:
       - ../Readme.md:/app/Readme.md
       - ../Readme.en.md:/app/Readme.en.md
       - ../lib:/app/lib
+      - ../backend:/app/backend
       - ../worker:/app/worker
       - ../configs:/app/configs
       - /var/run/docker.sock:/var/run/docker.sock

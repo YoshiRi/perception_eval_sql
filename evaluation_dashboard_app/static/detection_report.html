@@ -1,0 +1,1240 @@
+<title>StreamPETR+PTv3 Detection Comparison</title>
+<style>
+:root{ --surface:#fcfcfb; --plane:#f4f4f1; --card:#ffffff;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --muted:#898781;
+  --grid:#e6e5df; --axis:#c3c2b7;
+  --series-1:#2a78d6; --series-muted:#a9b4c0;
+  --good:#1f7a3d; --bad:#d03b3b;
+  --cell-mid:#f0efec; --cell-null:#f0efec;
+  --good-ink:#006300; --bad-ink:#b32020;
+  --border:rgba(11,11,11,.10); --hero:#0f1b2d; }
+:root[data-theme=dark], :root:not([data-theme=light]) {}
+@media (prefers-color-scheme:dark){:root{
+  --surface:#1a1a19; --plane:#0d0d0d; --card:#161615;
+  --text-primary:#f4f4f0; --text-secondary:#c3c2b7; --muted:#8f8e88;
+  --grid:#2c2c2a; --axis:#3a3a37;
+  --series-1:#3987e5; --series-muted:#5b6673;
+  --good:#3fae63; --bad:#e66767;
+  --cell-mid:#262623; --cell-null:#201f1d;
+  --good-ink:#3fae63; --bad-ink:#e66767; --border:rgba(255,255,255,.12); --hero:#0a1220;}}
+:root[data-theme=dark]{
+  --surface:#1a1a19; --plane:#0d0d0d; --card:#161615;
+  --text-primary:#f4f4f0; --text-secondary:#c3c2b7; --muted:#8f8e88;
+  --grid:#2c2c2a; --axis:#3a3a37;
+  --series-1:#3987e5; --series-muted:#5b6673;
+  --good:#3fae63; --bad:#e66767;
+  --cell-mid:#262623; --cell-null:#201f1d;
+  --good-ink:#3fae63; --bad-ink:#e66767; --border:rgba(255,255,255,.12); --hero:#0a1220;}
+:root[data-theme=light]{
+  --surface:#fcfcfb; --plane:#f4f4f1; --card:#ffffff;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --muted:#898781;
+  --grid:#e6e5df; --axis:#c3c2b7; --series-1:#2a78d6; --series-muted:#a9b4c0;
+  --good:#1f7a3d; --bad:#d03b3b; --cell-mid:#f0efec; --cell-null:#f0efec;
+  --good-ink:#006300; --bad-ink:#b32020; --border:rgba(11,11,11,.10); --hero:#0f1b2d;}
+*{box-sizing:border-box}
+.viz-root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--plane);
+  color:var(--text-primary);line-height:1.55;max-width:1080px;margin:0 auto;padding:20px 18px 60px;
+  font-size:15px;-webkit-font-smoothing:antialiased;}
+.hero{background:var(--hero);color:#fff;border-radius:16px;padding:30px 30px 26px;margin-bottom:22px;}
+.hero .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#9fb3cc;font-weight:600}
+.hero h1{font-size:29px;margin:.3em 0 .15em;line-height:1.15;color:#fff}
+.hero .sub{color:#c7d3e2;font-size:14px;margin:0 0 18px}
+.hero code{background:rgba(255,255,255,.14);padding:1px 6px;border-radius:5px;font-size:.9em}
+.verdict{display:flex;gap:16px;align-items:flex-start;background:rgba(208,59,59,.14);
+  border:1px solid rgba(230,103,103,.5);border-radius:12px;padding:16px 18px}
+.verdict-badge{flex:none;background:var(--bad);color:#fff;font-weight:800;font-size:13px;
+  letter-spacing:.04em;padding:8px 12px;border-radius:8px;align-self:center;text-align:center}
+.verdict-text{font-size:14.5px;color:#f0e3e3}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:20px}
+.card h2{font-size:20px;margin:0 0 14px;padding-bottom:10px;border-bottom:2px solid var(--grid)}
+.card h3{font-size:15.5px;margin:22px 0 10px;color:var(--text-primary)}
+.meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 26px;font-size:13.5px;color:var(--text-secondary)}
+.meta-grid .mk{display:inline-block;min-width:96px;color:var(--muted);font-weight:600;margin-right:6px}
+.meta-grid b{color:var(--text-primary)}
+.caveat{margin-top:14px;font-size:13px;background:var(--plane);border-left:3px solid var(--series-1);
+  padding:10px 14px;border-radius:0 8px 8px 0;color:var(--text-secondary)}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:8px}
+.tile{background:var(--plane);border:1px solid var(--border);border-radius:11px;padding:13px 15px}
+.tile-lab{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.tile-val{font-size:26px;font-weight:700;margin:2px 0 2px;letter-spacing:-.01em}
+.tile-delta{font-size:13px;font-weight:600}
+.tile-delta.good{color:var(--good-ink)} .tile-delta.bad{color:var(--bad-ink)}
+.tile-base{color:var(--muted);font-weight:400}
+.verdict-line{background:var(--plane);border-radius:10px;padding:12px 16px;font-size:14px;margin:16px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+@media(max-width:820px){.two{grid-template-columns:1fr}.tiles{grid-template-columns:1fr 1fr}.meta-grid{grid-template-columns:1fr}}
+figure{margin:6px 0 4px}
+.chart{width:100%;height:auto;overflow:visible;display:block}
+figcaption{font-size:12.5px;color:var(--text-secondary);margin-top:6px;line-height:1.45}
+.chart .ylab{fill:var(--text-secondary);font-size:12px}
+.chart .vlab{fill:var(--text-primary);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.chart .tick{fill:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
+.chart .xtick{font-size:10px}
+.chart .rot{}
+ul,ol{margin:8px 0;padding-left:22px} li{margin:5px 0;font-size:14px}
+.note{background:var(--plane);border-radius:10px;padding:12px 16px;font-size:13.5px;margin:14px 0 2px;color:var(--text-secondary)}
+.note b,.note u{color:var(--text-primary)}
+.tbl-wrap{overflow-x:auto;margin:8px 0}
+table{border-collapse:collapse;width:100%;font-size:13px}
+table th{text-align:left;padding:7px 9px;border-bottom:2px solid var(--grid);color:var(--muted);
+  font-weight:600;white-space:nowrap;font-size:11.5px;text-transform:uppercase;letter-spacing:.02em}
+table td{padding:6px 9px;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums}
+table.kpi td:first-child{font-weight:600}
+td.good,.good{color:var(--good-ink)} td.bad,.bad{color:var(--bad-ink)}
+td.mono,.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+table a{color:var(--series-1);text-decoration:none;font-weight:600;white-space:nowrap}
+table a:hover{text-decoration:underline}
+.cap{font-size:11.5px;color:var(--muted);margin-top:8px;font-style:italic}
+.rc{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:820px){.rc{grid-template-columns:1fr}}
+.rc-col{border-radius:11px;padding:6px 16px 14px}
+.rc-ev{background:color-mix(in srgb,var(--good) 8%,var(--card));border:1px solid color-mix(in srgb,var(--good) 30%,transparent)}
+.rc-hy{background:color-mix(in srgb,var(--series-1) 7%,var(--card));border:1px solid color-mix(in srgb,var(--series-1) 26%,transparent)}
+.rc-col h3{margin-top:14px} .rc-col li{font-size:13px}
+.src{display:inline-block;font-size:10.5px;color:var(--muted);font-style:italic;margin-left:4px}
+.final{border:2px solid color-mix(in srgb,var(--bad) 40%,transparent)}
+.rec-verdict{font-size:15px;background:var(--plane);border-radius:10px;padding:14px 16px;margin-bottom:6px}
+.pill{display:inline-block;padding:3px 11px;border-radius:20px;font-weight:700;font-size:12px;margin-right:8px}
+.pill-bad{background:var(--bad);color:#fff}
+.ft{text-align:center;font-size:12px;color:var(--muted);padding:10px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary);margin:2px 0 6px}
+.lg{display:inline-flex;align-items:center;gap:6px}
+.sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+</style>
+<div class="viz-root">
+<header class="hero">
+  <div class="eyebrow">Perception Detection · Compare Mode · Baseline A vs Candidate B</div>
+  <h1>StreamPETR + PTv3 — Detection Performance Comparison</h1>
+  <p class="sub">Baseline <b>A</b> = <code>ptv3_off</code> &nbsp;·&nbsp; Candidate <b>B</b> = <code>ptv3_on</code> &nbsp;·&nbsp; release <code>p4.4-v2.4a_0710</code> · 2026.07.10</p>
+  <div class="verdict verdict-bad">
+    <div class="verdict-badge">DO NOT SHIP</div>
+    <div class="verdict-text">Candidate B trades a small recall gain (+1.7 pts) for a large precision collapse (−10.7 pts). False positives rise <b>+58.6%</b> (+202,034) and F1 falls <b>−6.3 pts</b>. The regression is broad and systemic, not isolated. Recommend blocking release pending FP-suppression investigation.</div>
+  </div>
+</header>
+<section class="card">
+  <h2>1 · Comparison Target</h2>
+  <div class="meta-grid">
+    <div><span class="mk">Topic</span> perception.object_recognition.objects</div>
+    <div><span class="mk">Baseline A</span> eval_2.4a_0710_streampetr_ptv3_<b>off</b></div>
+    <div><span class="mk">Candidate B</span> eval_2.4a_0710_streampetr_ptv3_<b>on</b></div>
+    <div><span class="mk">Labels</span> animal, bicycle, bus, car, motorbike, pedestrian, truck, unknown</div>
+    <div><span class="mk">Suites (8)</span> Fujiyoshida, Fukuyama, Kawasaki, Komatsu, Odaiba, Omika, Shinkiba, Shiojiri — FullPerformance_V1 PDD</div>
+    <div><span class="mk">Visibility</span> FULL, MOST, NONE, PARTIAL, n/a</div>
+    <div><span class="mk">Distance</span> all bins [0,10)…[150,∞); max-eval-range ignored in this package</div>
+    <div><span class="mk">Ground truth</span> A: 914,047 objects · B: 894,238 objects</div>
+  </div>
+  <p class="caveat">⚠︎ <b>Caveat on GT counts.</b> The two runs report slightly different GT totals (Δ ≈ −19,809, −2.2%). Per-class GT also shifts (e.g. car 575,723→568,178). Absolute TP/FP/FN counts are therefore compared with care; rate metrics (TPR, FPR, precision) and the object-level diff tables — which track the <i>same</i> GT objects across runs — are the more reliable evidence and are weighted accordingly below.</p>
+</section>
+<section class="card">
+  <h2>2 · Executive Summary &amp; Overall KPIs</h2>
+  <div class="tiles">
+    <div class="tile">
+      <div class="tile-lab">Recall (TP-rate)</div>
+      <div class="tile-val">83.7%</div>
+      <div class="tile-delta good">▲ +2.1% <span class="tile-base">vs 82.0%</span></div>
+    </div>
+    <div class="tile">
+      <div class="tile-lab">Precision</div>
+      <div class="tile-val">57.8%</div>
+      <div class="tile-delta bad">▼ -15.6% <span class="tile-base">vs 68.5%</span></div>
+    </div>
+    <div class="tile">
+      <div class="tile-lab">F1 score</div>
+      <div class="tile-val">68.4%</div>
+      <div class="tile-delta bad">▼ -8.4% <span class="tile-base">vs 74.6%</span></div>
+    </div>
+    <div class="tile">
+      <div class="tile-lab">FP-rate</div>
+      <div class="tile-val">42.2%</div>
+      <div class="tile-delta bad">▲ +34.0% <span class="tile-base">vs 31.5%</span></div>
+    </div>
+    <div class="tile">
+      <div class="tile-lab">False Positives</div>
+      <div class="tile-val">546,878</div>
+      <div class="tile-delta bad">▲ +58.6% <span class="tile-base">vs 344,844</span></div>
+    </div>
+    <div class="tile">
+      <div class="tile-lab">False Negatives</div>
+      <div class="tile-val">145,926</div>
+      <div class="tile-delta good">▼ -11.3% <span class="tile-base">vs 164,583</span></div>
+    </div>
+  </div>
+  <p class="verdict-line"><b>Verdict:</b> This is a <b>recall-for-precision trade that lands badly</b>. Candidate B recovers real objects (recall 82.0%→83.7%, FN 164,583→145,926, −11.3%) but at the cost of a flood of false detections (FP 344,844→546,878, +58.6%). Precision drops from 68.5% to 57.8% and F1 from 74.6% to 68.4%. Because F1 falls, the recall gain <b>does not pay for</b> the precision loss.</p>
+
+  <h3>KPI comparison table</h3>
+  <div class="tbl-wrap"><table class="kpi">
+    <thead><tr><th>Metric</th><th>Baseline A</th><th>Candidate B</th><th>Δ (abs)</th><th>Δ (rel)</th><th>Direction</th></tr></thead>
+    <tbody>
+<tr><td>Recall / TP-rate</td><td>82.0%</td><td>83.7%</td><td>+1.7 pts</td><td class="good">+2.1%</td><td class="good">improved ✓</td></tr>
+<tr><td>Precision</td><td>68.5%</td><td>57.8%</td><td>-10.7 pts</td><td class="bad">-15.6%</td><td class="bad">regressed ✗</td></tr>
+<tr><td>F1</td><td>74.6%</td><td>68.4%</td><td>-6.3 pts</td><td class="bad">-8.4%</td><td class="bad">regressed ✗</td></tr>
+<tr><td>FP-rate</td><td>31.5%</td><td>42.2%</td><td>+10.7 pts</td><td class="bad">+34.0%</td><td class="bad">regressed ✗</td></tr>
+<tr><td>True Positives</td><td>749,464</td><td>748,312</td><td>-1,152</td><td class="bad">-0.2%</td><td class="bad">regressed ✗</td></tr>
+<tr><td>False Positives</td><td>344,844</td><td>546,878</td><td>+202,034</td><td class="bad">+58.6%</td><td class="bad">regressed ✗</td></tr>
+<tr><td>False Negatives</td><td>164,583</td><td>145,926</td><td>-18,657</td><td class="good">-11.3%</td><td class="good">improved ✓</td></tr>
+</tbody></table></div>
+  <p class="cap">Source: KPI snapshot (manifest.json) + Class_rate_comparison.csv. "Direction" applies the rule higher recall/precision/F1 = better, lower FP/FPR/FN = better.</p>
+<h3>KPI relative-change chart</h3>
+  <figure><svg viewBox="0 0 760 246" role="img" class="chart">
+<line x1="415.0" y1="8" x2="415.0" y2="238" stroke="var(--axis)" stroke-width="1"/>
+<text x="132" y="25.0" text-anchor="end" class="ylab">Recall / TP-rate</text>
+<rect x="415.0" y="8" width="9.7" height="26" rx="3" fill="var(--good)"><title>Recall / TP-rate: +2.1%</title></rect>
+<text x="430.7" y="25.0" text-anchor="start" class="vlab">+2.1%</text>
+<text x="132" y="59.0" text-anchor="end" class="ylab">Precision</text>
+<rect x="341.6" y="42" width="73.4" height="26" rx="3" fill="var(--bad)"><title>Precision: -15.6%</title></rect>
+<text x="335.6" y="59.0" text-anchor="end" class="vlab">-15.6%</text>
+<text x="132" y="93.0" text-anchor="end" class="ylab">F1</text>
+<rect x="375.5" y="76" width="39.5" height="26" rx="3" fill="var(--bad)"><title>F1: -8.4%</title></rect>
+<text x="369.5" y="93.0" text-anchor="end" class="vlab">-8.4%</text>
+<text x="132" y="127.0" text-anchor="end" class="ylab">FP-rate</text>
+<rect x="415.0" y="110" width="159.5" height="26" rx="3" fill="var(--bad)"><title>FP-rate: +34.0%</title></rect>
+<text x="580.5" y="127.0" text-anchor="start" class="vlab">+34.0%</text>
+<text x="132" y="161.0" text-anchor="end" class="ylab">True Positives</text>
+<rect x="414.3" y="144" width="0.7" height="26" rx="3" fill="var(--bad)"><title>True Positives: -0.2%</title></rect>
+<text x="408.3" y="161.0" text-anchor="end" class="vlab">-0.2%</text>
+<text x="132" y="195.0" text-anchor="end" class="ylab">False Positives</text>
+<rect x="415.0" y="178" width="275.0" height="26" rx="3" fill="var(--bad)"><title>False Positives: +58.6%</title></rect>
+<text x="696.0" y="195.0" text-anchor="start" class="vlab">+58.6%</text>
+<text x="132" y="229.0" text-anchor="end" class="ylab">False Negatives</text>
+<rect x="361.8" y="212" width="53.2" height="26" rx="3" fill="var(--good)"><title>False Negatives: -11.3%</title></rect>
+<text x="355.8" y="229.0" text-anchor="end" class="vlab">-11.3%</text>
+</svg>
+  <figcaption>Relative change of each headline KPI, colored by whether the move is an improvement (blue) or regression (red). The two green-worthy moves (recall ↑, FN ↓) are dwarfed by the FP surge (+58.6%) and the precision/F1 declines. Chart evidence: manifest KPI snapshot.</figcaption></figure>
+</section>
+<section class="card">
+  <h2>3 · Recall / Precision / FP Trade-off</h2>
+  <p>The candidate's detection head became <b>more permissive</b>. Two consequences follow directly and are both visible in the data:</p>
+  <ul>
+    <li><b>Recall up, FN down (good).</b> True positives held roughly flat (749,464 → 748,312) while false negatives fell 164,583 → 145,926. TP-rate rose +1.69 pts. Evidence: KPI snapshot, Class_rate_comparison.csv.</li>
+    <li><b>FP exploded (bad).</b> False positives grew by <b>202,034 (+58.6%)</b> and FP-rate rose +10.7 pts (31.5% → 42.2%). Precision fell 10.7 pts. Evidence: FP_diff_by_label.csv sums to +201,726 across 7 labels; KPI snapshot.</li>
+    <li><b>Net effect is negative.</b> F1 (the balance of the two) dropped from 0.746 to 0.684. In a perception stack feeding planning/tracking, a 59% rise in false detections raises phantom-obstacle braking and tracker-association risk that the modest recall gain does not offset.</li>
+  </ul>
+  <p class="note">Because headline recall barely moved, a naive read ("recall is up, ship it") is misleading. The next sections show that beneath the stable-ish recall there is heavy <b>object-level churn</b> (16,606 objects recovered FN→TP <i>and</i> 14,466 lost TP→FN) and a pervasive FP increase.</p>
+</section>
+<section class="card">
+  <h2>4 · Distance-Range Analysis</h2>
+  <div class="two">
+    <figure><div class="legend"><span class="lg"><span class="sw" style="background:var(--series-muted)"></span>Baseline A</span><span class="lg"><span class="sw" style="background:var(--series-1)"></span>Candidate B</span></div><svg viewBox="0 0 720 300" role="img" class="chart">
+<line x1="48" y1="244.0" x2="704" y2="244.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="248.0" text-anchor="end" class="tick">0.0</text>
+<line x1="48" y1="186.5" x2="704" y2="186.5" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="190.5" text-anchor="end" class="tick">0.2</text>
+<line x1="48" y1="129.0" x2="704" y2="129.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="133.0" text-anchor="end" class="tick">0.5</text>
+<line x1="48" y1="71.5" x2="704" y2="71.5" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="75.5" text-anchor="end" class="tick">0.8</text>
+<line x1="48" y1="14.0" x2="704" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="18.0" text-anchor="end" class="tick">1.0</text>
+<text x="48.0" y="260.0" text-anchor="middle" class="tick xtick rot">[0,10)</text>
+<text x="135.5" y="260.0" text-anchor="middle" class="tick xtick rot">[20,30)</text>
+<text x="222.9" y="260.0" text-anchor="middle" class="tick xtick rot">[40,50)</text>
+<text x="310.4" y="260.0" text-anchor="middle" class="tick xtick rot">[60,70)</text>
+<text x="397.9" y="260.0" text-anchor="middle" class="tick xtick rot">[80,90)</text>
+<text x="485.3" y="260.0" text-anchor="middle" class="tick xtick rot">[100,110)</text>
+<text x="572.8" y="260.0" text-anchor="middle" class="tick xtick rot">[120,130)</text>
+<text x="660.3" y="260.0" text-anchor="middle" class="tick xtick rot">[140,150)</text>
+<polyline points="48.0,37.7 91.7,37.0 135.5,36.3 179.2,37.1 222.9,38.6 266.7,38.1 310.4,40.1 354.1,42.9 397.9,47.8 441.6,47.4 485.3,54.7 529.1,65.8 572.8,137.4 616.5,194.5 660.3,211.8 704.0,227.4" fill="none" stroke="var(--series-muted)" stroke-width="2.4" stroke-linejoin="round"/>
+<circle cx="48.0" cy="37.7" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [0,10): 0.9</title></circle>
+<circle cx="91.7" cy="37.0" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [10,20): 0.9</title></circle>
+<circle cx="135.5" cy="36.3" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [20,30): 0.9</title></circle>
+<circle cx="179.2" cy="37.1" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [30,40): 0.9</title></circle>
+<circle cx="222.9" cy="38.6" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [40,50): 0.9</title></circle>
+<circle cx="266.7" cy="38.1" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [50,60): 0.9</title></circle>
+<circle cx="310.4" cy="40.1" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [60,70): 0.9</title></circle>
+<circle cx="354.1" cy="42.9" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [70,80): 0.9</title></circle>
+<circle cx="397.9" cy="47.8" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [80,90): 0.9</title></circle>
+<circle cx="441.6" cy="47.4" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [90,100): 0.9</title></circle>
+<circle cx="485.3" cy="54.7" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [100,110): 0.8</title></circle>
+<circle cx="529.1" cy="65.8" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [110,120): 0.8</title></circle>
+<circle cx="572.8" cy="137.4" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [120,130): 0.5</title></circle>
+<circle cx="616.5" cy="194.5" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [130,140): 0.2</title></circle>
+<circle cx="660.3" cy="211.8" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [140,150): 0.1</title></circle>
+<circle cx="704.0" cy="227.4" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [150,inf): 0.1</title></circle>
+<polyline points="48.0,31.4 91.7,29.6 135.5,30.1 179.2,32.0 222.9,34.1 266.7,35.2 310.4,37.3 354.1,41.0 397.9,46.1 441.6,46.6 485.3,52.4 529.1,66.0 572.8,139.4 616.5,194.2 660.3,210.8 704.0,226.3" fill="none" stroke="var(--series-1)" stroke-width="2.4" stroke-linejoin="round"/>
+<circle cx="48.0" cy="31.4" r="3.4" fill="var(--series-1)"><title>Candidate B @ [0,10): 0.9</title></circle>
+<circle cx="91.7" cy="29.6" r="3.4" fill="var(--series-1)"><title>Candidate B @ [10,20): 0.9</title></circle>
+<circle cx="135.5" cy="30.1" r="3.4" fill="var(--series-1)"><title>Candidate B @ [20,30): 0.9</title></circle>
+<circle cx="179.2" cy="32.0" r="3.4" fill="var(--series-1)"><title>Candidate B @ [30,40): 0.9</title></circle>
+<circle cx="222.9" cy="34.1" r="3.4" fill="var(--series-1)"><title>Candidate B @ [40,50): 0.9</title></circle>
+<circle cx="266.7" cy="35.2" r="3.4" fill="var(--series-1)"><title>Candidate B @ [50,60): 0.9</title></circle>
+<circle cx="310.4" cy="37.3" r="3.4" fill="var(--series-1)"><title>Candidate B @ [60,70): 0.9</title></circle>
+<circle cx="354.1" cy="41.0" r="3.4" fill="var(--series-1)"><title>Candidate B @ [70,80): 0.9</title></circle>
+<circle cx="397.9" cy="46.1" r="3.4" fill="var(--series-1)"><title>Candidate B @ [80,90): 0.9</title></circle>
+<circle cx="441.6" cy="46.6" r="3.4" fill="var(--series-1)"><title>Candidate B @ [90,100): 0.9</title></circle>
+<circle cx="485.3" cy="52.4" r="3.4" fill="var(--series-1)"><title>Candidate B @ [100,110): 0.8</title></circle>
+<circle cx="529.1" cy="66.0" r="3.4" fill="var(--series-1)"><title>Candidate B @ [110,120): 0.8</title></circle>
+<circle cx="572.8" cy="139.4" r="3.4" fill="var(--series-1)"><title>Candidate B @ [120,130): 0.5</title></circle>
+<circle cx="616.5" cy="194.2" r="3.4" fill="var(--series-1)"><title>Candidate B @ [130,140): 0.2</title></circle>
+<circle cx="660.3" cy="210.8" r="3.4" fill="var(--series-1)"><title>Candidate B @ [140,150): 0.1</title></circle>
+<circle cx="704.0" cy="226.3" r="3.4" fill="var(--series-1)"><title>Candidate B @ [150,inf): 0.1</title></circle>
+</svg>
+      <figcaption><b>TPR by distance.</b> Candidate B is at or above baseline recall across every bin — the recall gain is real and broad, concentrated in near/mid range ([0,10)–[60,70) all improve). Beyond 120 m both collapse (sparse points). Source: Distance_rates_*.csv.</figcaption></figure>
+    <figure><div class="legend"><span class="lg"><span class="sw" style="background:var(--series-muted)"></span>Baseline A</span><span class="lg"><span class="sw" style="background:var(--series-1)"></span>Candidate B</span></div><svg viewBox="0 0 720 300" role="img" class="chart">
+<line x1="48" y1="244.0" x2="704" y2="244.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="248.0" text-anchor="end" class="tick">0.0</text>
+<line x1="48" y1="186.5" x2="704" y2="186.5" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="190.5" text-anchor="end" class="tick">0.2</text>
+<line x1="48" y1="129.0" x2="704" y2="129.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="133.0" text-anchor="end" class="tick">0.4</text>
+<line x1="48" y1="71.5" x2="704" y2="71.5" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="75.5" text-anchor="end" class="tick">0.6</text>
+<line x1="48" y1="14.0" x2="704" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="42" y="18.0" text-anchor="end" class="tick">0.8</text>
+<text x="48.0" y="260.0" text-anchor="middle" class="tick xtick rot">[0,10)</text>
+<text x="135.5" y="260.0" text-anchor="middle" class="tick xtick rot">[20,30)</text>
+<text x="222.9" y="260.0" text-anchor="middle" class="tick xtick rot">[40,50)</text>
+<text x="310.4" y="260.0" text-anchor="middle" class="tick xtick rot">[60,70)</text>
+<text x="397.9" y="260.0" text-anchor="middle" class="tick xtick rot">[80,90)</text>
+<text x="485.3" y="260.0" text-anchor="middle" class="tick xtick rot">[100,110)</text>
+<text x="572.8" y="260.0" text-anchor="middle" class="tick xtick rot">[120,130)</text>
+<text x="660.3" y="260.0" text-anchor="middle" class="tick xtick rot">[140,150)</text>
+<polyline points="48.0,192.0 91.7,193.1 135.5,194.1 179.2,188.2 222.9,176.8 266.7,165.5 310.4,149.6 354.1,135.2 397.9,120.7 441.6,100.8 485.3,89.7 529.1,82.2 572.8,69.8 616.5,55.5 660.3,50.5 704.0,29.3" fill="none" stroke="var(--series-muted)" stroke-width="2.4" stroke-linejoin="round"/>
+<circle cx="48.0" cy="192.0" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [0,10): 0.2</title></circle>
+<circle cx="91.7" cy="193.1" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [10,20): 0.2</title></circle>
+<circle cx="135.5" cy="194.1" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [20,30): 0.2</title></circle>
+<circle cx="179.2" cy="188.2" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [30,40): 0.2</title></circle>
+<circle cx="222.9" cy="176.8" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [40,50): 0.2</title></circle>
+<circle cx="266.7" cy="165.5" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [50,60): 0.3</title></circle>
+<circle cx="310.4" cy="149.6" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [60,70): 0.3</title></circle>
+<circle cx="354.1" cy="135.2" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [70,80): 0.4</title></circle>
+<circle cx="397.9" cy="120.7" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [80,90): 0.4</title></circle>
+<circle cx="441.6" cy="100.8" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [90,100): 0.5</title></circle>
+<circle cx="485.3" cy="89.7" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [100,110): 0.5</title></circle>
+<circle cx="529.1" cy="82.2" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [110,120): 0.6</title></circle>
+<circle cx="572.8" cy="69.8" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [120,130): 0.6</title></circle>
+<circle cx="616.5" cy="55.5" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [130,140): 0.7</title></circle>
+<circle cx="660.3" cy="50.5" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [140,150): 0.7</title></circle>
+<circle cx="704.0" cy="29.3" r="3.4" fill="var(--series-muted)"><title>Baseline A @ [150,inf): 0.7</title></circle>
+<polyline points="48.0,119.4 91.7,116.7 135.5,125.4 179.2,138.5 222.9,138.6 266.7,140.8 310.4,134.8 354.1,123.9 397.9,113.3 441.6,98.8 485.3,92.5 529.1,86.6 572.8,66.1 616.5,51.5 660.3,48.4 704.0,28.6" fill="none" stroke="var(--series-1)" stroke-width="2.4" stroke-linejoin="round"/>
+<circle cx="48.0" cy="119.4" r="3.4" fill="var(--series-1)"><title>Candidate B @ [0,10): 0.4</title></circle>
+<circle cx="91.7" cy="116.7" r="3.4" fill="var(--series-1)"><title>Candidate B @ [10,20): 0.4</title></circle>
+<circle cx="135.5" cy="125.4" r="3.4" fill="var(--series-1)"><title>Candidate B @ [20,30): 0.4</title></circle>
+<circle cx="179.2" cy="138.5" r="3.4" fill="var(--series-1)"><title>Candidate B @ [30,40): 0.4</title></circle>
+<circle cx="222.9" cy="138.6" r="3.4" fill="var(--series-1)"><title>Candidate B @ [40,50): 0.4</title></circle>
+<circle cx="266.7" cy="140.8" r="3.4" fill="var(--series-1)"><title>Candidate B @ [50,60): 0.4</title></circle>
+<circle cx="310.4" cy="134.8" r="3.4" fill="var(--series-1)"><title>Candidate B @ [60,70): 0.4</title></circle>
+<circle cx="354.1" cy="123.9" r="3.4" fill="var(--series-1)"><title>Candidate B @ [70,80): 0.4</title></circle>
+<circle cx="397.9" cy="113.3" r="3.4" fill="var(--series-1)"><title>Candidate B @ [80,90): 0.5</title></circle>
+<circle cx="441.6" cy="98.8" r="3.4" fill="var(--series-1)"><title>Candidate B @ [90,100): 0.5</title></circle>
+<circle cx="485.3" cy="92.5" r="3.4" fill="var(--series-1)"><title>Candidate B @ [100,110): 0.5</title></circle>
+<circle cx="529.1" cy="86.6" r="3.4" fill="var(--series-1)"><title>Candidate B @ [110,120): 0.5</title></circle>
+<circle cx="572.8" cy="66.1" r="3.4" fill="var(--series-1)"><title>Candidate B @ [120,130): 0.6</title></circle>
+<circle cx="616.5" cy="51.5" r="3.4" fill="var(--series-1)"><title>Candidate B @ [130,140): 0.7</title></circle>
+<circle cx="660.3" cy="48.4" r="3.4" fill="var(--series-1)"><title>Candidate B @ [140,150): 0.7</title></circle>
+<circle cx="704.0" cy="28.6" r="3.4" fill="var(--series-1)"><title>Candidate B @ [150,inf): 0.7</title></circle>
+</svg>
+      <figcaption><b>FPR by distance.</b> The regression is a <b>near-range</b> phenomenon: at [0,10)–[30,40) FPR roughly <b>doubles</b> (0.18→0.43 at [0,10)). Beyond ~90 m the two curves converge. This is the opposite of the usual "far range is noisy" pattern. Source: Distance_rates_*.csv.</figcaption></figure>
+  </div>
+  <div class="two">
+    <figure><svg viewBox="0 0 560 552" role="img" class="chart">
+<line x1="289.0" y1="8" x2="289.0" y2="544" stroke="var(--axis)" stroke-width="1"/>
+<text x="80" y="25.0" text-anchor="end" class="ylab">[0,10)</text>
+<rect x="289.0" y="8" width="174.2" height="26" rx="3" fill="var(--good)"><title>[0,10): +2.8 pts</title></rect>
+<text x="469.2" y="25.0" text-anchor="start" class="vlab">+2.8 pts</text>
+<text x="80" y="59.0" text-anchor="end" class="ylab">[10,20)</text>
+<rect x="289.0" y="42" width="201.0" height="26" rx="3" fill="var(--good)"><title>[10,20): +3.2 pts</title></rect>
+<text x="496.0" y="59.0" text-anchor="start" class="vlab">+3.2 pts</text>
+<text x="80" y="93.0" text-anchor="end" class="ylab">[20,30)</text>
+<rect x="289.0" y="76" width="168.7" height="26" rx="3" fill="var(--good)"><title>[20,30): +2.7 pts</title></rect>
+<text x="463.7" y="93.0" text-anchor="start" class="vlab">+2.7 pts</text>
+<text x="80" y="127.0" text-anchor="end" class="ylab">[30,40)</text>
+<rect x="289.0" y="110" width="139.6" height="26" rx="3" fill="var(--good)"><title>[30,40): +2.2 pts</title></rect>
+<text x="434.6" y="127.0" text-anchor="start" class="vlab">+2.2 pts</text>
+<text x="80" y="161.0" text-anchor="end" class="ylab">[40,50)</text>
+<rect x="289.0" y="144" width="123.5" height="26" rx="3" fill="var(--good)"><title>[40,50): +2.0 pts</title></rect>
+<text x="418.5" y="161.0" text-anchor="start" class="vlab">+2.0 pts</text>
+<text x="80" y="195.0" text-anchor="end" class="ylab">[50,60)</text>
+<rect x="289.0" y="178" width="77.8" height="26" rx="3" fill="var(--good)"><title>[50,60): +1.2 pts</title></rect>
+<text x="372.8" y="195.0" text-anchor="start" class="vlab">+1.2 pts</text>
+<text x="80" y="229.0" text-anchor="end" class="ylab">[60,70)</text>
+<rect x="289.0" y="212" width="77.3" height="26" rx="3" fill="var(--good)"><title>[60,70): +1.2 pts</title></rect>
+<text x="372.3" y="229.0" text-anchor="start" class="vlab">+1.2 pts</text>
+<text x="80" y="263.0" text-anchor="end" class="ylab">[70,80)</text>
+<rect x="289.0" y="246" width="52.8" height="26" rx="3" fill="var(--good)"><title>[70,80): +0.8 pts</title></rect>
+<text x="347.8" y="263.0" text-anchor="start" class="vlab">+0.8 pts</text>
+<text x="80" y="297.0" text-anchor="end" class="ylab">[80,90)</text>
+<rect x="289.0" y="280" width="47.2" height="26" rx="3" fill="var(--good)"><title>[80,90): +0.7 pts</title></rect>
+<text x="342.2" y="297.0" text-anchor="start" class="vlab">+0.7 pts</text>
+<text x="80" y="331.0" text-anchor="end" class="ylab">[90,100)</text>
+<rect x="289.0" y="314" width="22.3" height="26" rx="3" fill="var(--good)"><title>[90,100): +0.4 pts</title></rect>
+<text x="317.3" y="331.0" text-anchor="start" class="vlab">+0.4 pts</text>
+<text x="80" y="365.0" text-anchor="end" class="ylab">[100,110)</text>
+<rect x="289.0" y="348" width="63.8" height="26" rx="3" fill="var(--good)"><title>[100,110): +1.0 pts</title></rect>
+<text x="358.8" y="365.0" text-anchor="start" class="vlab">+1.0 pts</text>
+<text x="80" y="399.0" text-anchor="end" class="ylab">[110,120)</text>
+<rect x="283.5" y="382" width="5.5" height="26" rx="3" fill="var(--bad)"><title>[110,120): -0.1 pts</title></rect>
+<text x="277.5" y="399.0" text-anchor="end" class="vlab">-0.1 pts</text>
+<text x="80" y="433.0" text-anchor="end" class="ylab">[120,130)</text>
+<rect x="233.9" y="416" width="55.1" height="26" rx="3" fill="var(--bad)"><title>[120,130): -0.9 pts</title></rect>
+<text x="227.9" y="433.0" text-anchor="end" class="vlab">-0.9 pts</text>
+<text x="80" y="467.0" text-anchor="end" class="ylab">[130,140)</text>
+<rect x="289.0" y="450" width="8.2" height="26" rx="3" fill="var(--good)"><title>[130,140): +0.1 pts</title></rect>
+<text x="303.2" y="467.0" text-anchor="start" class="vlab">+0.1 pts</text>
+<text x="80" y="501.0" text-anchor="end" class="ylab">[140,150)</text>
+<rect x="289.0" y="484" width="28.7" height="26" rx="3" fill="var(--good)"><title>[140,150): +0.5 pts</title></rect>
+<text x="323.7" y="501.0" text-anchor="start" class="vlab">+0.5 pts</text>
+<text x="80" y="535.0" text-anchor="end" class="ylab">[150,inf)</text>
+<rect x="289.0" y="518" width="30.2" height="26" rx="3" fill="var(--good)"><title>[150,inf): +0.5 pts</title></rect>
+<text x="325.2" y="535.0" text-anchor="start" class="vlab">+0.5 pts</text>
+</svg>
+      <figcaption>TPR Δ (candidate−baseline) per bin — positive nearly everywhere.</figcaption></figure>
+    <figure><svg viewBox="0 0 560 552" role="img" class="chart">
+<line x1="289.0" y1="8" x2="289.0" y2="544" stroke="var(--axis)" stroke-width="1"/>
+<text x="80" y="25.0" text-anchor="end" class="ylab">[0,10)</text>
+<rect x="289.0" y="8" width="191.1" height="26" rx="3" fill="var(--bad)"><title>[0,10): +25.3 pts</title></rect>
+<text x="486.1" y="25.0" text-anchor="start" class="vlab">+25.3 pts</text>
+<text x="80" y="59.0" text-anchor="end" class="ylab">[10,20)</text>
+<rect x="289.0" y="42" width="201.0" height="26" rx="3" fill="var(--bad)"><title>[10,20): +26.6 pts</title></rect>
+<text x="496.0" y="59.0" text-anchor="start" class="vlab">+26.6 pts</text>
+<text x="80" y="93.0" text-anchor="end" class="ylab">[20,30)</text>
+<rect x="289.0" y="76" width="180.7" height="26" rx="3" fill="var(--bad)"><title>[20,30): +23.9 pts</title></rect>
+<text x="475.7" y="93.0" text-anchor="start" class="vlab">+23.9 pts</text>
+<text x="80" y="127.0" text-anchor="end" class="ylab">[30,40)</text>
+<rect x="289.0" y="110" width="130.9" height="26" rx="3" fill="var(--bad)"><title>[30,40): +17.3 pts</title></rect>
+<text x="425.9" y="127.0" text-anchor="start" class="vlab">+17.3 pts</text>
+<text x="80" y="161.0" text-anchor="end" class="ylab">[40,50)</text>
+<rect x="289.0" y="144" width="100.4" height="26" rx="3" fill="var(--bad)"><title>[40,50): +13.3 pts</title></rect>
+<text x="395.4" y="161.0" text-anchor="start" class="vlab">+13.3 pts</text>
+<text x="80" y="195.0" text-anchor="end" class="ylab">[50,60)</text>
+<rect x="289.0" y="178" width="65.1" height="26" rx="3" fill="var(--bad)"><title>[50,60): +8.6 pts</title></rect>
+<text x="360.1" y="195.0" text-anchor="start" class="vlab">+8.6 pts</text>
+<text x="80" y="229.0" text-anchor="end" class="ylab">[60,70)</text>
+<rect x="289.0" y="212" width="39.1" height="26" rx="3" fill="var(--bad)"><title>[60,70): +5.2 pts</title></rect>
+<text x="334.1" y="229.0" text-anchor="start" class="vlab">+5.2 pts</text>
+<text x="80" y="263.0" text-anchor="end" class="ylab">[70,80)</text>
+<rect x="289.0" y="246" width="29.7" height="26" rx="3" fill="var(--bad)"><title>[70,80): +3.9 pts</title></rect>
+<text x="324.7" y="263.0" text-anchor="start" class="vlab">+3.9 pts</text>
+<text x="80" y="297.0" text-anchor="end" class="ylab">[80,90)</text>
+<rect x="289.0" y="280" width="19.6" height="26" rx="3" fill="var(--bad)"><title>[80,90): +2.6 pts</title></rect>
+<text x="314.6" y="297.0" text-anchor="start" class="vlab">+2.6 pts</text>
+<text x="80" y="331.0" text-anchor="end" class="ylab">[90,100)</text>
+<rect x="289.0" y="314" width="5.3" height="26" rx="3" fill="var(--bad)"><title>[90,100): +0.7 pts</title></rect>
+<text x="300.3" y="331.0" text-anchor="start" class="vlab">+0.7 pts</text>
+<text x="80" y="365.0" text-anchor="end" class="ylab">[100,110)</text>
+<rect x="281.7" y="348" width="7.3" height="26" rx="3" fill="var(--good)"><title>[100,110): -1.0 pts</title></rect>
+<text x="275.7" y="365.0" text-anchor="end" class="vlab">-1.0 pts</text>
+<text x="80" y="399.0" text-anchor="end" class="ylab">[110,120)</text>
+<rect x="277.5" y="382" width="11.5" height="26" rx="3" fill="var(--good)"><title>[110,120): -1.5 pts</title></rect>
+<text x="271.5" y="399.0" text-anchor="end" class="vlab">-1.5 pts</text>
+<text x="80" y="433.0" text-anchor="end" class="ylab">[120,130)</text>
+<rect x="289.0" y="416" width="9.8" height="26" rx="3" fill="var(--bad)"><title>[120,130): +1.3 pts</title></rect>
+<text x="304.8" y="433.0" text-anchor="start" class="vlab">+1.3 pts</text>
+<text x="80" y="467.0" text-anchor="end" class="ylab">[130,140)</text>
+<rect x="289.0" y="450" width="10.6" height="26" rx="3" fill="var(--bad)"><title>[130,140): +1.4 pts</title></rect>
+<text x="305.6" y="467.0" text-anchor="start" class="vlab">+1.4 pts</text>
+<text x="80" y="501.0" text-anchor="end" class="ylab">[140,150)</text>
+<rect x="289.0" y="484" width="5.7" height="26" rx="3" fill="var(--bad)"><title>[140,150): +0.8 pts</title></rect>
+<text x="300.7" y="501.0" text-anchor="start" class="vlab">+0.8 pts</text>
+<text x="80" y="535.0" text-anchor="end" class="ylab">[150,inf)</text>
+<rect x="289.0" y="518" width="1.9" height="26" rx="3" fill="var(--bad)"><title>[150,inf): +0.3 pts</title></rect>
+<text x="296.9" y="535.0" text-anchor="start" class="vlab">+0.3 pts</text>
+</svg>
+      <figcaption>FPR Δ per bin — red = worse. Large positive (worse) at near range, tapering to ~0 far out.</figcaption></figure>
+  </div>
+  <p class="note"><b>Near / mid / far read.</b> <u>Near (0–40 m):</u> recall slightly better, but FPR up +23–25 pts — the danger zone. <u>Mid (40–110 m):</u> recall better, FPR modestly up. <u>Far (120 m+):</u> essentially unchanged for both metrics. The false-positive damage is overwhelmingly a <b>close-range</b> problem, exactly where planning is most sensitive.</p>
+</section>
+<section class="card">
+  <h2>4b · Label × Distance Heatmaps</h2>
+  <p class="cap" style="margin-bottom:6px">Columns = distance-bin lower bound (m). Green = better, red = worse.</p>
+  <figure><svg viewBox="0 0 760 306" role="img" class="chart">
+<text x="112.6" y="48" text-anchor="start" transform="rotate(-52 112.6 48)" class="tick">0</text>
+<text x="153.9" y="48" text-anchor="start" transform="rotate(-52 153.9 48)" class="tick">10</text>
+<text x="195.1" y="48" text-anchor="start" transform="rotate(-52 195.1 48)" class="tick">20</text>
+<text x="236.4" y="48" text-anchor="start" transform="rotate(-52 236.4 48)" class="tick">30</text>
+<text x="277.6" y="48" text-anchor="start" transform="rotate(-52 277.6 48)" class="tick">40</text>
+<text x="318.9" y="48" text-anchor="start" transform="rotate(-52 318.9 48)" class="tick">50</text>
+<text x="360.1" y="48" text-anchor="start" transform="rotate(-52 360.1 48)" class="tick">60</text>
+<text x="401.4" y="48" text-anchor="start" transform="rotate(-52 401.4 48)" class="tick">70</text>
+<text x="442.6" y="48" text-anchor="start" transform="rotate(-52 442.6 48)" class="tick">80</text>
+<text x="483.9" y="48" text-anchor="start" transform="rotate(-52 483.9 48)" class="tick">90</text>
+<text x="525.1" y="48" text-anchor="start" transform="rotate(-52 525.1 48)" class="tick">100</text>
+<text x="566.4" y="48" text-anchor="start" transform="rotate(-52 566.4 48)" class="tick">110</text>
+<text x="607.6" y="48" text-anchor="start" transform="rotate(-52 607.6 48)" class="tick">120</text>
+<text x="648.9" y="48" text-anchor="start" transform="rotate(-52 648.9 48)" class="tick">130</text>
+<text x="690.1" y="48" text-anchor="start" transform="rotate(-52 690.1 48)" class="tick">140</text>
+<text x="731.4" y="48" text-anchor="start" transform="rotate(-52 731.4 48)" class="tick">150+</text>
+<text x="86" y="77.0" text-anchor="end" class="ylab">car</text>
+<rect x="92.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>car · 0: +0.6</title></rect>
+<rect x="133.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>car · 10: +1.5</title></rect>
+<rect x="174.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>car · 20: +1.5</title></rect>
+<rect x="215.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>car · 30: +1.5</title></rect>
+<rect x="257.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>car · 40: +1.4</title></rect>
+<rect x="298.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>car · 50: +1.0</title></rect>
+<rect x="339.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>car · 60: +1.2</title></rect>
+<rect x="380.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>car · 70: +0.9</title></rect>
+<rect x="422.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>car · 80: +0.8</title></rect>
+<rect x="463.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>car · 90: +0.4</title></rect>
+<rect x="504.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>car · 100: +1.3</title></rect>
+<rect x="545.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>car · 110: +0.5</title></rect>
+<rect x="587.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>car · 120: +0.1</title></rect>
+<rect x="628.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>car · 130: +0.6</title></rect>
+<rect x="669.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>car · 140: +1.1</title></rect>
+<rect x="710.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>car · 150+: +0.4</title></rect>
+<text x="86" y="107.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="92.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 5%, var(--cell-mid))"><title>pedestrian · 0: +2.5</title></rect>
+<rect x="133.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 7%, var(--cell-mid))"><title>pedestrian · 10: +3.5</title></rect>
+<rect x="174.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 4%, var(--cell-mid))"><title>pedestrian · 20: +2.1</title></rect>
+<rect x="215.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>pedestrian · 30: +1.9</title></rect>
+<rect x="257.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>pedestrian · 40: +1.3</title></rect>
+<rect x="298.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>pedestrian · 50: +0.8</title></rect>
+<rect x="339.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>pedestrian · 60: +1.3</title></rect>
+<rect x="380.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>pedestrian · 70: +1.2</title></rect>
+<rect x="422.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>pedestrian · 80: +1.0</title></rect>
+<rect x="463.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 90: -0.1</title></rect>
+<rect x="504.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>pedestrian · 100: +1.2</title></rect>
+<rect x="545.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 7%, var(--cell-mid))"><title>pedestrian · 110: -3.8</title></rect>
+<rect x="587.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 120: -0.0</title></rect>
+<rect x="628.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>pedestrian · 130: +0.0</title></rect>
+<rect x="669.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 140: -0.3</title></rect>
+<rect x="710.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>pedestrian · 150+: +0.0</title></rect>
+<text x="86" y="137.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="92.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 24%, var(--cell-mid))"><title>bicycle · 0: +12.0</title></rect>
+<rect x="133.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 38%, var(--cell-mid))"><title>bicycle · 10: +18.8</title></rect>
+<rect x="174.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 33%, var(--cell-mid))"><title>bicycle · 20: +16.6</title></rect>
+<rect x="215.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 29%, var(--cell-mid))"><title>bicycle · 30: +14.8</title></rect>
+<rect x="257.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 26%, var(--cell-mid))"><title>bicycle · 40: +13.0</title></rect>
+<rect x="298.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 21%, var(--cell-mid))"><title>bicycle · 50: +10.4</title></rect>
+<rect x="339.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 14%, var(--cell-mid))"><title>bicycle · 60: +7.0</title></rect>
+<rect x="380.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 12%, var(--cell-mid))"><title>bicycle · 70: +6.0</title></rect>
+<rect x="422.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 6%, var(--cell-mid))"><title>bicycle · 80: +3.4</title></rect>
+<rect x="463.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>bicycle · 90: +1.6</title></rect>
+<rect x="504.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 6%, var(--cell-mid))"><title>bicycle · 100: +3.0</title></rect>
+<rect x="545.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>bicycle · 110: -0.8</title></rect>
+<rect x="587.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 120: +0.1</title></rect>
+<rect x="628.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 130: +0.0</title></rect>
+<rect x="669.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 140: +0.0</title></rect>
+<rect x="710.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 150+: +0.0</title></rect>
+<text x="86" y="167.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="92.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 18%, var(--cell-mid))"><title>motorbike · 0: +9.0</title></rect>
+<rect x="133.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 29%, var(--cell-mid))"><title>motorbike · 10: +14.7</title></rect>
+<rect x="174.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 37%, var(--cell-mid))"><title>motorbike · 20: +18.6</title></rect>
+<rect x="215.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 43%, var(--cell-mid))"><title>motorbike · 30: +21.4</title></rect>
+<rect x="257.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 59%, var(--cell-mid))"><title>motorbike · 40: +29.2</title></rect>
+<rect x="298.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 16%, var(--cell-mid))"><title>motorbike · 50: +8.1</title></rect>
+<rect x="339.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 9%, var(--cell-mid))"><title>motorbike · 60: +4.5</title></rect>
+<rect x="380.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>motorbike · 70: +0.4</title></rect>
+<rect x="422.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 5%, var(--cell-mid))"><title>motorbike · 80: +2.5</title></rect>
+<rect x="463.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 17%, var(--cell-mid))"><title>motorbike · 90: +8.5</title></rect>
+<rect x="504.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 23%, var(--cell-mid))"><title>motorbike · 100: +11.8</title></rect>
+<rect x="545.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 26%, var(--cell-mid))"><title>motorbike · 110: +13.1</title></rect>
+<rect x="587.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>motorbike · 120: +1.9</title></rect>
+<rect x="628.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 5%, var(--cell-mid))"><title>motorbike · 130: +2.8</title></rect>
+<rect x="669.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 7%, var(--cell-mid))"><title>motorbike · 140: -3.5</title></rect>
+<rect x="710.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>motorbike · 150+: -0.8</title></rect>
+<text x="86" y="197.0" text-anchor="end" class="ylab">truck</text>
+<rect x="92.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>truck · 0: +0.1</title></rect>
+<rect x="133.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>truck · 10: +0.9</title></rect>
+<rect x="174.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 4%, var(--cell-mid))"><title>truck · 20: +2.1</title></rect>
+<rect x="215.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>truck · 30: +1.3</title></rect>
+<rect x="257.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>truck · 40: +0.0</title></rect>
+<rect x="298.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>truck · 50: +0.8</title></rect>
+<rect x="339.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>truck · 60: +0.0</title></rect>
+<rect x="380.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 70: -0.3</title></rect>
+<rect x="422.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 80: -0.3</title></rect>
+<rect x="463.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 90: -0.1</title></rect>
+<rect x="504.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 100: -0.0</title></rect>
+<rect x="545.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>truck · 110: -0.7</title></rect>
+<rect x="587.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 4%, var(--cell-mid))"><title>truck · 120: -2.3</title></rect>
+<rect x="628.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 130: -0.1</title></rect>
+<rect x="669.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 140: -0.2</title></rect>
+<rect x="710.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>truck · 150+: +0.4</title></rect>
+<text x="86" y="227.0" text-anchor="end" class="ylab">bus</text>
+<rect x="92.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>bus · 0: -0.0</title></rect>
+<rect x="133.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>bus · 10: -0.3</title></rect>
+<rect x="174.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bus · 20: +0.1</title></rect>
+<rect x="215.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>bus · 30: -0.2</title></rect>
+<rect x="257.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>bus · 40: -0.7</title></rect>
+<rect x="298.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bus · 50: +0.0</title></rect>
+<rect x="339.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>bus · 60: +0.7</title></rect>
+<rect x="380.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>bus · 70: +1.1</title></rect>
+<rect x="422.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>bus · 80: +0.9</title></rect>
+<rect x="463.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>bus · 90: -0.1</title></rect>
+<rect x="504.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>bus · 100: +1.7</title></rect>
+<rect x="545.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 3%, var(--cell-mid))"><title>bus · 110: -1.9</title></rect>
+<rect x="587.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>bus · 120: -1.4</title></rect>
+<rect x="628.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 5%, var(--cell-mid))"><title>bus · 130: -2.8</title></rect>
+<rect x="669.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 5%, var(--cell-mid))"><title>bus · 140: +2.9</title></rect>
+<rect x="710.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 2%, var(--cell-mid))"><title>bus · 150+: +1.3</title></rect>
+<text x="86" y="257.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="92.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 23%, var(--cell-mid))"><title>unknown · 0: +11.4</title></rect>
+<rect x="133.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 16%, var(--cell-mid))"><title>unknown · 10: +8.2</title></rect>
+<rect x="174.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 15%, var(--cell-mid))"><title>unknown · 20: +7.4</title></rect>
+<rect x="215.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 11%, var(--cell-mid))"><title>unknown · 30: +5.7</title></rect>
+<rect x="257.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 15%, var(--cell-mid))"><title>unknown · 40: +7.6</title></rect>
+<rect x="298.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 8%, var(--cell-mid))"><title>unknown · 50: +4.4</title></rect>
+<rect x="339.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 9%, var(--cell-mid))"><title>unknown · 60: +4.7</title></rect>
+<rect x="380.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 8%, var(--cell-mid))"><title>unknown · 70: +4.2</title></rect>
+<rect x="422.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 6%, var(--cell-mid))"><title>unknown · 80: +3.1</title></rect>
+<rect x="463.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 5%, var(--cell-mid))"><title>unknown · 90: +2.6</title></rect>
+<rect x="504.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>unknown · 100: -0.9</title></rect>
+<rect x="545.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 4%, var(--cell-mid))"><title>unknown · 110: -2.1</title></rect>
+<rect x="587.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>unknown · 120: +0.0</title></rect>
+<rect x="628.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>unknown · 130: +0.0</title></rect>
+<rect x="669.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>unknown · 140: +0.0</title></rect>
+<rect x="710.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>unknown · 150+: +0.0</title></rect>
+<text x="86" y="287.0" text-anchor="end" class="ylab">animal</text>
+<rect x="92.0" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 44%, var(--cell-mid))"><title>animal · 0: +22.1</title></rect>
+<rect x="133.2" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 100%, var(--cell-mid))"><title>animal · 10: +49.4</title></rect>
+<rect x="174.5" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 5%, var(--cell-mid))"><title>animal · 20: -2.6</title></rect>
+<rect x="215.8" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 11%, var(--cell-mid))"><title>animal · 30: +5.7</title></rect>
+<rect x="257.0" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 44%, var(--cell-mid))"><title>animal · 40: -22.2</title></rect>
+<rect x="298.2" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 50%, var(--cell-mid))"><title>animal · 50: +25.0</title></rect>
+<rect x="339.5" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 60: +0.0</title></rect>
+<rect x="380.8" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 70: +0.0</title></rect>
+<rect x="422.0" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 80: n/a</title></rect>
+<rect x="463.2" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 90: n/a</title></rect>
+<rect x="504.5" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 100: n/a</title></rect>
+<rect x="545.8" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 110: n/a</title></rect>
+<rect x="587.0" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 120: n/a</title></rect>
+<rect x="628.2" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 130: n/a</title></rect>
+<rect x="669.5" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 140: n/a</title></rect>
+<rect x="710.8" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 150+: n/a</title></rect>
+</svg>
+    <figcaption><b>TPR Δ (candidate − baseline).</b> Green = recall improved, red = recall lost. Recall gains dominate for bicycle, motorbike, unknown across near/mid bins; car/pedestrian barely move (small deltas). Source: Per-class_distance_deltas.csv.</figcaption></figure>
+  <figure><svg viewBox="0 0 760 306" role="img" class="chart">
+<text x="112.6" y="48" text-anchor="start" transform="rotate(-52 112.6 48)" class="tick">0</text>
+<text x="153.9" y="48" text-anchor="start" transform="rotate(-52 153.9 48)" class="tick">10</text>
+<text x="195.1" y="48" text-anchor="start" transform="rotate(-52 195.1 48)" class="tick">20</text>
+<text x="236.4" y="48" text-anchor="start" transform="rotate(-52 236.4 48)" class="tick">30</text>
+<text x="277.6" y="48" text-anchor="start" transform="rotate(-52 277.6 48)" class="tick">40</text>
+<text x="318.9" y="48" text-anchor="start" transform="rotate(-52 318.9 48)" class="tick">50</text>
+<text x="360.1" y="48" text-anchor="start" transform="rotate(-52 360.1 48)" class="tick">60</text>
+<text x="401.4" y="48" text-anchor="start" transform="rotate(-52 401.4 48)" class="tick">70</text>
+<text x="442.6" y="48" text-anchor="start" transform="rotate(-52 442.6 48)" class="tick">80</text>
+<text x="483.9" y="48" text-anchor="start" transform="rotate(-52 483.9 48)" class="tick">90</text>
+<text x="525.1" y="48" text-anchor="start" transform="rotate(-52 525.1 48)" class="tick">100</text>
+<text x="566.4" y="48" text-anchor="start" transform="rotate(-52 566.4 48)" class="tick">110</text>
+<text x="607.6" y="48" text-anchor="start" transform="rotate(-52 607.6 48)" class="tick">120</text>
+<text x="648.9" y="48" text-anchor="start" transform="rotate(-52 648.9 48)" class="tick">130</text>
+<text x="690.1" y="48" text-anchor="start" transform="rotate(-52 690.1 48)" class="tick">140</text>
+<text x="731.4" y="48" text-anchor="start" transform="rotate(-52 731.4 48)" class="tick">150+</text>
+<text x="86" y="77.0" text-anchor="end" class="ylab">car</text>
+<rect x="92.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 5%, var(--cell-mid))"><title>car · 0: +5.9</title></rect>
+<rect x="133.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 7%, var(--cell-mid))"><title>car · 10: +7.1</title></rect>
+<rect x="174.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 5%, var(--cell-mid))"><title>car · 20: +5.9</title></rect>
+<rect x="215.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 4%, var(--cell-mid))"><title>car · 30: +4.4</title></rect>
+<rect x="257.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 3%, var(--cell-mid))"><title>car · 40: +3.6</title></rect>
+<rect x="298.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>car · 50: +2.8</title></rect>
+<rect x="339.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>car · 60: +2.5</title></rect>
+<rect x="380.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>car · 70: +2.3</title></rect>
+<rect x="422.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>car · 80: +1.7</title></rect>
+<rect x="463.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>car · 90: +0.9</title></rect>
+<rect x="504.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>car · 100: +0.9</title></rect>
+<rect x="545.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>car · 110: +0.6</title></rect>
+<rect x="587.0" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>car · 120: +1.2</title></rect>
+<rect x="628.2" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>car · 130: +1.8</title></rect>
+<rect x="669.5" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>car · 140: +1.3</title></rect>
+<rect x="710.8" y="58.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>car · 150+: +1.0</title></rect>
+<text x="86" y="107.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="92.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 16%, var(--cell-mid))"><title>pedestrian · 0: +16.3</title></rect>
+<rect x="133.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 12%, var(--cell-mid))"><title>pedestrian · 10: +12.3</title></rect>
+<rect x="174.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 10%, var(--cell-mid))"><title>pedestrian · 20: +10.7</title></rect>
+<rect x="215.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 10%, var(--cell-mid))"><title>pedestrian · 30: +10.5</title></rect>
+<rect x="257.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 8%, var(--cell-mid))"><title>pedestrian · 40: +8.6</title></rect>
+<rect x="298.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 6%, var(--cell-mid))"><title>pedestrian · 50: +6.8</title></rect>
+<rect x="339.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 5%, var(--cell-mid))"><title>pedestrian · 60: +5.0</title></rect>
+<rect x="380.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>pedestrian · 70: +2.7</title></rect>
+<rect x="422.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 3%, var(--cell-mid))"><title>pedestrian · 80: +3.6</title></rect>
+<rect x="463.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>pedestrian · 90: +1.8</title></rect>
+<rect x="504.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 100: +0.1</title></rect>
+<rect x="545.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 110: +0.8</title></rect>
+<rect x="587.0" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 120: +0.8</title></rect>
+<rect x="628.2" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 130: +0.0</title></rect>
+<rect x="669.5" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>pedestrian · 140: +0.3</title></rect>
+<rect x="710.8" y="88.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>pedestrian · 150+: +0.0</title></rect>
+<text x="86" y="137.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="92.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 31%, var(--cell-mid))"><title>bicycle · 0: +31.7</title></rect>
+<rect x="133.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 36%, var(--cell-mid))"><title>bicycle · 10: +36.4</title></rect>
+<rect x="174.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 65%, var(--cell-mid))"><title>bicycle · 20: +65.4</title></rect>
+<rect x="215.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 50%, var(--cell-mid))"><title>bicycle · 30: +50.1</title></rect>
+<rect x="257.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 56%, var(--cell-mid))"><title>bicycle · 40: +56.1</title></rect>
+<rect x="298.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 31%, var(--cell-mid))"><title>bicycle · 50: +31.7</title></rect>
+<rect x="339.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 18%, var(--cell-mid))"><title>bicycle · 60: +18.2</title></rect>
+<rect x="380.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 17%, var(--cell-mid))"><title>bicycle · 70: +17.6</title></rect>
+<rect x="422.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 14%, var(--cell-mid))"><title>bicycle · 80: +14.5</title></rect>
+<rect x="463.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 15%, var(--cell-mid))"><title>bicycle · 90: +15.2</title></rect>
+<rect x="504.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>bicycle · 100: +0.3</title></rect>
+<rect x="545.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>bicycle · 110: +1.2</title></rect>
+<rect x="587.0" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>bicycle · 120: -1.4</title></rect>
+<rect x="628.2" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 130: -0.7</title></rect>
+<rect x="669.5" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 140: +0.0</title></rect>
+<rect x="710.8" y="118.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bicycle · 150+: +0.0</title></rect>
+<text x="86" y="167.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="92.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 47%, var(--cell-mid))"><title>motorbike · 0: +47.2</title></rect>
+<rect x="133.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 42%, var(--cell-mid))"><title>motorbike · 10: +42.5</title></rect>
+<rect x="174.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 47%, var(--cell-mid))"><title>motorbike · 20: +47.9</title></rect>
+<rect x="215.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 55%, var(--cell-mid))"><title>motorbike · 30: +55.4</title></rect>
+<rect x="257.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 53%, var(--cell-mid))"><title>motorbike · 40: +53.8</title></rect>
+<rect x="298.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 67%, var(--cell-mid))"><title>motorbike · 50: +67.5</title></rect>
+<rect x="339.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 33%, var(--cell-mid))"><title>motorbike · 60: +33.9</title></rect>
+<rect x="380.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 64%, var(--cell-mid))"><title>motorbike · 70: +64.1</title></rect>
+<rect x="422.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 66%, var(--cell-mid))"><title>motorbike · 80: +66.4</title></rect>
+<rect x="463.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 42%, var(--cell-mid))"><title>motorbike · 90: +42.4</title></rect>
+<rect x="504.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 30%, var(--cell-mid))"><title>motorbike · 100: +30.8</title></rect>
+<rect x="545.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>motorbike · 110: +0.0</title></rect>
+<rect x="587.0" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>motorbike · 120: +0.0</title></rect>
+<rect x="628.2" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>motorbike · 130: +0.0</title></rect>
+<rect x="669.5" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 100%, var(--cell-mid))"><title>motorbike · 140: +100.0</title></rect>
+<rect x="710.8" y="148.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 100%, var(--cell-mid))"><title>motorbike · 150+: +100.0</title></rect>
+<text x="86" y="197.0" text-anchor="end" class="ylab">truck</text>
+<rect x="92.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 7%, var(--cell-mid))"><title>truck · 0: +7.5</title></rect>
+<rect x="133.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 16%, var(--cell-mid))"><title>truck · 10: +16.7</title></rect>
+<rect x="174.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 15%, var(--cell-mid))"><title>truck · 20: +15.4</title></rect>
+<rect x="215.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 12%, var(--cell-mid))"><title>truck · 30: +12.2</title></rect>
+<rect x="257.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 12%, var(--cell-mid))"><title>truck · 40: +12.0</title></rect>
+<rect x="298.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 8%, var(--cell-mid))"><title>truck · 50: +8.5</title></rect>
+<rect x="339.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 7%, var(--cell-mid))"><title>truck · 60: +7.8</title></rect>
+<rect x="380.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 8%, var(--cell-mid))"><title>truck · 70: +8.2</title></rect>
+<rect x="422.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 4%, var(--cell-mid))"><title>truck · 80: +4.8</title></rect>
+<rect x="463.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 3%, var(--cell-mid))"><title>truck · 90: +3.4</title></rect>
+<rect x="504.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 100: +0.5</title></rect>
+<rect x="545.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 110: +0.3</title></rect>
+<rect x="587.0" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>truck · 120: +1.2</title></rect>
+<rect x="628.2" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>truck · 130: +1.1</title></rect>
+<rect x="669.5" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>truck · 140: +0.7</title></rect>
+<rect x="710.8" y="178.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>truck · 150+: -0.2</title></rect>
+<text x="86" y="227.0" text-anchor="end" class="ylab">bus</text>
+<rect x="92.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 57%, var(--cell-mid))"><title>bus · 0: +57.5</title></rect>
+<rect x="133.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 38%, var(--cell-mid))"><title>bus · 10: +39.0</title></rect>
+<rect x="174.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 22%, var(--cell-mid))"><title>bus · 20: +22.8</title></rect>
+<rect x="215.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 26%, var(--cell-mid))"><title>bus · 30: +26.1</title></rect>
+<rect x="257.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 19%, var(--cell-mid))"><title>bus · 40: +19.2</title></rect>
+<rect x="298.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 9%, var(--cell-mid))"><title>bus · 50: +9.5</title></rect>
+<rect x="339.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 5%, var(--cell-mid))"><title>bus · 60: +5.9</title></rect>
+<rect x="380.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>bus · 70: +3.0</title></rect>
+<rect x="422.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 4%, var(--cell-mid))"><title>bus · 80: +4.4</title></rect>
+<rect x="463.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 7%, var(--cell-mid))"><title>bus · 90: +7.2</title></rect>
+<rect x="504.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 1%, var(--cell-mid))"><title>bus · 100: +1.1</title></rect>
+<rect x="545.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>bus · 110: -1.6</title></rect>
+<rect x="587.0" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bus · 120: -0.8</title></rect>
+<rect x="628.2" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>bus · 130: +0.2</title></rect>
+<rect x="669.5" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>bus · 140: +0.0</title></rect>
+<rect x="710.8" y="208.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 32%, var(--cell-mid))"><title>bus · 150+: +32.4</title></rect>
+<text x="86" y="257.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="92.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 20%, var(--cell-mid))"><title>unknown · 0: +20.7</title></rect>
+<rect x="133.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 27%, var(--cell-mid))"><title>unknown · 10: +27.4</title></rect>
+<rect x="174.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 27%, var(--cell-mid))"><title>unknown · 20: +27.9</title></rect>
+<rect x="215.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 22%, var(--cell-mid))"><title>unknown · 30: +22.0</title></rect>
+<rect x="257.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 13%, var(--cell-mid))"><title>unknown · 40: +13.5</title></rect>
+<rect x="298.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 9%, var(--cell-mid))"><title>unknown · 50: +9.9</title></rect>
+<rect x="339.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 3%, var(--cell-mid))"><title>unknown · 60: +3.3</title></rect>
+<rect x="380.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 2%, var(--cell-mid))"><title>unknown · 70: +2.4</title></rect>
+<rect x="422.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--bad) 0%, var(--cell-mid))"><title>unknown · 80: +0.0</title></rect>
+<rect x="463.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 4%, var(--cell-mid))"><title>unknown · 90: -4.5</title></rect>
+<rect x="504.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 7%, var(--cell-mid))"><title>unknown · 100: -7.8</title></rect>
+<rect x="545.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 9%, var(--cell-mid))"><title>unknown · 110: -9.8</title></rect>
+<rect x="587.0" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 4%, var(--cell-mid))"><title>unknown · 120: -4.0</title></rect>
+<rect x="628.2" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 3%, var(--cell-mid))"><title>unknown · 130: -3.8</title></rect>
+<rect x="669.5" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 1%, var(--cell-mid))"><title>unknown · 140: -1.4</title></rect>
+<rect x="710.8" y="238.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>unknown · 150+: -0.2</title></rect>
+<text x="86" y="287.0" text-anchor="end" class="ylab">animal</text>
+<rect x="92.0" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 0: +0.0</title></rect>
+<rect x="133.2" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 10: +0.0</title></rect>
+<rect x="174.5" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 20: +0.0</title></rect>
+<rect x="215.8" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 30: +0.0</title></rect>
+<rect x="257.0" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 40: +0.0</title></rect>
+<rect x="298.2" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 50: +0.0</title></rect>
+<rect x="339.5" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 60: +0.0</title></rect>
+<rect x="380.8" y="268.0" width="39.8" height="28.5" rx="2" fill="color-mix(in srgb, var(--good) 0%, var(--cell-mid))"><title>animal · 70: +0.0</title></rect>
+<rect x="422.0" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 80: n/a</title></rect>
+<rect x="463.2" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 90: n/a</title></rect>
+<rect x="504.5" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 100: n/a</title></rect>
+<rect x="545.8" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 110: n/a</title></rect>
+<rect x="587.0" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 120: n/a</title></rect>
+<rect x="628.2" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 130: n/a</title></rect>
+<rect x="669.5" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 140: n/a</title></rect>
+<rect x="710.8" y="268.0" width="39.8" height="28.5" rx="2" fill="var(--cell-null)"><title>animal · 150+: n/a</title></rect>
+</svg>
+    <figcaption><b>FPR Δ (candidate − baseline).</b> Red = false-positive rate worsened (increase is bad). Near-range red bands for bicycle, bus, car, pedestrian, unknown confirm the FP problem is close-range and cross-class, not one bad label. Source: Per-class_distance_deltas.csv.</figcaption></figure>
+</section>
+<section class="card">
+  <h2>5 · Class-Level Analysis</h2>
+  <div class="two">
+    <figure><svg viewBox="0 0 560 280" role="img" class="chart">
+<line x1="293.0" y1="8" x2="293.0" y2="272" stroke="var(--axis)" stroke-width="1"/>
+<text x="88" y="25.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="293.0" y="8" width="197.0" height="26" rx="3" fill="var(--good)"><title>motorbike: +14.5 pts</title></rect>
+<text x="496.0" y="25.0" text-anchor="start" class="vlab">+14.5 pts</text>
+<text x="88" y="59.0" text-anchor="end" class="ylab">animal</text>
+<rect x="293.0" y="42" width="174.2" height="26" rx="3" fill="var(--good)"><title>animal: +12.9 pts</title></rect>
+<text x="473.2" y="59.0" text-anchor="start" class="vlab">+12.9 pts</text>
+<text x="88" y="93.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="293.0" y="76" width="172.1" height="26" rx="3" fill="var(--good)"><title>bicycle: +12.7 pts</title></rect>
+<text x="471.1" y="93.0" text-anchor="start" class="vlab">+12.7 pts</text>
+<text x="88" y="127.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="293.0" y="110" width="95.3" height="26" rx="3" fill="var(--good)"><title>unknown: +7.0 pts</title></rect>
+<text x="394.3" y="127.0" text-anchor="start" class="vlab">+7.0 pts</text>
+<text x="88" y="161.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="293.0" y="144" width="24.3" height="26" rx="3" fill="var(--good)"><title>pedestrian: +1.8 pts</title></rect>
+<text x="323.3" y="161.0" text-anchor="start" class="vlab">+1.8 pts</text>
+<text x="88" y="195.0" text-anchor="end" class="ylab">car</text>
+<rect x="293.0" y="178" width="15.9" height="26" rx="3" fill="var(--good)"><title>car: +1.2 pts</title></rect>
+<text x="314.9" y="195.0" text-anchor="start" class="vlab">+1.2 pts</text>
+<text x="88" y="229.0" text-anchor="end" class="ylab">bus</text>
+<rect x="293.0" y="212" width="10.3" height="26" rx="3" fill="var(--good)"><title>bus: +0.8 pts</title></rect>
+<text x="309.3" y="229.0" text-anchor="start" class="vlab">+0.8 pts</text>
+<text x="88" y="263.0" text-anchor="end" class="ylab">truck</text>
+<rect x="293.0" y="246" width="4.5" height="26" rx="3" fill="var(--good)"><title>truck: +0.3 pts</title></rect>
+<text x="303.5" y="263.0" text-anchor="start" class="vlab">+0.3 pts</text>
+</svg>
+      <figcaption><b>TPR Δ by class.</b> Every class improved recall. Largest gains: motorbike +14.5, animal +12.9, bicycle +12.7 pts. Source: Class_rate_comparison.csv.</figcaption></figure>
+    <figure><svg viewBox="0 0 560 280" role="img" class="chart">
+<line x1="293.0" y1="8" x2="293.0" y2="272" stroke="var(--axis)" stroke-width="1"/>
+<text x="88" y="25.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="293.0" y="8" width="197.0" height="26" rx="3" fill="var(--good)"><title>motorbike: +47.4 pts</title></rect>
+<text x="496.0" y="25.0" text-anchor="start" class="vlab">+47.4 pts</text>
+<text x="88" y="59.0" text-anchor="end" class="ylab">animal</text>
+<rect x="293.0" y="42" width="0.5" height="26" rx="3" fill="var(--good)"><title>animal: +0.0 pts</title></rect>
+<text x="299.0" y="59.0" text-anchor="start" class="vlab">+0.0 pts</text>
+<text x="88" y="93.0" text-anchor="end" class="ylab">car</text>
+<rect x="279.9" y="76" width="13.1" height="26" rx="3" fill="var(--bad)"><title>car: -3.1 pts</title></rect>
+<text x="273.9" y="93.0" text-anchor="end" class="vlab">-3.1 pts</text>
+<text x="88" y="127.0" text-anchor="end" class="ylab">truck</text>
+<rect x="262.5" y="110" width="30.5" height="26" rx="3" fill="var(--bad)"><title>truck: -7.3 pts</title></rect>
+<text x="256.5" y="127.0" text-anchor="end" class="vlab">-7.3 pts</text>
+<text x="88" y="161.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="262.1" y="144" width="30.9" height="26" rx="3" fill="var(--bad)"><title>pedestrian: -7.4 pts</title></rect>
+<text x="256.1" y="161.0" text-anchor="end" class="vlab">-7.4 pts</text>
+<text x="88" y="195.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="236.9" y="178" width="56.1" height="26" rx="3" fill="var(--bad)"><title>unknown: -13.5 pts</title></rect>
+<text x="230.9" y="195.0" text-anchor="end" class="vlab">-13.5 pts</text>
+<text x="88" y="229.0" text-anchor="end" class="ylab">bus</text>
+<rect x="224.6" y="212" width="68.4" height="26" rx="3" fill="var(--bad)"><title>bus: -16.5 pts</title></rect>
+<text x="218.6" y="229.0" text-anchor="end" class="vlab">-16.5 pts</text>
+<text x="88" y="263.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="124.2" y="246" width="168.8" height="26" rx="3" fill="var(--bad)"><title>bicycle: -40.7 pts</title></rect>
+<text x="130.2" y="263.0" text-anchor="start" class="vlab">-40.7 pts</text>
+</svg>
+      <figcaption><b>Precision Δ by class.</b> The mirror image: almost every class <i>lost</i> precision. bicycle −40.7, bus −16.5, unknown −13.5 pts. Only motorbike (+47.4) genuinely improved on both axes. Source: Class_rate_comparison.csv.</figcaption></figure>
+  </div>
+  <figure><svg viewBox="0 0 760 280" role="img" class="chart">
+<line x1="400.0" y1="8" x2="400.0" y2="272" stroke="var(--axis)" stroke-width="1"/>
+<text x="102" y="25.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="400.0" y="8" width="290.0" height="26" rx="3" fill="var(--good)"><title>motorbike: +55.3 pts</title></rect>
+<text x="696.0" y="25.0" text-anchor="start" class="vlab">+55.3 pts</text>
+<text x="102" y="59.0" text-anchor="end" class="ylab">animal</text>
+<rect x="400.0" y="42" width="0.5" height="26" rx="3" fill="var(--good)"><title>animal: +0.0 pts</title></rect>
+<text x="406.0" y="59.0" text-anchor="start" class="vlab">+0.0 pts</text>
+<text x="102" y="93.0" text-anchor="end" class="ylab">car</text>
+<rect x="392.4" y="76" width="7.6" height="26" rx="3" fill="var(--bad)"><title>car: -1.4 pts</title></rect>
+<text x="386.4" y="93.0" text-anchor="end" class="vlab">-1.4 pts</text>
+<text x="102" y="127.0" text-anchor="end" class="ylab">truck</text>
+<rect x="383.0" y="110" width="17.0" height="26" rx="3" fill="var(--bad)"><title>truck: -3.2 pts</title></rect>
+<text x="377.0" y="127.0" text-anchor="end" class="vlab">-3.2 pts</text>
+<text x="102" y="161.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="378.5" y="144" width="21.5" height="26" rx="3" fill="var(--bad)"><title>pedestrian: -4.1 pts</title></rect>
+<text x="372.5" y="161.0" text-anchor="end" class="vlab">-4.1 pts</text>
+<text x="102" y="195.0" text-anchor="end" class="ylab">bus</text>
+<rect x="356.8" y="178" width="43.2" height="26" rx="3" fill="var(--bad)"><title>bus: -8.2 pts</title></rect>
+<text x="350.8" y="195.0" text-anchor="end" class="vlab">-8.2 pts</text>
+<text x="102" y="229.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="319.9" y="212" width="80.1" height="26" rx="3" fill="var(--bad)"><title>bicycle: -15.3 pts</title></rect>
+<text x="313.9" y="229.0" text-anchor="end" class="vlab">-15.3 pts</text>
+<text x="102" y="263.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="317.8" y="246" width="82.2" height="26" rx="3" fill="var(--bad)"><title>unknown: -15.7 pts</title></rect>
+<text x="311.8" y="263.0" text-anchor="end" class="vlab">-15.7 pts</text>
+</svg>
+    <figcaption><b>F1 Δ by class</b> — the net verdict per class. motorbike is the one clear winner (+55.3). bicycle (−15.3) and unknown (−15.7) are the clear losers: recall bought at too high an FP price. car, truck, pedestrian, bus all slip slightly. Source: Class_rate_comparison.csv.</figcaption></figure>
+  <div class="two">
+    <figure><div class="legend"><span class="lg"><span class="sw" style="background:var(--good)"></span>Improved (FN→TP)</span><span class="lg"><span class="sw" style="background:var(--bad)"></span>Degraded (TP→FN)</span></div><svg viewBox="0 0 560 280" role="img" class="chart">
+<line x1="54" y1="226.0" x2="546" y2="226.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="230.0" text-anchor="end" class="tick">0</text>
+<line x1="54" y1="173.0" x2="546" y2="173.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="177.0" text-anchor="end" class="tick">2526</text>
+<line x1="54" y1="120.0" x2="546" y2="120.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="124.0" text-anchor="end" class="tick">5051</text>
+<line x1="54" y1="67.0" x2="546" y2="67.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="71.0" text-anchor="end" class="tick">7577</text>
+<line x1="54" y1="14.0" x2="546" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="18.0" text-anchor="end" class="tick">10102</text>
+<rect x="59.1" y="183.2" width="24.6" height="42.8" rx="3" fill="var(--good)"><title>unknown — Improved (FN→TP): 2038</title></rect>
+<rect x="85.8" y="217.2" width="24.6" height="8.8" rx="3" fill="var(--bad)"><title>unknown — Degraded (TP→FN): 418</title></rect>
+<text x="84.8" y="242.0" text-anchor="middle" class="tick xtick">unknown</text>
+<rect x="120.7" y="206.6" width="24.6" height="19.4" rx="3" fill="var(--good)"><title>bicycle — Improved (FN→TP): 926</title></rect>
+<rect x="147.2" y="221.4" width="24.6" height="4.6" rx="3" fill="var(--bad)"><title>bicycle — Degraded (TP→FN): 219</title></rect>
+<text x="146.2" y="242.0" text-anchor="middle" class="tick xtick">bicycle</text>
+<rect x="182.2" y="216.4" width="24.6" height="9.6" rx="3" fill="var(--good)"><title>motorbike — Improved (FN→TP): 456</title></rect>
+<rect x="208.8" y="222.3" width="24.6" height="3.7" rx="3" fill="var(--bad)"><title>motorbike — Degraded (TP→FN): 175</title></rect>
+<text x="207.8" y="242.0" text-anchor="middle" class="tick xtick">motorbike</text>
+<rect x="243.7" y="157.9" width="24.6" height="68.1" rx="3" fill="var(--good)"><title>pedestrian — Improved (FN→TP): 3244</title></rect>
+<rect x="270.2" y="162.9" width="24.6" height="63.1" rx="3" fill="var(--bad)"><title>pedestrian — Degraded (TP→FN): 3006</title></rect>
+<text x="269.2" y="242.0" text-anchor="middle" class="tick xtick">pedestrian</text>
+<rect x="305.1" y="194.8" width="24.6" height="31.2" rx="3" fill="var(--good)"><title>truck — Improved (FN→TP): 1488</title></rect>
+<rect x="331.8" y="195.4" width="24.6" height="30.6" rx="3" fill="var(--bad)"><title>truck — Degraded (TP→FN): 1456</title></rect>
+<text x="330.8" y="242.0" text-anchor="middle" class="tick xtick">truck</text>
+<rect x="366.6" y="225.6" width="24.6" height="0.4" rx="3" fill="var(--good)"><title>animal — Improved (FN→TP): 21</title></rect>
+<rect x="393.2" y="225.9" width="24.6" height="0.1" rx="3" fill="var(--bad)"><title>animal — Degraded (TP→FN): 5</title></rect>
+<text x="392.2" y="242.0" text-anchor="middle" class="tick xtick">animal</text>
+<rect x="428.1" y="222.9" width="24.6" height="3.1" rx="3" fill="var(--good)"><title>bus — Improved (FN→TP): 150</title></rect>
+<rect x="454.8" y="222.5" width="24.6" height="3.5" rx="3" fill="var(--bad)"><title>bus — Degraded (TP→FN): 167</title></rect>
+<text x="453.8" y="242.0" text-anchor="middle" class="tick xtick">bus</text>
+<rect x="489.6" y="52.2" width="24.6" height="173.8" rx="3" fill="var(--good)"><title>car — Improved (FN→TP): 8283</title></rect>
+<rect x="516.2" y="36.7" width="24.6" height="189.3" rx="3" fill="var(--bad)"><title>car — Degraded (TP→FN): 9020</title></rect>
+<text x="515.2" y="242.0" text-anchor="middle" class="tick xtick">car</text>
+</svg>
+      <figcaption><b>Object-level churn.</b> Improved = objects that went FN→TP; degraded = TP→FN. car alone lost <b>9,020</b> tracked objects to FN while gaining 8,283 (net −737). This churn is invisible in the headline recall. Source: Object_diff_by_class.csv.</figcaption></figure>
+    <figure><svg viewBox="0 0 560 246" role="img" class="chart">
+<line x1="291.0" y1="8" x2="291.0" y2="238" stroke="var(--axis)" stroke-width="1"/>
+<text x="84" y="25.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="291.0" y="8" width="199.0" height="26" rx="3" fill="var(--bad)"><title>unknown: 128,201</title></rect>
+<text x="496.0" y="25.0" text-anchor="start" class="vlab">128,201</text>
+<text x="84" y="59.0" text-anchor="end" class="ylab">car</text>
+<rect x="291.0" y="42" width="50.9" height="26" rx="3" fill="var(--bad)"><title>car: 32,780</title></rect>
+<text x="347.9" y="59.0" text-anchor="start" class="vlab">32,780</text>
+<text x="84" y="93.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="291.0" y="76" width="23.2" height="26" rx="3" fill="var(--bad)"><title>pedestrian: 14,928</title></rect>
+<text x="320.2" y="93.0" text-anchor="start" class="vlab">14,928</text>
+<text x="84" y="127.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="291.0" y="110" width="15.8" height="26" rx="3" fill="var(--bad)"><title>bicycle: 10,199</title></rect>
+<text x="312.8" y="127.0" text-anchor="start" class="vlab">10,199</text>
+<text x="84" y="161.0" text-anchor="end" class="ylab">truck</text>
+<rect x="291.0" y="144" width="15.7" height="26" rx="3" fill="var(--bad)"><title>truck: 10,112</title></rect>
+<text x="312.7" y="161.0" text-anchor="start" class="vlab">10,112</text>
+<text x="84" y="195.0" text-anchor="end" class="ylab">bus</text>
+<rect x="291.0" y="178" width="6.1" height="26" rx="3" fill="var(--bad)"><title>bus: 3,948</title></rect>
+<text x="303.1" y="195.0" text-anchor="start" class="vlab">3,948</text>
+<text x="84" y="229.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="291.0" y="212" width="2.9" height="26" rx="3" fill="var(--bad)"><title>motorbike: 1,866</title></rect>
+<text x="299.9" y="229.0" text-anchor="start" class="vlab">1,866</text>
+</svg>
+      <figcaption><b>FP increase by class.</b> <b>unknown</b> dominates: +128,201 FP (63% of the total FP rise). car +32,780, pedestrian +14,928. Source: FP_diff_by_label.csv.</figcaption></figure>
+  </div>
+  <p class="note"><b>Classes that improved recall but caused FP growth (the trap):</b> <b>bicycle</b> (TPR +12.7 pts but FP ×4.8: 2,683→12,882, precision −40.7 pts) and <b>unknown</b> (TPR +7.0 pts but +128k FP). These are recall gains that a safety reviewer should treat as regressions. <b>motorbike</b> is the only unambiguous win (recall <i>and</i> precision up). Source: Class_rate_comparison.csv, FP_diff_by_label.csv.</p>
+</section>
+<section class="card">
+  <h2>6 · TP Improvement Hotspots</h2>
+  <figure><svg viewBox="0 0 760 348" role="img" class="chart">
+<line x1="450.0" y1="8" x2="450.0" y2="340" stroke="var(--axis)" stroke-width="1"/>
+<text x="202" y="25.0" text-anchor="end" class="ylab">Kawasaki·PDD001_e86ea365</text>
+<rect x="450.0" y="8" width="240.0" height="26" rx="3" fill="var(--good)"><title>Kawasaki·PDD001_e86ea365: +216</title></rect>
+<text x="696.0" y="25.0" text-anchor="start" class="vlab">+216</text>
+<text x="202" y="59.0" text-anchor="end" class="ylab">Omika·PDD001_1a9b5cb6</text>
+<rect x="450.0" y="42" width="161.1" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_1a9b5cb6: +145</title></rect>
+<text x="617.1" y="59.0" text-anchor="start" class="vlab">+145</text>
+<text x="202" y="93.0" text-anchor="end" class="ylab">Omika·PDD001_f7082a34</text>
+<rect x="450.0" y="76" width="148.9" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_f7082a34: +134</title></rect>
+<text x="604.9" y="93.0" text-anchor="start" class="vlab">+134</text>
+<text x="202" y="127.0" text-anchor="end" class="ylab">Omika·PDD001_2fc10e65</text>
+<rect x="450.0" y="110" width="138.9" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_2fc10e65: +125</title></rect>
+<text x="594.9" y="127.0" text-anchor="start" class="vlab">+125</text>
+<text x="202" y="161.0" text-anchor="end" class="ylab">Omika·PDD001_ef96b126</text>
+<rect x="450.0" y="144" width="132.2" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_ef96b126: +119</title></rect>
+<text x="588.2" y="161.0" text-anchor="start" class="vlab">+119</text>
+<text x="202" y="195.0" text-anchor="end" class="ylab">Omika·PDD001_938725d4</text>
+<rect x="450.0" y="178" width="103.3" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_938725d4: +93</title></rect>
+<text x="559.3" y="195.0" text-anchor="start" class="vlab">+93</text>
+<text x="202" y="229.0" text-anchor="end" class="ylab">Kawasaki·PDD001_1d095bce</text>
+<rect x="450.0" y="212" width="97.8" height="26" rx="3" fill="var(--good)"><title>Kawasaki·PDD001_1d095bce: +88</title></rect>
+<text x="553.8" y="229.0" text-anchor="start" class="vlab">+88</text>
+<text x="202" y="263.0" text-anchor="end" class="ylab">Omika·PDD001_0599e44a</text>
+<rect x="450.0" y="246" width="85.6" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_0599e44a: +77</title></rect>
+<text x="541.6" y="263.0" text-anchor="start" class="vlab">+77</text>
+<text x="202" y="297.0" text-anchor="end" class="ylab">Omika·PDD001_33856f26</text>
+<rect x="450.0" y="280" width="76.7" height="26" rx="3" fill="var(--good)"><title>Omika·PDD001_33856f26: +69</title></rect>
+<text x="532.7" y="297.0" text-anchor="start" class="vlab">+69</text>
+<text x="202" y="331.0" text-anchor="end" class="ylab">Fukuyama·PDD001_5bb0d969</text>
+<rect x="450.0" y="314" width="76.7" height="26" rx="3" fill="var(--good)"><title>Fukuyama·PDD001_5bb0d969: +69</title></rect>
+<text x="532.7" y="331.0" text-anchor="start" class="vlab">+69</text>
+</svg>
+    <figcaption>Top scenes by net TP recovery. The biggest wins cluster in <b>Omika</b> (7 of top 10) plus Kawasaki_e86ea365 (+216). Improvements are <b>moderate and concentrated</b> — the largest single scene recovers +216 objects, small next to the degradations below. Source: Object_diff_by_scene.csv.</figcaption></figure>
+  <div class="tbl-wrap"><table class="hot"><thead><tr><th>Scenario</th><th>City</th><th>GT</th><th>Improved</th><th>Degraded</th><th>Net TP Δ</th><th>Viewer</th></tr></thead><tbody><tr><td class="mono">Kawasaki·PDD001_e86ea365</td><td>Kawasaki</td><td>1801</td><td class="good">269</td><td class="bad">53</td><td class="good">+216</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_e86ea365&amp;viewer_t4dataset=e86ea365-a96c-4a8f-9a1a-8f2b676db8e7&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_1a9b5cb6</td><td>Omika</td><td>3704</td><td class="good">178</td><td class="bad">33</td><td class="good">+145</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_1a9b5cb6&amp;viewer_t4dataset=1a9b5cb6-c839-4247-b4ac-4719963a4881&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_f7082a34</td><td>Omika</td><td>4576</td><td class="good">172</td><td class="bad">38</td><td class="good">+134</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_f7082a34&amp;viewer_t4dataset=f7082a34-42c9-47a2-9e64-ec998cab57a7&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_2fc10e65</td><td>Omika</td><td>2924</td><td class="good">169</td><td class="bad">44</td><td class="good">+125</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_2fc10e65&amp;viewer_t4dataset=2fc10e65-a85a-430e-a4b6-1d776e7aa198&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_ef96b126</td><td>Omika</td><td>3762</td><td class="good">165</td><td class="bad">46</td><td class="good">+119</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_ef96b126&amp;viewer_t4dataset=ef96b126-ff17-4765-9376-01527ffbc085&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_938725d4</td><td>Omika</td><td>4466</td><td class="good">154</td><td class="bad">61</td><td class="good">+93</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_938725d4&amp;viewer_t4dataset=938725d4-a33b-492e-a629-a283bb677991&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Kawasaki·PDD001_1d095bce</td><td>Kawasaki</td><td>1652</td><td class="good">128</td><td class="bad">40</td><td class="good">+88</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_1d095bce&amp;viewer_t4dataset=1d095bce-c323-4d40-adce-8c9a3fb59226&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_0599e44a</td><td>Omika</td><td>4023</td><td class="good">107</td><td class="bad">30</td><td class="good">+77</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_0599e44a&amp;viewer_t4dataset=0599e44a-1aab-4ac8-a848-453e4f0505d0&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Omika·PDD001_33856f26</td><td>Omika</td><td>2348</td><td class="good">104</td><td class="bad">35</td><td class="good">+69</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Omika_PDD_37c0b11d-4057-4182-8030-7d410547e8e1&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_33856f26&amp;viewer_t4dataset=33856f26-8d10-4f61-9237-2dd6ed1bdff7&amp;viewer_compare=side_by_side">3D ↗</a></td></tr><tr><td class="mono">Fukuyama·PDD001_5bb0d969</td><td>Fukuyama</td><td>3536</td><td class="good">102</td><td class="bad">33</td><td class="good">+69</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Fukuyama_PDD_857c0d9c-b818-4391-af25-5829abe1717b&amp;viewer_scenario=FullPerformance_V1_Fukuyama_PDD001_5bb0d969&amp;viewer_t4dataset=5bb0d969-d800-488e-8afc-34a682b88bd1&amp;viewer_compare=side_by_side">3D ↗</a></td></tr></tbody></table></div>
+  <p class="note">Improvement is <b>concentrated in a handful of Omika scenes</b> and is modest in magnitude. It does not broadly offset the losses: the worst-degraded scene alone (Omika_5b31d85d, −3,597) exceeds the sum of the entire top-10 improvement list.</p>
+</section>
+<section class="card">
+  <h2>7 · False-Positive Increase — Concentration Analysis</h2>
+  <div class="two">
+    <figure><svg viewBox="0 0 720 280" role="img" class="chart">
+<line x1="52" y1="236.0" x2="704" y2="236.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="46" y="240.0" text-anchor="end" class="tick">0%</text>
+<line x1="52" y1="180.5" x2="704" y2="180.5" stroke="var(--grid)" stroke-width="1"/>
+<text x="46" y="184.5" text-anchor="end" class="tick">25%</text>
+<line x1="52" y1="125.0" x2="704" y2="125.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="46" y="129.0" text-anchor="end" class="tick">50%</text>
+<line x1="52" y1="69.5" x2="704" y2="69.5" stroke="var(--grid)" stroke-width="1"/>
+<text x="46" y="73.5" text-anchor="end" class="tick">75%</text>
+<line x1="52" y1="14.0" x2="704" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="46" y="18.0" text-anchor="end" class="tick">100%</text>
+<polyline points="52.0,236.0 53.0,233.0 54.1,230.0 55.1,227.4 56.1,224.8 57.2,222.3 58.2,220.2 59.2,218.1 60.3,216.2 61.3,214.6 62.3,213.0 63.3,211.6 64.4,210.1 65.4,208.7 66.4,207.4 67.5,206.0 68.5,204.8 69.5,203.5 70.6,202.3 71.6,201.1 72.6,200.0 73.7,198.9 74.7,197.9 75.7,196.8 76.8,195.8 77.8,194.7 78.8,193.7 79.9,192.7 80.9,191.7 81.9,190.7 82.9,189.8 84.0,188.8 85.0,187.8 86.0,186.9 87.1,186.0 88.1,185.1 89.1,184.3 90.2,183.4 91.2,182.5 92.2,181.7 93.3,180.8 94.3,180.0 95.3,179.1 96.4,178.3 97.4,177.5 98.4,176.6 99.5,175.8 100.5,175.0 101.5,174.2 102.6,173.4 103.6,172.6 104.6,171.8 105.6,171.1 106.7,170.3 107.7,169.5 108.7,168.8 109.8,168.0 110.8,167.3 111.8,166.5 112.9,165.8 113.9,165.1 114.9,164.3 116.0,163.6 117.0,162.8 118.0,162.1 119.1,161.4 120.1,160.7 121.1,160.0 122.2,159.3 123.2,158.6 124.2,157.9 125.2,157.2 126.3,156.5 127.3,155.8 128.3,155.2 129.4,154.5 130.4,153.8 131.4,153.1 132.5,152.5 133.5,151.8 134.5,151.1 135.6,150.5 136.6,149.8 137.6,149.2 138.7,148.6 139.7,147.9 140.7,147.3 141.8,146.6 142.8,146.0 143.8,145.4 144.8,144.8 145.9,144.2 146.9,143.6 147.9,142.9 149.0,142.3 150.0,141.7 151.0,141.1 152.1,140.5 153.1,139.9 154.1,139.3 155.2,138.7 156.2,138.2 157.2,137.6 158.3,137.0 159.3,136.4 160.3,135.8 161.4,135.3 162.4,134.7 163.4,134.1 164.4,133.6 165.5,133.0 166.5,132.4 167.5,131.9 168.6,131.3 169.6,130.8 170.6,130.2 171.7,129.7 172.7,129.1 173.7,128.6 174.8,128.0 175.8,127.5 176.8,127.0 177.9,126.4 178.9,125.9 179.9,125.4 181.0,124.8 182.0,124.3 183.0,123.8 184.1,123.3 185.1,122.8 186.1,122.3 187.1,121.8 188.2,121.3 189.2,120.7 190.2,120.2 191.3,119.7 192.3,119.2 193.3,118.7 194.4,118.2 195.4,117.7 196.4,117.2 197.5,116.7 198.5,116.2 199.5,115.7 200.6,115.3 201.6,114.8 202.6,114.3 203.7,113.8 204.7,113.3 205.7,112.8 206.7,112.4 207.8,111.9 208.8,111.4 209.8,110.9 210.9,110.5 211.9,110.0 212.9,109.5 214.0,109.1 215.0,108.6 216.0,108.1 217.1,107.7 218.1,107.2 219.1,106.8 220.2,106.3 221.2,105.9 222.2,105.4 223.3,105.0 224.3,104.5 225.3,104.1 226.3,103.6 227.4,103.2 228.4,102.7 229.4,102.3 230.5,101.9 231.5,101.4 232.5,101.0 233.6,100.6 234.6,100.1 235.6,99.7 236.7,99.3 237.7,98.8 238.7,98.4 239.8,98.0 240.8,97.6 241.8,97.1 242.9,96.7 243.9,96.3 244.9,95.9 245.9,95.4 247.0,95.0 248.0,94.6 249.0,94.2 250.1,93.8 251.1,93.4 252.1,93.0 253.2,92.6 254.2,92.2 255.2,91.8 256.3,91.4 257.3,91.0 258.3,90.6 259.4,90.2 260.4,89.8 261.4,89.4 262.5,89.0 263.5,88.6 264.5,88.2 265.6,87.8 266.6,87.4 267.6,87.1 268.6,86.7 269.7,86.3 270.7,85.9 271.7,85.5 272.8,85.1 273.8,84.8 274.8,84.4 275.9,84.0 276.9,83.6 277.9,83.3 279.0,82.9 280.0,82.5 281.0,82.1 282.1,81.8 283.1,81.4 284.1,81.0 285.2,80.7 286.2,80.3 287.2,79.9 288.2,79.6 289.3,79.2 290.3,78.9 291.3,78.5 292.4,78.1 293.4,77.8 294.4,77.4 295.5,77.1 296.5,76.7 297.5,76.4 298.6,76.0 299.6,75.7 300.6,75.3 301.7,75.0 302.7,74.6 303.7,74.3 304.8,73.9 305.8,73.6 306.8,73.3 307.8,72.9 308.9,72.6 309.9,72.3 310.9,71.9 312.0,71.6 313.0,71.3 314.0,71.0 315.1,70.6 316.1,70.3 317.1,70.0 318.2,69.7 319.2,69.4 320.2,69.0 321.3,68.7 322.3,68.4 323.3,68.1 324.4,67.8 325.4,67.5 326.4,67.2 327.4,66.9 328.5,66.6 329.5,66.3 330.5,66.0 331.6,65.7 332.6,65.4 333.6,65.1 334.7,64.8 335.7,64.5 336.7,64.2 337.8,63.9 338.8,63.6 339.8,63.3 340.9,63.1 341.9,62.8 342.9,62.5 344.0,62.2 345.0,61.9 346.0,61.7 347.1,61.4 348.1,61.1 349.1,60.8 350.1,60.5 351.2,60.3 352.2,60.0 353.2,59.7 354.3,59.4 355.3,59.2 356.3,58.9 357.4,58.6 358.4,58.4 359.4,58.1 360.5,57.8 361.5,57.5 362.5,57.3 363.6,57.0 364.6,56.7 365.6,56.5 366.7,56.2 367.7,55.9 368.7,55.7 369.7,55.4 370.8,55.2 371.8,54.9 372.8,54.6 373.9,54.4 374.9,54.1 375.9,53.9 377.0,53.6 378.0,53.4 379.0,53.1 380.1,52.9 381.1,52.6 382.1,52.4 383.2,52.1 384.2,51.9 385.2,51.6 386.3,51.4 387.3,51.1 388.3,50.9 389.3,50.7 390.4,50.4 391.4,50.2 392.4,49.9 393.5,49.7 394.5,49.5 395.5,49.2 396.6,49.0 397.6,48.7 398.6,48.5 399.7,48.3 400.7,48.1 401.7,47.8 402.8,47.6 403.8,47.4 404.8,47.1 405.9,46.9 406.9,46.7 407.9,46.5 408.9,46.3 410.0,46.0 411.0,45.8 412.0,45.6 413.1,45.4 414.1,45.2 415.1,45.0 416.2,44.7 417.2,44.5 418.2,44.3 419.3,44.1 420.3,43.9 421.3,43.7 422.4,43.5 423.4,43.3 424.4,43.1 425.5,42.9 426.5,42.7 427.5,42.5 428.6,42.3 429.6,42.1 430.6,41.9 431.6,41.7 432.7,41.5 433.7,41.3 434.7,41.1 435.8,40.9 436.8,40.7 437.8,40.5 438.9,40.3 439.9,40.1 440.9,39.9 442.0,39.7 443.0,39.5 444.0,39.3 445.1,39.1 446.1,39.0 447.1,38.8 448.2,38.6 449.2,38.4 450.2,38.2 451.2,38.0 452.3,37.9 453.3,37.7 454.3,37.5 455.4,37.3 456.4,37.1 457.4,37.0 458.5,36.8 459.5,36.6 460.5,36.5 461.6,36.3 462.6,36.1 463.6,35.9 464.7,35.8 465.7,35.6 466.7,35.4 467.8,35.3 468.8,35.1 469.8,34.9 470.8,34.7 471.9,34.6 472.9,34.4 473.9,34.2 475.0,34.1 476.0,33.9 477.0,33.7 478.1,33.6 479.1,33.4 480.1,33.3 481.2,33.1 482.2,32.9 483.2,32.8 484.3,32.6 485.3,32.4 486.3,32.3 487.4,32.1 488.4,32.0 489.4,31.8 490.4,31.7 491.5,31.5 492.5,31.4 493.5,31.2 494.6,31.1 495.6,30.9 496.6,30.8 497.7,30.6 498.7,30.5 499.7,30.3 500.8,30.2 501.8,30.0 502.8,29.9 503.9,29.7 504.9,29.6 505.9,29.4 507.0,29.3 508.0,29.1 509.0,29.0 510.1,28.9 511.1,28.7 512.1,28.6 513.1,28.4 514.2,28.3 515.2,28.2 516.2,28.0 517.3,27.9 518.3,27.8 519.3,27.6 520.4,27.5 521.4,27.3 522.4,27.2 523.5,27.1 524.5,26.9 525.5,26.8 526.6,26.7 527.6,26.5 528.6,26.4 529.7,26.3 530.7,26.1 531.7,26.0 532.7,25.9 533.8,25.8 534.8,25.6 535.8,25.5 536.9,25.4 537.9,25.2 538.9,25.1 540.0,25.0 541.0,24.9 542.0,24.7 543.1,24.6 544.1,24.5 545.1,24.4 546.2,24.3 547.2,24.1 548.2,24.0 549.3,23.9 550.3,23.8 551.3,23.7 552.3,23.5 553.4,23.4 554.4,23.3 555.4,23.2 556.5,23.1 557.5,22.9 558.5,22.8 559.6,22.7 560.6,22.6 561.6,22.5 562.7,22.4 563.7,22.3 564.7,22.1 565.8,22.0 566.8,21.9 567.8,21.8 568.9,21.7 569.9,21.6 570.9,21.5 571.9,21.4 573.0,21.3 574.0,21.2 575.0,21.1 576.1,21.0 577.1,20.9 578.1,20.8 579.2,20.7 580.2,20.6 581.2,20.5 582.3,20.4 583.3,20.3 584.3,20.2 585.4,20.1 586.4,20.0 587.4,19.9 588.5,19.8 589.5,19.8 590.5,19.7 591.6,19.6 592.6,19.5 593.6,19.4 594.6,19.3 595.7,19.2 596.7,19.1 597.7,19.0 598.8,18.9 599.8,18.8 600.8,18.8 601.9,18.7 602.9,18.6 603.9,18.5 605.0,18.4 606.0,18.3 607.0,18.3 608.1,18.2 609.1,18.1 610.1,18.0 611.2,17.9 612.2,17.8 613.2,17.8 614.2,17.7 615.3,17.6 616.3,17.5 617.3,17.5 618.4,17.4 619.4,17.3 620.4,17.2 621.5,17.2 622.5,17.1 623.5,17.0 624.6,16.9 625.6,16.9 626.6,16.8 627.7,16.7 628.7,16.7 629.7,16.6 630.8,16.5 631.8,16.5 632.8,16.4 633.8,16.3 634.9,16.3 635.9,16.2 636.9,16.1 638.0,16.1 639.0,16.0 640.0,16.0 641.1,15.9 642.1,15.9 643.1,15.8 644.2,15.7 645.2,15.7 646.2,15.6 647.3,15.6 648.3,15.5 649.3,15.5 650.4,15.4 651.4,15.4 652.4,15.3 653.4,15.3 654.5,15.2 655.5,15.2 656.5,15.1 657.6,15.1 658.6,15.0 659.6,15.0 660.7,15.0 661.7,14.9 662.7,14.9 663.8,14.8 664.8,14.8 665.8,14.8 666.9,14.7 667.9,14.7 668.9,14.6 670.0,14.6 671.0,14.6 672.0,14.5 673.1,14.5 674.1,14.5 675.1,14.5 676.1,14.4 677.2,14.4 678.2,14.4 679.2,14.3 680.3,14.3 681.3,14.3 682.3,14.3 683.4,14.2 684.4,14.2 685.4,14.2 686.5,14.2 687.5,14.2 688.5,14.1 689.6,14.1 690.6,14.1 691.6,14.1 692.7,14.1 693.7,14.1 694.7,14.1 695.7,14.0 696.8,14.0 697.8,14.0 698.8,14.0 699.9,14.0 700.9,14.0 701.9,14.0 703.0,14.0 704.0,14.0" fill="none" stroke="var(--series-1)" stroke-width="2.4"/>
+<line x1="72.6" y1="14" x2="72.6" y2="236" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+<circle cx="72.6" cy="200.0" r="4" fill="var(--bad)"/>
+<text x="72.6" y="192.0" text-anchor="middle" class="vlab">16%</text>
+<text x="72.6" y="252.0" text-anchor="middle" class="tick">top 20</text>
+<line x1="103.6" y1="14" x2="103.6" y2="236" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+<circle cx="103.6" cy="172.6" r="4" fill="var(--bad)"/>
+<text x="103.6" y="164.6" text-anchor="middle" class="vlab">29%</text>
+<text x="103.6" y="252.0" text-anchor="middle" class="tick">top 50</text>
+<line x1="155.2" y1="14" x2="155.2" y2="236" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+<circle cx="155.2" cy="138.7" r="4" fill="var(--bad)"/>
+<text x="155.2" y="130.7" text-anchor="middle" class="vlab">44%</text>
+<text x="155.2" y="252.0" text-anchor="middle" class="tick">top 100</text>
+<text x="52" y="274" class="tick">datasets ranked by FP increase (707 total) →</text>
+</svg>
+      <figcaption><b>Cumulative FP-increase share.</b> Across 707 datasets, the top 20 explain only <b>16%</b>, top 50 <b>29%</b>, and top 100 <b>44%</b> of the total FP rise. The curve is close to the diagonal → the FP increase is <b>broad and systemic</b>, not a few pathological scenes. Source: FP_diff_by_dataset.csv.</figcaption></figure>
+    <figure><div class="legend"><span class="lg"><span class="sw" style="background:var(--series-muted)"></span>Baseline FP</span><span class="lg"><span class="sw" style="background:var(--series-1)"></span>Candidate FP</span></div><svg viewBox="0 0 560 280" role="img" class="chart">
+<line x1="54" y1="226.0" x2="546" y2="226.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="230.0" text-anchor="end" class="tick">0k</text>
+<line x1="54" y1="173.0" x2="546" y2="173.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="177.0" text-anchor="end" class="tick">30k</text>
+<line x1="54" y1="120.0" x2="546" y2="120.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="124.0" text-anchor="end" class="tick">59k</text>
+<line x1="54" y1="67.0" x2="546" y2="67.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="71.0" text-anchor="end" class="tick">89k</text>
+<line x1="54" y1="14.0" x2="546" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="18.0" text-anchor="end" class="tick">119k</text>
+<rect x="59.1" y="138.8" width="24.6" height="87.2" rx="3" fill="var(--series-muted)"><title>Kawasaki — Baseline FP: 49k</title></rect>
+<rect x="85.8" y="40.8" width="24.6" height="185.2" rx="3" fill="var(--series-1)"><title>Kawasaki — Candidate FP: 104k</title></rect>
+<text x="84.8" y="242.0" text-anchor="middle" class="tick xtick">Kawasaki</text>
+<rect x="120.7" y="161.5" width="24.6" height="64.5" rx="3" fill="var(--series-muted)"><title>Komatsu — Baseline FP: 36k</title></rect>
+<rect x="147.2" y="79.3" width="24.6" height="146.7" rx="3" fill="var(--series-1)"><title>Komatsu — Candidate FP: 82k</title></rect>
+<text x="146.2" y="242.0" text-anchor="middle" class="tick xtick">Komatsu</text>
+<rect x="182.2" y="96.9" width="24.6" height="129.1" rx="3" fill="var(--series-muted)"><title>Omika — Baseline FP: 72k</title></rect>
+<rect x="208.8" y="36.7" width="24.6" height="189.3" rx="3" fill="var(--series-1)"><title>Omika — Candidate FP: 106k</title></rect>
+<text x="207.8" y="242.0" text-anchor="middle" class="tick xtick">Omika</text>
+<rect x="243.7" y="106.8" width="24.6" height="119.2" rx="3" fill="var(--series-muted)"><title>Shiojiri — Baseline FP: 67k</title></rect>
+<rect x="270.2" y="58.9" width="24.6" height="167.1" rx="3" fill="var(--series-1)"><title>Shiojiri — Candidate FP: 94k</title></rect>
+<text x="269.2" y="242.0" text-anchor="middle" class="tick xtick">Shiojiri</text>
+<rect x="305.1" y="120.4" width="24.6" height="105.6" rx="3" fill="var(--series-muted)"><title>Odaiba — Baseline FP: 59k</title></rect>
+<rect x="331.8" y="83.1" width="24.6" height="142.9" rx="3" fill="var(--series-1)"><title>Odaiba — Candidate FP: 80k</title></rect>
+<text x="330.8" y="242.0" text-anchor="middle" class="tick xtick">Odaiba</text>
+<rect x="366.6" y="172.8" width="24.6" height="53.2" rx="3" fill="var(--series-muted)"><title>Fujiyoshida — Baseline FP: 30k</title></rect>
+<rect x="393.2" y="148.3" width="24.6" height="77.7" rx="3" fill="var(--series-1)"><title>Fujiyoshida — Candidate FP: 44k</title></rect>
+<text x="392.2" y="242.0" text-anchor="middle" class="tick xtick">Fujiyoshida</text>
+<rect x="428.1" y="202.0" width="24.6" height="24.0" rx="3" fill="var(--series-muted)"><title>Fukuyama — Baseline FP: 13k</title></rect>
+<rect x="454.8" y="191.4" width="24.6" height="34.6" rx="3" fill="var(--series-1)"><title>Fukuyama — Candidate FP: 19k</title></rect>
+<text x="453.8" y="242.0" text-anchor="middle" class="tick xtick">Fukuyama</text>
+<rect x="489.6" y="194.0" width="24.6" height="32.0" rx="3" fill="var(--series-muted)"><title>Shinkiba — Baseline FP: 18k</title></rect>
+<rect x="516.2" y="194.6" width="24.6" height="31.4" rx="3" fill="var(--series-1)"><title>Shinkiba — Candidate FP: 18k</title></rect>
+<text x="515.2" y="242.0" text-anchor="middle" class="tick xtick">Shinkiba</text>
+</svg>
+      <figcaption><b>FP by city (suite).</b> Every city except Shinkiba gets worse. Kawasaki (+54.9k) and Komatsu (+46.1k) together account for ~50% of the net FP rise. Source: FP_diff_by_scenario.csv.</figcaption></figure>
+  </div>
+  <div class="tbl-wrap"><table class="hot"><thead><tr><th>Scenario</th><th>City</th><th>Base FP</th><th>Cand FP</th><th>FP Δ</th><th>Viewer</th></tr></thead><tbody>
+<tr><td class="mono">Kawasaki·PDD001_640d280b</td><td>Kawasaki</td><td>2,670</td><td>5,634</td><td class="bad">+2,964</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_640d280b&amp;viewer_t4dataset=640d280b-8551-46a9-ba04-e136e32487d4&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Komatsu·PDD001_dc1347a1</td><td>Komatsu</td><td>864</td><td>3,704</td><td class="bad">+2,840</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Komatsu_PDD_9d62e254-787a-48f4-bfd5-673e67036885&amp;viewer_scenario=FullPerformance_V1_Komatsu_PDD001_dc1347a1&amp;viewer_t4dataset=dc1347a1-a58c-4fe2-8187-219c8799fece&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Komatsu·PDD001_56875f2a</td><td>Komatsu</td><td>933</td><td>3,552</td><td class="bad">+2,619</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Komatsu_PDD_9d62e254-787a-48f4-bfd5-673e67036885&amp;viewer_scenario=FullPerformance_V1_Komatsu_PDD001_56875f2a&amp;viewer_t4dataset=56875f2a-0400-4216-9152-09174018621a&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_a7a1aa5e</td><td>Kawasaki</td><td>1,693</td><td>4,153</td><td class="bad">+2,460</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_a7a1aa5e&amp;viewer_t4dataset=a7a1aa5e-18cb-4dc5-bb75-3ba08965075d&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Komatsu·PDD001_c5fc30dd</td><td>Komatsu</td><td>1,080</td><td>3,514</td><td class="bad">+2,434</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Komatsu_PDD_9d62e254-787a-48f4-bfd5-673e67036885&amp;viewer_scenario=FullPerformance_V1_Komatsu_PDD001_c5fc30dd&amp;viewer_t4dataset=c5fc30dd-95ba-457f-a1be-4b5b39707cf1&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_f547b2d7</td><td>Kawasaki</td><td>562</td><td>2,647</td><td class="bad">+2,085</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_f547b2d7&amp;viewer_t4dataset=f547b2d7-f42d-4c1b-a564-18ab00789ba1&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_9020f9c7</td><td>Kawasaki</td><td>697</td><td>2,741</td><td class="bad">+2,044</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_9020f9c7&amp;viewer_t4dataset=9020f9c7-216e-4303-8df4-48116e312825&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_a43fb447</td><td>Kawasaki</td><td>1,113</td><td>2,954</td><td class="bad">+1,841</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_a43fb447&amp;viewer_t4dataset=a43fb447-8266-4103-ac74-61e6323f62b4&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_87f2f1d6</td><td>Kawasaki</td><td>1,257</td><td>2,854</td><td class="bad">+1,597</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_87f2f1d6&amp;viewer_t4dataset=87f2f1d6-317b-43ce-bd3b-81e266011c68&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_fd787b32</td><td>Kawasaki</td><td>2,359</td><td>3,858</td><td class="bad">+1,499</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_fd787b32&amp;viewer_t4dataset=fd787b32-a0cd-4a94-8d1f-1d04b3aadefe&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Kawasaki·PDD001_f098c361</td><td>Kawasaki</td><td>637</td><td>2,073</td><td class="bad">+1,436</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Kawasaki_PDD_11b3abc3-3d6d-47a3-b6cc-3fbfaad6dde3&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_f098c361&amp;viewer_t4dataset=f098c361-129f-4270-b405-6e5c8eeec6f8&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td class="mono">Komatsu·PDD001_8865da61</td><td>Komatsu</td><td>1,013</td><td>2,420</td><td class="bad">+1,407</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_suite=FullPerformance_V1_Komatsu_PDD_9d62e254-787a-48f4-bfd5-673e67036885&amp;viewer_scenario=FullPerformance_V1_Komatsu_PDD001_8865da61&amp;viewer_t4dataset=8865da61-060d-435f-ae06-ef7dbd3735e5&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+</tbody></table></div>
+  <p class="note"><b>Quantified concentration:</b> top 10 datasets = 10% of the FP rise, top 20 = 16%, top 100 = 44%. 632 of 707 datasets got worse; only 75 improved. The worst single scene, Kawasaki_640d280b, adds +2,964 FP (2,670→5,634). Because concentration is low, a targeted "fix the top-N scenes" patch will not recover precision — the cause is model-wide. Source: FP_diff_by_dataset.csv.</p>
+</section>
+<section class="card">
+  <h2>8 · Safety-Critical Degraded Cases</h2>
+  <p>The Critical_degraded_cases table isolates the most dangerous regressions: objects the baseline detected (TP) that the candidate now <b>misses (FN)</b>, filtered to <b>near range (&lt;20 m)</b> and <b>high visibility (FULL/MOST)</b>. All 953 rows meet that bar — these are close, clearly-visible objects that vanished.</p>
+  <div class="two">
+    <figure><svg viewBox="0 0 560 246" role="img" class="chart">
+<line x1="295.0" y1="8" x2="295.0" y2="238" stroke="var(--axis)" stroke-width="1"/>
+<text x="92" y="25.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="295.0" y="8" width="195.0" height="26" rx="3" fill="var(--bad)"><title>pedestrian: 478</title></rect>
+<text x="496.0" y="25.0" text-anchor="start" class="vlab">478</text>
+<text x="92" y="59.0" text-anchor="end" class="ylab">car</text>
+<rect x="295.0" y="42" width="146.5" height="26" rx="3" fill="var(--bad)"><title>car: 359</title></rect>
+<text x="447.5" y="59.0" text-anchor="start" class="vlab">359</text>
+<text x="92" y="93.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="295.0" y="76" width="28.6" height="26" rx="3" fill="var(--bad)"><title>unknown: 70</title></rect>
+<text x="329.6" y="93.0" text-anchor="start" class="vlab">70</text>
+<text x="92" y="127.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="295.0" y="110" width="8.6" height="26" rx="3" fill="var(--bad)"><title>motorbike: 21</title></rect>
+<text x="309.6" y="127.0" text-anchor="start" class="vlab">21</text>
+<text x="92" y="161.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="295.0" y="144" width="7.8" height="26" rx="3" fill="var(--bad)"><title>bicycle: 19</title></rect>
+<text x="308.8" y="161.0" text-anchor="start" class="vlab">19</text>
+<text x="92" y="195.0" text-anchor="end" class="ylab">truck</text>
+<rect x="295.0" y="178" width="2.0" height="26" rx="3" fill="var(--bad)"><title>truck: 5</title></rect>
+<text x="303.0" y="195.0" text-anchor="start" class="vlab">5</text>
+<text x="92" y="229.0" text-anchor="end" class="ylab">animal</text>
+<rect x="295.0" y="212" width="0.5" height="26" rx="3" fill="var(--bad)"><title>animal: 1</title></rect>
+<text x="301.4" y="229.0" text-anchor="start" class="vlab">1</text>
+</svg>
+      <figcaption><b>953 critical FN by class.</b> <b>Pedestrian (478)</b> and <b>car (359)</b> — the two most safety-relevant classes — make up 88%. Source: Critical_degraded_cases.csv.</figcaption></figure>
+    <figure><svg viewBox="0 0 560 260" role="img" class="chart">
+<line x1="54" y1="206.0" x2="546" y2="206.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="210.0" text-anchor="end" class="tick">0</text>
+<line x1="54" y1="158.0" x2="546" y2="158.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="162.0" text-anchor="end" class="tick">92</text>
+<line x1="54" y1="110.0" x2="546" y2="110.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="114.0" text-anchor="end" class="tick">184</text>
+<line x1="54" y1="62.0" x2="546" y2="62.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="66.0" text-anchor="end" class="tick">276</text>
+<line x1="54" y1="14.0" x2="546" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="18.0" text-anchor="end" class="tick">368</text>
+<rect x="95.5" y="180.5" width="40.0" height="25.5" rx="3" fill="var(--bad)"><title>[0,5) — critical FN: 49</title></rect>
+<text x="115.5" y="222.0" text-anchor="middle" class="tick xtick">[0,5)</text>
+<rect x="218.5" y="49.7" width="40.0" height="156.3" rx="3" fill="var(--bad)"><title>[5,10) — critical FN: 300</title></rect>
+<text x="238.5" y="222.0" text-anchor="middle" class="tick xtick">[5,10)</text>
+<rect x="341.5" y="62.7" width="40.0" height="143.3" rx="3" fill="var(--bad)"><title>[10,15) — critical FN: 275</title></rect>
+<text x="361.5" y="222.0" text-anchor="middle" class="tick xtick">[10,15)</text>
+<rect x="464.5" y="34.6" width="40.0" height="171.4" rx="3" fill="var(--bad)"><title>[15,20) — critical FN: 329</title></rect>
+<text x="484.5" y="222.0" text-anchor="middle" class="tick xtick">[15,20)</text>
+</svg>
+      <figcaption><b>Distance of critical FN (&lt;20 m).</b> Spread across the near band, incl. 49 within 5 m. Visibility split: FULL 464, MOST 489. Source: Critical_degraded_cases.csv.</figcaption></figure>
+  </div>
+  <h3>Persistent (consecutive-frame) degradations</h3>
+  <p>Consecutive_degraded_objects tracks objects lost for multiple <i>consecutive</i> frames — a stationary miss a tracker cannot easily coast through. <b>60</b> objects were lost for ≥10 straight frames, 59 of them within 20 m. Pedestrians dominate the count (448 of 687).</p>
+  <div class="tbl-wrap"><table class="hot"><thead><tr><th>Label</th><th>Frames lost</th><th>Min dist (m)</th><th>Max points</th><th>Scenario</th><th>Viewer</th></tr></thead><tbody>
+<tr><td>car</td><td class="bad">44</td><td>3.1</td><td>4945</td><td class="mono">Fukuyama·PDD001_3c11fea2</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Fukuyama_PDD001_3c11fea2&amp;viewer_t4dataset=3c11fea2-0870-4f6c-b04a-d0109ae9e0af&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">22</td><td>12.5</td><td>404</td><td class="mono">Omika·PDD001_f7082a34</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_f7082a34&amp;viewer_t4dataset=f7082a34-42c9-47a2-9e64-ec998cab57a7&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>motorbike</td><td class="bad">19</td><td>4.4</td><td>1409</td><td class="mono">Kawasaki·PDD001_3a0c82f1</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_3a0c82f1&amp;viewer_t4dataset=3a0c82f1-57a8-4ad9-8c75-57227b73a67e&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">18</td><td>6.6</td><td>2094</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">18</td><td>11.6</td><td>825</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">18</td><td>8.9</td><td>808</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">18</td><td>13.7</td><td>584</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">17</td><td>15.4</td><td>80</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">16</td><td>5.7</td><td>1633</td><td class="mono">Komatsu·PDD001_fadb6515</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Komatsu_PDD001_fadb6515&amp;viewer_t4dataset=fadb6515-eb78-4f23-be2b-be80044d07da&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>pedestrian</td><td class="bad">16</td><td>7.7</td><td>220</td><td class="mono">Kawasaki·PDD001_3a0c82f1</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Kawasaki_PDD001_3a0c82f1&amp;viewer_t4dataset=3a0c82f1-57a8-4ad9-8c75-57227b73a67e&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">16</td><td>15.3</td><td>92</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+<tr><td>car</td><td class="bad">16</td><td>15.6</td><td>76</td><td class="mono">Omika·PDD001_5b31d85d</td><td><a href="/T4_3D_Viewer?mode=compare&amp;run_a=%5BREL%5D+p4.4-v2.4a_0710_pt_off+%7C+Performance+%7C+2026.07.10&amp;run_b=%5BREL%5D+p4.4-v2.4a_0710_pt_on+%7C+Performance+%7C+2026.07.10&amp;viewer_scenario=FullPerformance_V1_Omika_PDD001_5b31d85d&amp;viewer_t4dataset=5b31d85d-bf71-49f7-9674-fa4846c2f72b&amp;viewer_compare=side_by_side">3D ↗</a></td></tr>
+</tbody></table></div>
+  <p class="note"><b>Most severe single case:</b> a <b>car at 3.1 m, 4,945 points, FULL visibility</b>, missed for <b>44 consecutive frames</b> in Fukuyama_3c11fea2 — a large, close, dense-return object dropped for ~4 s. Several Omika_5b31d85d cars (16–18 frames, 5–15 m) and a Kawasaki_3a0c82f1 motorbike (19 frames, 4.4 m) follow. These are the must-inspect cases before any release decision. Source: Consecutive_degraded_objects.csv, Critical_degraded_cases.csv.</p>
+</section>
+<section class="card">
+  <h2>9 · Localization Quality</h2>
+  <p>Mean absolute error on matched (both-TP) objects, so this isolates <b>localization</b> from detection-rate changes.</p>
+  <div class="two">
+    <figure><svg viewBox="0 0 560 280" role="img" class="chart">
+<line x1="291.0" y1="8" x2="291.0" y2="272" stroke="var(--axis)" stroke-width="1"/>
+<text x="84" y="25.0" text-anchor="end" class="ylab">animal</text>
+<rect x="92.0" y="8" width="199.0" height="26" rx="3" fill="var(--good)"><title>animal: -12.0 cm</title></rect>
+<text x="98.0" y="25.0" text-anchor="start" class="vlab">-12.0 cm</text>
+<text x="84" y="59.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="260.0" y="42" width="31.0" height="26" rx="3" fill="var(--good)"><title>motorbike: -1.9 cm</title></rect>
+<text x="254.0" y="59.0" text-anchor="end" class="vlab">-1.9 cm</text>
+<text x="84" y="93.0" text-anchor="end" class="ylab">car</text>
+<rect x="291.0" y="76" width="11.9" height="26" rx="3" fill="var(--bad)"><title>car: +0.7 cm</title></rect>
+<text x="308.9" y="93.0" text-anchor="start" class="vlab">+0.7 cm</text>
+<text x="84" y="127.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="291.0" y="110" width="14.0" height="26" rx="3" fill="var(--bad)"><title>pedestrian: +0.8 cm</title></rect>
+<text x="311.0" y="127.0" text-anchor="start" class="vlab">+0.8 cm</text>
+<text x="84" y="161.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="291.0" y="144" width="20.2" height="26" rx="3" fill="var(--bad)"><title>bicycle: +1.2 cm</title></rect>
+<text x="317.2" y="161.0" text-anchor="start" class="vlab">+1.2 cm</text>
+<text x="84" y="195.0" text-anchor="end" class="ylab">bus</text>
+<rect x="291.0" y="178" width="54.3" height="26" rx="3" fill="var(--bad)"><title>bus: +3.3 cm</title></rect>
+<text x="351.3" y="195.0" text-anchor="start" class="vlab">+3.3 cm</text>
+<text x="84" y="229.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="291.0" y="212" width="74.5" height="26" rx="3" fill="var(--bad)"><title>unknown: +4.5 cm</title></rect>
+<text x="371.5" y="229.0" text-anchor="start" class="vlab">+4.5 cm</text>
+<text x="84" y="263.0" text-anchor="end" class="ylab">truck</text>
+<rect x="291.0" y="246" width="114.0" height="26" rx="3" fill="var(--bad)"><title>truck: +6.9 cm</title></rect>
+<text x="411.0" y="263.0" text-anchor="start" class="vlab">+6.9 cm</text>
+</svg>
+      <figcaption><b>Δ mean |x| error</b> (longitudinal); red = worse. Mostly slightly worse: truck +6.9 cm, unknown +4.5 cm; only animal/motorbike improve. Source: Mean_error_comparison.csv.</figcaption></figure>
+    <figure><svg viewBox="0 0 560 280" role="img" class="chart">
+<line x1="291.0" y1="8" x2="291.0" y2="272" stroke="var(--axis)" stroke-width="1"/>
+<text x="84" y="25.0" text-anchor="end" class="ylab">pedestrian</text>
+<rect x="291.0" y="8" width="1.7" height="26" rx="3" fill="var(--bad)"><title>pedestrian: +0.002 rad</title></rect>
+<text x="298.7" y="25.0" text-anchor="start" class="vlab">+0.002 rad</text>
+<text x="84" y="59.0" text-anchor="end" class="ylab">car</text>
+<rect x="291.0" y="42" width="9.5" height="26" rx="3" fill="var(--bad)"><title>car: +0.009 rad</title></rect>
+<text x="306.5" y="59.0" text-anchor="start" class="vlab">+0.009 rad</text>
+<text x="84" y="93.0" text-anchor="end" class="ylab">truck</text>
+<rect x="291.0" y="76" width="18.0" height="26" rx="3" fill="var(--bad)"><title>truck: +0.017 rad</title></rect>
+<text x="315.0" y="93.0" text-anchor="start" class="vlab">+0.017 rad</text>
+<text x="84" y="127.0" text-anchor="end" class="ylab">bus</text>
+<rect x="291.0" y="110" width="18.7" height="26" rx="3" fill="var(--bad)"><title>bus: +0.018 rad</title></rect>
+<text x="315.7" y="127.0" text-anchor="start" class="vlab">+0.018 rad</text>
+<text x="84" y="161.0" text-anchor="end" class="ylab">animal</text>
+<rect x="291.0" y="144" width="43.4" height="26" rx="3" fill="var(--bad)"><title>animal: +0.042 rad</title></rect>
+<text x="340.4" y="161.0" text-anchor="start" class="vlab">+0.042 rad</text>
+<text x="84" y="195.0" text-anchor="end" class="ylab">unknown</text>
+<rect x="291.0" y="178" width="44.1" height="26" rx="3" fill="var(--bad)"><title>unknown: +0.042 rad</title></rect>
+<text x="341.1" y="195.0" text-anchor="start" class="vlab">+0.042 rad</text>
+<text x="84" y="229.0" text-anchor="end" class="ylab">bicycle</text>
+<rect x="291.0" y="212" width="129.3" height="26" rx="3" fill="var(--bad)"><title>bicycle: +0.124 rad</title></rect>
+<text x="426.3" y="229.0" text-anchor="start" class="vlab">+0.124 rad</text>
+<text x="84" y="263.0" text-anchor="end" class="ylab">motorbike</text>
+<rect x="291.0" y="246" width="199.0" height="26" rx="3" fill="var(--bad)"><title>motorbike: +0.191 rad</title></rect>
+<text x="496.0" y="263.0" text-anchor="start" class="vlab">+0.191 rad</text>
+</svg>
+      <figcaption><b>Δ mean |yaw| error</b>; red = worse. Worse for most classes — motorbike +0.19 rad (≈11°), bicycle +0.12 rad. Heading estimates degraded. Source: Mean_error_comparison.csv.</figcaption></figure>
+  </div>
+  <figure><div class="legend"><span class="lg"><span class="sw" style="background:var(--series-muted)"></span>Baseline</span><span class="lg"><span class="sw" style="background:var(--series-1)"></span>Candidate</span></div><svg viewBox="0 0 760 260" role="img" class="chart">
+<line x1="54" y1="206.0" x2="746" y2="206.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="210.0" text-anchor="end" class="tick">0.00</text>
+<line x1="54" y1="158.0" x2="746" y2="158.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="162.0" text-anchor="end" class="tick">0.28</text>
+<line x1="54" y1="110.0" x2="746" y2="110.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="114.0" text-anchor="end" class="tick">0.56</text>
+<line x1="54" y1="62.0" x2="746" y2="62.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="66.0" text-anchor="end" class="tick">0.84</text>
+<line x1="54" y1="14.0" x2="746" y2="14.0" stroke="var(--grid)" stroke-width="1"/>
+<text x="48" y="18.0" text-anchor="end" class="tick">1.12</text>
+<rect x="61.6" y="155.3" width="34.6" height="50.7" rx="3" fill="var(--series-muted)"><title>animal — Baseline: 0.30</title></rect>
+<rect x="98.2" y="175.9" width="34.6" height="30.1" rx="3" fill="var(--series-1)"><title>animal — Candidate: 0.18</title></rect>
+<text x="97.2" y="222.0" text-anchor="middle" class="tick xtick">animal</text>
+<rect x="148.2" y="161.2" width="34.6" height="44.8" rx="3" fill="var(--series-muted)"><title>bicycle — Baseline: 0.26</title></rect>
+<rect x="184.8" y="159.1" width="34.6" height="46.9" rx="3" fill="var(--series-1)"><title>bicycle — Candidate: 0.27</title></rect>
+<text x="183.8" y="222.0" text-anchor="middle" class="tick xtick">bicycle</text>
+<rect x="234.7" y="163.6" width="34.6" height="42.4" rx="3" fill="var(--series-muted)"><title>bus — Baseline: 0.25</title></rect>
+<rect x="271.2" y="158.0" width="34.6" height="48.0" rx="3" fill="var(--series-1)"><title>bus — Candidate: 0.28</title></rect>
+<text x="270.2" y="222.0" text-anchor="middle" class="tick xtick">bus</text>
+<rect x="321.1" y="175.9" width="34.6" height="30.1" rx="3" fill="var(--series-muted)"><title>car — Baseline: 0.18</title></rect>
+<rect x="357.8" y="174.7" width="34.6" height="31.3" rx="3" fill="var(--series-1)"><title>car — Candidate: 0.18</title></rect>
+<text x="356.8" y="222.0" text-anchor="middle" class="tick xtick">car</text>
+<rect x="407.6" y="134.2" width="34.6" height="71.8" rx="3" fill="var(--series-muted)"><title>motorbike — Baseline: 0.42</title></rect>
+<rect x="444.2" y="137.4" width="34.6" height="68.6" rx="3" fill="var(--series-1)"><title>motorbike — Candidate: 0.40</title></rect>
+<text x="443.2" y="222.0" text-anchor="middle" class="tick xtick">motorbike</text>
+<rect x="494.1" y="180.6" width="34.6" height="25.4" rx="3" fill="var(--series-muted)"><title>pedestrian — Baseline: 0.15</title></rect>
+<rect x="530.8" y="179.1" width="34.6" height="26.9" rx="3" fill="var(--series-1)"><title>pedestrian — Candidate: 0.16</title></rect>
+<text x="529.8" y="222.0" text-anchor="middle" class="tick xtick">pedestrian</text>
+<rect x="580.6" y="141.8" width="34.6" height="64.2" rx="3" fill="var(--series-muted)"><title>truck — Baseline: 0.37</title></rect>
+<rect x="617.2" y="130.0" width="34.6" height="76.0" rx="3" fill="var(--series-1)"><title>truck — Candidate: 0.44</title></rect>
+<text x="616.2" y="222.0" text-anchor="middle" class="tick xtick">truck</text>
+<rect x="667.1" y="150.9" width="34.6" height="55.1" rx="3" fill="var(--series-muted)"><title>unknown — Baseline: 0.32</title></rect>
+<rect x="703.8" y="143.2" width="34.6" height="62.8" rx="3" fill="var(--series-1)"><title>unknown — Candidate: 0.37</title></rect>
+<text x="702.8" y="222.0" text-anchor="middle" class="tick xtick">unknown</text>
+</svg>
+    <figcaption>Mean |x| error, baseline vs candidate, per class (metres). Differences are small in absolute terms (single-cm) — localization is a <b>secondary</b>, mild regression, not the headline problem. Source: Mean_error_comparison.csv.</figcaption></figure>
+  <p class="note"><b>Read:</b> localization is marginally worse on most classes (x, y, yaw all drift up a few cm / a few degrees), with motorbike/bicycle yaw the largest movers. The magnitudes are small; the detection-rate and FP changes dominate the overall verdict. Separate the two: the release risk is <b>false positives</b>, not box precision.</p>
+</section>
+<section class="card">
+  <h2>10 · Root-Cause Hypotheses — Evidence vs. Hypothesis</h2>
+  <div class="rc">
+    <div class="rc-col rc-ev">
+      <h3>✓ Evidence-backed observations</h3>
+      <ul>
+        <li>Candidate B is uniformly <b>more permissive</b>: recall ↑ in every class and nearly every distance bin, FP ↑ in 632/707 datasets. <span class="src">Class_rate_comparison, Distance_rates, FP_diff_by_dataset</span></li>
+        <li>FP damage is <b>near-range</b>: FPR roughly doubles at 0–40 m and converges to baseline beyond ~90 m. <span class="src">Distance_rates, Per-class_distance_deltas</span></li>
+        <li>The FP rise is <b>class-led by "unknown"</b> (+128k, 63% of total) and <b>broad, not concentrated</b> (top 100 of 707 datasets = 44%). <span class="src">FP_diff_by_label, FP_diff_by_dataset</span></li>
+        <li><b>Whole-scene collapses exist</b>: Omika_5b31d85d (−3,597 net TP, 0 improved / 3,597 degraded) and Kawasaki_3a0c82f1 (−2,274, 0 improved) lost essentially all tracked objects. <span class="src">Object_diff_by_scene</span></li>
+        <li>953 near-range high-visibility objects flipped TP→FN, pedestrian+car = 88%; 60 objects lost for ≥10 consecutive frames. <span class="src">Critical_degraded_cases, Consecutive_degraded_objects</span></li>
+      </ul>
+    </div>
+    <div class="rc-col rc-hy">
+      <h3>? Hypotheses (need inspection, not yet proven)</h3>
+      <ul>
+        <li><b>PTv3 branch lowers the effective score threshold / adds duplicate proposals</b>, inflating near-range FP. Test: compare raw score distributions and NMS behavior on/off. <span class="src">hypothesis</span></li>
+        <li>The <b>"unknown" FP surge may be misclassified real returns</b> (clutter, vegetation, parked-object density) newly proposed as objects. Test: inspect unknown FP boxes in top Kawasaki/Komatsu scenes. <span class="src">hypothesis</span></li>
+        <li><b>Whole-scene collapses (Omika_5b31d85d, Kawasaki_3a0c82f1) may be a data/registration/timestamp fault</b> for those datasets rather than a model quality issue — 0 improved / all degraded is atypical of a model change. Test: open the 3D viewer for those datasets first. <span class="src">hypothesis</span></li>
+        <li>Slightly worse yaw on two-wheelers may be a <b>shared-feature side-effect</b> of the PTv3 fusion. <span class="src">hypothesis</span></li>
+        <li>GT-count drift (−2.2%) suggests <b>evaluation-set or filtering differences</b> between runs; confirm both runs evaluate the identical frame set before trusting absolute counts. <span class="src">hypothesis</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+<section class="card final">
+  <h2>11 · Recommendation</h2>
+  <div class="rec-verdict"><span class="pill pill-bad">Release judgment: BLOCK</span> Candidate B (ptv3_on) is <b>not ready to replace</b> Baseline A. F1 regresses 6.3 pts on a +58.6% false-positive increase; the small recall gain does not compensate.</div>
+  <h3>Must-check before any re-evaluation</h3>
+  <ol>
+    <li><b>Triage the whole-scene collapses first</b> — open Omika_5b31d85d and Kawasaki_3a0c82f1 in the 3D compare viewer (links in §6/§8). Confirm whether these are a model failure or a data/registration artifact; they alone account for ~5,900 net TP losses and skew the object-diff totals.</li>
+    <li><b>Investigate the "unknown" FP source</b> (+128k, 63% of the rise) in the worst Kawasaki/Komatsu datasets (§7 table). Determine if these are duplicate proposals, threshold changes, or genuine new clutter detections.</li>
+    <li><b>Audit near-range FP / NMS.</b> The doubling of FPR at 0–40 m points to a scoring or de-duplication change in the PTv3-on path. Compare raw confidence distributions and NMS settings A vs B.</li>
+    <li><b>Review the 953 safety-critical FN</b> — prioritize the ≥10-consecutive-frame pedestrian and car losses (§8 table), especially Fukuyama_3c11fea2 (car, 44 frames, 3.1 m).</li>
+  </ol>
+  <h3>Suggested next experiments</h3>
+  <ul>
+    <li>Re-run with the candidate's <b>operating threshold re-tuned</b> to match Baseline A's FP-rate, then re-compare F1 — this isolates "genuinely better detector" from "just more permissive".</li>
+    <li>Verify both runs evaluate the <b>identical GT frame set</b> (resolve the −2.2% GT drift) before trusting absolute TP/FP/FN.</li>
+    <li>Keep the one clear win — <b>motorbike</b> (recall +14.5, precision +47.4, F1 +55.3) — as a reference for what "good" looks like, and check why unknown/bicycle behave oppositely.</li>
+  </ul>
+  <p class="cap">All conclusions above cite the specific CSV table(s) they derive from. Object-level and rate tables are weighted over absolute counts because of the −2.2% GT drift between runs. Hypotheses are labelled and are not treated as findings.</p>
+</section>
+<footer class="ft">Generated from compare_1_B_llm_detection_analysis_package · Baseline A (ptv3_off) vs Candidate B (ptv3_on) · 14 CSV tables · charts rendered as inline SVG from source data.</footer>
+</div>

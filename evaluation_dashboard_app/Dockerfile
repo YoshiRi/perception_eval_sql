@@ -88,6 +88,7 @@ COPY Readme.en.md .
 COPY catalogs.json .
 COPY pages/ pages/
 COPY lib/ lib/
+COPY backend/ backend/
 COPY worker/ worker/
 COPY configs/ configs/
 COPY docs/ docs/
@@ -98,7 +99,7 @@ RUN chmod +x /app/docker-entrypoint.sh
 # Create runtime folders used by bind mounts / config
 RUN mkdir -p /app/data /app/.streamlit
 
-EXPOSE 8501
+EXPOSE 8501 8765
 
 # Entrypoint runs script that sources ROS + optional pilot-auto, then launches Streamlit
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
