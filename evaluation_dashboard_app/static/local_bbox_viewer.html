@@ -431,7 +431,7 @@
       position: absolute;
       left: 68px;
       right: 190px;
-      bottom: 60px;
+      bottom: 126px;
       height: 10px;
       border: 1px solid rgba(148, 163, 184, .18);
       border-radius: 999px;
@@ -439,7 +439,35 @@
       background: rgba(15, 23, 42, .68);
     }
     .heat-strip canvas { width: 100%; height: 100%; cursor: pointer; }
+    .frame-curve {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 64px;
+      height: 58px;
+      border: 1px solid rgba(148, 163, 184, .18);
+      border-radius: 7px;
+      overflow: hidden;
+      background: rgba(2, 6, 23, .62);
+      backdrop-filter: blur(12px);
+      cursor: crosshair;
+    }
+    .frame-curve canvas { width: 100%; height: 100%; }
     .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+    .overview-map {
+      position: absolute;
+      right: 16px;
+      bottom: 158px;
+      width: 178px;
+      height: 124px;
+      border: 1px solid rgba(148, 163, 184, .22);
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(2, 6, 23, .68);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, .24);
+    }
+    .overview-map canvas { width: 100%; height: 100%; cursor: pointer; }
     .timeline {
       position: absolute;
       left: 16px;
@@ -508,9 +536,47 @@
     }
     .mini-kpi b { display: block; font-size: 15px; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mini-kpi span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
-    .analysis-actions { display: flex; gap: 6px; }
+    .label-breakdown {
+      display: grid;
+      gap: 6px;
+      max-height: 150px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .label-row {
+      display: grid;
+      grid-template-columns: minmax(62px, 86px) minmax(0, 1fr) minmax(62px, auto);
+      gap: 7px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .label-row strong { color: var(--text); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .label-stack {
+      height: 8px;
+      display: flex;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(2, 6, 23, .72);
+      border: 1px solid rgba(148, 163, 184, .16);
+    }
+    .label-stack i { display: block; height: 100%; }
+    .zone-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .zone-chip {
+      border: 1px solid rgba(148, 163, 184, .18);
+      background: rgba(15, 23, 42, .58);
+      border-radius: 6px;
+      padding: 6px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .zone-chip b { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
+    .analysis-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     .analysis-actions button {
-      flex: 1;
       min-width: 0;
       min-height: 30px;
       padding: 5px 7px;
@@ -518,6 +584,12 @@
       background: rgba(15, 23, 42, .72);
       border-color: rgba(148, 163, 184, .22);
       color: var(--text);
+    }
+    .analysis-actions button.active {
+      color: #07111f;
+      background: var(--cyan);
+      border-color: transparent;
+      font-weight: 800;
     }
     .compare-summary {
       display: none;
@@ -642,7 +714,7 @@
       .results { max-height: 92px; }
       .timeline { grid-template-columns: 42px minmax(90px, 110px) minmax(0, 1fr); }
       .frame-readout { grid-column: 1 / -1; text-align: left; }
-      .legend, .analysis-panel, .viewer-controls, .label-dock { display: none; }
+      .legend, .analysis-panel, .viewer-controls, .label-dock, .overview-map, .frame-curve { display: none; }
     }
   </style>
 </head>
@@ -725,6 +797,7 @@
           <span class="chip layer active" style="--sw:#ff6666" data-layer="est_fp">EST·FP <span class="layer-count" id="cntEstFp">0</span></span>
           <button id="colorCycleBtn" class="cycle-btn" title="Cycle bbox coloring">Color: Eval</button>
           <button id="labelCycleBtn" class="cycle-btn" title="Cycle label display">Label: Class</button>
+          <button id="compareLensBtn" class="cycle-btn" title="Cycle comparison lens">Lens: All</button>
           <button id="advancedBtn" class="cycle-btn" title="Advanced display settings">Advanced</button>
         </div>
         <div class="viewer-controls-row is-hidden">
@@ -784,6 +857,7 @@
         <div><i style="background:#66b3ff"></i>EST·TP wire</div>
         <div><i style="background:#ff6666"></i>EST·FP wire</div>
       </div>
+      <div class="overview-map"><canvas id="overviewCanvas"></canvas></div>
       <div class="analysis-panel">
         <div class="analysis-title"><strong>Frame Analysis</strong><span id="analysisFrame">frame -</span></div>
         <div class="analysis-grid">
@@ -801,6 +875,18 @@
           <div class="compare-card"><strong style="color:#a78bfa">Run B</strong><code id="compareBStats">TP 0 · FP 0 · FN 0</code></div>
           <div class="compare-card delta"><strong>Delta B - A</strong><code id="compareDeltaStats">ΔTP 0 · ΔFP 0 · ΔFN 0</code></div>
         </div>
+        <div class="zone-strip" id="zoneBreakdown"></div>
+        <div class="analysis-title"><strong>Labels</strong><span id="labelFrameMeta">current frame</span></div>
+        <div class="label-breakdown" id="labelFrameBreakdown"></div>
+        <div class="analysis-title"><strong>Hotspot Seek</strong><span id="hotspotModeMeta">all</span></div>
+        <div class="analysis-actions" id="hotspotModes">
+          <button class="active" data-hotspot="all">All issues</button>
+          <button data-hotspot="fp">FP</button>
+          <button data-hotspot="fn">FN</button>
+          <button data-hotspot="ped_fp">Ped FP</button>
+          <button data-hotspot="near">Nearby</button>
+          <button data-hotspot="tp_error">TP error</button>
+        </div>
         <div class="analysis-actions">
           <button id="prevHotFrame" title="Previous frame with FP/FN or high TP error">Prev hotspot</button>
           <button id="nextHotFrame" title="Next frame with FP/FN or high TP error">Next hotspot</button>
@@ -814,12 +900,14 @@
         <div class="row"><span>Confidence</span><code id="inspectConf">-</code></div>
         <div class="row"><span>Center/plane</span><code id="inspectDist">-</code></div>
         <div class="row"><span>x/y/yaw err</span><code id="inspectErr">-</code></div>
+        <div class="row"><span>Peer/delta</span><code id="inspectPeer">-</code></div>
         <div class="row"><span>UUID</span><code id="inspectUuid">-</code></div>
       </div>
       <div class="hover-card" id="hoverCard"></div>
       <div class="split-label" id="splitLabelA">Run A</div>
       <div class="split-label" id="splitLabelB">Run B</div>
       <div class="curtain-handle" id="curtainHandle" title="Drag to compare Run A and Run B"></div>
+      <div class="frame-curve"><canvas id="frameCurveCanvas"></canvas></div>
       <div class="heat-strip"><canvas id="heatCanvas"></canvas></div>
       <div class="timeline">
         <button id="prevFrameBtn" title="Previous frame">◀</button>
@@ -872,6 +960,7 @@
       draggingCurtain: false,
       curtainX: 0.5,
       trails: false,
+      hotspotMode: "all",
       bounds: {maxAbs: 80},
       selected: null,
       hover: null,
@@ -886,7 +975,7 @@
       frameMin: $("frameMin"), frameMax: $("frameMax"), statuses: $("statusChips"), sources: $("sourceChips"), labels: $("labelChips"),
       viewMode: $("viewMode"), colorMode: $("colorMode"), labelMode: $("labelMode"), confMin: $("confMin"), boxOpacity: $("boxOpacity"), compareLens: $("compareLens"), compareLayout: $("compareLayout"),
       layerChips: $("layerChips"),
-      colorCycleBtn: $("colorCycleBtn"), labelCycleBtn: $("labelCycleBtn"), advancedBtn: $("advancedBtn"), advancedPanel: $("advancedPanel"),
+      colorCycleBtn: $("colorCycleBtn"), labelCycleBtn: $("labelCycleBtn"), compareLensBtn: $("compareLensBtn"), advancedBtn: $("advancedBtn"), advancedPanel: $("advancedPanel"),
       labelsAllBtn: $("labelsAllBtn"), labelsNoneBtn: $("labelsNoneBtn"),
       showVelocity: $("showVelocity"), showRings: $("showRings"), showErrors: $("showErrors"), dedupeRows: $("dedupeRows"),
       results: $("results"), load: $("loadBtn"), canvas: $("canvas"), slider: $("frameSlider"), play: $("playBtn"),
@@ -896,21 +985,26 @@
       toggleSidebar: $("toggleSidebar"), fullscreenBtn: $("fullscreenBtn"), loadStatus: $("loadStatus"),
       inspect: $("inspectPanel"), inspectTitle: $("inspectTitle"), inspectStatus: $("inspectStatus"), inspectPos: $("inspectPos"),
       inspectSize: $("inspectSize"), inspectConf: $("inspectConf"), inspectDist: $("inspectDist"), inspectErr: $("inspectErr"),
-      inspectUuid: $("inspectUuid"), hoverCard: $("hoverCard"), heatCanvas: $("heatCanvas"),
+      inspectPeer: $("inspectPeer"), inspectUuid: $("inspectUuid"), hoverCard: $("hoverCard"), heatCanvas: $("heatCanvas"), frameCurve: $("frameCurveCanvas"), overview: $("overviewCanvas"),
       analysisFrame: $("analysisFrame"), analysisTp: $("analysisTp"), analysisFp: $("analysisFp"), analysisFn: $("analysisFn"),
       analysisErr: $("analysisErr"), analysisRecall: $("analysisRecall"), analysisPrecision: $("analysisPrecision"),
       analysisGt: $("analysisGt"), analysisEst: $("analysisEst"), prevHotFrame: $("prevHotFrame"), nextHotFrame: $("nextHotFrame"),
+      labelFrameBreakdown: $("labelFrameBreakdown"), labelFrameMeta: $("labelFrameMeta"), zoneBreakdown: $("zoneBreakdown"), hotspotModes: $("hotspotModes"), hotspotModeMeta: $("hotspotModeMeta"),
       cntGtTp: $("cntGtTp"), cntGtFn: $("cntGtFn"), cntEstTp: $("cntEstTp"), cntEstFp: $("cntEstFp"),
       compareSummary: $("compareSummary"), compareAStats: $("compareAStats"), compareBStats: $("compareBStats"), compareDeltaStats: $("compareDeltaStats"),
       splitLabelA: $("splitLabelA"), splitLabelB: $("splitLabelB"), curtainHandle: $("curtainHandle")
     };
     const ctx = els.canvas.getContext("2d");
+    const frameCurveCtx = els.frameCurve.getContext("2d");
+    const overviewCtx = els.overview.getContext("2d");
     const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
     let activeViewport = null;
     function readDeepLink() {
       const q = new URLSearchParams(window.location.search);
       const link = {
         path: q.get("path") || "",
+        pathB: q.get("path_b") || q.get("pathB") || "",
+        compare: q.get("compare") === "1" || q.get("compare") === "true",
         suite: q.get("suite") || q.get("suite_name") || "",
         scenario: q.get("scenario") || q.get("scenario_name") || "",
         topic: q.get("topic") || q.get("topic_name") || "",
@@ -1004,6 +1098,7 @@
       els.compareLayout.disabled = !on;
       els.compareSideBtn.disabled = !on;
       els.compareCurtainBtn.disabled = !on;
+      els.compareLensBtn.disabled = !on;
       if (on) {
         if (els.compareLayout.value === "split") els.compareLayout.value = "side_by_side";
       }
@@ -1049,6 +1144,14 @@
         if (state.parquets.length > 1) {
           const next = state.parquets.find(p => p.path !== state.path);
           if (next) els.parquetB.value = next.path;
+        }
+        if (state.deepLink && state.deepLink.pathB) {
+          const hitB = state.parquets.find(p => p.path === state.deepLink.pathB || p.display === state.deepLink.pathB || p.path.endsWith(state.deepLink.pathB));
+          if (hitB) els.parquetB.value = hitB.path;
+        }
+        if (state.deepLink && state.deepLink.compare) {
+          els.compareEnabled.checked = Boolean(els.parquetB.value && els.parquetB.value !== state.path);
+          updateCompareControls();
         }
         state.pathB = els.parquetB.value || state.path;
         await hydrateFilters();
@@ -1361,6 +1464,12 @@
         (b.z || 0) + p[2]
       ]);
     }
+    function isPointLikeBox(b) {
+      const shape = String(b.shape_type || b.type || "").toLowerCase();
+      const l = Number(b.length) || 0;
+      const w = Number(b.width) || 0;
+      return shape === "polygon" || shape === "point" || l <= 0 || w <= 0;
+    }
     function project(p) {
       const vp = activeViewport || {x: 0, y: 0, w: els.canvas.clientWidth, h: els.canvas.clientHeight};
       const panX = state.panX;
@@ -1537,6 +1646,35 @@
       ctx.fillStyle = "#f8fafc";
       ctx.fillText(text, x, y);
     }
+    function drawPointObject(b, rank, total) {
+      const color = boxColor(b);
+      const selected = state.selected && sameObject(state.selected, b);
+      const opacity = Math.max(0.2, Math.min(1, Number(els.boxOpacity.value || 0.9)));
+      const base = project([b.x || 0, b.y || 0, b.z || 0]);
+      const top = project([b.x || 0, b.y || 0, (b.z || 0) + Math.max(.4, (b.height || 1.2) * .5)]);
+      const radius = Math.max(4, Math.min(12, base[2] * .45));
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.strokeStyle = selected ? "#ffffff" : color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = selected ? 3 : (b.source === "GT" ? 1.4 : 2.1);
+      ctx.beginPath();
+      ctx.arc(top[0], top[1], radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = Math.min(1, opacity * .9);
+      ctx.beginPath();
+      ctx.arc(top[0], top[1], Math.max(2, radius * .34), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = Math.min(1, opacity * .42);
+      ctx.beginPath();
+      ctx.moveTo(base[0], base[1]);
+      ctx.lineTo(top[0], top[1]);
+      ctx.stroke();
+      ctx.restore();
+      drawVelocity(b);
+      drawErrorGlyph(b);
+      drawLabel(b, [top], color, rank, total);
+    }
     function roundRect(x, y, w, h, r) {
       ctx.beginPath();
       ctx.moveTo(x + r, y);
@@ -1570,7 +1708,30 @@
       ctx.lineWidth = mag > 1.0 ? 2 : 1.2;
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
     }
+    function objectCenterPoint(b) {
+      return [b.x || 0, b.y || 0, (b.z || 0) + Math.max(.2, (b.height || 1.5) * .5)];
+    }
+    function drawObjectHalo(b, color = "#ffffff") {
+      const p = project(objectCenterPoint(b));
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2.2;
+      ctx.globalAlpha = .95;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], Math.max(7, Math.min(18, p[2] * .8)), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = .22;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], Math.max(11, Math.min(28, p[2] * 1.2)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
     function drawBox(b, rank, total) {
+      if (isPointLikeBox(b)) {
+        drawPointObject(b, rank, total);
+        return;
+      }
       const pts = corners(b).map(project);
       const color = boxColor(b);
       const selected = state.selected && sameObject(state.selected, b);
@@ -1629,6 +1790,83 @@
       out.fn = out.gtFn;
       return out;
     }
+    function boxDistance(b) {
+      return Math.hypot(Number(b.x) || 0, Number(b.y) || 0);
+    }
+    function labelFrameRows(frame) {
+      const order = ["car", "truck", "bus", "pedestrian", "bicycle", "motorbike", "animal", "unknown"];
+      const map = new Map();
+      const ensure = label => {
+        const key = label || "unknown";
+        if (!map.has(key)) map.set(key, {label: key, tp: 0, fp: 0, fn: 0, aTp: 0, aFp: 0, aFn: 0, bTp: 0, bFp: 0, bFn: 0});
+        return map.get(key);
+      };
+      order.forEach(ensure);
+      for (const b of (frame && frame.boxes) || []) {
+        const row = ensure(String(b.label || "unknown"));
+        const source = String(b.source || "").toUpperCase();
+        const status = String(b.status || "").toUpperCase();
+        const prefix = b.run === "B" ? "b" : "a";
+        if (source === "EST" && status === "TP") { row.tp++; row[`${prefix}Tp`]++; }
+        if (source === "EST" && status === "FP") { row.fp++; row[`${prefix}Fp`]++; }
+        if (source === "GT" && status === "FN") { row.fn++; row[`${prefix}Fn`]++; }
+      }
+      return [...map.values()].sort((a, b) => {
+        const ai = order.indexOf(a.label), bi = order.indexOf(b.label);
+        if (ai >= 0 || bi >= 0) return (ai >= 0 ? ai : 999) - (bi >= 0 ? bi : 999);
+        return a.label.localeCompare(b.label);
+      });
+    }
+    function zoneRows(frame) {
+      const zones = [
+        {label: "<20m", min: 0, max: 20, fp: 0, fn: 0, tp: 0},
+        {label: "20-40m", min: 20, max: 40, fp: 0, fn: 0, tp: 0},
+        {label: "40m+", min: 40, max: Infinity, fp: 0, fn: 0, tp: 0},
+      ];
+      for (const b of (frame && frame.boxes) || []) {
+        const d = boxDistance(b);
+        const z = zones.find(item => d >= item.min && d < item.max) || zones[zones.length - 1];
+        const source = String(b.source || "").toUpperCase();
+        const status = String(b.status || "").toUpperCase();
+        if (source === "EST" && status === "TP") z.tp++;
+        if (source === "EST" && status === "FP") z.fp++;
+        if (source === "GT" && status === "FN") z.fn++;
+      }
+      return zones;
+    }
+    function renderLabelBreakdown(frame) {
+      const rows = labelFrameRows(frame);
+      const max = Math.max(1, ...rows.map(r => state.compare
+        ? Math.max(Math.abs(r.bFp - r.aFp), Math.abs(r.bFn - r.aFn), Math.abs(r.bTp - r.aTp))
+        : r.tp + r.fp + r.fn));
+      els.labelFrameMeta.textContent = state.compare ? "B-A current frame" : "current frame";
+      els.labelFrameBreakdown.innerHTML = rows.map(r => {
+        if (state.compare) {
+          const dFp = r.bFp - r.aFp, dFn = r.bFn - r.aFn, dTp = r.bTp - r.aTp;
+          const total = Math.max(1, Math.abs(dFp) + Math.abs(dFn) + Math.abs(dTp));
+          return `<div class="label-row">
+            <strong>${escapeHtml(r.label)}</strong>
+            <div class="label-stack">
+              <i style="width:${Math.abs(dTp) / total * 100}%;background:${dTp >= 0 ? "#38bdf8" : "#34d399"}"></i>
+              <i style="width:${Math.abs(dFp) / total * 100}%;background:${dFp >= 0 ? "#ff6666" : "#34d399"}"></i>
+              <i style="width:${Math.abs(dFn) / total * 100}%;background:${dFn >= 0 ? "#ff9933" : "#34d399"}"></i>
+            </div>
+            <span>FP ${fmtDelta(dFp)} FN ${fmtDelta(dFn)}</span>
+          </div>`;
+        }
+        const total = Math.max(1, r.tp + r.fp + r.fn);
+        return `<div class="label-row">
+          <strong>${escapeHtml(r.label)}</strong>
+          <div class="label-stack">
+            <i style="width:${r.tp / total * 100}%;background:#66b3ff"></i>
+            <i style="width:${r.fp / total * 100}%;background:#ff6666"></i>
+            <i style="width:${r.fn / total * 100}%;background:#ff9933"></i>
+          </div>
+          <span>TP ${r.tp} FP ${r.fp} FN ${r.fn}</span>
+        </div>`;
+      }).join("");
+      els.zoneBreakdown.innerHTML = zoneRows(frame).map(z => `<div class="zone-chip"><b>${escapeHtml(z.label)}</b>FP ${z.fp} · FN ${z.fn} · TP ${z.tp}</div>`).join("");
+    }
     function runMetrics(frame, run) {
       const out = {tp: 0, fp: 0, fn: 0, gt: 0, est: 0, gtTp: 0, gtFn: 0, estTp: 0, estFp: 0, boxes: 0, worst: 0};
       for (const b of (frame && frame.boxes) || []) {
@@ -1668,8 +1906,19 @@
       const n = Number(value) || 0;
       return n > 0 ? `+${n}` : String(n);
     }
-    function hotspotScore(frame) {
+    function hotspotScore(frame, mode = state.hotspotMode) {
+      const boxes = (frame && frame.boxes) || [];
       const m = frameMetrics(frame);
+      if (state.compare) {
+        const a = runMetrics(frame, "A"), b = runMetrics(frame, "B");
+        if (mode === "fp") return Math.max(0, b.fp - a.fp) * 10;
+        if (mode === "fn") return Math.max(0, b.fn - a.fn) * 10;
+      }
+      if (mode === "fp") return m.fp * 10;
+      if (mode === "fn") return m.fn * 10;
+      if (mode === "ped_fp") return boxes.filter(b => String(b.label || "").toLowerCase().includes("ped") && String(b.source || "").toUpperCase() === "EST" && String(b.status || "").toUpperCase() === "FP").length * 20;
+      if (mode === "near") return boxes.filter(b => boxDistance(b) < 30 && ["FP", "FN"].includes(String(b.status || "").toUpperCase())).length * 12;
+      if (mode === "tp_error") return m.worst * 12;
       return m.fp * 6 + m.fn * 8 + m.worst * 4;
     }
     function updateAnalysis(frame, visible) {
@@ -1685,6 +1934,8 @@
       els.analysisPrecision.nextElementSibling.textContent = state.compare ? "B precision" : "precision";
       els.analysisGt.nextElementSibling.textContent = state.compare ? "A boxes" : "GT";
       els.analysisEst.nextElementSibling.textContent = state.compare ? "B boxes" : "EST";
+      const modeText = {all: "all", fp: "FP", fn: "FN", ped_fp: "ped FP", near: "nearby", tp_error: "TP error"}[state.hotspotMode] || "all";
+      els.hotspotModeMeta.textContent = modeText;
       els.analysisFrame.title = `${visible.length}/${(frame.boxes || []).length} boxes visible; metrics use the full current scene frame`;
       const layers = layerCounts(frame);
       els.cntGtTp.textContent = String(layers.gtTp);
@@ -1723,6 +1974,8 @@
       if (!state.frames.length) return;
       state.framePos = Math.max(0, Math.min(state.frames.length - 1, state.framePos + delta));
       state.playCarryMs = 0;
+      state.selected = null;
+      updateInspect();
       render();
     }
     function jumpHotspot(delta) {
@@ -1732,11 +1985,23 @@
         const idx = (state.framePos + delta * offset + n) % n;
         if (hotspotScore(state.frames[idx]) > 0.01) {
           state.framePos = idx;
+          state.selected = null;
+          updateInspect();
           render();
           return;
         }
       }
       toast("No error hotspot in the loaded frame window.");
+    }
+    function seekFrameFromClientX(canvas, clientX) {
+      if (!state.frames.length) return;
+      const rect = canvas.getBoundingClientRect();
+      const t = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
+      state.framePos = Math.max(0, Math.min(state.frames.length - 1, Math.round(t * (state.frames.length - 1))));
+      state.playCarryMs = 0;
+      state.selected = null;
+      updateInspect();
+      render();
     }
     function compareKey(box, statusSensitive = true) {
       const id = box.uuid || box.pair_uuid || "";
@@ -1824,18 +2089,168 @@
       hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       hctx.clearRect(0,0,r.width,r.height);
       const n = Math.max(1, state.frames.length);
+      const maxScore = Math.max(1, ...state.frames.map(f => hotspotScore(f)));
       state.frames.forEach((f, i) => {
-        const m = frameMetrics(f);
-        const score = Math.min(1, (m.fp + m.fn * 8 + m.worst * 10) / 260);
+        const score = Math.min(1, hotspotScore(f) / maxScore);
         const hue = 145 - score * 120;
         hctx.fillStyle = `hsl(${hue}, 85%, ${42 + score * 18}%)`;
         hctx.fillRect(i * r.width / n, 0, Math.ceil(r.width / n) + 1, r.height);
       });
     }
+    function resizeAuxCanvas(c, context) {
+      const dpr = window.devicePixelRatio || 1;
+      const r = c.getBoundingClientRect();
+      c.width = Math.max(1, Math.floor(r.width * dpr));
+      c.height = Math.max(1, Math.floor(r.height * dpr));
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return r;
+    }
+    function renderFrameCurve() {
+      const r = resizeAuxCanvas(els.frameCurve, frameCurveCtx);
+      frameCurveCtx.clearRect(0, 0, r.width, r.height);
+      frameCurveCtx.fillStyle = "rgba(2,6,23,.62)";
+      frameCurveCtx.fillRect(0, 0, r.width, r.height);
+      if (!state.frames.length) {
+        frameCurveCtx.fillStyle = "#94a3b8";
+        frameCurveCtx.font = "11px Inter, sans-serif";
+        frameCurveCtx.fillText("load a scene to inspect FP/FN/error over time", 12, 32);
+        return;
+      }
+      const values = state.frames.map(f => {
+        if (state.compare) {
+          const a = runMetrics(f, "A"), b = runMetrics(f, "B");
+          return {frame: f.frame, fp: b.fp - a.fp, fn: b.fn - a.fn, tp: b.tp - a.tp, err: b.worst};
+        }
+        const m = frameMetrics(f);
+        return {frame: f.frame, fp: m.fp, fn: m.fn, tp: m.tp, err: m.worst};
+      });
+      const max = Math.max(1, ...values.map(v => Math.max(Math.abs(v.fp), Math.abs(v.fn), Math.abs(v.tp), Math.abs(v.err))));
+      const plot = {x: 8, y: 17, w: Math.max(1, r.width - 16), h: Math.max(1, r.height - 24)};
+      frameCurveCtx.strokeStyle = "rgba(148,163,184,.16)";
+      frameCurveCtx.lineWidth = 1;
+      for (let i = 0; i < 3; i++) {
+        const y = plot.y + i * plot.h / 2;
+        frameCurveCtx.beginPath(); frameCurveCtx.moveTo(plot.x, y); frameCurveCtx.lineTo(plot.x + plot.w, y); frameCurveCtx.stroke();
+      }
+      const xAt = i => plot.x + i * plot.w / Math.max(1, values.length - 1);
+      if (state.compare) {
+        const mid = plot.y + plot.h / 2;
+        frameCurveCtx.strokeStyle = "rgba(226,232,240,.32)";
+        frameCurveCtx.beginPath(); frameCurveCtx.moveTo(plot.x, mid); frameCurveCtx.lineTo(plot.x + plot.w, mid); frameCurveCtx.stroke();
+        values.forEach((v, i) => {
+          const x = xAt(i);
+          const barW = Math.max(1, plot.w / Math.max(1, values.length) * .35);
+          for (const [key, color] of [["fp", "#ff6666"], ["fn", "#ff9933"], ["tp", "#66b3ff"]]) {
+            const offset = key === "fp" ? -barW : key === "fn" ? 0 : barW;
+            const val = Number(v[key]) || 0;
+            const h = Math.abs(val) / max * (plot.h / 2);
+            frameCurveCtx.fillStyle = val >= 0 ? color : "rgba(52,211,153,.7)";
+            frameCurveCtx.fillRect(x + offset - barW / 2, val >= 0 ? mid - h : mid, barW, h);
+          }
+        });
+      } else {
+        const drawLine = (key, color, width) => {
+          frameCurveCtx.strokeStyle = color;
+          frameCurveCtx.lineWidth = width;
+          frameCurveCtx.beginPath();
+          values.forEach((v, i) => {
+            const x = xAt(i);
+            const y = plot.y + plot.h - ((Number(v[key]) || 0) / max) * plot.h;
+            if (i === 0) frameCurveCtx.moveTo(x, y); else frameCurveCtx.lineTo(x, y);
+          });
+          frameCurveCtx.stroke();
+        };
+        drawLine("tp", "#66b3ff", 1.5);
+        drawLine("fp", "#ff6666", 2);
+        drawLine("fn", "#ff9933", 2);
+        drawLine("err", "#facc15", 1.2);
+      }
+      const currentX = xAt(state.framePos);
+      frameCurveCtx.strokeStyle = "#ffffff";
+      frameCurveCtx.lineWidth = 1.4;
+      frameCurveCtx.beginPath(); frameCurveCtx.moveTo(currentX, 4); frameCurveCtx.lineTo(currentX, r.height - 4); frameCurveCtx.stroke();
+      frameCurveCtx.fillStyle = "#e5edf7";
+      frameCurveCtx.font = "800 10px Inter, sans-serif";
+      frameCurveCtx.fillText(state.compare ? "ΔFP red · ΔFN amber · ΔTP blue · green improves" : "FP red · FN amber · TP blue · error yellow", 10, 12);
+      frameCurveCtx.textAlign = currentX > r.width - 70 ? "right" : "left";
+      frameCurveCtx.fillText(`f ${values[state.framePos]?.frame ?? "-"}`, currentX + (frameCurveCtx.textAlign === "right" ? -5 : 5), r.height - 7);
+      frameCurveCtx.textAlign = "left";
+    }
+    function renderOverviewMap() {
+      const r = resizeAuxCanvas(els.overview, overviewCtx);
+      overviewCtx.clearRect(0, 0, r.width, r.height);
+      overviewCtx.fillStyle = "rgba(2,6,23,.72)";
+      overviewCtx.fillRect(0, 0, r.width, r.height);
+      const maxAbs = Math.max(20, state.bounds.maxAbs || 80);
+      const pad = 10;
+      const scale = Math.min((r.width - pad * 2), (r.height - pad * 2)) / (maxAbs * 2);
+      const mapPoint = (x, y) => [r.width / 2 - y * scale, r.height / 2 - x * scale];
+      overviewCtx.strokeStyle = "rgba(148,163,184,.16)";
+      overviewCtx.lineWidth = 1;
+      for (let d = 20; d <= maxAbs; d += 20) {
+        const c = mapPoint(0, 0);
+        overviewCtx.beginPath(); overviewCtx.arc(c[0], c[1], d * scale, 0, Math.PI * 2); overviewCtx.stroke();
+      }
+      overviewCtx.fillStyle = "rgba(148,163,184,.24)";
+      for (const f of state.frames) {
+        for (const b of f.boxes || []) {
+          const p = mapPoint(Number(b.x) || 0, Number(b.y) || 0);
+          overviewCtx.fillRect(p[0] - .8, p[1] - .8, 1.6, 1.6);
+        }
+      }
+      const frame = state.frames[state.framePos] || {boxes: []};
+      for (const b of displayedBoxes(frame)) {
+        const p = mapPoint(Number(b.x) || 0, Number(b.y) || 0);
+        overviewCtx.fillStyle = evalLayerColor(b);
+        overviewCtx.beginPath(); overviewCtx.arc(p[0], p[1], 2.2, 0, Math.PI * 2); overviewCtx.fill();
+      }
+      const ego = mapPoint(0, 0);
+      overviewCtx.fillStyle = "#e5edf7";
+      overviewCtx.beginPath(); overviewCtx.arc(ego[0], ego[1], 3, 0, Math.PI * 2); overviewCtx.fill();
+      const center = mapPoint(state.panX, state.panY);
+      const viewMeters = Math.max(12, state.distance * 1.05);
+      overviewCtx.strokeStyle = "#38bdf8";
+      overviewCtx.lineWidth = 1.4;
+      overviewCtx.strokeRect(center[0] - viewMeters * scale / 2, center[1] - viewMeters * scale / 2, viewMeters * scale, viewMeters * scale);
+      overviewCtx.fillStyle = "#94a3b8";
+      overviewCtx.font = "800 10px Inter, sans-serif";
+      overviewCtx.fillText("overview", 9, 14);
+    }
     function sameObject(a, b) {
       if (!a || !b) return false;
+      if (a.run && b.run && a.run !== b.run) return false;
       if (a.uuid && b.uuid && a.uuid === b.uuid && a.source === b.source) return true;
       return a.frame === b.frame && a.source === b.source && a.status === b.status && a.label === b.label && Math.abs(a.x - b.x) < .03 && Math.abs(a.y - b.y) < .03;
+    }
+    function findComparePeer(frame, box) {
+      if (!state.compare || !box) return null;
+      const otherRun = box.run === "A" ? "B" : box.run === "B" ? "A" : "";
+      if (!otherRun) return null;
+      const boxes = (frame && frame.boxes) || [];
+      const id = box.pair_uuid || box.uuid || "";
+      if (id) {
+        const hit = boxes.find(b => b.run === otherRun && (b.uuid === id || b.pair_uuid === id || (box.uuid && b.uuid === box.uuid)));
+        if (hit) return hit;
+      }
+      let best = null, bestScore = Infinity;
+      for (const b of boxes) {
+        if (b.run !== otherRun) continue;
+        if (String(b.label || "") !== String(box.label || "")) continue;
+        if (String(b.source || "") !== String(box.source || "")) continue;
+        const d = Math.hypot((Number(b.x) || 0) - (Number(box.x) || 0), (Number(b.y) || 0) - (Number(box.y) || 0));
+        const yaw = Math.abs((Number(b.yaw) || 0) - (Number(box.yaw) || 0));
+        const score = d + yaw * .3;
+        if (score < bestScore) { best = b; bestScore = score; }
+      }
+      return bestScore < 4 ? best : null;
+    }
+    function compareDeltaText(box, peer) {
+      if (!box || !peer) return "no peer";
+      const dx = (Number(box.x) || 0) - (Number(peer.x) || 0);
+      const dy = (Number(box.y) || 0) - (Number(peer.y) || 0);
+      const dyaw = (Number(box.yaw) || 0) - (Number(peer.yaw) || 0);
+      const dv = Math.hypot((Number(box.vx) || 0) - (Number(peer.vx) || 0), (Number(box.vy) || 0) - (Number(peer.vy) || 0));
+      return `${peer.run || "peer"} Δxy ${Math.hypot(dx, dy).toFixed(2)}m · Δyaw ${dyaw.toFixed(2)} · Δv ${dv.toFixed(2)}`;
     }
     function nearestBox(screenX, screenY) {
       const f = state.frames[state.framePos] || {boxes: []};
@@ -1876,10 +2291,14 @@
       els.inspectTitle.textContent = `${b.label || "box"} · ${b.status || ""}`;
       els.inspectStatus.textContent = `${b.run ? `${b.run} · ` : ""}${b.status || "-"} / ${b.source || "-"}`;
       els.inspectPos.textContent = `${fmt(b.x,"",2)}, ${fmt(b.y,"",2)}, ${fmt(b.z,"",2)}`;
-      els.inspectSize.textContent = `${fmt(b.length,"",2)} x ${fmt(b.width,"",2)} x ${fmt(b.height,"",2)} / ${fmt(b.yaw," rad",2)}`;
+      els.inspectSize.textContent = isPointLikeBox(b)
+        ? `${b.shape_type || b.type || "point"} / ${fmt(b.yaw," rad",2)}`
+        : `${fmt(b.length,"",2)} x ${fmt(b.width,"",2)} x ${fmt(b.height,"",2)} / ${fmt(b.yaw," rad",2)}`;
       els.inspectConf.textContent = b.confidence == null ? "-" : fmt(b.confidence,"",3);
       els.inspectDist.textContent = `${fmt(b.center_distance,"m",3)} / ${fmt(b.plane_distance,"m",3)}`;
       els.inspectErr.textContent = `${fmt(b.x_error,"",2)} / ${fmt(b.y_error,"",2)} / ${fmt(b.yaw_error,"",2)}`;
+      const frame = state.frames[state.framePos] || {boxes: []};
+      els.inspectPeer.textContent = state.compare ? compareDeltaText(b, findComparePeer(frame, b)) : "-";
       els.inspectUuid.textContent = b.uuid || b.pair_uuid || "-";
     }
     function updateHoverCard(ev) {
@@ -1923,6 +2342,11 @@
       drawTrails(label ? (b => b.run === label) : null);
       const sorted = [...boxes].sort((a, b) => (a.y || 0) - (b.y || 0));
       sorted.forEach((b, i) => drawBox({...b, frame: frame.frame}, i, sorted.length));
+      if (state.compare && state.selected) {
+        const peer = findComparePeer(frame, state.selected);
+        if (state.selected.run === label) drawObjectHalo(state.selected, "#ffffff");
+        if (peer && peer.run === label) drawObjectHalo(peer, "#facc15");
+      }
       ctx.restore();
       if (label) drawViewportLabel(`Run ${label}`, viewport, label === "A" ? "#60a5fa" : "#a78bfa");
       activeViewport = null;
@@ -1938,6 +2362,11 @@
       drawGrid();
       drawTrails(b => b.run === "A");
       visible.filter(b => b.run === "A").sort((a, b) => (a.y || 0) - (b.y || 0)).forEach((b, i, arr) => drawBox({...b, frame: frame.frame}, i, arr.length));
+      if (state.selected) {
+        const peer = findComparePeer(frame, state.selected);
+        if (state.selected.run === "A") drawObjectHalo(state.selected, "#ffffff");
+        if (peer && peer.run === "A") drawObjectHalo(peer, "#facc15");
+      }
       ctx.restore();
       ctx.save();
       ctx.beginPath();
@@ -1946,6 +2375,11 @@
       drawGrid();
       drawTrails(b => b.run === "B");
       visible.filter(b => b.run === "B").sort((a, b) => (a.y || 0) - (b.y || 0)).forEach((b, i, arr) => drawBox({...b, frame: frame.frame}, i, arr.length));
+      if (state.selected) {
+        const peer = findComparePeer(frame, state.selected);
+        if (state.selected.run === "B") drawObjectHalo(state.selected, "#ffffff");
+        if (peer && peer.run === "B") drawObjectHalo(peer, "#facc15");
+      }
       ctx.restore();
       activeViewport = null;
       ctx.fillStyle = "rgba(226,232,240,.88)";
@@ -1980,6 +2414,9 @@
       els.slider.value = String(state.framePos);
       const m = frameMetrics(f);
       updateAnalysis(f, visible);
+      renderLabelBreakdown(f);
+      renderFrameCurve();
+      renderOverviewMap();
       els.readout.textContent = state.frames.length ? `frame ${f.frame} · ${state.framePos + 1}/${state.frames.length} · ${visible.length}/${f.boxes.length} visible · TP ${m.tp} FP ${m.fp} FN ${m.fn}` : "no scene loaded";
     }
     function loop() {
@@ -1994,11 +2431,12 @@
         let advanced = false;
         while (state.playCarryMs >= frameMs) {
           state.framePos = (state.framePos + 1) % state.frames.length;
+          state.selected = null;
           state.playCarryMs -= frameMs;
           advanced = true;
           if (state.playCarryMs > frameMs * 4) state.playCarryMs = 0;
         }
-        if (advanced) render();
+        if (advanced) { updateInspect(); render(); }
       }
       requestAnimationFrame(loop);
     }
@@ -2015,11 +2453,23 @@
       ["uuid", "Label: UUID"],
       ["none", "Label: Off"]
     ];
+    const compareLensModes = [
+      ["all", "Lens: All"],
+      ["new_fp_b", "Lens: New FP"],
+      ["resolved_fn_b", "Lens: Resolved FN"],
+      ["worse_tp_b", "Lens: Worse TP"],
+      ["better_tp_b", "Lens: Better TP"],
+      ["a_only", "Lens: A only"],
+      ["b_only", "Lens: B only"]
+    ];
     function syncCycleButtons() {
       const color = colorModes.find(([value]) => value === els.colorMode.value) || colorModes[0];
       const label = labelModes.find(([value]) => value === els.labelMode.value) || labelModes[0];
+      const lens = compareLensModes.find(([value]) => value === els.compareLens.value) || compareLensModes[0];
       els.colorCycleBtn.textContent = color[1];
       els.labelCycleBtn.textContent = label[1];
+      els.compareLensBtn.textContent = lens[1];
+      els.compareLensBtn.classList.toggle("active", state.compare && els.compareLens.value !== "all");
       els.advancedBtn.classList.toggle("active", els.advancedPanel.classList.contains("show"));
     }
     function cycleSelect(select, modes) {
@@ -2041,13 +2491,20 @@
     });
     els.scenario.addEventListener("change", () => { searchScenarios(); scheduleSceneReload("scene"); });
     els.load.addEventListener("click", loadScene);
-    els.slider.addEventListener("input", e => { state.framePos = Number(e.target.value) || 0; render(); });
+    els.slider.addEventListener("input", e => { state.framePos = Number(e.target.value) || 0; state.selected = null; updateInspect(); render(); });
     els.prevFrame.addEventListener("click", () => stepFrame(-1));
     els.nextFrame.addEventListener("click", () => stepFrame(1));
     els.play.addEventListener("click", () => { state.playing = !state.playing; state.playCarryMs = 0; state.lastPlayTs = performance.now(); els.play.textContent = state.playing ? "Ⅱ" : "▶"; });
     els.playSpeed.addEventListener("change", () => { state.playCarryMs = 0; });
     els.prevHotFrame.addEventListener("click", () => jumpHotspot(-1));
     els.nextHotFrame.addEventListener("click", () => jumpHotspot(1));
+    els.hotspotModes.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => {
+      state.hotspotMode = btn.dataset.hotspot || "all";
+      els.hotspotModes.querySelectorAll("button").forEach(x => x.classList.toggle("active", x === btn));
+      renderHeatStrip();
+      renderFrameCurve();
+      render();
+    }));
     els.camTop.addEventListener("click", () => setCameraPreset("top"));
     els.cam3d.addEventListener("click", () => setCameraPreset("3d"));
     els.camFollow.addEventListener("click", () => setCameraPreset("follow"));
@@ -2061,6 +2518,7 @@
     els.compareCurtainBtn.addEventListener("click", () => setCompareLayout("curtain"));
     els.colorCycleBtn.addEventListener("click", () => cycleSelect(els.colorMode, colorModes));
     els.labelCycleBtn.addEventListener("click", () => cycleSelect(els.labelMode, labelModes));
+    els.compareLensBtn.addEventListener("click", () => { if (state.compare) cycleSelect(els.compareLens, compareLensModes); });
     els.advancedBtn.addEventListener("click", () => {
       els.advancedPanel.classList.toggle("show");
       syncCycleButtons();
@@ -2103,6 +2561,17 @@
     els.confMin.addEventListener("input", () => { state.selected = null; updateInspect(); render(); });
     els.confMin.addEventListener("change", render);
     els.dedupeRows.addEventListener("change", () => { toast(els.dedupeRows.checked ? "Dedupe enabled." : "Dedupe disabled."); scheduleSceneReload("dedupe"); });
+    els.heatCanvas.addEventListener("click", e => seekFrameFromClientX(els.heatCanvas, e.clientX));
+    els.frameCurve.addEventListener("click", e => seekFrameFromClientX(els.frameCurve, e.clientX));
+    els.overview.addEventListener("click", e => {
+      const rect = els.overview.getBoundingClientRect();
+      const maxAbs = Math.max(20, state.bounds.maxAbs || 80);
+      const pad = 10;
+      const scale = Math.min((rect.width - pad * 2), (rect.height - pad * 2)) / (maxAbs * 2);
+      state.panY = -((e.clientX - rect.left) - rect.width / 2) / Math.max(.001, scale);
+      state.panX = -((e.clientY - rect.top) - rect.height / 2) / Math.max(.001, scale);
+      render();
+    });
     function updateCurtainFromEvent(e) {
       const rect = els.canvas.getBoundingClientRect();
       state.curtainX = Math.max(0.08, Math.min(0.92, (e.clientX - rect.left) / Math.max(1, rect.width)));
@@ -2205,13 +2674,7 @@
       }
       render();
     }, {passive: false});
-    els.heatCanvas.addEventListener("click", e => {
-      if (!state.frames.length) return;
-      const rect = els.heatCanvas.getBoundingClientRect();
-      state.framePos = Math.max(0, Math.min(state.frames.length - 1, Math.floor(((e.clientX - rect.left) / rect.width) * state.frames.length)));
-      render();
-    });
-    window.addEventListener("resize", render);
+    window.addEventListener("resize", () => { renderHeatStrip(); render(); });
     window.addEventListener("keydown", (ev) => {
       if (ev.target && ["INPUT", "SELECT", "TEXTAREA"].includes(ev.target.tagName)) return;
       if (ev.key === " ") {

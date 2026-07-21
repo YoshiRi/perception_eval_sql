@@ -38,6 +38,8 @@ CORE_COLUMNS = ("frame_index", "source", "x", "y", "z", "length", "width", "heig
 OPTIONAL_COLUMNS = (
     "unix_time",
     "frame_id",
+    "type",
+    "shape_type",
     "vx",
     "vy",
     "label",
@@ -68,6 +70,27 @@ OPTIONAL_COLUMNS = (
     "dx_min",
     "dy_min",
 )
+DISTANCE_BINS_SQL = """
+    SELECT * FROM (
+        VALUES
+            (0.0,   10.0,   '[0,10)',     10,  '0-10 m'),
+            (10.0,  20.0,   '[10,20)',    20,  '10-20 m'),
+            (20.0,  30.0,   '[20,30)',    30,  '20-30 m'),
+            (30.0,  40.0,   '[30,40)',    40,  '30-40 m'),
+            (40.0,  50.0,   '[40,50)',    50,  '40-50 m'),
+            (50.0,  60.0,   '[50,60)',    60,  '50-60 m'),
+            (60.0,  70.0,   '[60,70)',    70,  '60-70 m'),
+            (70.0,  80.0,   '[70,80)',    80,  '70-80 m'),
+            (80.0,  90.0,   '[80,90)',    90,  '80-90 m'),
+            (90.0,  100.0,  '[90,100)',   100, '90-100 m'),
+            (100.0, 110.0,  '[100,110)',  110, '100-110 m'),
+            (110.0, 120.0,  '[110,120)',  120, '110-120 m'),
+            (120.0, 130.0,  '[120,130)',  130, '120-130 m'),
+            (130.0, 140.0,  '[130,140)',  140, '130-140 m'),
+            (140.0, 150.0,  '[140,150)',  150, '140-150 m'),
+            (150.0, 1e12,   '[150,inf)',  160, '150+ m')
+    ) AS t(bin_start, bin_end, distance_bin, bin_idx, bin_label)
+"""
 _SERVER_LOCK = threading.Lock()
 _SERVER: ThreadingHTTPServer | None = None
 
@@ -122,8 +145,18 @@ def _short_path(path: Path) -> str:
         return path.name
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) -> None:
-    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body = json.dumps(_json_safe(payload), separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
@@ -154,6 +187,18 @@ def _viewer_html(api_base: str = "") -> str:
             source = path.read_text(encoding="utf-8")
             return source.replace("__API_BASE__", api_base.rstrip("/"))
     raise FileNotFoundError("static/local_bbox_viewer.html not found")
+
+
+def _explorer_html(api_base: str = "") -> str:
+    candidates = [
+        Path.cwd() / "static" / "local_bbox_explorer.html",
+        Path("/app/static/local_bbox_explorer.html"),
+    ]
+    for path in candidates:
+        if path.exists():
+            source = path.read_text(encoding="utf-8")
+            return source.replace("__API_BASE__", api_base.rstrip("/"))
+    raise FileNotFoundError("static/local_bbox_explorer.html not found")
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -211,6 +256,14 @@ def _where_from_filters(cols: list[str], filters: dict[str, Any]) -> tuple[list[
     if confidence_min not in (None, "") and "confidence" in cols:
         where.append("(confidence IS NULL OR TRY_CAST(confidence AS DOUBLE) >= ?)")
         params.append(float(confidence_min))
+    distance_min = filters.get("distance_min")
+    distance_max = filters.get("distance_max")
+    if distance_min not in (None, ""):
+        where.append("SQRT(POWER(TRY_CAST(x AS DOUBLE), 2) + POWER(TRY_CAST(y AS DOUBLE), 2)) >= ?")
+        params.append(float(distance_min))
+    if distance_max not in (None, ""):
+        where.append("SQRT(POWER(TRY_CAST(x AS DOUBLE), 2) + POWER(TRY_CAST(y AS DOUBLE), 2)) <= ?")
+        params.append(float(distance_max))
     return where, params
 
 
@@ -328,6 +381,311 @@ def scenarios(payload: dict[str, Any]) -> dict[str, Any]:
     return {"items": df.to_dict("records")}
 
 
+def dataset_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_local_path(payload.get("path"))
+    cols = _columns(path)
+    _require_columns(cols, ("frame_index", "source", "x", "y", "length", "width", "yaw"))
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    where, params = _where_from_filters(cols, filters)
+    group_cols = [c for c in ("suite_name", "scenario_name", "t4dataset_name", "topic_name") if c in cols]
+    if "scenario_name" not in group_cols:
+        raise ValueError("dataset_summary requires scenario_name column")
+    label_expr = "COALESCE(NULLIF(CAST(label AS VARCHAR), ''), 'unknown')" if "label" in cols else "'unknown'"
+    status_expr = "UPPER(COALESCE(NULLIF(CAST(status AS VARCHAR), ''), ''))" if "status" in cols else "''"
+    source_expr = "UPPER(COALESCE(NULLIF(CAST(source AS VARCHAR), ''), ''))"
+    center_error_expr = "TRY_CAST(center_distance AS DOUBLE)" if "center_distance" in cols else "NULL"
+    con = duckdb.connect()
+    try:
+        scenario_df = con.execute(
+            f"""
+            SELECT
+                {", ".join(group_cols)},
+                COUNT(*) AS rows,
+                COUNT(DISTINCT TRY_CAST(frame_index AS INTEGER)) AS frames,
+                MIN(TRY_CAST(frame_index AS INTEGER)) AS first_frame,
+                MAX(TRY_CAST(frame_index AS INTEGER)) AS last_frame,
+                SUM(CASE WHEN {source_expr} = 'GT' THEN 1 ELSE 0 END) AS gt,
+                SUM(CASE WHEN {source_expr} = 'EST' THEN 1 ELSE 0 END) AS est,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS tp,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS fp,
+                SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS fn,
+                AVG(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN {center_error_expr} ELSE NULL END) AS avg_tp_error,
+                MAX(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN {center_error_expr} ELSE NULL END) AS max_tp_error
+            FROM parquet_scan(?)
+            WHERE {" AND ".join(where)}
+              AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+            GROUP BY {", ".join(group_cols)}
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT ?
+            """,
+            [str(path)] + params + [int(payload.get("limit") or 800)],
+        ).df()
+        label_df = con.execute(
+            f"""
+            SELECT
+                {", ".join(group_cols)},
+                {label_expr} AS label,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS tp,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS fp,
+                SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS fn,
+                COUNT(*) AS rows
+            FROM parquet_scan(?)
+            WHERE {" AND ".join(where)}
+              AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+            GROUP BY {", ".join(group_cols)}, label
+            """,
+            [str(path)] + params,
+        ).df()
+    finally:
+        con.close()
+
+    label_by_key: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    label_totals: dict[str, dict[str, int]] = {}
+    for row in label_df.to_dict("records"):
+        key = tuple(str(row.get(c) or "") for c in ("suite_name", "scenario_name", "t4dataset_name", "topic_name"))
+        item = {
+            "label": _as_text(row.get("label")) or "unknown",
+            "tp": int(row.get("tp") or 0),
+            "fp": int(row.get("fp") or 0),
+            "fn": int(row.get("fn") or 0),
+            "rows": int(row.get("rows") or 0),
+        }
+        label_by_key.setdefault(key, []).append(item)
+        total = label_totals.setdefault(item["label"], {"tp": 0, "fp": 0, "fn": 0, "rows": 0})
+        for metric in ("tp", "fp", "fn", "rows"):
+            total[metric] += item[metric]
+
+    scenarios_out: list[dict[str, Any]] = []
+    for row in scenario_df.to_dict("records"):
+        key = tuple(str(row.get(c) or "") for c in ("suite_name", "scenario_name", "t4dataset_name", "topic_name"))
+        labels = sorted(label_by_key.get(key, []), key=lambda item: (item["fp"], item["fn"], item["rows"]), reverse=True)
+        tp = int(row.get("tp") or 0)
+        fp = int(row.get("fp") or 0)
+        fn = int(row.get("fn") or 0)
+        gt = int(row.get("gt") or 0)
+        est = int(row.get("est") or 0)
+        precision = tp / (tp + fp) if tp + fp else None
+        recall = tp / (tp + fn) if tp + fn else None
+        scenarios_out.append(
+            {
+                **{c: _as_text(row.get(c)) for c in group_cols},
+                "rows": int(row.get("rows") or 0),
+                "frames": int(row.get("frames") or 0),
+                "first_frame": None if row.get("first_frame") is None else int(row.get("first_frame")),
+                "last_frame": None if row.get("last_frame") is None else int(row.get("last_frame")),
+                "gt": gt,
+                "est": est,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "precision": precision,
+                "recall": recall,
+                "fpr": fp / est if est else None,
+                "fnr": fn / gt if gt else None,
+                "avg_tp_error": None if row.get("avg_tp_error") is None else _as_float(row.get("avg_tp_error")),
+                "max_tp_error": None if row.get("max_tp_error") is None else _as_float(row.get("max_tp_error")),
+                "labels": labels[:12],
+            }
+        )
+    return {
+        "items": scenarios_out,
+        "labels": [{"label": label, **metrics} for label, metrics in sorted(label_totals.items())],
+        "path": str(path),
+        "display": _short_path(path),
+    }
+
+
+def scenario_curve(payload: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_local_path(payload.get("path"))
+    cols = _columns(path)
+    _require_columns(cols, ("frame_index", "source", "x", "y", "length", "width", "yaw"))
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    where, params = _where_from_filters(cols, filters)
+    label = _as_text(payload.get("label"))
+    if label and "label" in cols:
+        where.append("label = ?")
+        params.append(label)
+    source_expr = "UPPER(COALESCE(NULLIF(CAST(source AS VARCHAR), ''), ''))"
+    status_expr = "UPPER(COALESCE(NULLIF(CAST(status AS VARCHAR), ''), ''))" if "status" in cols else "''"
+    center_error_expr = "TRY_CAST(center_distance AS DOUBLE)" if "center_distance" in cols else "NULL"
+    con = duckdb.connect()
+    try:
+        df = con.execute(
+            f"""
+            SELECT
+                TRY_CAST(frame_index AS INTEGER) AS frame,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS tp,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS fp,
+                SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS fn,
+                SUM(CASE WHEN {source_expr} = 'GT' THEN 1 ELSE 0 END) AS gt,
+                SUM(CASE WHEN {source_expr} = 'EST' THEN 1 ELSE 0 END) AS est,
+                MAX(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN {center_error_expr} ELSE NULL END) AS max_tp_error
+            FROM parquet_scan(?)
+            WHERE {" AND ".join(where)}
+              AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+            GROUP BY frame
+            ORDER BY frame
+            LIMIT ?
+            """,
+            [str(path)] + params + [int(payload.get("limit") or 5000)],
+        ).df()
+    finally:
+        con.close()
+    return {"frames": df.to_dict("records")}
+
+
+def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_local_path(payload.get("path"))
+    cols = _columns(path)
+    _require_columns(cols, ("frame_index", "source", "x", "y"))
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    where, params = _where_from_filters(cols, filters)
+    label_expr = "COALESCE(NULLIF(CAST(label AS VARCHAR), ''), 'unknown')" if "label" in cols else "'unknown'"
+    source_expr = "UPPER(COALESCE(NULLIF(CAST(source AS VARCHAR), ''), ''))"
+    status_expr = "UPPER(COALESCE(NULLIF(CAST(status AS VARCHAR), ''), ''))" if "status" in cols else "''"
+    x_error_expr = "TRY_CAST(x_error AS DOUBLE)" if "x_error" in cols else "CAST(NULL AS DOUBLE)"
+    y_error_expr = "TRY_CAST(y_error AS DOUBLE)" if "y_error" in cols else "CAST(NULL AS DOUBLE)"
+    yaw_error_expr = "TRY_CAST(yaw_error AS DOUBLE)" if "yaw_error" in cols else "CAST(NULL AS DOUBLE)"
+    base_cte = f"""
+        WITH src AS (
+            SELECT
+                *,
+                SQRT(POWER(TRY_CAST(x AS DOUBLE), 2) + POWER(TRY_CAST(y AS DOUBLE), 2)) AS dist_h,
+                {label_expr} AS label_norm,
+                {source_expr} AS source_norm,
+                {status_expr} AS status_norm
+            FROM parquet_scan(?)
+            WHERE {" AND ".join(where)}
+              AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+              AND TRY_CAST(x AS DOUBLE) IS NOT NULL
+              AND TRY_CAST(y AS DOUBLE) IS NOT NULL
+        ),
+        bins AS ({DISTANCE_BINS_SQL}),
+        binned AS (
+            SELECT src.*, bins.distance_bin, bins.bin_idx, bins.bin_label
+            FROM src
+            JOIN bins ON src.dist_h >= bins.bin_start AND src.dist_h < bins.bin_end
+        ),
+        stats AS (
+            SELECT
+                distance_bin,
+                bin_idx,
+                bin_label,
+                label_norm AS label,
+                COUNT(*) AS rows,
+                SUM(CASE WHEN source_norm = 'GT' THEN 1 ELSE 0 END) AS gt,
+                SUM(CASE WHEN source_norm = 'EST' THEN 1 ELSE 0 END) AS est,
+                SUM(CASE WHEN source_norm = 'EST' AND status_norm = 'TP' THEN 1 ELSE 0 END) AS tp,
+                SUM(CASE WHEN source_norm = 'EST' AND status_norm = 'FP' THEN 1 ELSE 0 END) AS fp,
+                SUM(CASE WHEN source_norm = 'GT' AND status_norm = 'FN' THEN 1 ELSE 0 END) AS fn,
+                SUM(CASE WHEN source_norm = 'GT' AND status_norm IN ('TP','FN') THEN 1 ELSE 0 END) AS gt_total,
+                SUM(CASE WHEN source_norm = 'GT' AND status_norm = 'TP' THEN 1 ELSE 0 END) AS tp_gt,
+                SUM(CASE WHEN source_norm = 'EST' AND status_norm IN ('TP','FP') THEN 1 ELSE 0 END) AS est_total,
+                SUM(CASE WHEN source_norm = 'EST' AND status_norm = 'FP' THEN 1 ELSE 0 END) AS fp_est
+            FROM binned
+            GROUP BY distance_bin, bin_idx, bin_label, label_norm
+        )
+    """
+    con = duckdb.connect()
+    try:
+        distance_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                distance_bin,
+                MIN(bin_idx) AS bin_idx,
+                MIN(bin_label) AS bin_label,
+                SUM(rows) AS rows,
+                SUM(gt) AS gt,
+                SUM(est) AS est,
+                SUM(tp) AS tp,
+                SUM(fp) AS fp,
+                SUM(fn) AS fn,
+                CASE WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total) ELSE NULL END AS tpr,
+                CASE WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total) ELSE NULL END AS fpr
+            FROM stats
+            GROUP BY distance_bin
+            ORDER BY MIN(bin_idx)
+            """,
+            [str(path)] + params,
+        ).df()
+        label_distance_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                distance_bin,
+                bin_idx,
+                bin_label,
+                label,
+                SUM(rows) AS rows,
+                SUM(gt) AS gt,
+                SUM(est) AS est,
+                SUM(tp) AS tp,
+                SUM(fp) AS fp,
+                SUM(fn) AS fn,
+                CASE WHEN SUM(gt_total) > 0 THEN CAST(SUM(tp_gt) AS DOUBLE) / SUM(gt_total) ELSE NULL END AS tpr,
+                CASE WHEN SUM(est_total) > 0 THEN CAST(SUM(fp_est) AS DOUBLE) / SUM(est_total) ELSE NULL END AS fpr
+            FROM stats
+            GROUP BY distance_bin, bin_idx, bin_label, label
+            ORDER BY bin_idx, label
+            """,
+            [str(path)] + params,
+        ).df()
+        label_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                label,
+                SUM(rows) AS rows,
+                SUM(gt) AS gt,
+                SUM(est) AS est,
+                SUM(tp) AS tp,
+                SUM(fp) AS fp,
+                SUM(fn) AS fn,
+                CASE WHEN SUM(tp) + SUM(fp) > 0 THEN CAST(SUM(tp) AS DOUBLE) / (SUM(tp) + SUM(fp)) ELSE NULL END AS precision,
+                CASE WHEN SUM(tp) + SUM(fn) > 0 THEN CAST(SUM(tp) AS DOUBLE) / (SUM(tp) + SUM(fn)) ELSE NULL END AS recall
+            FROM stats
+            GROUP BY label
+            ORDER BY label
+            """,
+            [str(path)] + params,
+        ).df()
+        error_df = con.execute(
+            f"""
+            WITH src AS (
+                SELECT
+                    {label_expr} AS label,
+                    {source_expr} AS source_norm,
+                    {status_expr} AS status_norm,
+                    {x_error_expr} AS x_error_value,
+                    {y_error_expr} AS y_error_value,
+                    {yaw_error_expr} AS yaw_error_value
+                FROM parquet_scan(?)
+                WHERE {" AND ".join(where)}
+            )
+            SELECT
+                label,
+                AVG(ABS(x_error_value)) FILTER (WHERE source_norm = 'EST' AND status_norm = 'TP' AND x_error_value IS NOT NULL) AS mean_abs_x_error,
+                AVG(ABS(y_error_value)) FILTER (WHERE source_norm = 'EST' AND status_norm = 'TP' AND y_error_value IS NOT NULL) AS mean_abs_y_error,
+                AVG(ABS(yaw_error_value)) FILTER (WHERE source_norm = 'EST' AND status_norm = 'TP' AND yaw_error_value IS NOT NULL) AS mean_abs_yaw_error
+            FROM src
+            GROUP BY label
+            ORDER BY label
+            """,
+            [str(path)] + params,
+        ).df()
+    finally:
+        con.close()
+    return {
+        "distance": distance_df.to_dict("records"),
+        "label_distance": label_distance_df.to_dict("records"),
+        "labels": label_df.to_dict("records"),
+        "errors": error_df.to_dict("records"),
+        "path": str(path),
+        "display": _short_path(path),
+    }
+
+
 def frames(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
     run_label = _as_text(payload.get("run")) or "A"
@@ -342,13 +700,27 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
     order_cols.extend(c for c in ("source", "status", "label") if c in select_cols)
     max_rows = min(max(int(payload.get("max_rows") or 120000), 100), 600000)
     dedupe = payload.get("dedupe", True) is not False
+    shape_type_col = "shape_type" if "shape_type" in cols else ("type" if "type" in cols else None)
+    polygon_keep_sql = (
+        f" OR LOWER(COALESCE(CAST({shape_type_col} AS VARCHAR), '')) IN ('polygon', 'point')"
+        if shape_type_col
+        else ""
+    )
+    valid_geometry_sql = f"""
+          AND (
+            (
+              TRY_CAST(length AS DOUBLE) > 0
+              AND TRY_CAST(width AS DOUBLE) > 0
+            )
+            {polygon_keep_sql}
+          )
+    """
     source_sql = f"""
         SELECT {", ".join(select_cols_with_frame_int)}
         FROM parquet_scan(?)
         WHERE {" AND ".join(where)}
           AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
-          AND TRY_CAST(length AS DOUBLE) > 0
-          AND TRY_CAST(width AS DOUBLE) > 0
+          {valid_geometry_sql}
     """
     if dedupe:
         dedupe_order = "TRY_CAST(confidence AS DOUBLE) DESC NULLS LAST" if "confidence" in select_cols else "TRY_CAST(x AS DOUBLE)"
@@ -376,8 +748,7 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
                 FROM parquet_scan(?)
                 WHERE {" AND ".join(where)}
                   AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
-                  AND TRY_CAST(length AS DOUBLE) > 0
-                  AND TRY_CAST(width AS DOUBLE) > 0
+                  {valid_geometry_sql}
             )
             WHERE _bbox_rn = 1
         """
@@ -407,6 +778,7 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
                         "width": _as_float(row.get("width")),
                         "height": _as_float(row.get("height"), 1.5),
                         "yaw": _as_float(row.get("yaw")),
+                        "shape_type": _as_text(row.get("shape_type")) or _as_text(row.get("type")),
                         "source": _as_text(row.get("source")),
                         "status": _as_text(row.get("status")),
                         "label": _as_text(row.get("label")),
@@ -492,6 +864,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         "/api/describe": describe,
         "/api/values": values,
         "/api/scenarios": scenarios,
+        "/api/dataset_summary": dataset_summary,
+        "/api/dataset_stats": dataset_stats,
+        "/api/scenario_curve": scenario_curve,
         "/api/frames": frames,
         "/api/compare_frames": compare_frames,
     }
@@ -505,9 +880,10 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path in ("/", "/viewer", "/viewer/", "/health", "/api/health"):
+        if parsed.path in ("/", "/viewer", "/viewer/", "/explorer", "/explorer/", "/health", "/api/health"):
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8" if "viewer" in parsed.path or parsed.path == "/" else "application/json")
+            is_html = parsed.path == "/" or "viewer" in parsed.path or "explorer" in parsed.path
+            self.send_header("Content-Type", "text/html; charset=utf-8" if is_html else "application/json")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             return
@@ -521,6 +897,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
             return
         if parsed.path in ("/", "/viewer", "/viewer/"):
             _html_response(self, 200, _viewer_html(""))
+            return
+        if parsed.path in ("/explorer", "/explorer/"):
+            _html_response(self, 200, _explorer_html(""))
             return
         query = parse_qs(parsed.query)
         payload = {k: v[-1] for k, v in query.items()}
