@@ -49,6 +49,13 @@ def inject_app_page_styles() -> None:
         """,
         unsafe_allow_html=True,
     )
+    # App-wide identity badge (top of the main area). No-ops for local/direct access.
+    try:
+        from lib.auth import render_identity_badge
+
+        render_identity_badge()
+    except Exception:
+        pass
     # try:
     #     from lib.deploy_debug import running_in_docker
 

@@ -33,7 +33,6 @@ UUID_RE = re.compile(
 from lib.auth import (
     _read_streamlit_headers,
     get_access_context,
-    render_signed_in_user,
 )
 from lib.path_utils import path_display
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
@@ -315,7 +314,6 @@ render_page_hero(
 # ----------------------------
 # Sidebar (Filters) — shared keys with Bounding Box Viewer
 # ----------------------------
-render_signed_in_user(sidebar=True)
 with st.sidebar:
     st.markdown("##### Filters")
     st.caption("Same scene / topic / labels as the BEV viewer. Frame / playback: use the **3D viewer** controls.")

@@ -220,11 +220,39 @@ def get_access_context(headers: Optional[Dict[str, str]] = None) -> Dict[str, An
     return ctx
 
 
-def render_signed_in_user(*, sidebar: bool = True) -> Dict[str, Any]:
-    """Show 'Signed in as …' (or an unauthenticated note) and log the access once per session.
+def _log_access_once(st, ctx: Dict[str, Any]) -> None:
+    """Log the resolved access context once per browser session (avoids per-rerun noise)."""
+    email = ctx.get("user_email") or ""
+    log_key = f"_access_logged::{email}::{ctx.get('origin')}"
+    if st.session_state.get(log_key):
+        return
+    logger.info(
+        "access origin=%s host=%s user=%s cf_ip=%s cf_ray=%s",
+        ctx.get("origin"),
+        ctx.get("host"),
+        email or "-",
+        ctx.get("cf_connecting_ip") or "-",
+        ctx.get("cf_ray") or "-",
+    )
+    st.session_state[log_key] = True
 
-    Returns the access context dict. Safe to call from any page; no-ops gracefully if
-    Streamlit / headers are unavailable.
+
+def _identity_label(ctx: Dict[str, Any]) -> str:
+    """Human-facing identity string, or '' when there is nothing worth showing."""
+    email = ctx.get("user_email") or ""
+    if email:
+        return f"Signed in as {email}"
+    if ctx.get("is_cloudflare"):
+        return "Signed in via Cloudflare"
+    return ""
+
+
+def render_identity_badge() -> Dict[str, Any]:
+    """Render a small, right-aligned identity badge at the top of the main area.
+
+    Called once per page from `inject_app_page_styles`, so it appears app-wide.
+    Logs the access once per session. No-ops when there is no identity to show
+    (e.g. local/direct access) or when Streamlit/headers are unavailable.
     """
     try:
         import streamlit as st
@@ -232,20 +260,33 @@ def render_signed_in_user(*, sidebar: bool = True) -> Dict[str, Any]:
         return {}
 
     ctx = get_access_context()
-    email = ctx.get("user_email") or ""
+    _log_access_once(st, ctx)
 
-    # Log once per browser session to avoid noise on every rerun.
-    log_key = f"_access_logged::{email}::{ctx.get('origin')}"
-    if not st.session_state.get(log_key):
-        logger.info(
-            "access origin=%s host=%s user=%s cf_ip=%s cf_ray=%s",
-            ctx.get("origin"),
-            ctx.get("host"),
-            email or "-",
-            ctx.get("cf_connecting_ip") or "-",
-            ctx.get("cf_ray") or "-",
-        )
-        st.session_state[log_key] = True
+    label = _identity_label(ctx)
+    if not label:
+        return ctx
+    st.markdown(
+        f"<div style='text-align:right; margin:-0.5rem 0 0.25rem; "
+        f"font-size:0.8rem; color:#64748b;'>👤 {label}</div>",
+        unsafe_allow_html=True,
+    )
+    return ctx
+
+
+def render_signed_in_user(*, sidebar: bool = True) -> Dict[str, Any]:
+    """Show 'Signed in as …' (or an unauthenticated note) and log the access once per session.
+
+    Kept for explicit per-page use (e.g. in a sidebar). App-wide display is handled
+    by `render_identity_badge` via `inject_app_page_styles`.
+    """
+    try:
+        import streamlit as st
+    except Exception:
+        return {}
+
+    ctx = get_access_context()
+    _log_access_once(st, ctx)
+    email = ctx.get("user_email") or ""
 
     target = st.sidebar if sidebar else st
     if email:
