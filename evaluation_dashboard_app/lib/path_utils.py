@@ -158,7 +158,12 @@ def _load_yaml_metadata(path: Path) -> dict:
 
 
 def _compact_release_version(metadata: dict, fallback: str) -> str:
-    version = str(metadata.get("version_abbr") or metadata.get("pilot_auto_version") or "").strip()
+    version = str(
+        metadata.get("pilot_auto_version_abbr")
+        or metadata.get("version_abbr")
+        or metadata.get("pilot_auto_version")
+        or ""
+    ).strip()
     if not version:
         return fallback
     version = _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version

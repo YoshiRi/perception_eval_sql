@@ -262,6 +262,7 @@ def _merge_metadata(base: dict[str, Any], *, group_name: str, topic_name: str, j
         for key in (
             "tags",
             "pilot_auto_version",
+            "pilot_auto_version_abbr",
             "version_abbr",
             "data_count",
             "description",

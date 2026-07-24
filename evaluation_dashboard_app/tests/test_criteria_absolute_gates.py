@@ -22,6 +22,12 @@ def test_infer_criteria_count():
     assert infer_criteria_count(raw_empty, 11) == 1
 
 
+def test_infer_criteria_count_with_dataset_column():
+    # 4 base + 2 blocks * 11 = 26
+    raw = pd.DataFrame([[0] * 26], columns=["Scenario", "Dataset", "Option", "GT_OBJ"] + [f"c{i}" for i in range(22)])
+    assert infer_criteria_count(raw, 11) == 2
+
+
 def test_mean_mode_pass_rate_only():
     df = pd.DataFrame(
         {
@@ -38,6 +44,22 @@ def test_mean_mode_pass_rate_only():
     assert r["scenario_pass"].tolist() == [True, True]
     s = gate_summary(r)
     assert s["n_pass"] == 2 and s["all_pass"] is True
+
+
+def test_mean_mode_groups_by_dataset_when_present():
+    df = pd.DataFrame(
+        {
+            "Scenario": ["s1", "s1"],
+            "Dataset": ["d1", "d2"],
+            "pass_rate": [100.0, 50.0],
+            "nm": [1.0, 1.0],
+        }
+    )
+    r = evaluate_scenario_gates(df, 95.0, None)
+    assert len(r) == 2
+    assert set(r["Dataset"]) == {"d1", "d2"}
+    assert r.loc[r["Dataset"] == "d1", "scenario_pass"].iloc[0] is True
+    assert r.loc[r["Dataset"] == "d2", "scenario_pass"].iloc[0] is False
 
 
 def test_mean_mode_pass_rate_fail():

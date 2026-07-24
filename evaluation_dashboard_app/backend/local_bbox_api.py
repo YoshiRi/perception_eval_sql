@@ -69,6 +69,8 @@ OPTIONAL_COLUMNS = (
     "height_error",
     "dx_min",
     "dy_min",
+    # §8: object-local polygon footprint vertices (analyzer >=0.2.0); NULL for boxes.
+    "footprint",
 )
 DISTANCE_BINS_SQL = """
     SELECT * FROM (
@@ -686,6 +688,39 @@ def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _row_footprint_base_link(row: dict[str, Any]) -> list[list[float]] | None:
+    """Transform an object-local footprint (analyzer >=0.2.0) into base_link vertices.
+
+    Returns None when the row has no footprint (boxes, older parquet). Reuses the analyzer's
+    footprint_to_base_link so the rotation matches the library, with a local fallback.
+    """
+    fp = row.get("footprint")
+    if fp is None:
+        return None
+    # Missing values may arrive as a float NaN rather than None for object columns.
+    if isinstance(fp, float):
+        return None
+    try:
+        pts = [[float(p[0]), float(p[1])] for p in fp]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not pts:
+        return None
+
+    x = _as_float(row.get("x"))
+    y = _as_float(row.get("y"))
+    yaw = _as_float(row.get("yaw"))
+    try:
+        from perception_catalog_analyzer.dataframe import footprint_to_base_link
+
+        return footprint_to_base_link(pts, x, y, yaw)
+    except Exception:
+        import math
+
+        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+        return [[p[0] * cos_y - p[1] * sin_y + x, p[0] * sin_y + p[1] * cos_y + y] for p in pts]
+
+
 def frames(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
     run_label = _as_text(payload.get("run")) or "A"
@@ -769,8 +804,7 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
         for frame_index, group in df.groupby("_frame_index_int", sort=True):
             boxes: list[dict[str, Any]] = []
             for row in group.to_dict("records"):
-                boxes.append(
-                    {
+                box = {
                         "x": _as_float(row.get("x")),
                         "y": _as_float(row.get("y")),
                         "z": _as_float(row.get("z")),
@@ -798,7 +832,11 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
                         "pair_dt_sec": None if row.get("pair_dt_sec") is None else _as_float(row.get("pair_dt_sec")),
                         "run": run_label,
                     }
-                )
+                # §8: attach base_link footprint polygon when present (analyzer >=0.2.0).
+                footprint_base_link = _row_footprint_base_link(row)
+                if footprint_base_link:
+                    box["footprint"] = footprint_base_link
+                boxes.append(box)
             out_frames.append({"frame": int(float(frame_index)), "boxes": boxes})
     return {
         "frames": out_frames,

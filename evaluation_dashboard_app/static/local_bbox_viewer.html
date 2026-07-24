@@ -1646,7 +1646,52 @@
       ctx.fillStyle = "#f8fafc";
       ctx.fillText(text, x, y);
     }
+    function drawFootprintPolygon(b, rank, total) {
+      // §8: render base_link footprint vertices as an extruded polygon prism.
+      const color = boxColor(b);
+      const selected = state.selected && sameObject(state.selected, b);
+      const opacity = Math.max(0.2, Math.min(1, Number(els.boxOpacity.value || 0.9)));
+      const zBase = b.z || 0;
+      const zTop = zBase + Math.max(0.4, Number(b.height || 1.2));
+      const baseP = b.footprint.map(pt => project([Number(pt[0]) || 0, Number(pt[1]) || 0, zBase]));
+      const topP = b.footprint.map(pt => project([Number(pt[0]) || 0, Number(pt[1]) || 0, zTop]));
+      const rgb = hexToRgb(color);
+      ctx.save();
+      ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(b.status === "FN" ? 0.05 : 0.14) * opacity})`;
+      for (const face of [baseP, topP]) {
+        ctx.beginPath();
+        ctx.moveTo(face[0][0], face[0][1]);
+        for (let i = 1; i < face.length; i++) ctx.lineTo(face[i][0], face[i][1]);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.strokeStyle = selected ? "#ffffff" : color;
+      ctx.lineWidth = selected ? 3.2 : (b.source === "GT" ? 1.35 : 2.1);
+      ctx.globalAlpha = (b.source === "GT" ? .76 : .92) * opacity;
+      for (const face of [baseP, topP]) {
+        ctx.beginPath();
+        ctx.moveTo(face[0][0], face[0][1]);
+        for (let i = 1; i < face.length; i++) ctx.lineTo(face[i][0], face[i][1]);
+        ctx.closePath();
+        ctx.stroke();
+      }
+      for (let i = 0; i < baseP.length; i++) {
+        ctx.beginPath();
+        ctx.moveTo(baseP[i][0], baseP[i][1]);
+        ctx.lineTo(topP[i][0], topP[i][1]);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      drawVelocity(b);
+      drawErrorGlyph(b);
+      drawLabel(b, topP, color, rank, total);
+    }
     function drawPointObject(b, rank, total) {
+      if (Array.isArray(b.footprint) && b.footprint.length >= 3) {
+        drawFootprintPolygon(b, rank, total);
+        return;
+      }
       const color = boxColor(b);
       const selected = state.selected && sameObject(state.selected, b);
       const opacity = Math.max(0.2, Math.min(1, Number(els.boxOpacity.value || 0.9)));

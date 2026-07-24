@@ -41,6 +41,29 @@ from lib.ui.detection_stats import (
 )
 
 # Perception diff: unified improved/degraded palette (Hierarchical view + Comparison lens)
+# Skip the first/last few frames per dataset so Detection Stats matches the spec-sheet metrics
+# (perception systems may not be fully initialized at the boundaries). Mirrors
+# perception_catalog_analyzer.dataframe.operations.filter_lf. Values come from the library so
+# the dashboard stays in lock-step with whichever analyzer version is installed. The pinned
+# analyzer commit is 0.2.0 + skip-last-frame (#158), so SKIP_LAST_N_FRAMES is expected to be 1;
+# it falls back to 0 only for older/local analyzer checkouts that do not expose the constant.
+try:
+    from perception_catalog_analyzer.constants import (
+        SKIP_FIRST_N_FRAMES as _SKIP_FIRST_N_FRAMES,
+    )
+except Exception:  # pragma: no cover - library optional / older versions
+    _SKIP_FIRST_N_FRAMES = 3
+try:
+    from perception_catalog_analyzer.constants import (
+        SKIP_LAST_N_FRAMES as _SKIP_LAST_N_FRAMES,
+    )
+except Exception:  # pragma: no cover - older analyzer checkouts
+    _SKIP_LAST_N_FRAMES = 0
+SKIP_FIRST_N_FRAMES = int(_SKIP_FIRST_N_FRAMES or 0)
+SKIP_LAST_N_FRAMES = int(_SKIP_LAST_N_FRAMES or 0)
+# Bump when the eval_flat SQL changes so stale caches are rebuilt.
+_DS_EVAL_FLAT_CACHE_VERSION = "skipframe1_poly1"
+
 IMPROVED_COLOR = "#1a9850"
 DEGRADED_COLOR = "#d73027"
 IMPROVED_SCALE = [[0.0, "#f7fcf5"], [1.0, IMPROVED_COLOR]]
@@ -742,18 +765,106 @@ def _is_detection_stats_eval_flat_cache(path: str) -> bool:
     return p.suffix == ".parquet" and p.name.endswith("_eval_flat.parquet")
 
 
-def create_view_eval_flat(con, target_file: str, view_name: str = "view_eval_flat"):
+def create_view_eval_flat(
+    con,
+    target_file: str,
+    view_name: str = "view_eval_flat",
+    *,
+    exclude_polygons: bool = False,
+):
     """Create view_eval_flat with distance bins."""
     safe_target = target_file.replace("'", "''")
     if _is_detection_stats_eval_flat_cache(target_file):
+        # Cache already had the skip-frame filter applied when it was materialized.
         query = f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM parquet_scan('{safe_target}')"
     else:
-        query = f"CREATE OR REPLACE VIEW {view_name} AS {eval_flat_select_sql(target_file)}"
+        cols = set(get_parquet_columns(con, target_file))
+        query = (
+            f"CREATE OR REPLACE VIEW {view_name} AS "
+            + eval_flat_select_sql(
+                target_file,
+                has_frame_index="frame_index" in cols,
+                has_t4dataset_id="t4dataset_id" in cols,
+                exclude_polygons=exclude_polygons,
+            )
+        )
     con.execute(query)
 
 
-def eval_flat_select_sql(target_file: str) -> str:
+def eval_flat_select_sql(
+    target_file: str,
+    *,
+    has_frame_index: bool = False,
+    has_t4dataset_id: bool = False,
+    exclude_polygons: bool = False,
+) -> str:
     safe_target = target_file.replace("'", "''")
+
+    # Skip-frame filter mirrors perception_catalog_analyzer.dataframe.operations.filter_lf:
+    # drop the first SKIP_FIRST_N_FRAMES frames, and (when enabled) the last SKIP_LAST_N_FRAMES
+    # frames per t4dataset_id. Only applied when the source parquet exposes the needed columns.
+    skip_first_pred = ""
+    if has_frame_index and SKIP_FIRST_N_FRAMES > 0:
+        skip_first_pred = (
+            f"\n          AND TRY_CAST(frame_index AS BIGINT) >= {SKIP_FIRST_N_FRAMES}"
+        )
+    use_skip_last = has_frame_index and has_t4dataset_id and SKIP_LAST_N_FRAMES > 0
+    max_frame_col = (
+        "\n            , MAX(TRY_CAST(frame_index AS BIGINT)) OVER (PARTITION BY t4dataset_id) AS _max_frame"
+        if use_skip_last
+        else ""
+    )
+    final_star = "bse.* EXCLUDE (_max_frame)" if use_skip_last else "bse.*"
+    skip_last_where = (
+        f"\n    WHERE bse._max_frame IS NULL OR TRY_CAST(bse.frame_index AS BIGINT) <= bse._max_frame - {SKIP_LAST_N_FRAMES}"
+        if use_skip_last
+        else ""
+    )
+
+    source_cte = "src"
+    polygon_exclusion_ctes = ""
+    if exclude_polygons:
+        clear_cols = (
+            "x_error",
+            "y_error",
+            "yaw_error",
+            "speed_error",
+            "plane_distance",
+            "pair_dt_sec",
+            "pair_uuid",
+        )
+        clear_exprs = ",\n            ".join(
+            f"CASE WHEN _poly_matched AND source = 'GT' THEN NULL ELSE {col} END AS {col}"
+            for col in clear_cols
+        )
+        polygon_exclusion_ctes = f""",
+    poly_matched_gt AS (
+        SELECT DISTINCT frame_index, CAST(pair_uuid AS VARCHAR) AS uuid
+        FROM src
+        WHERE source = 'EST'
+          AND LOWER(COALESCE(CAST(shape_type AS VARCHAR), '')) = 'polygon'
+          AND status = 'TP'
+          AND pair_uuid IS NOT NULL
+    ),
+    polygon_adjusted AS (
+        SELECT * EXCLUDE (_poly_matched) REPLACE (
+            CASE WHEN _poly_matched AND source = 'GT' AND status = 'TP' THEN 'FN' ELSE status END AS status,
+            {clear_exprs}
+        )
+        FROM (
+            SELECT src.*, COALESCE(poly_matched_gt.uuid IS NOT NULL, FALSE) AS _poly_matched
+            FROM src
+            LEFT JOIN poly_matched_gt
+              ON src.frame_index = poly_matched_gt.frame_index
+             AND CAST(src.uuid AS VARCHAR) = poly_matched_gt.uuid
+        ) joined
+        WHERE NOT (
+            source = 'EST'
+            AND LOWER(COALESCE(CAST(shape_type AS VARCHAR), '')) = 'polygon'
+        )
+    )"""
+        source_cte = "polygon_adjusted"
+
     return f"""
     WITH src AS (
         SELECT * FROM parquet_scan('{safe_target}')
@@ -761,15 +872,25 @@ def eval_flat_select_sql(target_file: str) -> str:
         SELECT CAST(NULL AS VARCHAR) AS visibility,
                CAST(NULL AS VARCHAR) AS suite_name,
                CAST(NULL AS VARCHAR) AS scenario_name,
-               CAST(NULL AS VARCHAR) AS t4dataset_name
+               CAST(NULL AS VARCHAR) AS t4dataset_name,
+               CAST(NULL AS VARCHAR) AS shape_type,
+               CAST(NULL AS VARCHAR) AS uuid,
+               CAST(NULL AS VARCHAR) AS pair_uuid,
+               CAST(NULL AS BIGINT) AS frame_index,
+               CAST(NULL AS DOUBLE) AS x_error,
+               CAST(NULL AS DOUBLE) AS y_error,
+               CAST(NULL AS DOUBLE) AS yaw_error,
+               CAST(NULL AS DOUBLE) AS speed_error,
+               CAST(NULL AS DOUBLE) AS plane_distance,
+               CAST(NULL AS DOUBLE) AS pair_dt_sec
         WHERE FALSE
-    ),
+    ){polygon_exclusion_ctes},
     base AS (
         SELECT
             * REPLACE (coalesce(CAST(visibility AS VARCHAR), 'not available') AS visibility),
-            sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h
-        FROM src
-        WHERE x IS NOT NULL AND y IS NOT NULL
+            sqrt(CAST(x AS DOUBLE)*CAST(x AS DOUBLE) + CAST(y AS DOUBLE)*CAST(y AS DOUBLE)) AS dist_h{max_frame_col}
+        FROM {source_cte}
+        WHERE x IS NOT NULL AND y IS NOT NULL{skip_first_pred}
     ),
     bins AS (
         SELECT * FROM (
@@ -793,7 +914,7 @@ def eval_flat_select_sql(target_file: str) -> str:
         ) AS t(bin_start, bin_end, distance_bin, bin_idx)
     )
     SELECT
-        bse.*,
+        {final_star},
         b.distance_bin,
         b.bin_idx,
         (status = 'TP') AS is_tp,
@@ -801,7 +922,7 @@ def eval_flat_select_sql(target_file: str) -> str:
         (status = 'FN') AS is_fn
     FROM base bse
     JOIN bins b
-        ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end
+        ON bse.dist_h >= b.bin_start AND bse.dist_h < b.bin_end{skip_last_where}
     """
 
 
@@ -813,9 +934,13 @@ def _ds_cache_key_for_source(source_path: str) -> str:
     return hashlib.sha1(source_path.encode("utf-8")).hexdigest()[:12]
 
 
-def _ds_cache_path_for_source(run_path: Path, source_path: str) -> Path:
+def _ds_cache_path_for_source(run_path: Path, source_path: str, *, exclude_polygons: bool = False) -> Path:
     src = Path(source_path)
-    return _ds_cache_dir_for_run(run_path) / f"{src.stem}_{_ds_cache_key_for_source(source_path)}_eval_flat.parquet"
+    mode = "exclude_polygons" if exclude_polygons else "all_objects"
+    return (
+        _ds_cache_dir_for_run(run_path)
+        / f"{src.stem}_{_ds_cache_key_for_source(source_path)}_{mode}_{_DS_EVAL_FLAT_CACHE_VERSION}_eval_flat.parquet"
+    )
 
 
 def _ensure_detection_stats_eval_flat_cache(
@@ -823,6 +948,7 @@ def _ensure_detection_stats_eval_flat_cache(
     *,
     run_path: Path,
     source_path: str,
+    exclude_polygons: bool = False,
 ) -> tuple[str, bool]:
     """
     Ensure a materialized eval_flat parquet exists for this source parquet.
@@ -830,7 +956,7 @@ def _ensure_detection_stats_eval_flat_cache(
     """
     cache_dir = _ds_cache_dir_for_run(run_path)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = _ds_cache_path_for_source(run_path, source_path)
+    cache_path = _ds_cache_path_for_source(run_path, source_path, exclude_polygons=exclude_polygons)
     source_stat = Path(source_path).stat()
     needs_rebuild = (
         not cache_path.exists()
@@ -838,7 +964,10 @@ def _ensure_detection_stats_eval_flat_cache(
     )
     if needs_rebuild:
         safe_out = str(cache_path).replace("'", "''")
-        con.execute(f"COPY ({eval_flat_select_sql(source_path)}) TO '{safe_out}' (FORMAT PARQUET)")
+        cols = set(get_parquet_columns(con, source_path))
+        con.execute(
+            f"COPY ({eval_flat_select_sql(source_path, has_frame_index='frame_index' in cols, has_t4dataset_id='t4dataset_id' in cols, exclude_polygons=exclude_polygons)}) TO '{safe_out}' (FORMAT PARQUET)"
+        )
     return str(cache_path), needs_rebuild
 
 # Per-(dataset, topic, label, bin, visibility, suite) aggregates — shared by distance-bin rate queries.
@@ -3333,10 +3462,19 @@ with st.sidebar:
                 key=file_key
             )
             target_files.append(tf)
+    exclude_polygons_for_metrics = st.checkbox(
+        "Exclude polygons",
+        value=False,
+        key="ds_exclude_polygons_for_metrics",
+        help=(
+            "Drop estimated polygon objects before aggregating Detection Stats. "
+            "Matched GT true positives become false negatives, mirroring perception_catalog_analyzer."
+        ),
+    )
 
 target_file = target_files[0] if target_files else None
 con = get_duckdb_connection()
-fp = _parquet_selection_fingerprint(target_files)
+fp = _parquet_selection_fingerprint(target_files) + (("__exclude_polygons__", float(int(exclude_polygons_for_metrics))),)
 cache_hit = st.session_state.get("_ds_parquet_fp") == fp and "_ds_filter_opts" in st.session_state
 selected_run_paths = [Path(r["path"]) for r in runs]
 cached_target_files = list(target_files)
@@ -3365,6 +3503,7 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
                 con,
                 run_path=run_path,
                 source_path=path,
+                exclude_polygons=exclude_polygons_for_metrics,
             )
             cached_target_files[i] = cached_path
             if rebuilt:
@@ -3375,7 +3514,7 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
         try:
             for i, path in enumerate(cached_target_files):
                 v_flat = "view_eval_flat" if i == 0 else f"view_eval_flat_{i}"
-                create_view_eval_flat(con, path, v_flat)
+                create_view_eval_flat(con, path, v_flat, exclude_polygons=exclude_polygons_for_metrics)
         except Exception as e:
             st.error(f"Error creating views: {e}")
             st.stop()
@@ -3444,7 +3583,7 @@ with ds_dtimer("duckdb_validate_views_list_values_or_cache", st.session_state):
         per_run_topics = [set(t) for t in opts.get("per_run_topics", [])]
         for i, path in enumerate(cached_target_files):
             v_flat = "view_eval_flat" if i == 0 else f"view_eval_flat_{i}"
-            create_view_eval_flat(con, path, v_flat)
+            create_view_eval_flat(con, path, v_flat, exclude_polygons=exclude_polygons_for_metrics)
 
 ds_debug_log_memory("after_duckdb_validate_views")
 

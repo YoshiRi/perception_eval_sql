@@ -394,7 +394,7 @@ def _make_default_release_metadata_text(target_name: str) -> str:
         "tags: [trend]\n"
         f"release_group: {release_group}\n"
         f'pilot_auto_version: "{pilot_auto_version}"\n'
-        f"version_abbr: {_safe_output_part(pilot_auto_version.replace('Pilot.Auto', '').strip(), 'release')[:16]}\n"
+        f"pilot_auto_version_abbr: {_safe_output_part(pilot_auto_version.replace('Pilot.Auto', '').strip(), 'release')[:16]}\n"
         "data_count: 99,776+\n"
         f"description: {description}\n"
         f"date: {date}\n"
@@ -2642,6 +2642,17 @@ def _render_start_workflow_form(
 
         with tag_col:
             is_tag = st.checkbox("Target is tag", value=False, key="workflow_is_tag")
+            # §6: drop estimated polygon objects so spec-sheet metrics reflect only
+            # planning-relevant objects (analyzer >=0.2.0 SceneDataFrame.from_dir).
+            is_exclude_polygons = st.checkbox(
+                "Exclude polygons (spec-sheet)",
+                value=False,
+                key="workflow_is_exclude_polygons",
+                help=(
+                    "Drop estimated polygon objects when computing spec-sheet metrics. "
+                    "Requires perception_catalog_analyzer >= 0.2.0."
+                ),
+            )
 
     if workflow_kind == _WORKFLOW_KIND_TLR:
         download_type = _TLR_DOWNLOAD_TYPE
@@ -2713,6 +2724,7 @@ def _render_start_workflow_form(
             "resolved_output": str(resolved_output) if resolved_output else "",
             "environment": environment,
             "is_tag": is_tag,
+            "is_exclude_polygons": bool(is_exclude_polygons) if release_mode else False,
             "download_type": download_type,
             "phase": phase,
             "poll_interval": int(poll_interval),
@@ -2842,6 +2854,7 @@ def _render_workflow_launcher_section(
                             "output_path": dialog_payload["resolved_output"],
                             "environment": dialog_payload["environment"],
                             "is_tag": dialog_payload["is_tag"],
+                            "is_exclude_polygons": dialog_payload.get("is_exclude_polygons", False),
                             "poll_interval": dialog_payload["poll_interval"],
                             "max_wait_seconds": dialog_payload["max_wait_hours"] * 3600,
                             "trend_metadata": trend_metadata,

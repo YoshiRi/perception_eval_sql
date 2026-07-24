@@ -6,6 +6,7 @@ import html
 import math
 import base64
 import struct
+import ast
 from urllib.parse import urlencode
 from typing import TYPE_CHECKING
 
@@ -59,6 +60,8 @@ _BINARY_BOX_STRUCT = struct.Struct("<" + ("f" * _BINARY_BOX_FLOAT_COUNT) + ("I" 
 _BINARY_FRAME_STRUCT = struct.Struct("<iIIIIII")
 _BINARY_PAIR_STRUCT = struct.Struct("<III")
 _BINARY_HEADER_STRUCT = struct.Struct("<8sIIIII")
+_BINARY_FOOTPRINT_COUNT_STRUCT = struct.Struct("<I")
+_BINARY_FOOTPRINT_POINT_STRUCT = struct.Struct("<fff")
 
 _VEHICLE_LABELS = {"car", "truck", "bus", "trailer"}
 _EXTERNAL_EVAL_TO_T4_YAW_OFFSET = 0.0
@@ -89,6 +92,42 @@ def _as_text(value: object, default: str = "") -> str:
     if _is_missing(value):
         return default
     return str(value)
+
+
+def _as_footprint_vertices(value: object) -> list[list[float]] | None:
+    """Return base_link footprint vertices as [[x, y, z], ...], or None."""
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    raw = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            raw = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            return None
+    if hasattr(raw, "tolist"):
+        raw = raw.tolist()
+    if not isinstance(raw, (list, tuple)):
+        return None
+    vertices: list[list[float]] = []
+    for pt in raw:
+        if hasattr(pt, "tolist"):
+            pt = pt.tolist()
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            return None
+        x = _as_float(pt[0], float("nan"))
+        y = _as_float(pt[1], float("nan"))
+        z = _as_float(pt[2], 0.0) if len(pt) >= 3 else 0.0
+        if not all(math.isfinite(v) for v in (x, y, z)):
+            return None
+        vertices.append([x, y, z])
+    if len(vertices) < 3:
+        return None
+    return vertices
 
 
 def resolve_t4_dataset_id(dff: "pd.DataFrame") -> str:
@@ -331,6 +370,10 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
                     if is_invalid_polygon_marker and field == "shape_type":
                         continue
                     box[field] = _as_text(value)
+        if "footprint" in row.index:
+            footprint = _as_footprint_vertices(row.get("footprint"))
+            if footprint is not None:
+                box["footprint"] = footprint
         return box
 
     gt_df = _dedupe_eval_rows(df_frame[df_frame["source"] == "GT"].copy())
@@ -442,7 +485,7 @@ def _pack_three_layer_payload_binary(layer_payload: dict) -> tuple[bytes, dict]:
     ]
 
     frame_rows: list[tuple[int, int, int, int, int, int, int]] = []
-    box_rows: list[tuple[list[float], list[int], int]] = []
+    box_rows: list[tuple[list[float], list[int], int, list[list[float]] | None]] = []
     pair_rows: list[tuple[int, int, int]] = []
     gt_total = 0
     pred_total = 0
@@ -462,7 +505,7 @@ def _pack_three_layer_payload_binary(layer_payload: dict) -> tuple[bytes, dict]:
             floats.extend([float("nan")] * 24)
         text_ids = [sid(box.get(field)) for field in _BINARY_TEXT_FIELDS]
         force_wireframe = 1 if box.get("force_wireframe") is True else 0
-        box_rows.append((floats, text_ids, force_wireframe))
+        box_rows.append((floats, text_ids, force_wireframe, _as_footprint_vertices(box.get("footprint"))))
 
     def frame_sort_key(item: tuple[str, dict]) -> int:
         try:
@@ -523,10 +566,20 @@ def _pack_three_layer_payload_binary(layer_payload: dict) -> tuple[bytes, dict]:
         parts.append(struct.pack("<I", run_id))
     for row in frame_rows:
         parts.append(_BINARY_FRAME_STRUCT.pack(*row))
-    for floats, text_ids, force_wireframe in box_rows:
+    for floats, text_ids, force_wireframe, _footprint in box_rows:
         parts.append(_BINARY_BOX_STRUCT.pack(*floats, *text_ids, force_wireframe))
     for row in pair_rows:
         parts.append(_BINARY_PAIR_STRUCT.pack(*row))
+    footprint_point_count = 0
+    footprint_box_count = 0
+    for _floats, _text_ids, _force_wireframe, footprint in box_rows:
+        vertices = footprint or []
+        if vertices:
+            footprint_box_count += 1
+        footprint_point_count += len(vertices)
+        parts.append(_BINARY_FOOTPRINT_COUNT_STRUCT.pack(len(vertices)))
+        for x, y, z in vertices:
+            parts.append(_BINARY_FOOTPRINT_POINT_STRUCT.pack(x, y, z))
     blob = b"".join(parts)
     frame_indexes = [row[0] for row in frame_rows]
     stats = {
@@ -546,6 +599,8 @@ def _pack_three_layer_payload_binary(layer_payload: dict) -> tuple[bytes, dict]:
         "box_row_bytes": _BINARY_BOX_STRUCT.size,
         "frame_row_bytes": _BINARY_FRAME_STRUCT.size,
         "pair_row_bytes": _BINARY_PAIR_STRUCT.size,
+        "footprint_box_count": footprint_box_count,
+        "footprint_point_count": footprint_point_count,
         "float_fields_per_box": _BINARY_BOX_FLOAT_COUNT,
         "text_id_fields_per_box": _BINARY_BOX_TEXT_COUNT,
         "numeric_fields": list(_BINARY_CORE_FLOAT_FIELDS + _OPTIONAL_NUMERIC_FIELDS),

@@ -54,6 +54,7 @@ USECASE_PLANNING_EVALUATION_HEADERS = {"ユースケース評価", "ユースケ
 USECASE_DEVOPS_EVALUATION_HEADER = "ユースケース(過去課題)評価"
 DEFAULT_TREND_METADATA_TEXT = """tags: [trend]
 pilot_auto_version: "Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)"
+pilot_auto_version_abbr: p430-c231
 data_count: 99,776+
 description: データの追加
 date: 2025.11.7
@@ -435,28 +436,33 @@ def parse_trend_metadata_text(text: str) -> dict[str, Any]:
         "description": description,
         "date": date,
     }
-    for optional_key in ("release_group", "topic_name", "version_abbr"):
+    for optional_key in ("release_group", "topic_name"):
         optional_value = str(raw.get(optional_key) or "").strip()
         if optional_value:
             parsed[optional_key] = optional_value
+    # Version abbreviation: accept either key on input, always persist the library key
+    # (pilot_auto_version_abbr) so the file works with both the dashboard and the library.
+    version_abbr = str(
+        raw.get("pilot_auto_version_abbr") or raw.get("version_abbr") or ""
+    ).strip()
+    if version_abbr:
+        parsed["pilot_auto_version_abbr"] = version_abbr
     return parsed
 
 
 def _trend_version_abbr(metadata: dict[str, Any]) -> str:
-    explicit = str(metadata.get("version_abbr") or "").strip()
+    # Prefer the library's key (pilot_auto_version_abbr); fall back to the legacy dashboard
+    # key (version_abbr) for metadata files not yet migrated (see §4 migration script).
+    explicit = str(
+        metadata.get("pilot_auto_version_abbr") or metadata.get("version_abbr") or ""
+    ).strip()
     if explicit:
         return explicit
     version = str(metadata.get("pilot_auto_version") or "").strip()
     if not version:
         return ""
-    try:
-        from perception_catalog_analyzer.trend import _abbreviate_version
-
-        abbreviated = str(_abbreviate_version(version) or "").strip()
-        if abbreviated:
-            return abbreviated
-    except Exception:
-        pass
+    # v0.2.0 removed perception_catalog_analyzer.trend._abbreviate_version; derive a short
+    # label locally by stripping the "Pilot.Auto " prefix.
     shortened = _PILOT_AUTO_PREFIX_PATTERN.sub("", version).strip() or version
     return shortened[:16]
 
@@ -1107,6 +1113,32 @@ def _extract_full_metric_tables(summary: dict[str, Any]) -> list[dict[str, Any]]
     return _deduplicate_summary_tables(data_list)
 
 
+def _extract_usecase_metric_tables(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    data_list: list[dict[str, Any]] = []
+    blocks = summary.get("blocks", [])
+    if not isinstance(blocks, list):
+        return data_list
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("header") not in USECASE_PLANNING_EVALUATION_HEADERS:
+            continue
+        if block.get("mode") not in (None, "metrics"):
+            continue
+        if block.get("evaluation_type") not in (None, "usecase", "usecase_planning"):
+            continue
+        block_tables = block.get("tables", [])
+        if not isinstance(block_tables, list):
+            continue
+        for tables in block_tables:
+            if not isinstance(tables, dict):
+                continue
+            table_data = tables.get("data", {})
+            if isinstance(table_data, dict) and table_data:
+                data_list.append(table_data)
+    return _deduplicate_summary_tables(data_list)
+
+
 def _load_only_full_summary(summary_path: Path) -> list[dict[str, Any]]:
     summary = load_trend_summary_file(summary_path)
     return _extract_full_metric_tables(summary)
@@ -1134,13 +1166,19 @@ def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[st
 
     if len(data_list) != 1:
         raise ValueError(f"Expected exactly one distinct full summary table, but got {len(data_list)}")
-    metrics = data_list[0]
+    return _average_metric_tables(data_list)
 
+
+def _average_metric_tables(data_list: list[dict[str, Any]]) -> dict[str, float]:
     def _avg(metric_name: str) -> float:
-        values = metrics.get(metric_name, {})
-        if not isinstance(values, dict) or not values:
+        raw_values: list[Any] = []
+        for metrics in data_list:
+            values = metrics.get(metric_name, {})
+            if isinstance(values, dict):
+                raw_values.extend(values.values())
+        if not raw_values:
             return float("nan")
-        numeric = pd.to_numeric(pd.Series(list(values.values())), errors="coerce")
+        numeric = pd.to_numeric(pd.Series(raw_values), errors="coerce")
         return float(numeric.mean())
 
     return {
@@ -1159,6 +1197,14 @@ def extract_performance_metrics_from_summary(summary: dict[str, Any]) -> dict[st
         "minADE@5s": _avg("minADE@5s"),
         "minFDE@5s": _avg("minFDE@5s"),
     }
+
+
+def extract_usecase_metrics_from_summary(summary: dict[str, Any]) -> dict[str, float]:
+    """Return averaged UseCase planning metrics from a usecase summary payload."""
+    data_list = _extract_usecase_metric_tables(summary)
+    if not data_list:
+        return {}
+    return _average_metric_tables(data_list)
 
 
 def _with_unique_trend_version_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1223,7 +1269,7 @@ def extract_devops_case_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
                 rows.append(
                     {
                         "major_category": major_category,
-                        "mid_category": major_category,
+                        "mid_category": mid_category,
                         "minor_category": mid_category,
                         "case_name": mid_category,
                         "passed": passed,
@@ -1382,6 +1428,45 @@ def load_performance_trend_data(metadata_list: Sequence[Path]) -> list[dict[str,
     return _with_unique_trend_version_labels(output)
 
 
+def banded_recall_percent_from_summary(summary: Any) -> dict[str, float]:
+    """Return ``{distance_band: recall %}`` from a summary, or ``{}`` when banded recall is
+    absent (all pre-0.2.0 releases).
+
+    Uses perception_catalog_analyzer's own helpers so the band definitions stay in lock-step
+    with the library. Accepts either a summary dict (with a ``blocks`` list) or a raw blocks
+    list. Non-finite values are dropped so callers can treat a non-empty result as "has real
+    banded recall" (see §7 graceful fallback).
+    """
+    try:
+        from perception_catalog_analyzer.trend import recall_by_subsection_from_summary
+        from perception_catalog_analyzer.file_io import (
+            overall_recall_by_band_percent_from_subsections,
+        )
+    except Exception:
+        return {}
+
+    if isinstance(summary, dict):
+        blocks = summary.get("blocks", [])
+    elif isinstance(summary, list):
+        blocks = summary
+    else:
+        blocks = []
+    if not isinstance(blocks, list):
+        return {}
+
+    try:
+        recall_by_subsection = recall_by_subsection_from_summary(blocks)
+        bands = overall_recall_by_band_percent_from_subsections(recall_by_subsection)
+    except Exception:
+        return {}
+
+    return {
+        str(band): float(value)
+        for band, value in (bands or {}).items()
+        if isinstance(value, (int, float)) and value == value  # finite (drop NaN)
+    }
+
+
 def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]]:
     trend_data_rows: list[dict[str, Any]] = []
     for metadata_path in metadata_list:
@@ -1416,6 +1501,8 @@ def load_devops_trend_data(metadata_list: Sequence[Path]) -> list[dict[str, Any]
                 "scenario_count": overall_total,
                 "devops_data": normalized_summary,
                 "usecase_devops_data": normalized_summary,
+                # §7: banded recall when the summary carries it (0.2.0+); {} otherwise.
+                "recall_by_band": banded_recall_percent_from_summary(summary),
             }
         )
 
@@ -1544,7 +1631,12 @@ def _build_trend_context(
             if devops_data:
                 _notify(progress_callback, "Rendering current pass-rate plot")
                 devops_plot_path = output_dir / "usecase_devops.png"
-                generate_devops_plot(devops_data, devops_plot_path)
+                _generate_usecase_devops_plot_compat(
+                    generate_devops_plot,
+                    devops_data=devops_data,
+                    devops_summary_blocks=current_devops_summary,
+                    path=devops_plot_path,
+                )
     if devops_trend_data:
         _notify(progress_callback, "Rendering pass-rate trend plots")
         generate_devops_trend_plot(devops_trend_data, devops_trend_plot_path)
@@ -1570,6 +1662,73 @@ def _build_trend_context(
         "usecase_devops_trend_plot_path": devops_trend_plot_path,
         "job_ids": [],
     }
+
+
+def _generate_usecase_devops_plot_compat(
+    generate_func: Callable[..., None],
+    *,
+    devops_data: dict[str, Any],
+    devops_summary_blocks: Any,
+    path: Path,
+) -> None:
+    """Call ``generate_usecase_devops_plot`` across analyzer versions.
+
+    v0.1.0 signature was ``(data, path)`` where ``data`` is the normalized 大/中/小
+    pass/total tree. v0.2.0 rewrote it to
+    ``(recall_by_subsection, category_mapping, path, *, pass_by_subsection, fp_subcats)``
+    so the plot shows banded recall (and pass-rate only for FP subcategories).
+    """
+    try:
+        parameters = inspect.signature(generate_func).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    if "category_mapping" not in parameters:
+        # Legacy 0.1.0 signature.
+        generate_func(devops_data, path)
+        return
+
+    # New 0.2.0 signature: assemble recall_by_subsection + category_mapping (+ pass_by_subsection)
+    # using the library's own helpers so we don't reimplement its category/recall logic.
+    try:
+        from perception_catalog_analyzer.file_io import load_yaml
+        from perception_catalog_analyzer.trend import recall_by_subsection_from_summary
+
+        try:
+            from perception_catalog_analyzer.constants import USECASE_DEVOPS_MAPPING_PATH
+        except ImportError:  # older layouts exposed it via path
+            from perception_catalog_analyzer.path import (
+                DEVOPS_MAPPING_PATH as USECASE_DEVOPS_MAPPING_PATH,
+            )
+    except ImportError:
+        # Cannot build new-style args; skip the plot rather than crash PDF generation.
+        return
+
+    category_mapping = load_yaml(USECASE_DEVOPS_MAPPING_PATH)
+    try:
+        recall_by_subsection = recall_by_subsection_from_summary(devops_summary_blocks)
+    except Exception:
+        recall_by_subsection = {}
+
+    # Flatten the normalized 大/中/小 pass/total tree to {小: {passed, total}} for FP subcats.
+    pass_by_subsection: dict[str, dict[str, int]] = {}
+    for mid_categories in (devops_data or {}).values():
+        if not isinstance(mid_categories, dict):
+            continue
+        for subcats in mid_categories.values():
+            if not isinstance(subcats, dict):
+                continue
+            for subcat, vals in subcats.items():
+                if isinstance(vals, dict) and {"passed", "total"} <= set(vals):
+                    pass_by_subsection[str(subcat)] = {
+                        "passed": int(vals.get("passed", 0) or 0),
+                        "total": int(vals.get("total", 0) or 0),
+                    }
+
+    kwargs: dict[str, Any] = {}
+    if "pass_by_subsection" in parameters:
+        kwargs["pass_by_subsection"] = pass_by_subsection
+    generate_func(recall_by_subsection, category_mapping, path, **kwargs)
 
 
 def _update_template_compat(
@@ -1678,18 +1837,111 @@ def _patch_template_dataset_paths(
         for key, original_path in originals.items():
             globals_dict[key] = original_path
 
+# Columns that perception_catalog_analyzer >=0.2.0 hardcodes in SceneDataFrame.from_dir
+# (select_columns / topic filter / suite exclude). Older (0.1.0-era) stored parquet may lack
+# them, which makes from_dir raise ColumnNotFound. We backfill them with no-op defaults so old
+# parquet keeps loading: bounding_box is never dropped by the polygon filter and an empty
+# suite_name never matches fp_suite_names(). {col: DuckDB default expression}.
+_SCENE_PARQUET_BACKFILL_DEFAULTS: dict[str, str] = {
+    "pair_uuid": "CAST(NULL AS VARCHAR)",
+    "shape_type": "CAST('bounding_box' AS VARCHAR)",
+    "suite_name": "CAST('' AS VARCHAR)",
+    "scenario_name": "CAST('' AS VARCHAR)",
+}
+
+
+def _backfill_one_scene_parquet(parquet_path: Path, topic_name: str) -> bool:
+    """Add missing analyzer-required columns to a single scene parquet in place.
+
+    Returns True if the file was rewritten. Best-effort: any failure is left to the caller.
+    """
+    import duckdb
+
+    con = duckdb.connect()
+    try:
+        existing = {
+            row[0]
+            for row in con.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?)", [str(parquet_path)]
+            ).fetchall()
+        }
+        additions: list[str] = []
+        for col, default_expr in _SCENE_PARQUET_BACKFILL_DEFAULTS.items():
+            if col not in existing:
+                additions.append(f"{default_expr} AS {col}")
+        # topic_name is a filter column in from_dir; fill with the resolved topic so all rows match.
+        if "topic_name" not in existing:
+            safe_topic = topic_name.replace("'", "''")
+            additions.append(f"CAST('{safe_topic}' AS VARCHAR) AS topic_name")
+        if not additions:
+            return False
+
+        safe_src = str(parquet_path).replace("'", "''")
+        tmp_path = parquet_path.with_name(parquet_path.name + ".backfill.tmp")
+        safe_tmp = str(tmp_path).replace("'", "''")
+        select_cols = "*, " + ", ".join(additions)
+        con.execute(
+            f"COPY (SELECT {select_cols} FROM read_parquet('{safe_src}')) "
+            f"TO '{safe_tmp}' (FORMAT PARQUET)"
+        )
+        os.replace(tmp_path, parquet_path)
+        return True
+    finally:
+        con.close()
+
+
+def _backfill_scene_parquet_columns(
+    run_path: Path,
+    topic_name: str,
+    progress_callback: Callable[[str], None] | None = None,
+) -> None:
+    """Backfill analyzer-required columns on stored current/future parquet (see §5a).
+
+    No-op when the columns are already present (freshly-generated 0.2.0 parquet), so this is
+    safe to call unconditionally before from_dir.
+    """
+    paths = get_specsheet_artifact_paths(run_path)
+    for key in ("current_parquet", "future_parquet"):
+        parquet_path = paths.get(key)
+        if not isinstance(parquet_path, Path) or not parquet_path.exists():
+            continue
+        try:
+            if _backfill_one_scene_parquet(parquet_path, topic_name):
+                _notify(
+                    progress_callback,
+                    f"Backfilled analyzer columns into {parquet_path.name} for 0.2.0 compatibility",
+                )
+        except Exception:
+            # Leave it to from_dir; the CSV fallback in _load_scene_dataframe_for_specsheet
+            # still covers genuinely incompatible files.
+            pass
+
+
 def _scene_dataframe_from_dir_compat(
     scene_dataframe_cls,
     run_path: Path,
     *,
     topic_name: str,
+    is_exclude_polygons: bool = False,
 ):
-    """Call SceneDataFrame.from_dir across analyzer versions with/without topic."""
+    """Call SceneDataFrame.from_dir across analyzer versions with/without topic.
+
+    ``is_exclude_polygons`` is forwarded only when from_dir accepts it (analyzer >=0.2.0);
+    older versions ignore it.
+    """
     from_dir = scene_dataframe_cls.from_dir
     try:
         parameters = inspect.signature(from_dir).parameters
     except (TypeError, ValueError):
         parameters = {}
+
+    accepts_varargs = any(
+        param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for param in parameters.values()
+    )
+    extra_kwargs: dict[str, Any] = {}
+    if is_exclude_polygons and ("is_exclude_polygons" in parameters or accepts_varargs):
+        extra_kwargs["is_exclude_polygons"] = True
 
     required_parameters = [
         param
@@ -1701,14 +1953,10 @@ def _scene_dataframe_from_dir_compat(
         )
         and param.default is inspect.Parameter.empty
     ]
-    accepts_varargs = any(
-        param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-        for param in parameters.values()
-    )
 
     if accepts_varargs or len(required_parameters) >= 2:
-        return from_dir(run_path, topic_name)
-    return from_dir(run_path)
+        return from_dir(run_path, topic_name, **extra_kwargs)
+    return from_dir(run_path, **extra_kwargs)
 
 
 def _load_scene_dataframe_for_specsheet(
@@ -1716,13 +1964,17 @@ def _load_scene_dataframe_for_specsheet(
     run_path: Path,
     *,
     topic_name: str,
+    is_exclude_polygons: bool = False,
     progress_callback: Callable[[str], None] | None = None,
 ):
+    # Ensure stored parquet has the columns analyzer >=0.2.0 requires (§5a). No-op for new data.
+    _backfill_scene_parquet_columns(run_path, topic_name, progress_callback)
     try:
         return _scene_dataframe_from_dir_compat(
             scene_dataframe_cls,
             run_path,
             topic_name=topic_name,
+            is_exclude_polygons=is_exclude_polygons,
         )
     except Exception as exc:
         paths = get_specsheet_artifact_paths(run_path)
@@ -1740,6 +1992,7 @@ def _load_scene_dataframe_for_specsheet(
                 scene_dataframe_cls,
                 run_path,
                 topic_name=topic_name,
+                is_exclude_polygons=is_exclude_polygons,
             )
         except Exception:
             raise exc
@@ -2103,6 +2356,7 @@ def generate_specsheet_pdf(
     trend_metadata: dict[str, Any] | None = None,
     trend_metadata_paths: Sequence[str | Path] | None = None,
     force: bool = False,
+    is_exclude_polygons: bool = False,
     progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[Path, bool]:
     paths = get_specsheet_artifact_paths(run_dir)
@@ -2148,6 +2402,7 @@ def generate_specsheet_pdf(
         SceneDataFrame,
         run_path,
         topic_name=topic_name,
+        is_exclude_polygons=is_exclude_polygons,
         progress_callback=progress_callback,
     )
     df = _coerce_specsheet_scene_numeric_columns(df)

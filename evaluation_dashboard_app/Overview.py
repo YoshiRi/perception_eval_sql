@@ -818,7 +818,9 @@ if _selected_trend_metadata_text:
         _selected_metadata_defaults = {}
 
 def _specsheet_title_version_from_metadata(metadata: dict) -> str:
-    explicit = str(metadata.get("version_abbr") or "").strip()
+    explicit = str(
+        metadata.get("pilot_auto_version_abbr") or metadata.get("version_abbr") or ""
+    ).strip()
     if explicit:
         return explicit
     version = str(metadata.get("pilot_auto_version") or "").strip()

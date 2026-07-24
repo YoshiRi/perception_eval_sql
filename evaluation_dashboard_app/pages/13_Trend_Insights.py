@@ -23,13 +23,30 @@ from lib.specsheet_report import (
     TREND_METADATA_FILENAME,
     TREND_SUMMARY_FILENAME,
     TrendReleaseGroup,
+    banded_recall_percent_from_summary,
     classify_trend_summary,
     discover_trend_release_groups,
     extract_devops_case_rows,
     extract_performance_metrics_from_summary,
+    extract_usecase_metrics_from_summary,
     load_trend_summary_file,
     parse_trend_metadata_text,
 )
+
+# §7: distance bands for UseCase/DevOps recall. Column names on the release frame are
+# f"recall_band_{band}"; populated only when a release's summary carries banded recall so
+# pre-0.2.0 releases fall back to the pass-rate + scalar-recall view.
+try:
+    from perception_catalog_analyzer.constants import (
+        RECALL_DISTANCE_BAND_LABELS as _RECALL_DISTANCE_BAND_LABELS,
+    )
+    RECALL_DISTANCE_BAND_LABELS = list(_RECALL_DISTANCE_BAND_LABELS)
+except Exception:  # pragma: no cover - library optional
+    RECALL_DISTANCE_BAND_LABELS = ["0-20", "20-40", "40-60", "60-"]
+
+
+def _recall_band_column(band: str) -> str:
+    return f"recall_band_{band}"
 
 st.set_page_config(page_title="Trend Insights", layout="wide", initial_sidebar_state="expanded")
 inject_app_page_styles()
@@ -96,6 +113,7 @@ def _infer_history_type_from_metadata(metadata: dict[str, Any], *extra_values: A
         metadata.get("release_group"),
         metadata.get("pilot_auto_version"),
         metadata.get("description"),
+        metadata.get("pilot_auto_version_abbr"),
         metadata.get("version_abbr"),
         *extra_values,
     ]
@@ -130,7 +148,11 @@ def _infer_release_inventory_history_type(release: dict[str, Any]) -> str:
     metadata = {
         **workflow_metadata,
         "pilot_auto_version": workflow_metadata.get("pilot_auto_version") or release.get("pilot_auto_version"),
-        "version_abbr": workflow_metadata.get("version_abbr") or release.get("version_abbr"),
+        "version_abbr": (
+            workflow_metadata.get("pilot_auto_version_abbr")
+            or workflow_metadata.get("version_abbr")
+            or release.get("version_abbr")
+        ),
         "description": workflow_metadata.get("description") or release.get("description"),
         "data_count": workflow_metadata.get("data_count") or release.get("data_count"),
         "date": workflow_metadata.get("date") or release.get("date"),
@@ -1849,7 +1871,12 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
 
     for group in groups:
         primary_metadata = _select_primary_metadata(group)
-        version = str(primary_metadata.get("version_abbr") or primary_metadata.get("pilot_auto_version") or "")
+        version = str(
+            primary_metadata.get("pilot_auto_version_abbr")
+            or primary_metadata.get("version_abbr")
+            or primary_metadata.get("pilot_auto_version")
+            or ""
+        )
         date = str(primary_metadata.get("date") or "")
         description = str(primary_metadata.get("description") or "")
         data_count = str(primary_metadata.get("data_count") or "")
@@ -1915,11 +1942,20 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
                                 }
                             )
 
+        if "usecase" in group.jobs:
+            usecase_summary = group.jobs["usecase"]["summary"]
+            usecase_metrics = extract_usecase_metrics_from_summary(usecase_summary)
+            release_row.update({f"usecase_{key}": value for key, value in usecase_metrics.items()})
+
         if "devops" in group.jobs:
             devops_job = group.jobs["devops"]
             flattened = extract_devops_case_rows(
                 devops_job.get("devops_summary") or devops_job["summary"]
             )
+            # §7: banded recall from the raw summary blocks (0.2.0+); {} for older releases.
+            banded_recall = banded_recall_percent_from_summary(devops_job.get("summary"))
+            for band, pct in banded_recall.items():
+                release_row[_recall_band_column(band)] = pct
             if flattened:
                 total_passed = sum(int(row["passed"]) for row in flattened)
                 total_count = sum(int(row["total"]) for row in flattened)
@@ -2293,6 +2329,83 @@ if not metric_df.empty:
     )
     ordered_release_axes = release_manifest["release_axis"].tolist()
 
+section_header("UseCase Metrics Trend")
+
+usecase_score_cols = ["usecase_recall", "usecase_FNR"]
+usecase_error_cols = ["usecase_x_error", "usecase_y_error", "usecase_yaw_error", "usecase_speed_error"]
+usecase_entries = release_df[release_df["usecase_job_id"].notna()].sort_values(
+    ["date_sort", "version", "release_name"],
+    ascending=[True, True, True],
+)
+available_usecase_score_cols = [col for col in usecase_score_cols if col in usecase_entries.columns]
+available_usecase_error_cols = [col for col in usecase_error_cols if col in usecase_entries.columns]
+if (
+    not usecase_entries.empty
+    and available_usecase_score_cols
+    and usecase_entries[available_usecase_score_cols].notna().any().any()
+):
+    usecase_versions = usecase_entries["version"].drop_duplicates().tolist()
+    usecase_fig = go.Figure()
+    usecase_styles = {
+        "usecase_recall": ("Recall", "#be123c", "solid"),
+        "usecase_FNR": ("FNR", "#7c3aed", "dot"),
+    }
+    for col in available_usecase_score_cols:
+        label, color, dash = usecase_styles.get(col, (col.replace("usecase_", ""), "#334155", "solid"))
+        metric_df_for_line = usecase_entries.dropna(subset=[col])
+        if metric_df_for_line.empty:
+            continue
+        usecase_fig.add_trace(
+            go.Scatter(
+                x=metric_df_for_line["version"],
+                y=metric_df_for_line[col],
+                name=label,
+                mode="lines+markers",
+                line=dict(color=color, width=3, dash=dash),
+                marker=dict(size=8),
+                customdata=metric_df_for_line[["date", "release_name", "data_count", "topic_name"]].to_numpy(),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    + label
+                    + ": %{y:.3f}<br>Date: %{customdata[0]}<br>Release: %{customdata[1]}<br>Data Count: %{customdata[2]}<br>Topic: %{customdata[3]}<extra></extra>"
+                ),
+            )
+        )
+    usecase_fig.update_layout(
+        title="UseCase Recall / FNR",
+        xaxis_title="Pilot.Auto Version",
+        yaxis_title="Score",
+        yaxis=dict(range=[0, 1]),
+        height=420,
+        legend=dict(orientation="h", yanchor="top", y=-0.18, x=0, xanchor="left"),
+        margin=dict(l=20, r=20, t=80, b=100),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+    )
+    usecase_fig.update_xaxes(showgrid=False, categoryorder="array", categoryarray=usecase_versions)
+    usecase_fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
+    st.plotly_chart(usecase_fig, use_container_width=True)
+
+    visible_usecase_cols = [
+        "version",
+        "date",
+        "release_name",
+        "data_count",
+        *available_usecase_score_cols,
+        *available_usecase_error_cols,
+        "usecase_job_id",
+    ]
+    st.dataframe(
+        usecase_entries.sort_values(["date_sort", "version", "release_name"], ascending=[False, False, False])[
+            [col for col in visible_usecase_cols if col in usecase_entries.columns]
+        ],
+        width="stretch",
+        hide_index=True,
+        height=52 + max(1, len(usecase_entries)) * 36,
+    )
+else:
+    st.info("No UseCase metric trend values are available yet.")
+
 section_header("Pass Rate Trend")
 
 pass_entries = release_df[release_df["devops_job_id"].notna()].sort_values(
@@ -2348,6 +2461,44 @@ if not overall_plot_df.empty:
     )
 else:
     st.info("No grouped pass-rate summaries are available yet.")
+
+# §7: banded recall (0.2.0+). Rendered only when at least one release carries banded recall;
+# older releases simply don't contribute, so pass-rate above remains the primary view.
+_recall_band_cols = [
+    _recall_band_column(band)
+    for band in RECALL_DISTANCE_BAND_LABELS
+    if _recall_band_column(band) in pass_entries.columns
+]
+if not pass_entries.empty and _recall_band_cols:
+    _recall_band_df = pass_entries[["pass_axis", "date", "release_name", *_recall_band_cols]].copy()
+    if _recall_band_df[_recall_band_cols].notna().any().any():
+        _recall_fig = go.Figure()
+        for band in RECALL_DISTANCE_BAND_LABELS:
+            col = _recall_band_column(band)
+            if col not in _recall_band_df.columns:
+                continue
+            _recall_fig.add_trace(
+                go.Scatter(
+                    x=_recall_band_df["pass_axis"],
+                    y=_recall_band_df[col],
+                    mode="lines+markers",
+                    name=f"Recall {band}m",
+                    connectgaps=True,
+                )
+            )
+        _recall_fig.update_layout(
+            title="UseCase/DevOps Recall by Distance Band (%)",
+            xaxis_title="Pilot.Auto Version",
+            yaxis_title="Recall (%)",
+            yaxis=dict(range=[0, 100]),
+            legend_title="Distance band",
+        )
+        _recall_fig.update_xaxes(categoryorder="array", categoryarray=ordered_versions)
+        st.plotly_chart(_recall_fig, use_container_width=True)
+        st.caption(
+            "Recall by distance band is shown for releases evaluated with "
+            "perception_catalog_analyzer ≥ 0.2.0. Earlier releases show pass rate only."
+        )
 
 if not major_summary.empty:
     st.plotly_chart(

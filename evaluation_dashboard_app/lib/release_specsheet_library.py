@@ -107,7 +107,10 @@ def publish_static_release_pdf(
 
 
 def _release_version_label(metadata: dict[str, Any]) -> str:
-    version_abbr = str(metadata.get("version_abbr") or "").strip()
+    # Prefer the library key (pilot_auto_version_abbr); fall back to the legacy dashboard key.
+    version_abbr = str(
+        metadata.get("pilot_auto_version_abbr") or metadata.get("version_abbr") or ""
+    ).strip()
     pilot_auto_version = str(metadata.get("pilot_auto_version") or "").strip()
     if version_abbr:
         return version_abbr
@@ -312,7 +315,9 @@ def _build_release_inventory_row(release_dir: Path, *, release_name: str) -> dic
         "source_kind": "imported" if release_dir.name.startswith("release_spec_") else "workflow",
         "version": _release_version_label(metadata),
         "pilot_auto_version": str(metadata.get("pilot_auto_version") or "").strip(),
-        "version_abbr": str(metadata.get("version_abbr") or "").strip(),
+        "version_abbr": str(
+            metadata.get("pilot_auto_version_abbr") or metadata.get("version_abbr") or ""
+        ).strip(),
         "date": metadata.get("date") or "",
         "description": metadata.get("description") or "",
         "data_count": metadata.get("data_count") or "",

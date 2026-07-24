@@ -1614,6 +1614,10 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
 
         release_root = Path(output_path)
         release_root.mkdir(parents=True, exist_ok=True)
+        # Persist the library's version-abbreviation key; carry over the legacy key if that is
+        # all the caller supplied (see §4 metadata standardization).
+        if metadata.get("version_abbr") and not metadata.get("pilot_auto_version_abbr"):
+            metadata = {**metadata, "pilot_auto_version_abbr": metadata["version_abbr"]}
         _write_release_metadata_file(release_root / "metadata.yaml", metadata)
         performance_path = release_root / "performance"
         devops_path = release_root / "devops"
@@ -1905,6 +1909,7 @@ def job_run_release_specsheet_workflow(task_id: str, parameters: Dict[str, Any])
             include_trend=True,
             trend_metadata=metadata,
             force=bool(parameters.get("overwrite", True)),
+            is_exclude_polygons=bool(parameters.get("is_exclude_polygons", False)),
             progress_callback=lambda msg: append_task_log(task_id, f"specsheet: {msg}"),
         )
         from lib.release_specsheet_library import publish_static_release_pdf
