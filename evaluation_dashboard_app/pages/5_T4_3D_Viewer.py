@@ -30,6 +30,11 @@ UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
+from lib.auth import (
+    _read_streamlit_headers,
+    get_access_context,
+    render_signed_in_user,
+)
 from lib.path_utils import path_display
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
@@ -60,67 +65,28 @@ st.set_page_config(
 inject_app_page_styles()
 
 
-def _request_headers() -> dict[str, str]:
-    """Best-effort read of the incoming HTTP request headers (Streamlit 1.37+)."""
-    try:
-        ctx = getattr(st, "context", None)
-        headers = getattr(ctx, "headers", None) if ctx is not None else None
-        if headers is None:
-            return {}
-        # st.context.headers is a read-only, case-insensitive Mapping.
-        return {str(k): str(v) for k, v in headers.items()}
-    except Exception:
-        return {}
-
-
-def _detect_access_origin(headers: dict[str, str]) -> dict[str, Any]:
-    """Classify whether this request arrived via the Cloudflare tunnel or a direct IP hit."""
-    # Case-insensitive lookup.
-    lower = {k.lower(): v for k, v in headers.items()}
-    host = lower.get("host", "")
-    cf_ray = lower.get("cf-ray", "")
-    cf_connecting_ip = lower.get("cf-connecting-ip", "")
-    cf_visitor = lower.get("cf-visitor", "")
-    cdn_loop = lower.get("cdn-loop", "")
-    xff = lower.get("x-forwarded-for", "")
-    xfproto = lower.get("x-forwarded-proto", "")
-    xfhost = lower.get("x-forwarded-host", "")
-
-    via_cloudflare = bool(cf_ray or cf_connecting_ip or "cloudflare" in cdn_loop.lower())
-    return {
-        "origin": "cloudflare_tunnel" if via_cloudflare else "direct_or_other",
-        "host": host,
-        "x_forwarded_host": xfhost,
-        "x_forwarded_proto": xfproto,
-        "x_forwarded_for": xff,
-        "cf_ray": cf_ray,
-        "cf_connecting_ip": cf_connecting_ip,
-        "cf_visitor": cf_visitor,
-        "cdn_loop": cdn_loop,
-    }
-
-
 with st.expander("🔎 Access / request header debug", expanded=False):
-    _hdrs = _request_headers()
+    _hdrs = _read_streamlit_headers()
     if not _hdrs:
         st.info(
             "No request headers available (`st.context.headers` returned empty). "
             "This can happen in some run contexts; try a hard refresh."
         )
     else:
-        _origin = _detect_access_origin(_hdrs)
-        if _origin["origin"] == "cloudflare_tunnel":
+        _access = get_access_context(_hdrs)
+        if _access["is_cloudflare"]:
+            _who = _access.get("user_email") or "(no email header)"
             st.success(
-                f"Accessed via **Cloudflare tunnel** — Host: `{_origin['host']}`, "
-                f"Cf-Ray: `{_origin['cf_ray']}`"
+                f"Accessed via **Cloudflare** as **{_who}** — Host: `{_access['host']}`, "
+                f"Cf-Ray: `{_access['cf_ray']}`"
             )
         else:
             st.warning(
-                f"Accessed **directly / non-Cloudflare** — Host: `{_origin['host']}` "
-                "(no Cf-* headers present)."
+                f"Accessed **directly / non-Cloudflare** — Host: `{_access['host']}` "
+                "(no Cf-* headers present; identity cannot be trusted)."
             )
-        st.markdown("**Origin signals**")
-        st.json(_origin)
+        st.markdown("**Access context**")
+        st.json(_access)
         st.markdown("**All request headers**")
         st.json(_hdrs)
 
@@ -349,6 +315,7 @@ render_page_hero(
 # ----------------------------
 # Sidebar (Filters) — shared keys with Bounding Box Viewer
 # ----------------------------
+render_signed_in_user(sidebar=True)
 with st.sidebar:
     st.markdown("##### Filters")
     st.caption("Same scene / topic / labels as the BEV viewer. Frame / playback: use the **3D viewer** controls.")
