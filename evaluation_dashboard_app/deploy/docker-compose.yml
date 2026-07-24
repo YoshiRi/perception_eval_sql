@@ -218,7 +218,9 @@ services:
 
 secrets:
   ssh:
-    file: ${HOME}/.ssh/id_rsa
+    # Git SSH key for private repo access. Path is machine-specific: defaults to the
+    # invoking user's key, override via SSH_PRIVATE_KEY_FILE in the untracked deploy/.env.
+    file: ${SSH_PRIVATE_KEY_FILE:-${HOME}/.ssh/id_rsa}
 
 volumes:
   pr_git_workspaces:

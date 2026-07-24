@@ -46,7 +46,9 @@ def _read_streamlit_headers() -> Dict[str, str]:
         headers = getattr(ctx, "headers", None) if ctx else None
         if callable(headers):
             headers = headers()
-        if isinstance(headers, dict):
+        # Streamlit 1.37+ returns a StreamlitHeaders mapping (not a dict), so accept
+        # anything with .items() rather than requiring an exact dict instance.
+        if headers is not None and hasattr(headers, "items"):
             normalized: Dict[str, str] = {}
             for key, value in headers.items():
                 if not isinstance(key, str):

@@ -1,0 +1,7 @@
+.cache/
+
+# Real deployment env (secrets / infra values). Create from deploy/.env.example
+# via deploy/01_SETUP_ENV.sh. The template deploy/.env.example stays tracked.
+deploy/.env
+deploy/.env.local
+

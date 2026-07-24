@@ -20,6 +20,10 @@ import requests
 DEFAULT_BASE_URL = "http://localhost:8000"
 ENV_BASE_URL = "T4_VISUALIZER_BASE_URL"
 ENV_BROWSER_BASE_URL = "T4_VISUALIZER_BROWSER_BASE_URL"
+# Browser base URL to use when the dashboard itself is reached through Cloudflare.
+# The browser then cannot use localhost; it must hit the dataset server's public
+# Cloudflare hostname. Configure the value via this env var (kept out of the repo).
+ENV_CLOUDFLARE_BASE_URL = "T4_VISUALIZER_CLOUDFLARE_BASE_URL"
 
 
 class T4VisualizerError(Exception):
@@ -128,6 +132,20 @@ def _default_base_url() -> str:
     return os.environ.get(ENV_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
 
 
+def _dashboard_accessed_via_cloudflare() -> bool:
+    """True if the current Streamlit request arrived through Cloudflare.
+
+    Lazy import keeps this HTTP client free of a hard Streamlit dependency; returns
+    False in any non-Streamlit / header-less context.
+    """
+    try:
+        from lib.auth import detect_access_origin
+
+        return bool(detect_access_origin().get("is_cloudflare"))
+    except Exception:
+        return False
+
+
 def browser_base_url(api_base_url: str | None = None) -> str:
     """Return the T4 URL that the user's browser should open.
 
@@ -136,7 +154,14 @@ def browser_base_url(api_base_url: str | None = None) -> str:
     host cannot resolve that Docker-only hostname. Use
     `T4_VISUALIZER_BROWSER_BASE_URL` for iframe/link URLs; if unset, translate the
     common Docker hostname back to localhost.
+
+    When the dashboard itself is reached through Cloudflare, the browser must instead
+    hit the dataset server's public Cloudflare hostname; if `T4_VISUALIZER_CLOUDFLARE_BASE_URL`
+    is set and the request came via Cloudflare, that URL wins over everything else.
     """
+    cloudflare = os.environ.get(ENV_CLOUDFLARE_BASE_URL, "").strip()
+    if cloudflare and _dashboard_accessed_via_cloudflare():
+        return cloudflare.rstrip("/")
     explicit = os.environ.get(ENV_BROWSER_BASE_URL, "").strip()
     if explicit:
         return explicit.rstrip("/")
