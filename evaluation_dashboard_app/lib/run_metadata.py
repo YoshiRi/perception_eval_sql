@@ -212,6 +212,8 @@ def build_metadata_patch_from_task_row(task_row: Dict[str, Any]) -> Dict[str, An
     params = _as_dict(task_row.get("parameters"))
     summary = _as_dict(task_row.get("result_summary"))
     task_type = str(task_row.get("type") or "").strip()
+    requester = _as_dict(params.get("_requester"))
+    requested_by = str(task_row.get("session_id") or requester.get("id") or "").strip()
     request_output = str(
         params.get("output_path")
         or params.get("output_dir")
@@ -227,7 +229,8 @@ def build_metadata_patch_from_task_row(task_row: Dict[str, Any]) -> Dict[str, An
             "id": str(task_row.get("id") or "").strip(),
             "type": task_type,
             "status": str(task_row.get("status") or "").strip(),
-            "requested_by": str(task_row.get("session_id") or "").strip(),
+            "requested_by": requested_by,
+            "requester": requester,
             "created_at": task_row.get("created_at"),
             "updated_at": task_row.get("updated_at"),
             "result_path": str(task_row.get("result_path") or "").strip(),
@@ -264,6 +267,7 @@ def build_metadata_patch_from_task_row(task_row: Dict[str, Any]) -> Dict[str, An
             "output_path": request_output,
             "parameters": params,
         },
+        "owner": requester or ({"id": requested_by} if requested_by else {}),
         "backfilled_from_task_history": True,
     }
 

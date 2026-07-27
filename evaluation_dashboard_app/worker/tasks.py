@@ -262,11 +262,15 @@ def _resolve_active_integration_id(api: Any, project_id: str, catalog_id: str) -
 
 def _task_row_payload(task_id: str) -> Dict[str, Any]:
     row = get_task(task_id) or {}
+    parameters = row.get("parameters") if isinstance(row.get("parameters"), dict) else {}
+    requester = parameters.get("_requester") if isinstance(parameters.get("_requester"), dict) else {}
+    requested_by = str(row.get("session_id") or requester.get("id") or "").strip()
     return {
         "id": str(row.get("id") or task_id),
         "type": str(row.get("type") or "").strip(),
         "status": str(row.get("status") or "").strip(),
-        "requested_by": str(row.get("session_id") or "").strip(),
+        "requested_by": requested_by,
+        "requester": requester,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "result_path": str(row.get("result_path") or "").strip(),
@@ -316,10 +320,14 @@ def _task_request_payload(parameters: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_run_metadata_patch(task_id: str, parameters: Dict[str, Any], *, task_type: str) -> Dict[str, Any]:
+    task_payload = _task_row_payload(task_id)
+    requester = task_payload.get("requester") if isinstance(task_payload.get("requester"), dict) else {}
+    requested_by = str(task_payload.get("requested_by") or "").strip()
     return {
         "source_mode": task_type,
-        "task": _task_row_payload(task_id),
+        "task": task_payload,
         "request": _task_request_payload(parameters),
+        "owner": requester or ({"id": requested_by} if requested_by else {}),
     }
 
 

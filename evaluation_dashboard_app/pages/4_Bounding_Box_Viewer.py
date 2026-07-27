@@ -95,10 +95,10 @@ for i, r in enumerate(runs):
     _ld_entries.append((_ltitle, path_display(r["path"])))
 render_loaded_data_section(_ld_entries)
 render_page_hero(
-    kicker="Spatial visualization",
+    kicker="Bounding boxes",
     title="Bounding box & BEV viewer",
     description=(
-        "Inspect frames from parquet: camera overlays, bird’s-eye context, and optional multi-run comparison "
+        "Inspect frames from parquet: camera overlays, BEV view, and optional multi-run comparison "
         "when several evaluations are loaded from Overview."
     ),
     mode=mode,

@@ -361,7 +361,7 @@ with st.sidebar.expander("Absolute pass/fail gates", expanded=abs_gates_enabled)
 
 render_page_hero(
     kicker="Criteria-based evaluation",
-    title="Score & pass-rate insight",
+    title="Score & pass-rate",
     description=(
         "Distributions, grouped averages, scenario-level comparisons, and optional absolute gates "
         "for a clear pass/fail sign-off."

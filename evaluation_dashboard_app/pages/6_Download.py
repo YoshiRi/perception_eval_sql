@@ -66,7 +66,7 @@ from lib.db import (
 )
 from lib import download_core
 from lib import evaluator_api
-from lib.auth import get_current_user_id, is_auth_enabled
+from lib.auth import get_current_user_id, get_current_user_identity, is_auth_enabled
 
 try:
     from lib.perception_catalog_io import pkl_archive_to_parquet
@@ -185,7 +185,11 @@ def _enqueue_task(
     """Create task in Postgres and enqueue to RQ. Returns task_id or None on failure.
     job_timeout: RQ max runtime in seconds; when omitted, uses RQ_JOB_TIMEOUT_SEC (default 7 days).
     """
-    session_id = get_current_user_id() if is_auth_enabled() else None
+    identity = get_current_user_identity()
+    session_id = str(identity.get("id") or "").strip() if is_auth_enabled() else None
+    parameters = dict(parameters)
+    if session_id:
+        parameters.setdefault("_requester", identity)
     task_id = create_task(task_type, parameters, session_id=session_id)
     if not task_id:
         return None
@@ -2877,7 +2881,7 @@ with tab1:
 
     # === Combined Download + Eval + Parquet Button ===
     st.divider()
-    st.subheader("🚀 Combined Workflow: Download + Eval + Parquet")
+    st.subheader("🚀 Download + Eval + Parquet")
     st.caption("Download results, run evaluation, and generate parquet in one click. Eval only runs if download succeeds.")
     
     # Options for combined workflow
@@ -3041,7 +3045,7 @@ with tab1:
             
             progress_placeholder.empty()
             status_placeholder.empty()
-            st.success("🎉 Combined workflow complete!")
+            st.success("🎉 Download + Eval + Parquet complete!")
             
             # Show file tree
             with st.expander("📁 File Structure"):

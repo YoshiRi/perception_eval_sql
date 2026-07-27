@@ -132,26 +132,88 @@ def _extract_identity_from_bearer_token(headers: Dict[str, str]) -> Dict[str, An
     }
 
 
+def get_current_user_identity(headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Return the best available request identity.
+
+    Cloudflare Access is used automatically when present. Direct access keeps the
+    legacy behavior: no identity unless AUTH_USER_HEADER/AUTH_DEFAULT_USER is
+    configured by the deployment.
+    """
+    if headers is None:
+        headers = _read_streamlit_headers()
+
+    access = get_access_context(headers)
+    email = str(access.get("user_email") or "").strip()
+    if email:
+        return {
+            "id": email,
+            "email": email,
+            "name": email,
+            "source": "cloudflare_access",
+            "origin": access.get("origin") or "",
+            "is_cloudflare": bool(access.get("is_cloudflare")),
+        }
+
+    if AUTH_USER_HEADER:
+        value = _header_ci(headers, AUTH_USER_HEADER)
+        if value:
+            return {
+                "id": value,
+                "email": value if "@" in value else "",
+                "name": value,
+                "source": f"header:{AUTH_USER_HEADER}",
+                "origin": access.get("origin") or "",
+                "is_cloudflare": bool(access.get("is_cloudflare")),
+            }
+
+    bearer_identity = _extract_identity_from_bearer_token(headers)
+    bearer_id = _first_nonempty_string(
+        bearer_identity.get("email"),
+        bearer_identity.get("username"),
+        bearer_identity.get("subject_id"),
+    )
+    if bearer_id:
+        return {
+            "id": bearer_id,
+            "email": str(bearer_identity.get("email") or "").strip(),
+            "name": str(bearer_identity.get("name") or bearer_id).strip(),
+            "source": "bearer",
+            "origin": access.get("origin") or "",
+            "is_cloudflare": bool(access.get("is_cloudflare")),
+        }
+
+    if AUTH_DEFAULT_USER:
+        return {
+            "id": AUTH_DEFAULT_USER,
+            "email": AUTH_DEFAULT_USER if "@" in AUTH_DEFAULT_USER else "",
+            "name": AUTH_DEFAULT_USER,
+            "source": "default",
+            "origin": access.get("origin") or "",
+            "is_cloudflare": bool(access.get("is_cloudflare")),
+        }
+
+    return {
+        "id": "",
+        "email": "",
+        "name": "",
+        "source": "anonymous",
+        "origin": access.get("origin") or "",
+        "is_cloudflare": bool(access.get("is_cloudflare")),
+    }
+
+
 def get_current_user_id() -> Optional[str]:
-    """
-    Return the current user identifier, or None if auth is not configured.
-    Uses (in order):
-    1. HTTP header named by AUTH_USER_HEADER (when Streamlit is behind an auth proxy / WebAutoAuth).
-    2. AUTH_DEFAULT_USER (for development or when proxy does not set the header).
-    Streamlit 1.37+ provides st.context.headers; on older versions we fall back to AUTH_DEFAULT_USER only.
-    """
-    if not AUTH_USER_HEADER and not AUTH_DEFAULT_USER:
-        return None
-    headers = _read_streamlit_headers()
-    value = headers.get(AUTH_USER_HEADER) or headers.get(AUTH_USER_HEADER.lower())
-    if value and isinstance(value, str) and value.strip():
-        return value.strip()
-    return AUTH_DEFAULT_USER
+    """Return the current user identifier, or None when this request is anonymous."""
+    identity = get_current_user_identity()
+    user_id = str(identity.get("id") or "").strip()
+    return user_id or None
 
 
 def is_auth_enabled() -> bool:
-    """True if AUTH_USER_HEADER or AUTH_DEFAULT_USER is set (per-user task filtering)."""
-    return bool(AUTH_USER_HEADER or AUTH_DEFAULT_USER)
+    """True when this request has an identity that can scope task history."""
+    if AUTH_USER_HEADER or AUTH_DEFAULT_USER:
+        return True
+    return bool(get_current_user_id())
 
 
 def _header_ci(headers: Dict[str, str], name: str) -> str:

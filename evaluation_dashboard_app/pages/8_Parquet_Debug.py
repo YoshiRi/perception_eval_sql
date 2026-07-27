@@ -30,7 +30,7 @@ render_page_hero(
     kicker="Developer tools",
     title="Parquet, PKL & result.json inspector",
     description=(
-        "Peek inside evaluation artifacts: schema, keys, criteria status, and optional plots — "
+        "Inspect evaluation artifacts: schema, keys, criteria status, and optional plots — "
         "for debugging pipeline output without leaving the dashboard."
     ),
     mode="Single Run",

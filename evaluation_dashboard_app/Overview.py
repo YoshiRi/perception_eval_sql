@@ -6,6 +6,7 @@ import zipfile
 import yaml
 from pathlib import Path
 from lib.run_loader import load_run
+from lib.run_metadata import read_run_metadata
 from lib.path_utils import (
     get_data_root,
     get_data_root_display,
@@ -64,6 +65,33 @@ inject_app_page_styles()
 #         icon="🐳",
 #     )
 RUN_ROOT = get_data_root()
+
+
+def _run_owner_label(run_path: Path) -> str:
+    metadata = read_run_metadata(run_path)
+    owner_meta = metadata.get("owner") if isinstance(metadata.get("owner"), dict) else {}
+    task_meta = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+    requester_meta = task_meta.get("requester") if isinstance(task_meta.get("requester"), dict) else {}
+    evaluator_meta = metadata.get("evaluator") if isinstance(metadata.get("evaluator"), dict) else {}
+    label = str(
+        owner_meta.get("name")
+        or owner_meta.get("email")
+        or owner_meta.get("id")
+        or requester_meta.get("name")
+        or requester_meta.get("email")
+        or requester_meta.get("id")
+        or task_meta.get("requested_by")
+        or evaluator_meta.get("scheduled_by")
+        or ""
+    ).strip()
+    return label
+
+
+def _overview_entry_name(run_path: Path) -> str:
+    name = get_run_display_name(run_path)
+    owner = _run_owner_label(run_path)
+    return f"{name} · owner: {owner}" if owner else name
+
 PRODUCT_LABEL_JA = {
     "Occlusion-Case": "遮蔽ケース",
     "False-Positive-Grass": "草誤検知（草停止）",
@@ -308,11 +336,11 @@ if not run_dirs:
     st.stop()
 
 render_page_hero(
-    kicker="Evaluation hub",
+    kicker="Evaluation",
     title="Overview",
     description=(
         "Choose baseline and optional compare runs, filter perception/product labels, and inspect summary metrics. "
-        "Use the sidebar pages for deeper analysis; copy the share link below so teammates open the same view."
+        "Use the sidebar pages for other views; copy the share link below so teammates open the same view."
     ),
     mode=mode,
 )
@@ -451,12 +479,12 @@ else:
         st.session_state.pop(key, None)
 
 # ====== MAIN PAGE METRICS & CHARTS ======
-_ov_entries = [("Baseline · A", get_run_display_name(runA["path"]))]
+_ov_entries = [("Baseline · A", _overview_entry_name(runA["path"]))]
 if mode == "Compare Mode" and compare_run_dirs:
     all_runs = st.session_state["all_runs"]
     run_labels = st.session_state["run_labels"]
     for i in range(1, len(all_runs)):
-        _ov_entries.append((f"Candidate · {run_labels[i]}", get_run_display_name(all_runs[i]["path"])))
+        _ov_entries.append((f"Candidate · {run_labels[i]}", _overview_entry_name(all_runs[i]["path"])))
 render_loaded_data_section(_ov_entries)
 
 if mode == "Compare Mode" and compare_run_dirs:

@@ -72,6 +72,7 @@ from lib.ui.recent_evaluator_jobs import (
 )
 from lib.ui.task_history import get_task_list_current_user, render_task_list
 from lib.ui.styles_download import inject_download_page_styles
+from lib.auth import get_current_user_identity
 from lib.user_config import UserConfig
 
 try:
@@ -286,7 +287,11 @@ def _resolve_integration_id_for_catalog(project_id: str, environment: str, catal
 def _enqueue_task(task_type: str, params: dict) -> Optional[str]:
     task_id = None
     try:
-        session_id = get_task_list_current_user()
+        identity = get_current_user_identity()
+        session_id = str(identity.get("id") or "").strip() or None
+        params = dict(params)
+        if session_id:
+            params.setdefault("_requester", identity)
         task_id = create_task(task_type, params, session_id=session_id)
         if not task_id:
             st.error("Failed to create task row. Check DATABASE_URL and task parameters.")
@@ -667,7 +672,9 @@ def _load_local_runs() -> List[Dict[str, object]]:
     for run_path in list_run_directories():
         info = get_run_info(run_path)
         metadata = read_run_metadata(run_path)
+        owner_meta = metadata.get("owner") if isinstance(metadata.get("owner"), dict) else {}
         task_meta = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+        requester_meta = task_meta.get("requester") if isinstance(task_meta.get("requester"), dict) else {}
         request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
         evaluator_meta = metadata.get("evaluator") if isinstance(metadata.get("evaluator"), dict) else {}
         description = str(
@@ -676,12 +683,20 @@ def _load_local_runs() -> List[Dict[str, object]]:
             or ""
         ).strip()
         requested_by = str(
-            evaluator_meta.get("scheduled_by")
+            owner_meta.get("id")
+            or requester_meta.get("id")
             or task_meta.get("requested_by")
+            or evaluator_meta.get("scheduled_by")
             or ""
         ).strip()
         environment = str(request_meta.get("environment") or "default").strip() or "default"
-        requested_by_label = _run_user_label(requested_by, environment)
+        requested_by_label = str(
+            owner_meta.get("name")
+            or owner_meta.get("email")
+            or requester_meta.get("name")
+            or requester_meta.get("email")
+            or ""
+        ).strip() or _run_user_label(requested_by, environment)
         task_type = str(task_meta.get("type") or metadata.get("source_mode") or "").strip()
         task_status = str(task_meta.get("status") or "").strip()
         evaluator_job_id = str(
@@ -1337,7 +1352,9 @@ def _render_local_run_row(run: Dict[str, object], *, selected: bool) -> bool:
 def _render_local_run_details(run: Dict[str, object]) -> None:
     row_key = _run_row_key(run)
     metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+    owner_meta = metadata.get("owner") if isinstance(metadata.get("owner"), dict) else {}
     task_meta = metadata.get("task") if isinstance(metadata.get("task"), dict) else {}
+    requester_meta = task_meta.get("requester") if isinstance(task_meta.get("requester"), dict) else {}
     request_meta = metadata.get("request") if isinstance(metadata.get("request"), dict) else {}
     evaluator_meta = metadata.get("evaluator") if isinstance(metadata.get("evaluator"), dict) else {}
     download_meta = metadata.get("download") if isinstance(metadata.get("download"), dict) else {}
@@ -1410,14 +1427,20 @@ def _render_local_run_details(run: Dict[str, object]) -> None:
                 or "—"
             )
 
-        requested_by = str(task_meta.get("requested_by") or "").strip()
         requested_by = str(
-            evaluator_meta.get("scheduled_by")
-            or requested_by
+            owner_meta.get("id")
+            or requester_meta.get("id")
+            or task_meta.get("requested_by")
+            or evaluator_meta.get("scheduled_by")
             or ""
         ).strip()
-        requested_by_label = requested_by or "—"
-        requested_by_label = _run_user_label(requested_by, request_environment)
+        requested_by_label = str(
+            owner_meta.get("name")
+            or owner_meta.get("email")
+            or requester_meta.get("name")
+            or requester_meta.get("email")
+            or ""
+        ).strip() or _run_user_label(requested_by, request_environment)
 
         task_cols = st.columns(4)
         task_cols[0].text_input("Requested by", value=requested_by_label, disabled=True, key=f"run_detail_user::{run['name']}")
@@ -3064,9 +3087,9 @@ def _render_pr_test_branch_launcher_section() -> None:
 
 _inject_workflow_page_styles()
 render_page_hero(
-    kicker="Workflow automation",
+    kicker="Evaluator tasks",
     title="Evaluator Workflow",
-    description="Browse finished runs, watch background tasks, launch fresh evaluator pipelines, and reuse existing evaluator reports from one aligned workspace.",
+    description="Browse finished runs, watch background tasks, start evaluator runs, and reuse existing evaluator reports from one page.",
 )
 
 catalog_presets, catalogs_path, catalog_load_error = _load_catalog_presets()

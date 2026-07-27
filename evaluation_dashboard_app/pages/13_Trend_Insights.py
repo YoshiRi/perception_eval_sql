@@ -48,7 +48,7 @@ except Exception:  # pragma: no cover - library optional
 def _recall_band_column(band: str) -> str:
     return f"recall_band_{band}"
 
-st.set_page_config(page_title="Trend Insights", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Release Trends", layout="wide", initial_sidebar_state="expanded")
 inject_app_page_styles()
 
 
@@ -2001,8 +2001,8 @@ def _build_release_frames(groups: list[TrendReleaseGroup]) -> tuple[pd.DataFrame
 
 
 render_page_hero(
-    kicker="Release Analytics",
-    title="Trend Insights",
+    kicker="Release data",
+    title="Release Trends",
     description="Release history and performance trends.",
 )
 
@@ -2015,7 +2015,7 @@ if not groups:
 try:
     release_df, case_df, metric_df = _build_release_frames(groups)
 except Exception as exc:
-    st.error(f"Could not build trend insights: {exc}")
+    st.error(f"Could not build trend data: {exc}")
     st.stop()
 
 if not release_df.empty:

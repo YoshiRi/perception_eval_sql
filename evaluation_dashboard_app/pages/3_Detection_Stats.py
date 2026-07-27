@@ -1101,7 +1101,7 @@ def _analyze_kpi_comparison(baseline: Optional[dict], candidate: Optional[dict],
 
     Provides a verdict and actionable recommendation for all combined scenarios
     (both improve, both degrade, trade-offs, flat).  Does NOT repeat the raw numbers
-    already visible in the KPI cards above — only adds insight.
+    already visible in the KPI cards above — only adds a short summary.
     """
     if baseline is None or candidate is None:
         return '<div class="kpi-analysis kpi-analysis-neutral">ⓘ Insufficient data for comparison analysis — one or both runs have no KPI data.</div>'
@@ -1238,7 +1238,7 @@ def _analyze_kpi_comparison(baseline: Optional[dict], candidate: Optional[dict],
     else:
         recommendation = (
             f"The overall impact is mixed — check per-class and per-distance breakdowns "
-            f"below for more granular insight."
+            f"below for more detailed breakdowns."
         )
 
     # Edge-case notes
@@ -3431,9 +3431,9 @@ for i, r in enumerate(runs):
 render_loaded_data_section(_ld_entries)
 render_page_hero(
     kicker="Object detection",
-    title="Detection evaluation dashboard",
+    title="Detection evaluation",
     description=(
-        "Parquet-driven analytics: filters, hierarchical views, scenario breakdowns, "
+        "Parquet-based charts: filters, hierarchy views, scenario breakdowns, "
         "and multi-run compare when you load several runs from Overview. "
         f"Frames 0-{DETECTION_STATS_SKIP_INITIAL_FRAMES - 1} are excluded from statistics."
     ),

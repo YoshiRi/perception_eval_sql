@@ -33,6 +33,7 @@ from lib.local_evaluator_debug import (
     write_container_file,
 )
 from lib.page_chrome import inject_app_page_styles, render_page_hero, section_header
+from lib.auth import get_current_user_identity
 from lib.ui.task_history import get_task_list_current_user, render_task_list
 
 
@@ -104,7 +105,11 @@ def _render_log_file(path_text: str, *, key_prefix: str) -> None:
 
 def _enqueue(params: Dict[str, object]) -> Optional[str]:
     try:
-        session_id = get_task_list_current_user()
+        identity = get_current_user_identity()
+        session_id = str(identity.get("id") or "").strip() or None
+        params = dict(params)
+        if session_id:
+            params.setdefault("_requester", identity)
         task_id = create_task("local_evaluator_debug", params, session_id=session_id)
         if not task_id:
             return None

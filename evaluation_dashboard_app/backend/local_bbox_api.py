@@ -179,6 +179,50 @@ def _html_response(handler: BaseHTTPRequestHandler, status: int, html_text: str)
     handler.wfile.write(body)
 
 
+_EXPLORER_ASSET_TYPES = {
+    "bbox_explorer.css": "text/css; charset=utf-8",
+    "bbox_api.js": "text/javascript; charset=utf-8",
+    "bbox_state.js": "text/javascript; charset=utf-8",
+    "metrics.js": "text/javascript; charset=utf-8",
+    "preview_renderer.js": "text/javascript; charset=utf-8",
+    "map_renderer.js": "text/javascript; charset=utf-8",
+    "stats_renderer.js": "text/javascript; charset=utf-8",
+    "events.js": "text/javascript; charset=utf-8",
+    "bbox_viewer.css": "text/css; charset=utf-8",
+    "bbox_viewer_api.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_state.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_filters.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_analysis.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_geometry.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_renderer.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_timeline.js": "text/javascript; charset=utf-8",
+    "bbox_viewer_events.js": "text/javascript; charset=utf-8",
+}
+
+
+def _static_asset_response(handler: BaseHTTPRequestHandler, asset_name: str, *, head_only: bool = False) -> bool:
+    content_type = _EXPLORER_ASSET_TYPES.get(asset_name)
+    if not content_type:
+        return False
+    candidates = [
+        Path.cwd() / "static" / asset_name,
+        Path("/app/static") / asset_name,
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        body = b"" if head_only else path.read_bytes()
+        handler.send_response(200)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(path.stat().st_size))
+        handler.send_header("Cache-Control", "no-cache")
+        handler.end_headers()
+        if not head_only:
+            handler.wfile.write(body)
+        return True
+    return False
+
+
 def _viewer_html(api_base: str = "") -> str:
     candidates = [
         Path.cwd() / "static" / "local_bbox_viewer.html",
@@ -548,6 +592,11 @@ def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
     x_error_expr = "TRY_CAST(x_error AS DOUBLE)" if "x_error" in cols else "CAST(NULL AS DOUBLE)"
     y_error_expr = "TRY_CAST(y_error AS DOUBLE)" if "y_error" in cols else "CAST(NULL AS DOUBLE)"
     yaw_error_expr = "TRY_CAST(yaw_error AS DOUBLE)" if "yaw_error" in cols else "CAST(NULL AS DOUBLE)"
+    suite_expr = "COALESCE(NULLIF(CAST(suite_name AS VARCHAR), ''), '')" if "suite_name" in cols else "''"
+    scenario_expr = "COALESCE(NULLIF(CAST(scenario_name AS VARCHAR), ''), '')" if "scenario_name" in cols else "''"
+    dataset_expr = "COALESCE(NULLIF(CAST(t4dataset_name AS VARCHAR), ''), '')" if "t4dataset_name" in cols else "''"
+    dataset_id_expr = "COALESCE(NULLIF(CAST(t4dataset_id AS VARCHAR), ''), '')" if "t4dataset_id" in cols else "''"
+    topic_expr = "COALESCE(NULLIF(CAST(topic_name AS VARCHAR), ''), '')" if "topic_name" in cols else "''"
     base_cte = f"""
         WITH src AS (
             SELECT
@@ -555,7 +604,13 @@ def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
                 SQRT(POWER(TRY_CAST(x AS DOUBLE), 2) + POWER(TRY_CAST(y AS DOUBLE), 2)) AS dist_h,
                 {label_expr} AS label_norm,
                 {source_expr} AS source_norm,
-                {status_expr} AS status_norm
+                {status_expr} AS status_norm,
+                {suite_expr} AS suite_norm,
+                {scenario_expr} AS scenario_norm,
+                {dataset_expr} AS dataset_norm,
+                {dataset_id_expr} AS dataset_id_norm,
+                {topic_expr} AS topic_norm,
+                TRY_CAST(frame_index AS INTEGER) AS frame_norm
             FROM parquet_scan(?)
             WHERE {" AND ".join(where)}
               AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
@@ -587,6 +642,29 @@ def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
             FROM binned
             GROUP BY distance_bin, bin_idx, bin_label, label_norm
         )
+    """
+    detail_metrics_sql = """
+                COUNT(*) AS rows,
+                COUNT(DISTINCT frame_norm) AS frames,
+                MIN(frame_norm) AS first_frame,
+                MAX(frame_norm) AS last_frame,
+                SUM(CASE WHEN source_norm = 'GT' THEN 1 ELSE 0 END) AS gt,
+                SUM(CASE WHEN source_norm = 'EST' THEN 1 ELSE 0 END) AS est,
+                SUM(CASE WHEN source_norm = 'EST' AND status_norm = 'TP' THEN 1 ELSE 0 END) AS tp,
+                SUM(CASE WHEN source_norm = 'EST' AND status_norm = 'FP' THEN 1 ELSE 0 END) AS fp,
+                SUM(CASE WHEN source_norm = 'GT' AND status_norm = 'FN' THEN 1 ELSE 0 END) AS fn,
+                CASE
+                    WHEN SUM(CASE WHEN source_norm = 'EST' AND status_norm IN ('TP','FP') THEN 1 ELSE 0 END) > 0
+                    THEN CAST(SUM(CASE WHEN source_norm = 'EST' AND status_norm = 'TP' THEN 1 ELSE 0 END) AS DOUBLE)
+                        / SUM(CASE WHEN source_norm = 'EST' AND status_norm IN ('TP','FP') THEN 1 ELSE 0 END)
+                    ELSE NULL
+                END AS precision,
+                CASE
+                    WHEN SUM(CASE WHEN source_norm = 'GT' AND status_norm IN ('TP','FN') THEN 1 ELSE 0 END) > 0
+                    THEN CAST(SUM(CASE WHEN source_norm = 'GT' AND status_norm = 'TP' THEN 1 ELSE 0 END) AS DOUBLE)
+                        / SUM(CASE WHEN source_norm = 'GT' AND status_norm IN ('TP','FN') THEN 1 ELSE 0 END)
+                    ELSE NULL
+                END AS recall
     """
     con = duckdb.connect()
     try:
@@ -676,6 +754,113 @@ def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
             """,
             [str(path)] + params,
         ).df()
+        scenario_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                suite_norm AS suite_name,
+                scenario_norm AS scenario_name,
+                dataset_norm AS t4dataset_name,
+                dataset_id_norm AS t4dataset_id,
+                topic_norm AS topic_name,
+                {detail_metrics_sql}
+            FROM binned
+            GROUP BY suite_norm, scenario_norm, dataset_norm, dataset_id_norm, topic_norm
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT 800
+            """,
+            [str(path)] + params,
+        ).df()
+        dataset_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                suite_norm AS suite_name,
+                scenario_norm AS scenario_name,
+                dataset_norm AS t4dataset_name,
+                dataset_id_norm AS t4dataset_id,
+                topic_norm AS topic_name,
+                {detail_metrics_sql}
+            FROM binned
+            GROUP BY suite_norm, scenario_norm, dataset_norm, dataset_id_norm, topic_norm
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT 1200
+            """,
+            [str(path)] + params,
+        ).df()
+        frame_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                suite_norm AS suite_name,
+                scenario_norm AS scenario_name,
+                dataset_norm AS t4dataset_name,
+                dataset_id_norm AS t4dataset_id,
+                topic_norm AS topic_name,
+                frame_norm AS frame,
+                {detail_metrics_sql}
+            FROM binned
+            GROUP BY suite_norm, scenario_norm, dataset_norm, dataset_id_norm, topic_norm, frame_norm
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT 2000
+            """,
+            [str(path)] + params,
+        ).df()
+        label_scenario_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                label_norm AS label,
+                suite_norm AS suite_name,
+                scenario_norm AS scenario_name,
+                dataset_norm AS t4dataset_name,
+                dataset_id_norm AS t4dataset_id,
+                topic_norm AS topic_name,
+                {detail_metrics_sql}
+            FROM binned
+            GROUP BY label_norm, suite_norm, scenario_norm, dataset_norm, dataset_id_norm, topic_norm
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT 1600
+            """,
+            [str(path)] + params,
+        ).df()
+        label_dataset_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                label_norm AS label,
+                suite_norm AS suite_name,
+                scenario_norm AS scenario_name,
+                dataset_norm AS t4dataset_name,
+                dataset_id_norm AS t4dataset_id,
+                topic_norm AS topic_name,
+                {detail_metrics_sql}
+            FROM binned
+            GROUP BY label_norm, suite_norm, scenario_norm, dataset_norm, dataset_id_norm, topic_norm
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT 2200
+            """,
+            [str(path)] + params,
+        ).df()
+        label_frame_df = con.execute(
+            f"""
+            {base_cte}
+            SELECT
+                label_norm AS label,
+                suite_norm AS suite_name,
+                scenario_norm AS scenario_name,
+                dataset_norm AS t4dataset_name,
+                dataset_id_norm AS t4dataset_id,
+                topic_norm AS topic_name,
+                frame_norm AS frame,
+                {detail_metrics_sql}
+            FROM binned
+            GROUP BY label_norm, suite_norm, scenario_norm, dataset_norm, dataset_id_norm, topic_norm, frame_norm
+            ORDER BY fp DESC, fn DESC, rows DESC
+            LIMIT 3000
+            """,
+            [str(path)] + params,
+        ).df()
     finally:
         con.close()
     return {
@@ -683,6 +868,12 @@ def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
         "label_distance": label_distance_df.to_dict("records"),
         "labels": label_df.to_dict("records"),
         "errors": error_df.to_dict("records"),
+        "scenarios": scenario_df.to_dict("records"),
+        "datasets": dataset_df.to_dict("records"),
+        "frames": frame_df.to_dict("records"),
+        "label_scenarios": label_scenario_df.to_dict("records"),
+        "label_datasets": label_dataset_df.to_dict("records"),
+        "label_frames": label_frame_df.to_dict("records"),
         "path": str(path),
         "display": _short_path(path),
     }
@@ -918,6 +1109,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         parsed = urlparse(self.path)
+        asset_name = parsed.path.rsplit("/", 1)[-1]
+        if _static_asset_response(self, asset_name, head_only=True):
+            return
         if parsed.path in ("/", "/viewer", "/viewer/", "/explorer", "/explorer/", "/health", "/api/health"):
             self.send_response(200)
             is_html = parsed.path == "/" or "viewer" in parsed.path or "explorer" in parsed.path
@@ -930,6 +1124,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        asset_name = parsed.path.rsplit("/", 1)[-1]
+        if _static_asset_response(self, asset_name):
+            return
         if parsed.path in ("/health", "/api/health"):
             _json_response(self, 200, {"ok": True, "service": "local_bbox_api"})
             return

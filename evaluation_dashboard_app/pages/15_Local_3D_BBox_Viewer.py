@@ -13,7 +13,7 @@ from lib.page_chrome import inject_app_page_styles, render_page_hero
 
 st.set_page_config(
     layout="wide",
-    page_title="Local 3D BBox Arena",
+    page_title="Local 3D BBox Viewer",
     page_icon="▦",
     initial_sidebar_state="collapsed",
 )
@@ -35,11 +35,11 @@ def _api_base_url() -> str:
 
 
 render_page_hero(
-    kicker="Local parquet web app",
-    title="Local BBox Arena",
+    kicker="Local parquet viewer",
+    title="Local BBox Viewer",
     description=(
-        "A fast parquet-backed 3D bounding box viewer with scenario search, filters, playback, "
-        "camera controls, and rendering handled inside one browser app."
+        "A parquet-backed 3D bounding box viewer with scenario search, filters, playback, "
+        "and camera controls."
     ),
     mode="Local",
 )
@@ -49,12 +49,11 @@ direct_url = "/bbox-viewer/" if _running_behind_docker_nginx() else f"{api_base}
 explorer_url = "/bbox-explorer/" if _running_behind_docker_nginx() else f"{api_base}/explorer"
 
 st.info(
-    "The local bbox viewer now runs as a standalone full-window app so the viewport, "
-    "fullscreen controls, and keyboard/mouse interaction are not clipped by Streamlit."
+    "The viewer opens in a separate page so the canvas, fullscreen controls, and keyboard/mouse input work normally."
 )
 col_a, col_b = st.columns(2)
 with col_a:
-    st.link_button("Open Dataset Problem Map", explorer_url, type="primary")
+    st.link_button("Open Dataset BBox Summary", explorer_url, type="primary")
 with col_b:
-    st.link_button("Open Local BBox Arena", direct_url)
+    st.link_button("Open Local BBox Viewer", direct_url)
 st.caption(f"Explorer URL: `{explorer_url}` · Viewer URL: `{direct_url}` · API: `{api_base}`")

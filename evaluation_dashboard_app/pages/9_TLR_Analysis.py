@@ -505,7 +505,7 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
 
 
 def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Current run") -> None:
-    st.subheader("Scenario insights")
+    st.subheader("Scenario summary")
     details_df = analyzer.get_vehicle_status_details_df()
     scenario_df = _build_scenario_insights_df(details_df)
     if scenario_df.empty:
@@ -653,7 +653,7 @@ def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Cu
             hide_index=True,
         )
         st.download_button(
-            "Download scenario insights CSV",
+            "Download scenario summary CSV",
             data=filtered[display_cols + ["scenario"]].to_csv(index=False).encode("utf-8"),
             file_name="tlr_scenario_insights.csv",
             mime="text/csv",
@@ -851,7 +851,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
 
     with tab_scenarios:
         view_which = st.radio(
-            "Show scenario insights for",
+            "Show scenario summary for",
             [label_a, label_b],
             horizontal=True,
             key="tlr_compare_scenario_insights_which",
@@ -1302,7 +1302,7 @@ if mode == "Single":
         )
 
     tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
-        "Criteria matrix", "Scenario insights", "Vehicle status vs TLR type",
+        "Criteria matrix", "Scenario summary", "Vehicle status vs TLR type",
         "Critical & priority zones", "Vehicle status details", "TLR viewer",
     ])
     _render_single_tabs(analyzer_a, tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer)
@@ -1341,7 +1341,7 @@ with col_b:
     st.metric("Overall TP rate", f"{stats_b['overall_tp_rate']:.2%}")
 
 tab_criteria, tab_scenarios, tab_vehicle, tab_critical, tab_details, tab_tlr_viewer = st.tabs([
-    "Criteria matrix", "Scenario insights", "Vehicle status vs TLR type",
+    "Criteria matrix", "Scenario summary", "Vehicle status vs TLR type",
     "Critical & priority zones", "Vehicle status details", "TLR viewer",
 ])
 _render_compare_tabs(
