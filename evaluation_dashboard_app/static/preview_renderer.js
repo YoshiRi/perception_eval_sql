@@ -34,6 +34,20 @@ function setPreviewFrames(frames, message = "") {
   els.previewSlider.value = "0";
   renderPreview(message);
 }
+function setPreviewFramesPreserveFrame(frames, message = "") {
+  const currentFrame = state.previewFrames[state.previewIndex] && Number(state.previewFrames[state.previewIndex].frame);
+  setPreviewFrames(frames, message);
+  if (Number.isFinite(currentFrame) && state.previewFrames.length) {
+    let best = 0, dist = Infinity;
+    state.previewFrames.forEach((f, i) => {
+      const d = Math.abs(Number(f.frame) - currentFrame);
+      if (d < dist) { best = i; dist = d; }
+    });
+    state.previewIndex = best;
+    els.previewSlider.value = String(best);
+    renderPreview(message);
+  }
+}
 function clampPreviewWindow() {
   const stage = els.canvas.getBoundingClientRect();
   const win = els.previewWindow;
@@ -63,6 +77,7 @@ function showPreviewWindow() {
 async function loadPreview(s, options = {}) {
   const requestId = ++state.previewRequestId;
   state.previewFrames = [];
+  state.devopsFrameResults = null;
   state.previewIndex = 0;
   state.previewPanX = 0;
   state.previewPanY = 0;
@@ -98,6 +113,45 @@ async function loadPreview(s, options = {}) {
       data = {frames: mergePreviewFrames(dataA.frames || [], dataB.frames || [])};
     } else {
       data = await api("/api/frames", { ...request, path: state.path, run: "A" });
+      if (requestId !== state.previewRequestId) return;
+      setPreviewFrames(data.frames || []);
+      if (devopsContext(s).is_devops) {
+        (async () => {
+          try {
+            const tn = await api("/api/scenario_devops_tn_objects", {
+              ...request,
+              path: state.path,
+              run: "A",
+              max_rows: 70000,
+              timeout_ms: 8000,
+            });
+            if (requestId !== state.previewRequestId) return;
+            setPreviewFramesPreserveFrame(mergePreviewFrames(state.previewFrames || [], tn.frames || []));
+            if (typeof renderResultPanel === "function") renderResultPanel();
+          } catch (err) {
+            if (requestId !== state.previewRequestId) return;
+            console.warn("DevOps TN objects unavailable", err);
+          }
+          try {
+            const frameResult = await api("/api/scenario_devops_frame_results", {
+              ...request,
+              path: state.path,
+              max_frames: 5000,
+              timeout_ms: 8000,
+            });
+            if (requestId !== state.previewRequestId) return;
+            state.devopsFrameResults = frameResult;
+          } catch (err) {
+            if (requestId !== state.previewRequestId) return;
+            state.devopsFrameResults = {available: false, reason: err.message, frames: []};
+            console.warn("DevOps frame judgement unavailable", err);
+          }
+          if (requestId !== state.previewRequestId) return;
+          renderPreview();
+          if (typeof renderResultPanel === "function") renderResultPanel();
+        })();
+        return;
+      }
     }
     if (requestId !== state.previewRequestId) return;
     setPreviewFrames(data.frames || []);
@@ -108,7 +162,8 @@ async function loadPreview(s, options = {}) {
   }
 }
 function focusPreviewOnCurvePeak() {
-  if (!state.previewFrames.length || !state.curve.length) return;
+  if (!state.previewFrames.length) return;
+  if (!state.curve.length) return;
   const score = f => state.compare ? Math.abs(f.fp || 0) + Math.abs(f.fn || 0) : (f.fp || 0) + (f.fn || 0);
   const peak = [...state.curve].sort((a, b) => score(b) - score(a))[0];
   if (!peak) return;
@@ -171,6 +226,286 @@ function previewLayerVisible(b) {
   if (!key) return true;
   const btn = els.previewLayers.querySelector(`[data-layer="${key}"]`);
   return !!(btn && btn.classList.contains("active"));
+}
+function previewIsDevops() {
+  return !!(state.selected && devopsContext(state.selected).is_devops);
+}
+function previewTargetAliases() {
+  if (!previewIsDevops()) return [];
+  const ctx = devopsContext(state.selected);
+  return targetLabelAliases(ctx.target_label, ctx).map(x => String(x).toLowerCase());
+}
+function previewBoxMatchesDevopsTarget(b) {
+  const aliases = previewTargetAliases();
+  if (!aliases.length) return false;
+  return aliases.includes(String(b.label || "").toLowerCase());
+}
+function previewDevopsEvidenceMode() {
+  if (!previewIsDevops()) return "";
+  const gates = (state.devopsResult && state.devopsResult.gates) || [];
+  const supported = gates.filter(g => g && g.passed !== null);
+  const basis = supported.length ? supported : gates;
+  if (basis.some(g => String(g.evaluation_task || "").toLowerCase() === "fp_validation")) return "fp";
+  if (basis.some(g => ["num_gt_tp", "num_tp"].includes(String(g.method || "").toLowerCase()))) return "recall";
+  if (basis.some(g => String(g.method || "").toLowerCase().includes("yaw"))) return "error";
+  const ctx = devopsContext(state.selected);
+  if (ctx.focus_metric === "fn") return "recall";
+  if (ctx.focus_metric === "fp") return "fp";
+  if (ctx.focus_metric === "error") return "error";
+  return "";
+}
+function previewBoxMatchesDevopsCriterionTarget(b) {
+  const mode = previewDevopsEvidenceMode();
+  if (mode !== "fp") return previewBoxMatchesDevopsTarget(b);
+  if (previewBoxMatchesDevopsTarget(b)) return true;
+  const ctx = previewIsDevops() ? devopsContext(state.selected) : {};
+  const label = String(b.label || "").toLowerCase();
+  const source = String(b.source || "").toUpperCase();
+  const status = String(b.status || "").toUpperCase();
+  return ctx.focus_metric === "fp" && (
+    (source === "GT" && label === "false_positive") ||
+    (source === "EST" && status === "FP")
+  );
+}
+function previewBoxIsEvidence(b) {
+  if (!previewIsDevops()) return false;
+  const mode = previewDevopsEvidenceMode();
+  const status = String(b.status || "").toUpperCase();
+  const source = String(b.source || "").toUpperCase();
+  if (mode === "recall") return previewBoxMatchesDevopsTarget(b) && source === "GT" && status === "FN";
+  if (mode === "fp") return source === "EST" && status === "FP";
+  if (mode === "error") return previewBoxMatchesDevopsTarget(b) && status === "TP";
+  return false;
+}
+function previewBoxIsCorrectTarget(b) {
+  const status = String(b.status || "").toUpperCase();
+  if (status === "TN") return previewBoxMatchesDevopsCriterionTarget(b);
+  return status === "TP" && previewBoxMatchesDevopsTarget(b);
+}
+function previewBoxDevopsAnnotation(b) {
+  if (previewBoxIsEvidence(b)) {
+    const source = String(b.source || "").toUpperCase();
+    const status = String(b.status || "").toUpperCase();
+    if (source === "GT" && status === "FN") return {kind: "fail", title: "MISSED TARGET"};
+    if (source === "EST" && status === "FP") return {kind: "fail", title: "FALSE POSITIVE"};
+    return {kind: "fail", title: "CRITERION FAIL"};
+  }
+  if (previewBoxIsCorrectTarget(b)) return {kind: "ok", title: "TARGET OK"};
+  return null;
+}
+function previewObjectPairKey(b) {
+  const uuid = String(b.uuid || "").trim();
+  const pair = String(b.pair_uuid || "").trim();
+  if (uuid && pair) return [uuid, pair].sort().join("|");
+  if (pair) return `pair:${pair}`;
+  return "";
+}
+function previewMergedDevopsAnnotations(boxes) {
+  const raw = boxes
+    .map(b => ({box: b, ann: previewBoxDevopsAnnotation(b)}))
+    .filter(x => x.ann && previewLayerVisible(x.box));
+  const out = raw.filter(x => x.ann.kind === "fail");
+  const ok = raw.filter(x => x.ann.kind === "ok");
+  const used = new Set();
+  const keyed = new Map();
+  ok.forEach((x, i) => {
+    const key = previewObjectPairKey(x.box);
+    if (!key) return;
+    if (!keyed.has(key)) keyed.set(key, []);
+    keyed.get(key).push({...x, index: i});
+  });
+  keyed.forEach(group => {
+    if (group.length < 2) return;
+    group.forEach(x => used.add(x.index));
+    const est = group.find(x => String(x.box.source || "").toUpperCase() === "EST");
+    const gt = group.find(x => String(x.box.source || "").toUpperCase() === "GT");
+    out.push({box: (est || gt || group[0]).box, ann: {kind: "ok", title: "TARGET OK", merged: group.length > 1}});
+  });
+  ok.forEach((x, i) => {
+    if (used.has(i)) return;
+    const source = String(x.box.source || "").toUpperCase();
+    let pairIndex = -1;
+    for (let j = i + 1; j < ok.length; j += 1) {
+      if (used.has(j)) continue;
+      const other = ok[j];
+      if (String(other.box.source || "").toUpperCase() === source) continue;
+      if (Math.hypot((Number(x.box.x) || 0) - (Number(other.box.x) || 0), (Number(x.box.y) || 0) - (Number(other.box.y) || 0)) < 2.5) {
+        pairIndex = j;
+        break;
+      }
+    }
+    if (pairIndex >= 0) {
+      used.add(i);
+      used.add(pairIndex);
+      const est = source === "EST" ? x : ok[pairIndex];
+      out.push({box: est.box, ann: {kind: "ok", title: "TARGET OK", merged: true}});
+    } else {
+      used.add(i);
+      out.push(x);
+    }
+  });
+  return out.sort((a, b) => (a.ann.kind === "fail" ? -1 : 1) - (b.ann.kind === "fail" ? -1 : 1));
+}
+function previewDistanceFromEgo(b) {
+  const x = Number(b.x) || 0;
+  const y = Number(b.y) || 0;
+  return Math.hypot(x, y);
+}
+function devopsGateDistanceBounds(g) {
+  const distance = g && g.filter && g.filter.Distance;
+  if (typeof distance === "string") {
+    const numsFromFilter = distance.match(/-?\d+(?:\.\d+)?/g)?.map(Number) || [];
+    if (numsFromFilter.length >= 2) return {min: numsFromFilter[0], max: numsFromFilter[1]};
+    if (numsFromFilter.length === 1 && /-$/.test(distance.trim())) return {min: numsFromFilter[0], max: null};
+  }
+  if (Array.isArray(distance) && distance.length >= 2) return {min: Number(distance[0]), max: Number(distance[1])};
+  const raw = String(g && g.distance_label || "");
+  const nums = raw.match(/-?\d+(?:\.\d+)?/g)?.map(Number) || [];
+  if (/^>=/.test(raw) && nums.length) return {min: nums[0], max: null};
+  if (nums.length >= 2) return {min: nums[0], max: nums[1]};
+  if (nums.length === 1 && /</.test(raw)) return {min: 0, max: nums[0]};
+  return null;
+}
+function devopsGateRegionBounds(g) {
+  const region = g && g.filter && g.filter.Region;
+  if (!region || typeof region !== "object") return null;
+  const parseAxis = value => {
+    if (Array.isArray(value) && value.length >= 2) return [Number(value[0]), Number(value[1])];
+    const nums = String(value || "").match(/-?\d+(?:\.\d+)?/g)?.map(Number) || [];
+    return nums.length >= 2 ? [nums[0], nums[1]] : null;
+  };
+  const xr = parseAxis(region.x_position);
+  const yr = parseAxis(region.y_position);
+  if (!xr && !yr) return null;
+  return {xMin: xr ? xr[0] : -PREVIEW_MAX_VIEW_EXTENT, xMax: xr ? xr[1] : PREVIEW_MAX_VIEW_EXTENT, yMin: yr ? yr[0] : -PREVIEW_MAX_VIEW_EXTENT, yMax: yr ? yr[1] : PREVIEW_MAX_VIEW_EXTENT};
+}
+function previewBoxInGate(b, g) {
+  const region = devopsGateRegionBounds(g);
+  if (region) {
+    const x = Number(b.x) || 0;
+    const y = Number(b.y) || 0;
+    return x >= region.xMin && x <= region.xMax && y >= region.yMin && y <= region.yMax;
+  }
+  const bounds = devopsGateDistanceBounds(g);
+  if (!bounds) return true;
+  const d = previewDistanceFromEgo(b);
+  if (Number.isFinite(bounds.min) && d < bounds.min) return false;
+  if (Number.isFinite(bounds.max) && d >= bounds.max) return false;
+  return true;
+}
+function previewCriteriaLevelValue(g) {
+  const raw = String(g.criteria_level || g.level || "").toLowerCase();
+  const named = {perfect: 100, hard: 75, normal: 50, easy: 25};
+  if (raw in named) return named[raw];
+  const fromApi = Number(g.criteria_level_value);
+  if (Number.isFinite(fromApi)) return fromApi;
+  const numeric = Number(g.level);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+function previewFrameGateEvidence(boxes, g) {
+  const scoped = boxes.filter(b => previewBoxMatchesDevopsCriterionTarget(b) && previewBoxInGate(b, g));
+  const source = b => String(b.source || "").toUpperCase();
+  const status = b => String(b.status || "").toUpperCase();
+  const label = b => String(b.label || "").toLowerCase();
+  const gtTp = scoped.filter(b => source(b) === "GT" && status(b) === "TP").length;
+  const gtFpValidation = scoped.filter(b => source(b) === "GT" && status(b) === "FP" && label(b) === "false_positive").length;
+  const gtFn = scoped.filter(b => source(b) === "GT" && status(b) === "FN").length;
+  const gtTn = scoped.filter(b => source(b) === "GT" && status(b) === "TN").length;
+  const estFp = scoped.filter(b => source(b) === "EST" && status(b) === "FP").length;
+  const estTp = scoped.filter(b => source(b) === "EST" && status(b) === "TP").length;
+  const method = String(g.method || "").toLowerCase();
+  const evaluationTask = String(g.evaluation_task || (devopsContext(state.selected).focus_metric === "fp" ? "fp_validation" : "")).toLowerCase();
+  let passedCount = 0;
+  let totalCount = 0;
+  let score = null;
+  let failCount = 0;
+  let scoreUnit = "%";
+  let level = previewCriteriaLevelValue(g);
+  if (method === "num_gt_tp") {
+    if (evaluationTask === "fp_validation") {
+      passedCount = gtTn;
+      failCount = Math.max(gtFpValidation, estFp);
+      totalCount = passedCount + failCount;
+    } else {
+      passedCount = gtTp;
+      totalCount = gtTp + gtFn;
+      failCount = gtFn;
+    }
+    score = totalCount ? 100 * passedCount / totalCount : null;
+    if (level == null) level = 100;
+  } else if (method === "num_tp") {
+    if (evaluationTask === "fp_validation") {
+      passedCount = gtTn;
+      failCount = Math.max(gtFpValidation, estFp);
+    } else {
+      passedCount = gtTp + gtTn;
+      failCount = gtFn + estFp;
+    }
+    totalCount = passedCount + failCount;
+    score = totalCount ? 100 * passedCount / totalCount : null;
+    if (level == null) level = 100;
+  } else if (method === "yaw_error") {
+    const yawBoxes = scoped.filter(b => source(b) === "EST" && status(b) === "TP" && Number.isFinite(Number(b.yaw_error)));
+    if (level == null) level = 0;
+    passedCount = yawBoxes.filter(b => Math.abs(Number(b.yaw_error)) <= level).length;
+    totalCount = yawBoxes.length;
+    failCount = Math.max(0, totalCount - passedCount);
+    score = totalCount ? yawBoxes.reduce((sum, b) => sum + Math.abs(Number(b.yaw_error)), 0) / totalCount : null;
+    scoreUnit = "rad";
+  } else {
+    passedCount = gtTp;
+    failCount = gtFn + estFp;
+    totalCount = passedCount + failCount;
+    score = totalCount ? 100 * passedCount / totalCount : null;
+    if (level == null) level = 100;
+  }
+  const judged = totalCount > 0 && score != null;
+  const isError = method === "yaw_error";
+  const pass = judged ? (isError ? score <= level : score >= level) : null;
+  return {gtTp, gtFpValidation, gtFn, gtTn, estFp, estTp, passedCount, failCount, totalCount, score, scoreUnit, level, pass, judged};
+}
+function drawDevopsCriteriaRings(sx, sy, scale, maxAbs) {
+  if (!previewIsDevops() || !state.devopsResult) return;
+  const gates = (state.devopsResult.gates || []).map(g => ({...g, bounds: devopsGateDistanceBounds(g), region: devopsGateRegionBounds(g)})).filter(g => g.bounds || g.region);
+  if (!gates.length) return;
+  previewCtx.save();
+  gates.forEach(g => {
+    if (g.region) {
+      const left = sx - (g.region.yMax - state.previewPanY) * scale;
+      const right = sx - (g.region.yMin - state.previewPanY) * scale;
+      const top = sy - (g.region.xMax - state.previewPanX) * scale;
+      const bottom = sy - (g.region.xMin - state.previewPanX) * scale;
+      const color = g.passed === false ? "rgba(251,113,133,.62)" : "rgba(52,211,153,.46)";
+      previewCtx.strokeStyle = color;
+      previewCtx.fillStyle = g.passed === false ? "rgba(251,113,133,.08)" : "rgba(52,211,153,.05)";
+      previewCtx.lineWidth = g.passed === false ? 2 : 1.2;
+      previewCtx.setLineDash(g.passed === false ? [7, 5] : [3, 6]);
+      previewCtx.strokeRect(left, top, right - left, bottom - top);
+      previewCtx.fillRect(left, top, right - left, bottom - top);
+      previewCtx.setLineDash([]);
+      previewCtx.fillStyle = g.passed === false ? "#fecdd3" : "#bbf7d0";
+      previewCtx.font = "900 10px Inter, sans-serif";
+      previewCtx.fillText(`${g.passed === false ? "FAIL" : "PASS"} ${g.distance_label || "region"}`, left + 5, top + 13);
+      return;
+    }
+    const max = g.bounds.max;
+    if (!Number.isFinite(max) || max <= 0 || max > maxAbs * 1.2) return;
+    previewCtx.strokeStyle = g.passed === false ? "rgba(251,113,133,.62)" : "rgba(52,211,153,.46)";
+    previewCtx.fillStyle = g.passed === false ? "rgba(251,113,133,.08)" : "rgba(52,211,153,.05)";
+    previewCtx.lineWidth = g.passed === false ? 2 : 1.2;
+    previewCtx.setLineDash(g.passed === false ? [7, 5] : [3, 6]);
+    previewCtx.beginPath();
+    previewCtx.arc(sx, sy, max * scale, 0, Math.PI * 2);
+    previewCtx.stroke();
+    previewCtx.beginPath();
+    previewCtx.arc(sx, sy, max * scale, 0, Math.PI * 2);
+    previewCtx.fill();
+    previewCtx.setLineDash([]);
+    previewCtx.fillStyle = g.passed === false ? "#fecdd3" : "#bbf7d0";
+    previewCtx.font = "900 10px Inter, sans-serif";
+    previewCtx.fillText(`${g.passed === false ? "FAIL" : "PASS"} ${g.distance_label}`, sx + max * scale + 5, sy - 5);
+  });
+  previewCtx.restore();
 }
 function isPointLikeBox(b) {
   const shape = String(b.shape_type || b.type || "").toLowerCase();
@@ -292,6 +627,39 @@ function drawPreviewBox(b, sx, sy, scale) {
   previewCtx.fillStyle = previewColor(b);
   previewCtx.beginPath(); previewCtx.arc(nose[0], nose[1], 2, 0, Math.PI * 2); previewCtx.fill();
 }
+function drawPreviewDevopsHighlights(boxes, sx, sy, scale) {
+  if (!previewIsDevops()) return;
+  const evidence = previewMergedDevopsAnnotations(boxes).slice(0, 120);
+  previewCtx.save();
+  evidence.forEach(({box: b, ann}) => {
+    const p = previewBoxScreenCenter(b, sx, sy, scale);
+    const color = ann.kind === "fail" ? previewColor(b) : "#a7f3d0";
+    const distance = previewDistanceFromEgo(b);
+    previewCtx.strokeStyle = color;
+    previewCtx.fillStyle = color;
+    previewCtx.lineWidth = ann.kind === "fail" ? 2.6 : 1.8;
+    previewCtx.setLineDash(ann.kind === "fail" ? [5, 4] : []);
+    previewCtx.beginPath();
+    previewCtx.arc(p[0], p[1], Math.max(10, Math.min(28, scale * (ann.kind === "fail" ? 1.8 : 1.35))), 0, Math.PI * 2);
+    previewCtx.stroke();
+    previewCtx.setLineDash([]);
+    previewCtx.globalAlpha = ann.kind === "fail" ? .14 : .08;
+    previewCtx.beginPath();
+    previewCtx.arc(p[0], p[1], Math.max(16, Math.min(42, scale * (ann.kind === "fail" ? 3.2 : 2.3))), 0, Math.PI * 2);
+    previewCtx.fill();
+    previewCtx.globalAlpha = 1;
+    const label = `${ann.title}${ann.merged ? " MATCH" : ""} · ${b.source}/${b.status} ${b.label || ""} ${distance.toFixed(1)}m`;
+    previewCtx.font = "900 10px Inter, sans-serif";
+    const tw = previewCtx.measureText(label).width;
+    previewCtx.fillStyle = ann.kind === "fail" ? "rgba(2,6,23,.86)" : "rgba(6,78,59,.78)";
+    previewCtx.fillRect(p[0] + 8, p[1] - 18, tw + 10, 18);
+    previewCtx.strokeStyle = color;
+    previewCtx.strokeRect(p[0] + 8, p[1] - 18, tw + 10, 18);
+    previewCtx.fillStyle = "#f8fafc";
+    previewCtx.fillText(label, p[0] + 13, p[1] - 5);
+  });
+  previewCtx.restore();
+}
 function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBoundsMaxAbs()) {
   const scale = previewScaleForRect(viewport);
   const sx = viewport.x + viewport.w / 2;
@@ -306,7 +674,10 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
     previewCtx.beginPath(); previewCtx.moveTo(sx - (m - state.previewPanY) * scale, viewport.y); previewCtx.lineTo(sx - (m - state.previewPanY) * scale, viewport.y + viewport.h); previewCtx.stroke();
     previewCtx.beginPath(); previewCtx.moveTo(viewport.x, sy - (m - state.previewPanX) * scale); previewCtx.lineTo(viewport.x + viewport.w, sy - (m - state.previewPanX) * scale); previewCtx.stroke();
   }
-  drawPreviewRings(sx - (0 - state.previewPanY) * scale, sy - (0 - state.previewPanX) * scale, scale, maxAbs);
+  const egoScreenX = sx - (0 - state.previewPanY) * scale;
+  const egoScreenY = sy - (0 - state.previewPanX) * scale;
+  drawPreviewRings(egoScreenX, egoScreenY, scale, maxAbs);
+  drawDevopsCriteriaRings(egoScreenX, egoScreenY, scale, maxAbs);
   const egoX = sx - (0 - state.previewPanY) * scale;
   const egoY = sy - (0 - state.previewPanX) * scale;
   previewCtx.fillStyle = "rgba(234,242,255,.86)";
@@ -314,6 +685,7 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
   previewCtx.moveTo(egoX, egoY - 9); previewCtx.lineTo(egoX - 6, egoY + 8); previewCtx.lineTo(egoX + 6, egoY + 8); previewCtx.closePath(); previewCtx.fill();
   const sorted = [...boxes].filter(previewLayerVisible).sort((a, b) => (String(a.source) === "GT" ? -1 : 1) - (String(b.source) === "GT" ? -1 : 1));
   sorted.forEach(b => drawPreviewBox(b, sx, sy, scale));
+  drawPreviewDevopsHighlights(sorted, sx, sy, scale);
   drawPreviewPersistentLabels(sorted, sx, sy, scale);
   previewCtx.restore();
   if (label) {
@@ -339,6 +711,61 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
     previewCtx.fillStyle = label === "A" ? "#60a5fa" : "#a78bfa";
     previewCtx.fillText(text, viewport.x + 20, viewport.y + 25);
   }
+}
+function currentFrameDevopsCounts(boxes) {
+  const targetBoxes = boxes.filter(previewBoxMatchesDevopsCriterionTarget);
+  const targetAnnotations = previewMergedDevopsAnnotations(targetBoxes);
+  const count = (source, status) => targetBoxes.filter(b => String(b.source || "").toUpperCase() === source && String(b.status || "").toUpperCase() === status).length;
+  return {
+    target: targetBoxes.length,
+    gtFn: count("GT", "FN"),
+    estFp: count("EST", "FP"),
+    ok: targetAnnotations.filter(x => x.ann.kind === "ok").length,
+    evidence: targetAnnotations.filter(x => x.ann.kind === "fail").length,
+  };
+}
+function renderPreviewDevopsOverlay(frame, boxes) {
+  if (!els.previewDevopsOverlay) return;
+  if (!previewIsDevops()) {
+    els.previewDevopsOverlay.classList.remove("show");
+    els.previewDevopsOverlay.innerHTML = "";
+    return;
+  }
+  const ctx = devopsContext(state.selected);
+  const result = state.devopsResult;
+  const verdict = result ? (result.overall_pass ? "PASS" : "FAIL") : scenarioJudgement(state.selected).label;
+  const verdictClass = verdict === "PASS" ? "pass" : "fail";
+  const counts = currentFrameDevopsCounts(boxes);
+  const exactFrame = typeof exactFrameResultFor === "function" ? exactFrameResultFor(frame) : null;
+  const exactLabel = exactFrame
+    ? (exactFrame.passed == null ? "Frame Not Judged" : (exactFrame.passed ? "Frame PASS" : "Frame FAIL"))
+    : (state.devopsFrameResults && state.devopsFrameResults.available === false ? "Frame Approx" : "");
+  const exactClass = exactFrame
+    ? (exactFrame.passed == null ? "warn" : (exactFrame.passed ? "" : "bad"))
+    : "warn";
+  const exactDetail = exactFrame
+    ? `${(exactFrame.gates || []).filter(g => g.judged).length}/${(exactFrame.gates || []).length} gates judged`
+    : (state.devopsFrameResults && state.devopsFrameResults.reason ? state.devopsFrameResults.reason : "");
+  els.previewDevopsOverlay.innerHTML = `
+    <div class="preview-evidence-card">
+      <div class="preview-evidence-head">
+        <strong>${escapeHtml(ctx.purpose || devopsPurposeText(state.selected) || "DevOps scenario")}</strong>
+        <i class="preview-verdict ${verdictClass}">${escapeHtml(verdict)}</i>
+      </div>
+      <div class="preview-evidence-tags">
+        ${[ctx.intent_type, ctx.target_label, ctx.behavior, ctx.pc_mode, ctx.city].filter(Boolean).map(x => `<i>${escapeHtml(x)}</i>`).join("")}
+      </div>
+      <div class="preview-frame-counts">
+        <i>frame ${escapeHtml(frame.frame)}</i>
+        ${exactLabel ? `<i class="${exactClass}">${escapeHtml(exactLabel)}</i>` : ""}
+        <i class="${counts.gtFn ? "warn" : ""}">GT FN ${fmt(counts.gtFn)}</i>
+        <i class="${counts.estFp ? "bad" : ""}">EST FP ${fmt(counts.estFp)}</i>
+        <i>Target OK ${fmt(counts.ok)}</i>
+      </div>
+      ${exactDetail ? `<p>${escapeHtml(exactDetail)}</p>` : ""}
+    </div>
+  `;
+  els.previewDevopsOverlay.classList.add("show");
 }
 function previewViewportsForRect(r) {
   if (!state.compare) return [{label: "", x: 0, y: 0, w: r.width, h: r.height, run: ""}];
@@ -380,6 +807,7 @@ function renderPreview(message = "") {
     previewCtx.fillStyle = "#91a4bf";
     previewCtx.font = "12px Inter, sans-serif";
     previewCtx.fillText(text, 12, Math.max(28, r.height / 2));
+    renderPreviewDevopsOverlay({frame: "-"}, []);
     return;
   }
   const frame = state.previewFrames[Math.max(0, Math.min(state.previewIndex, state.previewFrames.length - 1))];
@@ -409,4 +837,5 @@ function renderPreview(message = "") {
   els.previewSlider.value = String(state.previewIndex);
   updatePreviewHover();
   drawPreviewHoverLabel();
+  renderPreviewDevopsOverlay(frame, boxes);
 }

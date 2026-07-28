@@ -24,6 +24,8 @@ ENV_BROWSER_BASE_URL = "T4_VISUALIZER_BROWSER_BASE_URL"
 # The browser then cannot use localhost; it must hit the dataset server's public
 # Cloudflare hostname. Configure the value via this env var (kept out of the repo).
 ENV_CLOUDFLARE_BASE_URL = "T4_VISUALIZER_CLOUDFLARE_BASE_URL"
+ENV_CF_ACCESS_CLIENT_ID = "T4_VISUALIZER_CF_ACCESS_CLIENT_ID"
+ENV_CF_ACCESS_CLIENT_SECRET = "T4_VISUALIZER_CF_ACCESS_CLIENT_SECRET"
 
 
 class T4VisualizerError(Exception):
@@ -39,6 +41,23 @@ class T4VisualizerError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.response_text = response_text
+
+
+def format_t4_visualizer_error(exc: T4VisualizerError) -> str:
+    """Return a compact user-facing message for a T4 visualizer API error."""
+    status = f" ({exc.status_code})" if exc.status_code is not None else ""
+    return f"T4 server error{status}: {exc}"
+
+
+def _cloudflare_access_headers_from_env() -> dict[str, str]:
+    client_id = os.environ.get(ENV_CF_ACCESS_CLIENT_ID, "").strip()
+    client_secret = os.environ.get(ENV_CF_ACCESS_CLIENT_SECRET, "").strip()
+    if not client_id or not client_secret:
+        return {}
+    return {
+        "CF-Access-Client-Id": client_id,
+        "CF-Access-Client-Secret": client_secret,
+    }
 
 
 @dataclass
@@ -243,6 +262,7 @@ class T4VisualizerClient:
         self.base_url = raw.rstrip("/")
         self.timeout = timeout
         self._session = session if session is not None else requests.Session()
+        self._headers = _cloudflare_access_headers_from_env()
 
     def _url(self, path: str) -> str:
         if not path.startswith("/"):
@@ -259,34 +279,82 @@ class T4VisualizerClient:
             response_text=text,
         )
 
+    def _json_or_raise(self, resp: requests.Response, endpoint: str) -> dict:
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            text = (resp.text or "")[:2000]
+            preview = "empty body"
+            if text.strip():
+                preview = " ".join(text.strip().split())
+                if len(preview) > 500:
+                    preview = f"{preview[:500]}..."
+            headers = getattr(resp, "headers", {}) or {}
+            content_type = ""
+            if isinstance(headers, Mapping):
+                content_type = str(
+                    headers.get("content-type") or headers.get("Content-Type") or ""
+                )
+            meta: list[str] = []
+            if getattr(resp, "status_code", None) is not None:
+                meta.append(f"status={resp.status_code}")
+            if content_type:
+                meta.append(f"content-type={content_type}")
+            suffix = f" ({', '.join(meta)})" if meta else ""
+            cloudflare_hint = ""
+            if "cloudflare access" in text.lower() or "cf-access" in text.lower():
+                cloudflare_hint = (
+                    "; Cloudflare Access returned a sign-in page, so the Streamlit backend "
+                    "could not reach the T4 JSON API. Use a direct T4 API URL or set "
+                    f"{ENV_CF_ACCESS_CLIENT_ID}/{ENV_CF_ACCESS_CLIENT_SECRET} service-token env vars"
+                )
+            raise T4VisualizerError(
+                (
+                    f"Invalid JSON from {endpoint}{suffix}{cloudflare_hint}; "
+                    f"response preview: {preview}"
+                ),
+                status_code=getattr(resp, "status_code", None),
+                response_text=text,
+            ) from exc
+        if not isinstance(data, dict):
+            raise T4VisualizerError(
+                f"Unexpected JSON from {endpoint}: expected object, got {type(data).__name__}",
+                status_code=getattr(resp, "status_code", None),
+                response_text=(resp.text or "")[:2000],
+            )
+        return data
+
     def health(self) -> dict:
         """GET /health — status, ``service``, ``version``, ``data_dir_exists``, structure paths (newer servers)."""
-        resp = self._session.get(self._url("/health"), timeout=self.timeout)
+        resp = self._session.get(
+            self._url("/health"),
+            headers=self._headers or None,
+            timeout=self.timeout,
+        )
         print(resp.text)
         self._raise_for_status(resp)
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise T4VisualizerError("Invalid JSON from /health") from exc
+        return self._json_or_raise(resp, "/health")
 
     def server_structure_json(self) -> dict:
         """GET /server/structure.json — Mermaid source for the server internals plus cache/runtime meta."""
         to = min(30.0, float(self.timeout))
-        resp = self._session.get(self._url("/server/structure.json"), timeout=to)
+        resp = self._session.get(
+            self._url("/server/structure.json"),
+            headers=self._headers or None,
+            timeout=to,
+        )
         self._raise_for_status(resp)
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise T4VisualizerError("Invalid JSON from /server/structure.json") from exc
+        return self._json_or_raise(resp, "/server/structure.json")
 
     def list_datasets(self) -> dict:
         """GET /datasets — returns at least ``data_dir`` and ``datasets``."""
-        resp = self._session.get(self._url("/datasets"), timeout=self.timeout)
+        resp = self._session.get(
+            self._url("/datasets"),
+            headers=self._headers or None,
+            timeout=self.timeout,
+        )
         self._raise_for_status(resp)
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise T4VisualizerError("Invalid JSON from /datasets") from exc
+        return self._json_or_raise(resp, "/datasets")
 
     def list_dataset_scenarios(
         self, t4dataset_id: str, version: Optional[str] = None
@@ -302,14 +370,12 @@ class T4VisualizerClient:
         params = {"version": version} if version is not None else None
         resp = self._session.get(
             self._url(f"/datasets/{tid}/scenarios"),
+            headers=self._headers or None,
             params=params,
             timeout=self.timeout,
         )
         self._raise_for_status(resp)
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise T4VisualizerError("Invalid JSON from /datasets/.../scenarios") from exc
+        return self._json_or_raise(resp, "/datasets/.../scenarios")
 
     def dataset_availability(self, t4dataset_id: str) -> dict:
         """GET /datasets/{t4dataset_id}/availability — whether the dataset is on disk for this server.
@@ -321,27 +387,23 @@ class T4VisualizerClient:
         tid = quote(str(t4dataset_id), safe="")
         resp = self._session.get(
             self._url(f"/datasets/{tid}/availability"),
+            headers=self._headers or None,
             timeout=self.timeout,
         )
         self._raise_for_status(resp)
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise T4VisualizerError("Invalid JSON from /datasets/.../availability") from exc
+        return self._json_or_raise(resp, "/datasets/.../availability")
 
     def render(self, payload: RenderRequest) -> RenderResult:
         """POST /render with a :class:`RenderRequest`."""
         body = render_request_to_json_body(payload)
         resp = self._session.post(
             self._url("/render"),
+            headers=self._headers or None,
             json=body,
             timeout=self.timeout,
         )
         self._raise_for_status(resp)
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            raise T4VisualizerError("Invalid JSON from /render") from exc
+        data = self._json_or_raise(resp, "/render")
 
         try:
             images_raw = data["images"]

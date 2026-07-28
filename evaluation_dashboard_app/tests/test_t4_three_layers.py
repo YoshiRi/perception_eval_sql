@@ -8,6 +8,7 @@ from lib.t4_three_layers import (
     build_three_layer_payload_all_frames,
     infer_external_bbox_alignment_query_params,
     infer_legacy_width_length_swapped,
+    resolve_t4_dataset_id,
 )
 
 
@@ -20,6 +21,19 @@ def _corner_extents(corners: list[float]) -> tuple[float, float, float]:
     ys = corners[1::3]
     zs = corners[2::3]
     return max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)
+
+
+def test_resolve_t4_dataset_id_uses_name_when_id_is_placeholder():
+    df = pd.DataFrame(
+        {
+            "t4dataset_id": ["00000000-0000-0000-0000-000000000001"],
+            "t4dataset_name": ["DevOps_V1_J6Gen2_Shiojiri_FP_IntersectionRight_Board_PCOff_DT001956"],
+        }
+    )
+
+    assert resolve_t4_dataset_id(df) == (
+        "DevOps_V1_J6Gen2_Shiojiri_FP_IntersectionRight_Board_PCOff_DT001956"
+    )
 
 
 def test_infer_external_bbox_alignment_for_length_forward_exports():

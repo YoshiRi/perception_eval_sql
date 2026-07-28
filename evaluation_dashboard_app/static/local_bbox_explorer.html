@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dataset BBox Summary</title>
-  <link rel="stylesheet" href="bbox_explorer.css">
+  <link rel="stylesheet" href="bbox_explorer.css?v=devops-review-20260729t">
 </head>
 <body>
   <div class="app">
     <aside class="panel left">
       <div>
         <h1>Dataset BBox Summary</h1>
-        <p class="sub">Scenario-level view for FP/FN hotspots, label changes, and frame-level issues.</p>
+        <p class="sub">Scenario-level view for FP/FN hotspots, devops intent, criteria gates, and frame-level issues.</p>
       </div>
       <div class="field">
         <label>Data root or parquet</label>
@@ -25,6 +25,13 @@
       <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
       <div class="field"><label>Search scenarios / suite / label</label><input id="searchInput" placeholder="pedestrian FP, Kawasaki, PDD..." spellcheck="false"></div>
       <div>
+        <h2>Explorer Mode</h2>
+        <div class="chips" id="modeChips">
+          <span class="chip active" data-mode="hotspots">Hotspots</span>
+          <span class="chip" data-mode="devops">DevOps Review</span>
+        </div>
+      </div>
+      <div class="lens-section">
         <h2>Issue Lens</h2>
         <div class="chips" id="lensChips">
           <span class="chip" data-lens="count">Count</span>
@@ -33,17 +40,20 @@
           <span class="chip" data-lens="fpr">FPR</span>
           <span class="chip" data-lens="fnr">FNR</span>
           <span class="chip" data-lens="error">TP error</span>
+          <span class="chip" data-lens="intent_risk">Intent risk</span>
+          <span class="chip" data-lens="target_fn">Target FN</span>
+          <span class="chip" data-lens="target_fp">Target FP</span>
           <span class="chip compare-chip" data-lens="changed_only">Changed only</span>
           <span class="chip compare-chip" data-lens="delta_fp">FP change</span>
           <span class="chip compare-chip" data-lens="delta_fn">FN change</span>
           <span class="chip compare-chip" data-lens="regression">More FP/FN in B</span>
         </div>
       </div>
-      <div>
+      <div class="label-filter-section">
         <h2>Object Label</h2>
         <div class="chips" id="labelChips"><span class="chip active" data-label="">All labels</span></div>
       </div>
-      <div>
+      <div class="range-section">
         <h2>Ego Range</h2>
         <div class="chips" id="rangeChips">
           <span class="chip active" data-range="">All range</span>
@@ -55,11 +65,14 @@
           <span class="chip" data-range="100">&lt;100m</span>
         </div>
       </div>
-      <div>
+      <div class="shortcut-section">
         <h2>Shortcuts</h2>
         <div class="chips">
+          <span class="chip" id="devopsIntentBtn">DevOps intent</span>
           <span class="chip" id="nearPedBtn">Nearby pedestrian</span>
           <span class="chip" id="nearPedFpBtn">Nearby pedestrian FP</span>
+          <span class="chip" id="animalBtn">Animal / debris</span>
+          <span class="chip" id="falseStopBtn">False stop FP</span>
         </div>
       </div>
       <div class="kpis">
@@ -67,8 +80,8 @@
         <div class="kpi"><b id="kFp">0</b><span id="kFpLabel">FP</span></div>
         <div class="kpi"><b id="kFn">0</b><span id="kFnLabel">FN</span></div>
       </div>
-      <div>
-        <h2>Top Issues</h2>
+      <div class="scenario-list-section">
+        <h2 id="scenarioListTitle">Top Issues</h2>
         <div class="list" id="scenarioList"></div>
       </div>
     </aside>
@@ -83,6 +96,7 @@
         </div>
         <div class="tools">
           <button id="layoutGalaxy" class="active">Map</button>
+          <button id="layoutReview">Review</button>
           <button id="layoutStats">Stats</button>
           <select id="statsDistanceStyle" class="stats-tool" title="Distance chart style">
             <option value="line">Distance line</option>
@@ -120,6 +134,7 @@
           </div>
         </div>
         <canvas class="scene-preview" id="previewCanvas"></canvas>
+        <div class="preview-devops-overlay" id="previewDevopsOverlay"></div>
         <div class="preview-diagnostics">
           <div class="preview-layers" id="previewLayers">
             <button class="active" data-layer="gt_tp">GT·TP</button>
@@ -162,10 +177,22 @@
         <div class="metric"><b id="selPrecision">-</b><span>precision</span></div>
         <div class="metric"><b id="selRecall">-</b><span>recall</span></div>
       </div>
-      <div class="card">
+      <div class="card curve-card">
         <h2>Frame Curve</h2>
         <canvas class="curve" id="curveCanvas"></canvas>
         <div class="curve-status" id="curveStatus">Select a scenario to load the frame curve.</div>
+      </div>
+      <div class="card">
+        <h2>Result Explanation</h2>
+        <div class="result-panel" id="resultPanel">
+          <div class="scenario"><strong>No result loaded</strong><span>Select a scenario to evaluate criteria and hot frames.</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>DevOps Intent</h2>
+        <div class="intent-panel" id="intentPanel">
+          <div class="scenario"><strong>No scenario selected</strong><span>Click a devops scenario to see purpose and criteria.</span></div>
+        </div>
       </div>
       <div class="card">
         <h2>Scenario Actions</h2>
@@ -173,7 +200,7 @@
           <button id="openViewerBtn">Inspect BBoxes</button>
         </div>
       </div>
-      <div class="card">
+      <div class="card labels-card">
         <h2>Labels In Scenario</h2>
         <div class="list labels-panel-list" id="labelBreakdown"></div>
       </div>
@@ -193,12 +220,12 @@
     <iframe id="viewerFrame" title="BBox Viewer"></iframe>
   </div>
   <script>window.BBOX_EXPLORER_API_BASE = "__API_BASE__";</script>
-  <script src="bbox_api.js"></script>
-  <script src="bbox_state.js"></script>
-  <script src="metrics.js"></script>
-  <script src="preview_renderer.js"></script>
-  <script src="map_renderer.js"></script>
-  <script src="stats_renderer.js"></script>
-  <script src="events.js"></script>
+  <script src="bbox_api.js?v=devops-review-20260729t"></script>
+  <script src="bbox_state.js?v=devops-review-20260729t"></script>
+  <script src="metrics.js?v=devops-review-20260729t"></script>
+  <script src="preview_renderer.js?v=devops-review-20260729t"></script>
+  <script src="map_renderer.js?v=devops-review-20260729t"></script>
+  <script src="stats_renderer.js?v=devops-review-20260729t"></script>
+  <script src="events.js?v=devops-review-20260729t"></script>
 </body>
 </html>

@@ -32,6 +32,7 @@ var state = {
   selected: null,
   hover: null,
   mouse: {x: -9999, y: -9999},
+  devopsResult: null,
   deepLink: null
 };
 var $ = (id) => document.getElementById(id);
@@ -59,6 +60,7 @@ var els = {
   labelFrameBreakdown: $("labelFrameBreakdown"), labelFrameMeta: $("labelFrameMeta"), zoneBreakdown: $("zoneBreakdown"), hotspotModes: $("hotspotModes"), hotspotModeMeta: $("hotspotModeMeta"),
   cntGtTp: $("cntGtTp"), cntGtFn: $("cntGtFn"), cntEstTp: $("cntEstTp"), cntEstFp: $("cntEstFp"),
   compareSummary: $("compareSummary"), compareAStats: $("compareAStats"), compareBStats: $("compareBStats"), compareDeltaStats: $("compareDeltaStats"), compareFrameNote: $("compareFrameNote"),
+  devopsViewerPanel: $("devopsViewerPanel"),
   compareBanner: $("compareBanner"), compareBannerText: $("compareBannerText"), splitLabelA: $("splitLabelA"), splitLabelB: $("splitLabelB"), curtainHandle: $("curtainHandle")
 };
 var ctx = els.canvas.getContext("2d");

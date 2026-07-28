@@ -13,6 +13,7 @@ function readDeepLink() {
     scenario: q.get("scenario") || q.get("scenario_name") || "",
     topic: q.get("topic") || q.get("topic_name") || "",
     frame: q.get("frame") || q.get("frame_index") || "",
+    devops: q.get("devops") === "1" || q.get("devops") === "true",
     lens: q.get("lens") || q.get("compare_lens") || "",
     layout: q.get("layout") || q.get("compare_layout") || ""
   };

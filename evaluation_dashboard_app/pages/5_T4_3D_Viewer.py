@@ -53,6 +53,7 @@ from lib.t4_visualizer_client import (
     T4VisualizerClient,
     T4VisualizerError,
     browser_base_url,
+    format_t4_visualizer_error,
 )
 
 st.set_page_config(
@@ -1042,7 +1043,7 @@ else:
                 "ok": False,
                 "available": False,
                 "data": None,
-                "error": f"T4 server error ({ex.status_code}): {ex}",
+                "error": format_t4_visualizer_error(ex),
             }
         except (OSError, requests.RequestException) as ex:
             st.session_state["bbox_t4_availability"] = {

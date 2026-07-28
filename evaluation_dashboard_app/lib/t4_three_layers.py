@@ -66,6 +66,10 @@ _BINARY_FOOTPRINT_POINT_STRUCT = struct.Struct("<fff")
 _VEHICLE_LABELS = {"car", "truck", "bus", "trailer"}
 _EXTERNAL_EVAL_TO_T4_YAW_OFFSET = 0.0
 EXTERNAL_BBOX_ALIGNMENT_VERSION = "eval-yaw0-explicit-corners-v3"
+PLACEHOLDER_T4_DATASET_IDS = {
+    "00000000-0000-0000-0000-000000000000",
+    "00000000-0000-0000-0000-000000000001",
+}
 
 
 def _is_missing(value: object) -> bool:
@@ -92,6 +96,15 @@ def _as_text(value: object, default: str = "") -> str:
     if _is_missing(value):
         return default
     return str(value)
+
+
+def _clean_t4_dataset_value(value: object) -> str:
+    text = _as_text(value).strip()
+    if text.lower() in {"", "none", "nan", "<na>"}:
+        return ""
+    if text in PLACEHOLDER_T4_DATASET_IDS:
+        return ""
+    return text
 
 
 def _as_footprint_vertices(value: object) -> list[list[float]] | None:
@@ -135,9 +148,15 @@ def resolve_t4_dataset_id(dff: "pd.DataFrame") -> str:
     if dff is None or dff.empty:
         return ""
     if "t4dataset_id" in dff.columns and dff["t4dataset_id"].notna().any():
-        return str(dff["t4dataset_id"].dropna().astype(str).iloc[0])
+        for value in dff["t4dataset_id"].dropna().tolist():
+            clean = _clean_t4_dataset_value(value)
+            if clean:
+                return clean
     if "t4dataset_name" in dff.columns and dff["t4dataset_name"].notna().any():
-        return str(dff["t4dataset_name"].dropna().iloc[0])
+        for value in dff["t4dataset_name"].dropna().tolist():
+            clean = _clean_t4_dataset_value(value)
+            if clean:
+                return clean
     return ""
 
 

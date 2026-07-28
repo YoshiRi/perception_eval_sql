@@ -25,6 +25,7 @@ from lib.t4_visualizer_client import (
     T4VisualizerClient,
     T4VisualizerError,
     browser_base_url,
+    format_t4_visualizer_error,
     target_object_from_gt_row,
 )
 
@@ -595,7 +596,7 @@ else:
                 "ok": False,
                 "available": False,
                 "data": None,
-                "error": f"T4 server error ({ex.status_code}): {ex}",
+                "error": format_t4_visualizer_error(ex),
             }
         except (OSError, requests.RequestException) as ex:
             st.session_state["bbox_t4_availability"] = {
@@ -731,7 +732,7 @@ else:
                 st.session_state.pop("bbox_t4_last_meta", None)
                 st.session_state.pop("bbox_t4_success_key", None)
                 st.session_state["bbox_t4_error_key"] = _req_key
-                st.session_state["bbox_t4_error_msg"] = f"T4 server error ({ex.status_code}): {ex}"
+                st.session_state["bbox_t4_error_msg"] = format_t4_visualizer_error(ex)
             except (OSError, requests.RequestException) as ex:
                 st.session_state.pop("bbox_t4_last_images", None)
                 st.session_state.pop("bbox_t4_last_meta", None)

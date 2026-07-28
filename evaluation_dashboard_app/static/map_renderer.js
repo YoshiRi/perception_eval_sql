@@ -302,9 +302,397 @@ function aggregateLabelsFor(arr) {
   });
   return [...map.values()];
 }
+function canvasRoundRect(x, y, w, h, radius = 8) {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+}
+function fillCard(x, y, w, h, options = {}) {
+  canvasRoundRect(x, y, w, h, options.radius || 8);
+  ctx.fillStyle = options.fill || "rgba(8,13,28,.72)";
+  ctx.fill();
+  ctx.strokeStyle = options.stroke || "rgba(148,163,184,.18)";
+  ctx.lineWidth = options.lineWidth || 1;
+  ctx.stroke();
+}
+function drawWrappedText(text, x, y, maxW, lineH, maxLines = 3) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  words.forEach(word => {
+    const next = line ? `${line} ${word}` : word;
+    if (ctx.measureText(next).width <= maxW || !line) line = next;
+    else { lines.push(line); line = word; }
+  });
+  if (line) lines.push(line);
+  lines.slice(0, maxLines).forEach((l, i) => {
+    const out = i === maxLines - 1 && lines.length > maxLines ? `${l.replace(/\s+\S+$/, "")}...` : l;
+    ctx.fillText(out, x, y + i * lineH);
+  });
+  return Math.min(lines.length, maxLines) * lineH;
+}
+function drawCanvasBadge(text, status, x, y, w = 58, h = 21) {
+  const colors = {
+    pass: ["rgba(52,211,153,.18)", "rgba(52,211,153,.72)", "#bbf7d0"],
+    fail: ["rgba(251,113,133,.18)", "rgba(251,113,133,.72)", "#fecdd3"],
+    review: ["rgba(251,191,36,.16)", "rgba(251,191,36,.66)", "#fde68a"],
+    unknown: ["rgba(148,163,184,.14)", "rgba(148,163,184,.46)", "#cbd5e1"]
+  }[status] || ["rgba(148,163,184,.14)", "rgba(148,163,184,.46)", "#cbd5e1"];
+  fillCard(x, y, w, h, {fill: colors[0], stroke: colors[1], radius: 7});
+  ctx.fillStyle = colors[2];
+  ctx.font = "800 10px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(text, x + w / 2, y + 14);
+  ctx.textAlign = "left";
+}
+function selectedOrFirstDevops(arr) {
+  if (state.selected && devopsContext(state.selected).is_devops) {
+    const key = scenarioKey(state.selected);
+    return arr.find(s => scenarioKey(s) === key) || state.selected;
+  }
+  return arr[0] || null;
+}
+function devopsResultForCanvas(s) {
+  if (state.selected && s && scenarioKey(state.selected) === scenarioKey(s) && state.devopsResult) return state.devopsResult;
+  return fallbackScenarioResult(s, "");
+}
+function drawDevopsSuiteCards(groups, x, y, w, h) {
+  ctx.fillStyle = "#eaf2ff";
+  ctx.font = "800 15px Inter, sans-serif";
+  ctx.fillText("Suites", x, y);
+  ctx.fillStyle = "rgba(145,164,191,.9)";
+  ctx.font = "600 11px Inter, sans-serif";
+  ctx.fillText("Worst pass rate first. Select cases below or from the left list.", x, y + 20);
+  const gap = 9;
+  const cardH = 60;
+  const usableY = y + 36;
+  const cols = w > 620 ? 2 : 1;
+  const colW = (w - gap * (cols - 1)) / cols;
+  const maxCards = Math.max(4, Math.floor(h / (cardH + gap)) * cols);
+  groups.slice(0, maxCards).forEach((group, i) => {
+    const cx = x + (i % cols) * (colW + gap);
+    const cy = usableY + Math.floor(i / cols) * (cardH + gap);
+    const suitePass = group.suitePass;
+    const rateValue = suitePass ? suitePass.pass_rate : group.pass / Math.max(1, group.items.length);
+    const ratePct = Math.max(0, Math.min(100, Number(rateValue || 0) * 100));
+    const isFailing = ratePct < 50 || group.fail > group.pass;
+    fillCard(cx, cy, colW, cardH, {
+      fill: isFailing ? "rgba(69,10,10,.28)" : "rgba(6,78,59,.18)",
+      stroke: isFailing ? "rgba(251,113,133,.30)" : "rgba(52,211,153,.26)"
+    });
+    ctx.fillStyle = "#eaf2ff";
+    ctx.font = "800 11px Inter, sans-serif";
+    drawWrappedText(group.key.replace(/^DevOps_V1_/, ""), cx + 10, cy + 16, colW - 88, 12, 2);
+    ctx.fillStyle = isFailing ? "#fecdd3" : "#bbf7d0";
+    ctx.font = "800 13px Inter, sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(`${Math.round(ratePct)}%`, cx + colW - 10, cy + 18);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "rgba(15,23,42,.92)";
+    canvasRoundRect(cx + 10, cy + cardH - 16, colW - 20, 5, 4);
+    ctx.fill();
+    ctx.fillStyle = isFailing ? "#fb7185" : "#34d399";
+    canvasRoundRect(cx + 10, cy + cardH - 16, (colW - 20) * ratePct / 100, 5, 4);
+    ctx.fill();
+    ctx.fillStyle = "rgba(203,213,225,.82)";
+    ctx.font = "600 10px Inter, sans-serif";
+    const counts = suitePass
+      ? `${fmt(suitePass.passed)}/${fmt(suitePass.total)} official pass`
+      : `${fmt(group.pass)} pass / ${fmt(group.fail)} fail / ${fmt(group.review)} review`;
+    ctx.fillText(counts, cx + 10, cy + cardH - 25);
+  });
+}
+function drawDevopsSuiteTree(groups, x, y, w, h, selected) {
+  ctx.fillStyle = "#eaf2ff";
+  ctx.font = "800 15px Inter, sans-serif";
+  ctx.fillText("Suite Results", x, y);
+  ctx.fillStyle = "rgba(145,164,191,.9)";
+  ctx.font = "600 11px Inter, sans-serif";
+  ctx.fillText("Fold suites here, then select a scenario to inspect judgement gates.", x, y + 20);
+  const listX = x;
+  const listY = y + 36;
+  const listW = w;
+  const listH = h - 36;
+  fillCard(listX, listY, listW, listH, {fill: "rgba(2,6,23,.22)", stroke: "rgba(148,163,184,.14)"});
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(listX, listY, listW, listH);
+  ctx.clip();
+  let cursor = listY + 8 - (state.devopsCanvasScroll || 0);
+  const selectedKey = selected ? scenarioKey(selected) : "";
+  groups.forEach(group => {
+    const expanded = state.expandedSuites.has(group.key);
+    const headH = 42;
+    const visible = cursor + headH >= listY && cursor <= listY + listH;
+    if (visible) {
+      const suitePass = group.suitePass;
+      const rateValue = suitePass ? suitePass.pass_rate : group.pass / Math.max(1, group.items.length);
+      const ratePct = Math.max(0, Math.min(100, Number(rateValue || 0) * 100));
+      const failing = ratePct < 50 || group.fail > group.pass;
+      fillCard(listX + 8, cursor, listW - 16, headH - 4, {
+        fill: failing ? "rgba(69,10,10,.24)" : "rgba(6,78,59,.16)",
+        stroke: failing ? "rgba(251,113,133,.28)" : "rgba(52,211,153,.22)"
+      });
+      state.devopsCanvasHits.push({kind: "suite", suite: group.key, x: listX + 8, y: cursor, w: listW - 16, h: headH - 4});
+      ctx.fillStyle = "#eaf2ff";
+      ctx.font = "900 12px Inter, sans-serif";
+      ctx.fillText(expanded ? "v" : ">", listX + 20, cursor + 24);
+      drawWrappedText(group.key.replace(/^DevOps_V1_/, ""), listX + 42, cursor + 17, listW - 210, 13, 1);
+      const countText = suitePass
+        ? `${fmt(suitePass.passed)}/${fmt(suitePass.total)} pass`
+        : `${fmt(group.pass)} pass / ${fmt(group.fail)} fail`;
+      ctx.fillStyle = failing ? "#fecdd3" : "#bbf7d0";
+      ctx.font = "900 12px Inter, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(`${Math.round(ratePct)}%`, listX + listW - 20, cursor + 17);
+      ctx.fillStyle = "rgba(203,213,225,.82)";
+      ctx.font = "700 10px Inter, sans-serif";
+      ctx.fillText(countText, listX + listW - 20, cursor + 31);
+      ctx.textAlign = "left";
+      ctx.fillStyle = "rgba(15,23,42,.92)";
+      canvasRoundRect(listX + 42, cursor + 27, Math.max(80, listW - 250), 5, 4);
+      ctx.fill();
+      ctx.fillStyle = failing ? "#fb7185" : "#34d399";
+      canvasRoundRect(listX + 42, cursor + 27, Math.max(80, listW - 250) * ratePct / 100, 5, 4);
+      ctx.fill();
+    }
+    cursor += headH;
+    if (!expanded) return;
+    group.items
+      .sort((a, b) => {
+        const aj = scenarioJudgement(a), bj = scenarioJudgement(b);
+        const order = {fail: 0, review: 1, pass: 2};
+        return order[aj.status] - order[bj.status] || scenarioMetric(b) - scenarioMetric(a);
+      })
+      .forEach(item => {
+        const rowH = 43;
+        const rowVisible = cursor + rowH >= listY && cursor <= listY + listH;
+        if (rowVisible) {
+          const active = scenarioKey(item) === selectedKey;
+          const j = scenarioJudgement(item);
+          fillCard(listX + 24, cursor, listW - 40, rowH - 5, {
+            fill: active ? "rgba(8,47,73,.74)" : "rgba(15,23,42,.54)",
+            stroke: active ? "rgba(56,189,248,.62)" : "rgba(148,163,184,.14)",
+            radius: 7
+          });
+          state.devopsCanvasHits.push({kind: "scenario", s: item, x: listX + 24, y: cursor, w: listW - 40, h: rowH - 5});
+          drawCanvasBadge(j.label, j.status, listX + 34, cursor + 8, 50, 20);
+          ctx.fillStyle = "#eaf2ff";
+          ctx.font = "800 11px Inter, sans-serif";
+          drawWrappedText(scenarioName(item), listX + 94, cursor + 16, listW - 176, 12, 1);
+          ctx.fillStyle = "rgba(145,164,191,.9)";
+          ctx.font = "600 10px Inter, sans-serif";
+          drawWrappedText(`${j.reason} / TP ${fmt(targetMetric(item, "tp"))} / FP ${fmt(targetMetric(item, "fp"))} / FN ${fmt(targetMetric(item, "fn"))}`, listX + 94, cursor + 31, listW - 176, 12, 1);
+        }
+        cursor += rowH;
+      });
+  });
+  ctx.restore();
+  const totalH = cursor - (listY + 8 - (state.devopsCanvasScroll || 0)) + 16;
+  state.devopsCanvasMaxScroll = Math.max(0, totalH - listH);
+  state.devopsCanvasScroll = Math.max(0, Math.min(state.devopsCanvasScroll || 0, state.devopsCanvasMaxScroll));
+  if (state.devopsCanvasMaxScroll > 0) {
+    const thumbH = Math.max(36, listH * listH / (listH + state.devopsCanvasMaxScroll));
+    const thumbY = listY + (listH - thumbH) * (state.devopsCanvasScroll / state.devopsCanvasMaxScroll);
+    fillCard(listX + listW - 8, thumbY, 4, thumbH, {fill: "rgba(56,189,248,.5)", stroke: "rgba(56,189,248,.1)", radius: 3});
+  }
+}
+function devopsGateLabel(g) {
+  const method = g.metric_label || g.method || "criterion";
+  const dist = g.distance_label || "all distances";
+  return `${method} / ${dist}`;
+}
+function drawDevopsGate(g, x, y, w) {
+  const passed = g.passed === true;
+  const failed = g.passed === false;
+  const status = passed ? "pass" : (failed ? "fail" : "review");
+  drawCanvasBadge(passed ? "PASS" : (failed ? "FAIL" : "CHECK"), status, x, y - 3, 58, 21);
+  ctx.fillStyle = "#dbeafe";
+  ctx.font = "800 11px Inter, sans-serif";
+  drawWrappedText(devopsGateLabel(g), x + 68, y + 11, w - 74, 12, 1);
+  const barY = y + 28;
+  ctx.fillStyle = "rgba(15,23,42,.92)";
+  canvasRoundRect(x, barY, w, 7, 4);
+  ctx.fill();
+  const actual = Number(g.actual_rate);
+  const required = Number(g.required_rate);
+  const actualPct = Number.isFinite(actual) ? Math.max(0, Math.min(1, actual)) : 0;
+  const requiredPct = Number.isFinite(required) ? Math.max(0, Math.min(1, required)) : null;
+  ctx.fillStyle = failed ? "#fb7185" : "#38bdf8";
+  canvasRoundRect(x, barY, w * actualPct, 7, 4);
+  ctx.fill();
+  if (requiredPct != null) {
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x + w * requiredPct, barY - 4);
+    ctx.lineTo(x + w * requiredPct, barY + 11);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(145,164,191,.92)";
+  ctx.font = "600 10px Inter, sans-serif";
+  const meta = `${pctText(g.actual_rate)} actual / ${pctText(g.required_rate)} required / ${fmt(g.fail_count)} failed / ${fmt(g.total_count)} total`;
+  drawWrappedText(meta, x, y + 49, w, 12, 1);
+}
+function drawDevopsEvidenceCurve(s, result, x, y, w, h) {
+  fillCard(x, y, w, h, {fill: "rgba(2,6,23,.34)", stroke: "rgba(148,163,184,.16)"});
+  ctx.fillStyle = "#eaf2ff";
+  ctx.font = "800 12px Inter, sans-serif";
+  ctx.fillText("Frame Evidence", x + 12, y + 18);
+  const frames = (state.selected && s && scenarioKey(state.selected) === scenarioKey(s) ? state.curve : []) || [];
+  const hot = result && (result.hot_frames || []);
+  const plotX = x + 12, plotY = y + 34, plotW = w - 24, plotH = h - 48;
+  if (!frames.length) {
+    ctx.fillStyle = "rgba(145,164,191,.85)";
+    ctx.font = "600 11px Inter, sans-serif";
+    ctx.fillText("Select a scenario to load its per-frame TP / FP / FN curve.", plotX, plotY + 25);
+    return;
+  }
+  const sampled = frames.length > 120 ? frames.filter((_, i) => i % Math.ceil(frames.length / 120) === 0) : frames;
+  const maxV = Math.max(1, ...sampled.map(f => Math.abs(f.fp || 0) + Math.abs(f.fn || 0) + Math.abs(f.tp || 0)));
+  sampled.forEach((f, i) => {
+    const bx = plotX + i / Math.max(1, sampled.length - 1) * plotW;
+    const fpH = Math.abs(f.fp || 0) / maxV * plotH;
+    const fnH = Math.abs(f.fn || 0) / maxV * plotH;
+    const tpH = Math.abs(f.tp || 0) / maxV * plotH;
+    ctx.fillStyle = "rgba(251,113,133,.7)";
+    ctx.fillRect(bx, plotY + plotH - fpH, Math.max(1, plotW / sampled.length - 1), fpH);
+    ctx.fillStyle = "rgba(251,191,36,.72)";
+    ctx.fillRect(bx, plotY + plotH - fpH - fnH, Math.max(1, plotW / sampled.length - 1), fnH);
+    ctx.fillStyle = "rgba(56,189,248,.66)";
+    ctx.fillRect(bx, plotY + plotH - fpH - fnH - tpH, Math.max(1, plotW / sampled.length - 1), tpH);
+  });
+  (hot || []).slice(0, 5).forEach((f, i) => {
+    const fx = plotX + (i + .5) * Math.min(92, plotW / Math.max(1, Math.min(5, hot.length)));
+    const fy = y + h - 25;
+    fillCard(fx, fy, 78, 18, {fill: "rgba(15,23,42,.86)", stroke: "rgba(56,189,248,.25)", radius: 6});
+    ctx.fillStyle = "#bae6fd";
+    ctx.font = "800 10px Inter, sans-serif";
+    ctx.fillText(`f${f.frame}`, fx + 8, fy + 12);
+    state.devopsCanvasHits.push({kind: "frame", frame: Number(f.frame), x: fx, y: fy, w: 78, h: 18});
+  });
+}
+function renderDevopsCanvas(rect) {
+  state.devopsCanvasHits = [];
+  state.hover = null;
+  state.hoverLabel = null;
+  const all = filteredScenarios().filter(s => devopsContext(s).is_devops);
+  const groups = devopsSuiteGroups(all);
+  const pad = 24;
+  const topY = 92;
+  const contentW = rect.width - pad * 2;
+  const contentH = rect.height - topY - pad;
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "900 24px Inter, sans-serif";
+  ctx.fillText("DevOps Result Review", pad, 42);
+  ctx.fillStyle = "rgba(186,230,253,.86)";
+  ctx.font = "600 12px Inter, sans-serif";
+  ctx.fillText("Suite pass/fail, scenario intent, criteria gates, and evidence frames in one place.", pad, 64);
+  const totalPass = groups.reduce((n, g) => n + (g.suitePass ? g.suitePass.passed : g.pass), 0);
+  const totalCases = groups.reduce((n, g) => n + (g.suitePass ? g.suitePass.total : g.items.length), 0);
+  const kpis = [
+    ["Suites", fmt(groups.length)],
+    ["Scenarios", fmt(all.length)],
+    ["Official Pass", totalCases ? `${fmt(totalPass)}/${fmt(totalCases)}` : "-"],
+    ["Estimated Fails", fmt(groups.reduce((n, g) => n + g.fail, 0))]
+  ];
+  kpis.forEach((k, i) => {
+    const x = rect.width - pad - (4 - i) * 126;
+    fillCard(x, 24, 112, 46, {fill: "rgba(8,13,28,.58)", stroke: "rgba(56,189,248,.18)"});
+    ctx.fillStyle = "#eaf2ff";
+    ctx.font = "900 16px Inter, sans-serif";
+    ctx.fillText(k[1], x + 10, 44);
+    ctx.fillStyle = "rgba(145,164,191,.9)";
+    ctx.font = "700 10px Inter, sans-serif";
+    ctx.fillText(k[0], x + 10, 60);
+  });
+  if (!all.length) {
+    fillCard(pad, topY, contentW, Math.min(280, contentH), {fill: "rgba(8,13,28,.58)", stroke: "rgba(251,191,36,.25)"});
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "900 18px Inter, sans-serif";
+    ctx.fillText("No DevOps scenario metadata was inferred.", pad + 18, topY + 38);
+    ctx.fillStyle = "rgba(203,213,225,.9)";
+    ctx.font = "600 12px Inter, sans-serif";
+    drawWrappedText("Choose a devops parquet, clear the search, or restart the bbox API if the run metadata was loaded before the new parser.", pad + 18, topY + 64, contentW - 36, 16, 3);
+    updateDevopsCanvasHover(rect);
+    return;
+  }
+  const leftW = Math.max(360, Math.min(700, contentW * .47));
+  const rightX = pad + leftW + 20;
+  const rightW = contentW - leftW - 20;
+  const s = selectedOrFirstDevops(all);
+  const result = s ? devopsResultForCanvas(s) : null;
+  const judgement = s ? (result ? {
+    status: result.overall_pass ? "pass" : "fail",
+    label: result.overall_pass ? "PASS" : "FAIL",
+    reason: (result.explanation || [])[0] || scenarioJudgement(s).reason
+  } : scenarioJudgement(s)) : null;
+  fillCard(rightX, topY, rightW, contentH, {fill: "rgba(8,13,28,.62)", stroke: "rgba(56,189,248,.20)"});
+  if (!s) {
+    ctx.fillStyle = "#eaf2ff";
+    ctx.font = "900 16px Inter, sans-serif";
+    ctx.fillText("Select a scenario", rightX + 16, topY + 32);
+    return;
+  }
+  drawDevopsSuiteTree(groups, pad, topY, leftW, contentH, s);
+  drawCanvasBadge(judgement.label, judgement.status, rightX + 16, topY + 16, 66, 24);
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "900 17px Inter, sans-serif";
+  drawWrappedText(scenarioName(s), rightX + 94, topY + 34, rightW - 112, 18, 2);
+  const c = devopsContext(s);
+  ctx.fillStyle = "rgba(186,230,253,.86)";
+  ctx.font = "700 11px Inter, sans-serif";
+  drawWrappedText([c.intent_type, c.target_label, c.behavior, c.pc_mode, c.city].filter(Boolean).join(" / "), rightX + 16, topY + 78, rightW - 32, 14, 2);
+  ctx.fillStyle = "rgba(226,232,240,.92)";
+  ctx.font = "600 12px Inter, sans-serif";
+  drawWrappedText((result && result.explanation || [judgement.reason, devopsQuickRead(s)]).join(" "), rightX + 16, topY + 116, rightW - 32, 16, 4);
+  const target = c.target_label || "target";
+  const metricY = topY + 190;
+  [
+    ["TP", targetMetric(s, "tp"), "#38bdf8"],
+    ["FP", targetMetric(s, "fp"), "#fb7185"],
+    ["FN", targetMetric(s, "fn"), "#fbbf24"],
+    ["Frames", s.frames || 0, "#cbd5e1"]
+  ].forEach((m, i) => {
+    const mx = rightX + 16 + i * Math.max(92, (rightW - 32) / 4);
+    ctx.fillStyle = m[2];
+    ctx.font = "900 17px Inter, sans-serif";
+    ctx.fillText(fmt(m[1]), mx, metricY);
+    ctx.fillStyle = "rgba(145,164,191,.9)";
+    ctx.font = "700 10px Inter, sans-serif";
+    ctx.fillText(`${target} ${m[0]}`.replace(`${target} Frames`, "Frames"), mx, metricY + 16);
+  });
+  ctx.fillStyle = "#eaf2ff";
+  ctx.font = "900 13px Inter, sans-serif";
+  ctx.fillText("Criteria Gates", rightX + 16, metricY + 50);
+  const gates = (result && result.gates || []).slice(0, 4);
+  if (gates.length) gates.forEach((g, i) => drawDevopsGate(g, rightX + 16, metricY + 70 + i * 72, rightW - 32));
+  else {
+    ctx.fillStyle = "rgba(145,164,191,.9)";
+    ctx.font = "600 11px Inter, sans-serif";
+    drawWrappedText("No supported criteria gates for this scenario yet. The summary still shows target TP / FP / FN for investigation.", rightX + 16, metricY + 72, rightW - 32, 14, 2);
+  }
+  const evidenceY = Math.max(metricY + 70 + Math.max(1, gates.length) * 72 + 8, topY + contentH - 142);
+  drawDevopsEvidenceCurve(s, result, rightX + 16, evidenceY, rightW - 32, Math.max(118, topY + contentH - evidenceY - 16));
+  fillCard(rightX + rightW - 120, topY + contentH - 44, 96, 26, {fill: "rgba(8,145,178,.26)", stroke: "rgba(56,189,248,.40)", radius: 7});
+  ctx.fillStyle = "#ddf7ff";
+  ctx.font = "900 11px Inter, sans-serif";
+  ctx.fillText("Open Viewer", rightX + rightW - 103, topY + contentH - 27);
+  state.devopsCanvasHits.push({kind: "viewer", x: rightX + rightW - 120, y: topY + contentH - 44, w: 96, h: 26});
+  updateDevopsCanvasHover(rect);
+}
 
 function render() {
   els.stage.classList.toggle("stats-mode", state.stageView === "stats");
+  els.stage.classList.toggle("devops-mode", state.explorerMode === "devops" && state.stageView !== "stats");
   const r = resizeCanvas(els.canvas, ctx);
   ctx.clearRect(0, 0, r.width, r.height);
   const bg = ctx.createLinearGradient(0, 0, r.width, r.height);
@@ -313,6 +701,13 @@ function render() {
   if (state.stageView === "stats") {
     els.legend.style.display = "none";
     renderStatsDashboard(r);
+    return;
+  }
+  if (state.explorerMode === "devops") {
+    els.legend.style.display = "none";
+    state.devopsCanvasHits = [];
+    state.devopsHoverHit = null;
+    els.hoverCard.classList.remove("show");
     return;
   }
   els.legend.style.display = "";
@@ -325,6 +720,32 @@ function render() {
   drawLabelConnections(r, arr);
   drawLabelBubbles(r, arr);
   updateHover(r);
+}
+function updateDevopsCanvasHover(rect) {
+  let hit = null;
+  for (const n of state.devopsCanvasHits || []) {
+    if (state.mouseX >= n.x && state.mouseX <= n.x + n.w && state.mouseY >= n.y && state.mouseY <= n.y + n.h) {
+      hit = n;
+      break;
+    }
+  }
+  state.devopsHoverHit = hit;
+  state.hover = hit && hit.kind === "scenario" ? hit.s : null;
+  state.hoverLabel = null;
+  if (!hit) { els.hoverCard.classList.remove("show"); return; }
+  if (hit.kind === "scenario") {
+    const j = scenarioJudgement(hit.s);
+    els.hoverCard.innerHTML = `<b>${escapeHtml(scenarioName(hit.s))}</b><span>${escapeHtml(hit.s.suite_name || "")}</span><span>${escapeHtml(j.label)}: ${escapeHtml(j.reason)}</span>`;
+  } else if (hit.kind === "frame") {
+    els.hoverCard.innerHTML = `<b>Frame ${escapeHtml(hit.frame)}</b><span>Click to open the viewer at this evidence frame.</span>`;
+  } else if (hit.kind === "suite") {
+    els.hoverCard.innerHTML = `<b>${escapeHtml(hit.suite.replace(/^DevOps_V1_/, ""))}</b><span>Click to expand or collapse this suite.</span>`;
+  } else {
+    els.hoverCard.innerHTML = `<b>Open Viewer</b><span>Open the selected scenario at the most suspicious frame.</span>`;
+  }
+  els.hoverCard.style.left = `${Math.max(8, Math.min(Math.max(8, rect.width - 340), state.mouseX))}px`;
+  els.hoverCard.style.top = `${Math.max(8, Math.min(Math.max(8, rect.height - 120), state.mouseY))}px`;
+  els.hoverCard.classList.add("show");
 }
 function updateStatsHover(rect) {
   let best = null;

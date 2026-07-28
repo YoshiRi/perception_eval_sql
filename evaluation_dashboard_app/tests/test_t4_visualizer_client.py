@@ -15,10 +15,13 @@ import pytest
 
 from lib.t4_visualizer_client import (
     ENV_BASE_URL,
+    ENV_CF_ACCESS_CLIENT_ID,
+    ENV_CF_ACCESS_CLIENT_SECRET,
     RenderRequest,
     T4VisualizerClient,
     T4VisualizerError,
     TargetObjectIn,
+    format_t4_visualizer_error,
     target_object_from_gt_row,
 )
 
@@ -37,6 +40,7 @@ def _ok_response(json_data):
     r.ok = True
     r.status_code = 200
     r.text = ""
+    r.headers = {"content-type": "application/json"}
     r.json.return_value = json_data
     return r
 
@@ -46,6 +50,7 @@ def _err_response(status_code: int, text: str = "not found"):
     r.ok = False
     r.status_code = status_code
     r.text = text
+    r.headers = {"content-type": "text/plain"}
     return r
 
 
@@ -67,6 +72,22 @@ def test_list_datasets_success():
     d = c.list_datasets()
     assert d["datasets"] == ["ds_a", "ds_b"]
     assert d["data_dir"] == "/data"
+    assert session.get.call_args.kwargs["headers"] is None
+
+
+def test_cloudflare_access_service_token_headers_from_env(monkeypatch):
+    monkeypatch.setenv(ENV_CF_ACCESS_CLIENT_ID, "client-id")
+    monkeypatch.setenv(ENV_CF_ACCESS_CLIENT_SECRET, "client-secret")
+    session = MagicMock()
+    session.get.return_value = _ok_response({"data_dir": "/data", "datasets": []})
+    c = T4VisualizerClient(base_url="http://test", session=session)
+
+    c.list_datasets()
+
+    assert session.get.call_args.kwargs["headers"] == {
+        "CF-Access-Client-Id": "client-id",
+        "CF-Access-Client-Secret": "client-secret",
+    }
 
 
 def test_list_dataset_scenarios_success():
@@ -138,11 +159,63 @@ def test_render_invalid_json_body():
     r = MagicMock()
     r.ok = True
     r.status_code = 200
+    r.text = "<html>login required</html>"
+    r.headers = {"content-type": "text/html; charset=utf-8"}
     r.json.side_effect = ValueError("bad json")
     session.post.return_value = r
     c = T4VisualizerClient(base_url="http://test", session=session)
-    with pytest.raises(T4VisualizerError, match="Invalid JSON"):
+    with pytest.raises(T4VisualizerError, match="Invalid JSON") as ei:
         c.render(RenderRequest(t4dataset_id="a", scenario_name="b", frame_index=0))
+    assert ei.value.status_code == 200
+    assert "content-type=text/html" in str(ei.value)
+    assert "login required" in str(ei.value)
+    assert ei.value.response_text == "<html>login required</html>"
+
+
+def test_cloudflare_access_login_html_gets_actionable_hint():
+    session = MagicMock()
+    r = MagicMock()
+    r.ok = True
+    r.status_code = 200
+    r.text = "<!DOCTYPE html><title>Sign in - Cloudflare Access</title>"
+    r.headers = {"content-type": "text/html"}
+    r.json.side_effect = ValueError("bad json")
+    session.get.return_value = r
+    c = T4VisualizerClient(base_url="http://test", session=session)
+
+    with pytest.raises(T4VisualizerError) as ei:
+        c.dataset_availability("ds1")
+
+    message = str(ei.value)
+    assert "Cloudflare Access returned a sign-in page" in message
+    assert ENV_CF_ACCESS_CLIENT_ID in message
+    assert ENV_CF_ACCESS_CLIENT_SECRET in message
+
+
+def test_dataset_availability_invalid_json_message_has_status_and_preview():
+    session = MagicMock()
+    r = MagicMock()
+    r.ok = True
+    r.status_code = 200
+    r.text = ""
+    r.headers = {"content-type": "text/plain"}
+    r.json.side_effect = ValueError("bad json")
+    session.get.return_value = r
+    c = T4VisualizerClient(base_url="http://test", session=session)
+    with pytest.raises(T4VisualizerError) as ei:
+        c.dataset_availability("ds1")
+    assert ei.value.status_code == 200
+    assert "Invalid JSON from /datasets/.../availability" in str(ei.value)
+    assert "status=200" in str(ei.value)
+    assert "empty body" in str(ei.value)
+    assert format_t4_visualizer_error(ei.value).startswith("T4 server error (200):")
+
+
+def test_format_t4_visualizer_error_omits_missing_status():
+    err = T4VisualizerError("Invalid JSON from /datasets/.../availability")
+    assert format_t4_visualizer_error(err) == (
+        "T4 server error: Invalid JSON from /datasets/.../availability"
+    )
 
 
 def test_target_object_from_gt_row_full():

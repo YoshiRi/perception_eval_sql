@@ -7,15 +7,26 @@ both local development and the Docker deployment.
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 import math
 import os
+import pickle
+import re
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import duckdb
+
+try:
+    import yaml
+except Exception:  # pragma: no cover - PyYAML is optional for the bbox API.
+    yaml = None
 
 
 DEFAULT_PORT = int(os.environ.get("LOCAL_BBOX_API_PORT", "8765"))
@@ -95,6 +106,15 @@ DISTANCE_BINS_SQL = """
 """
 _SERVER_LOCK = threading.Lock()
 _SERVER: ThreadingHTTPServer | None = None
+_SCENARIO_CONTEXT_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
+_SUITE_PASS_CACHE: dict[str, dict[str, Any]] = {}
+_COLUMNS_CACHE: dict[tuple[str, int, int], list[str]] = {}
+_SCENE_RESULT_PICKLE_CACHE: dict[tuple[str, int, int], Any] = {}
+_KNOWN_DEVOPS_TARGETS = {
+    "animal", "bicycle", "bus", "car", "exhaust_fog", "fallen_object", "ghost", "ground",
+    "motorbike", "opened_door", "pedestrian", "rain", "structure", "traffic_cone",
+    "truck", "unknown", "vegetation",
+}
 
 
 def _data_root() -> Path:
@@ -122,12 +142,32 @@ def _allowed_roots() -> list[Path]:
     return out
 
 
+def _container_path_candidates(raw: Path) -> list[Path]:
+    if not raw.is_absolute():
+        return []
+    out: list[Path] = []
+    mappings = [
+        (os.environ.get("LOCAL_EVALUATOR_HOST_DATA_ROOT"), os.environ.get("LOCAL_EVALUATOR_CONTAINER_DATA_ROOT") or str(_data_root())),
+    ]
+    for host_root_raw, container_root_raw in mappings:
+        if not host_root_raw or not container_root_raw:
+            continue
+        host_root = Path(host_root_raw).expanduser().resolve()
+        container_root = Path(container_root_raw).expanduser().resolve()
+        try:
+            rel = raw.relative_to(host_root)
+        except ValueError:
+            continue
+        out.append((container_root / rel).resolve())
+    return out
+
+
 def _resolve_local_path(value: str | None, *, allow_file: bool = True) -> Path:
     text = str(value or "").strip()
     if not text:
         return _data_root()
     raw = Path(text).expanduser()
-    candidates = [raw.resolve()] if raw.is_absolute() else [(Path.cwd() / raw).resolve(), (_data_root() / raw).resolve()]
+    candidates = [raw.resolve(), *_container_path_candidates(raw)] if raw.is_absolute() else [(Path.cwd() / raw).resolve(), (_data_root() / raw).resolve()]
     roots = _allowed_roots()
     for candidate in candidates:
         if allow_file and candidate.is_file() or candidate.is_dir():
@@ -259,11 +299,17 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
 
 
 def _columns(parquet_path: Path) -> list[str]:
+    stat = parquet_path.stat()
+    key = (str(parquet_path), stat.st_size, stat.st_mtime_ns)
+    if key in _COLUMNS_CACHE:
+        return _COLUMNS_CACHE[key]
     con = duckdb.connect()
     try:
-        return con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [str(parquet_path)]).df()["column_name"].tolist()
+        cols = con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [str(parquet_path)]).df()["column_name"].tolist()
     finally:
         con.close()
+    _COLUMNS_CACHE[key] = cols
+    return cols
 
 
 def _require_columns(cols: list[str], required: tuple[str, ...]) -> None:
@@ -328,8 +374,870 @@ def _as_text(value: Any) -> str:
     return "" if text.lower() in {"none", "nan", "<na>"} else text
 
 
+def _criteria_level_value(value: Any) -> float:
+    text = _as_text(value).lower()
+    named = {
+        "perfect": 100.0,
+        "hard": 75.0,
+        "normal": 50.0,
+        "easy": 25.0,
+    }
+    if text in named:
+        return named[text]
+    return _as_float(value, default=float("nan"))
+
+
+def _normalize_devops_label(value: str) -> str:
+    raw = re.sub(r"(?<!^)(?=[A-Z])", "_", str(value or "")).replace("-", "_").lower()
+    aliases = {
+        "pedestrian": "pedestrian",
+        "pedestrians": "pedestrian",
+        "pedestrian_child": "pedestrian",
+        "pedestrians_children": "pedestrian",
+        "child": "pedestrian",
+        "children": "pedestrian",
+        "adult": "pedestrian",
+        "adults": "pedestrian",
+        "pedestrian_group": "pedestrian",
+        "bicycle_pedestrians": "pedestrian",
+        "crouching_pedestrian": "pedestrian",
+        "dog": "animal",
+        "animal": "animal",
+        "card_board": "fallen_object",
+        "cardboard": "fallen_object",
+        "fallen_object": "fallen_object",
+        "fallen_sign": "fallen_object",
+        "road_debris": "fallen_object",
+        "sandbag": "fallen_object",
+        "sunshade": "fallen_object",
+        "fallen_cone": "traffic_cone",
+        "plastic_bag": "fallen_object",
+        "umbrella": "fallen_object",
+        "others": "unknown",
+        "other": "unknown",
+        "unknown": "unknown",
+        "cone": "traffic_cone",
+        "cones": "traffic_cone",
+        "traffic_cone": "traffic_cone",
+        "opened_door": "opened_door",
+        "door": "opened_door",
+        "truck": "truck",
+        "trailer": "truck",
+        "track": "truck",
+        "bus": "bus",
+        "car": "car",
+        "bicycle": "bicycle",
+        "bicycles": "bicycle",
+        "motorbike": "motorbike",
+        "motorcycle": "motorbike",
+        "motorcycles": "motorbike",
+        "surface_cluster": "ground",
+        "ground": "ground",
+        "shrub": "vegetation",
+        "tree": "vegetation",
+        "vegetation": "vegetation",
+        "plant": "vegetation",
+        "rain": "rain",
+        "watervapor": "exhaust_fog",
+        "water_vapor": "exhaust_fog",
+        "exhaust": "exhaust_fog",
+        "fog": "exhaust_fog",
+        "ghost": "ghost",
+        "ghost_from_fence": "ghost",
+        "ghost_from_guardrail": "ghost",
+        "ghost_or_side_mirror": "ghost",
+        "rocket": "ghost",
+        "streetlight": "structure",
+        "signboard": "structure",
+        "pole": "structure",
+        "rubberpole": "structure",
+        "utility_pole_or_banner": "structure",
+        "watersupply": "structure",
+        "board": "structure",
+        "bird": "animal",
+        "dragonfly": "animal",
+    }
+    return aliases.get(raw, raw)
+
+
+def _suite_base_name(suite_name: str) -> str:
+    return re.sub(r"_[0-9a-f]{8}-[0-9a-f-]{27,}$", "", _as_text(suite_name))
+
+
+def _suite_pass_summary(parquet_path: Path, suite_name: str) -> dict[str, Any]:
+    run_dir = parquet_path.parent
+    cache_key = str(run_dir)
+    if cache_key not in _SUITE_PASS_CACHE:
+        data: dict[str, Any] = {}
+        for rel in ("resources/summary.json", "summary.json"):
+            path = run_dir / rel
+            if not path.exists():
+                continue
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            devops = raw.get("DevOps") if isinstance(raw, dict) else None
+            pass_rate = devops.get("Suite pass rate") if isinstance(devops, dict) else None
+            if isinstance(pass_rate, dict):
+                data = pass_rate
+                break
+        _SUITE_PASS_CACHE[cache_key] = data
+    hit = _SUITE_PASS_CACHE[cache_key].get(_suite_base_name(suite_name)) or {}
+    passed = hit.get("passed")
+    total = hit.get("total")
+    if passed is None or total in (None, 0):
+        return {}
+    return {"passed": int(passed), "total": int(total), "pass_rate": float(passed) / float(total)}
+
+
+def _devops_context_from_name(suite_name: str, scenario_name: str) -> dict[str, Any]:
+    suite_text = _as_text(suite_name)
+    scenario_text = _as_text(scenario_name)
+    blob = f"{suite_text} {scenario_text}"
+    tokens = [t for t in re.split(r"[_\s]+", scenario_text) if t]
+    lower_tokens = [t.lower() for t in tokens]
+    suite_tokens = [t for t in re.split(r"[_\s]+", suite_text) if t]
+    issue = ""
+    for token in [t.lower() for t in suite_tokens] + lower_tokens:
+        if token in {"fn", "fp", "tp"}:
+            issue = token.upper()
+            break
+    city = ""
+    for idx, token in enumerate(tokens):
+        if token.lower().startswith(("j6gen", "j6", "x2")) and idx + 1 < len(tokens):
+            city = tokens[idx + 1]
+            break
+    behavior = ""
+    for token in tokens:
+        if token in {
+            "ObstacleStop", "RoadUserStop", "RunOut", "Crosswalk", "Intersection",
+            "IntersectionLeft", "IntersectionRight", "IntersectionStraight", "Normal",
+            "LaneChange", "Distant", "NA",
+        }:
+            behavior = token
+            break
+    if behavior == "NA":
+        behavior = ""
+    pc_mode = ""
+    for token in tokens:
+        if token.lower() in {"pcon", "pcoff"}:
+            pc_mode = "PC on" if token.lower() == "pcon" else "PC off"
+            break
+    target = ""
+    for token in tokens + re.split(r"[_\s]+", suite_text):
+        label = _normalize_devops_label(token)
+        raw_label = re.sub(r"(?<!^)(?=[A-Z])", "_", str(token or "")).replace("-", "_").lower()
+        if label in _KNOWN_DEVOPS_TARGETS and (label != "unknown" or raw_label == "unknown"):
+            target = label
+            break
+    family = suite_text.replace("DevOps_V1_", "")
+    intent_type = "investigate"
+    focus_metric = "fp"
+    family_l = family.lower()
+    if "inaccurate_yaw" in family_l or "xy_position_jitter" in family_l or "yaw" in blob.lower():
+        intent_type = "localization/yaw accuracy"
+        focus_metric = "error"
+    elif "mislabeled" in family_l:
+        intent_type = "label confusion"
+        focus_metric = "fn" if issue == "FN" else "fp"
+    elif "misclassified" in family_l:
+        intent_type = "structure misclassification"
+        focus_metric = "fp"
+    elif "large_object" in family_l:
+        intent_type = "large-object stability"
+        focus_metric = "fn"
+    elif issue == "FN":
+        intent_type = "target detection"
+        focus_metric = "fn"
+    elif issue == "FP":
+        intent_type = "false detection / false stop"
+        focus_metric = "fp"
+    purpose = " ".join(x for x in [issue, behavior, target, city] if x).strip()
+    return {
+        "is_devops": "DevOps" in blob,
+        "issue_type": issue,
+        "intent_type": intent_type,
+        "focus_metric": focus_metric,
+        "target_label": target,
+        "behavior": behavior,
+        "pc_mode": pc_mode,
+        "city": city,
+        "family": family,
+        "purpose": purpose,
+        "description": "",
+        "criteria": [],
+        "target_labels": [],
+        "matching_thresholds": [],
+        "merge_similar_labels": False,
+        "matching_label_policy": "",
+        "yaml_path": "",
+    }
+
+
+def _scenario_yaml_path(parquet_path: Path, suite_name: str, scenario_name: str) -> Path | None:
+    if not suite_name or not scenario_name:
+        return None
+    direct = parquet_path.parent / suite_name / scenario_name / "scenario.yaml"
+    if direct.exists():
+        return direct
+    # Some source dumps differ only by case in the scenario directory name.
+    suite_dir = parquet_path.parent / suite_name
+    if suite_dir.is_dir():
+        expected = scenario_name.lower()
+        for child in suite_dir.iterdir():
+            if child.is_dir() and child.name.lower() == expected and (child / "scenario.yaml").exists():
+                return child / "scenario.yaml"
+    return None
+
+
+def _suite_scenario_inventory(parquet_path: Path, suite_name: str) -> list[str]:
+    suite_text = _as_text(suite_name)
+    if not suite_text:
+        return []
+    run_dir = parquet_path.parent
+    candidates = [run_dir / suite_text]
+    base = _suite_base_name(suite_text).lower()
+    if not candidates[0].exists():
+        try:
+            candidates.extend(
+                child for child in run_dir.iterdir()
+                if child.is_dir() and _suite_base_name(child.name).lower() == base
+            )
+        except OSError:
+            pass
+    for suite_dir in candidates:
+        if not suite_dir.exists() or not suite_dir.is_dir():
+            continue
+        try:
+            names = sorted(
+                child.name for child in suite_dir.iterdir()
+                if child.is_dir() and (child / "scenario.yaml").exists()
+            )
+        except OSError:
+            continue
+        if names:
+            return names
+    return []
+
+
+def _criterion_summary(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw[:8]:
+        if not isinstance(item, dict):
+            continue
+        filter_obj = item.get("Filter") if isinstance(item.get("Filter"), dict) else {}
+        out.append(
+            {
+                "method": _as_text(item.get("CriteriaMethod")),
+                "level": _as_text(item.get("CriteriaLevel")),
+                "pass_rate": item.get("PassRate"),
+                "filter": {str(k): _as_text(v) for k, v in filter_obj.items()},
+            }
+        )
+    return out
+
+
+def _planning_factor_summary(scenario_dir: Path) -> dict[str, Any]:
+    path = scenario_dir / "planning_factor.jsonl"
+    if not path.exists():
+        return {}
+    out: dict[str, Any] = {"path": _short_path(path), "passed_frames": 0, "failed_frames": 0, "nodata_frames": 0, "conditions": []}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return out
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if idx == 0 and isinstance(obj.get("Condition"), list):
+            for cond in obj.get("Condition", [])[:4]:
+                if not isinstance(cond, dict):
+                    continue
+                dist = cond.get("distance") if isinstance(cond.get("distance"), dict) else {}
+                out["conditions"].append(
+                    {
+                        "topic": _as_text(cond.get("topic")),
+                        "behavior": [str(x) for x in cond.get("behavior", [])] if isinstance(cond.get("behavior"), list) else [],
+                        "judgement": _as_text(cond.get("judgement")),
+                        "distance": {
+                            "min": dist.get("min"),
+                            "max": dist.get("max"),
+                        },
+                    }
+                )
+            continue
+        result = obj.get("Result") if isinstance(obj.get("Result"), dict) else {}
+        summary = _as_text(result.get("Summary"))
+        if "Passed:" in summary:
+            out["passed_frames"] += 1
+        elif "Failed:" in summary:
+            out["failed_frames"] += 1
+        elif "NoData" in summary:
+            out["nodata_frames"] += 1
+    return out
+
+
+def _parse_distance_filter(value: Any) -> tuple[float | None, float | None, str]:
+    text = _as_text(value)
+    if not text:
+        return None, None, "all distances"
+    nums = re.findall(r"-?\d+(?:\.\d+)?", text)
+    low = float(nums[0]) if nums else None
+    high = float(nums[1]) if len(nums) > 1 else None
+    if "-" in text and text.strip().endswith("-"):
+        high = None
+    if low is None and high is None:
+        return None, None, text
+    if high is None:
+        return low, None, f">= {low:g} m"
+    if low is None:
+        return None, high, f"< {high:g} m"
+    return low, high, f"{low:g} - {high:g} m"
+
+
+def _parse_region_axis(value: Any) -> tuple[float, float] | None:
+    text = _as_text(value)
+    if not text:
+        return None
+    nums = re.findall(r"-?\d+(?:\.\d+)?", text)
+    if len(nums) < 2:
+        return None
+    low = float(nums[0])
+    high = float(nums[1])
+    return (low, high) if low < high else None
+
+
+def _parse_region_filter(value: Any) -> tuple[Any | None, str]:
+    if not isinstance(value, dict):
+        return None, ""
+    x_range = _parse_region_axis(value.get("x_position"))
+    y_range = _parse_region_axis(value.get("y_position"))
+    if x_range is None and y_range is None:
+        return None, ""
+    label_parts = []
+    if x_range is not None:
+        label_parts.append(f"x {x_range[0]:g} - {x_range[1]:g} m")
+    if y_range is not None:
+        label_parts.append(f"y {y_range[0]:g} - {y_range[1]:g} m")
+    return SimpleNamespace(x_position=x_range, y_position=y_range), ", ".join(label_parts)
+
+
+def _criteria_filter_label(filter_obj: dict[str, Any]) -> str:
+    _, _, distance_label = _parse_distance_filter(filter_obj.get("Distance"))
+    if distance_label != "all distances":
+        return distance_label
+    _, region_label = _parse_region_filter(filter_obj.get("Region"))
+    return region_label or distance_label
+
+
+def _scenario_pickle_path(parquet_path: Path, suite_name: str, scenario_name: str) -> Path | None:
+    yaml_path = _scenario_yaml_path(parquet_path, suite_name, scenario_name)
+    if not yaml_path:
+        return None
+    path = yaml_path.parent / "scene_result.pkl"
+    return path if path.exists() else None
+
+
+def _ensure_eval_lib_paths() -> None:
+    for lib_path in (
+        "/home/leigu/driving_log_replayer_v2/driving_log_replayer_v2",
+        "/home/leigu/autoware_perception_evaluation/perception_eval",
+    ):
+        if Path(lib_path).exists() and lib_path not in sys.path:
+            sys.path.append(lib_path)
+
+
+def _load_scene_result_pickle(pickle_path: Path) -> Any:
+    _ensure_eval_lib_paths()
+    stat = pickle_path.stat()
+    key = (str(pickle_path), int(stat.st_mtime_ns), int(stat.st_size))
+    if key in _SCENE_RESULT_PICKLE_CACHE:
+        return _SCENE_RESULT_PICKLE_CACHE[key]
+    real_makedirs = os.makedirs
+
+    def quiet_makedirs(name: Any, mode: int = 0o777, exist_ok: bool = False) -> None:
+        try:
+            real_makedirs(name, mode=mode, exist_ok=exist_ok)
+        except OSError:
+            return None
+
+    old_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        os.makedirs = quiet_makedirs  # type: ignore[assignment]
+        with pickle_path.open("rb") as f:
+            frames = pickle.load(f)
+    finally:
+        os.makedirs = real_makedirs  # type: ignore[assignment]
+        logging.disable(old_disable)
+    _SCENE_RESULT_PICKLE_CACHE.clear()
+    _SCENE_RESULT_PICKLE_CACHE[key] = frames
+    return frames
+
+
+def _criteria_filter_namespace(filter_obj: dict[str, Any]) -> Any:
+    low, high, _ = _parse_distance_filter(filter_obj.get("Distance") if isinstance(filter_obj, dict) else None)
+    distance = None
+    if low is not None or high is not None:
+        distance = (0.0 if low is None else low, sys.float_info.max if high is None else high)
+    region, _ = _parse_region_filter(filter_obj.get("Region") if isinstance(filter_obj, dict) else None)
+    if distance is not None:
+        region = None
+    return SimpleNamespace(Distance=distance, Region=region)
+
+
+def _gate_label_for_method(method: str, evaluation_task: str, level: float) -> tuple[str, str]:
+    method_l = _as_text(method).lower()
+    if method_l == "num_gt_tp":
+        if evaluation_task == "fp_validation":
+            return (
+                "frame FP-validation pass rate",
+                "Each FP-validation frame must satisfy evaluator TN/FP pass-fail at CriteriaLevel, then enough frames must satisfy PassRate.",
+            )
+        return (
+            "frame GT recall pass rate",
+            "Each non-empty frame must reach the CriteriaLevel GT recall, then enough frames must satisfy PassRate.",
+        )
+    if method_l == "num_tp":
+        return (
+            "frame object pass rate",
+            "Each non-empty frame must reach the CriteriaLevel object success rate, then enough frames must satisfy PassRate.",
+        )
+    if method_l == "yaw_error":
+        return (
+            "frame yaw-error pass rate",
+            f"Each frame's average TP yaw error must be <= {level:.3f} rad, then enough frames must satisfy PassRate.",
+        )
+    return (method_l or "criterion", "Evaluator criterion method.")
+
+
+def _perception_criteria_for(criterion: dict[str, Any]) -> Any:
+    from driving_log_replayer_v2.criteria.perception import PerceptionCriteria  # type: ignore
+
+    filter_obj = criterion.get("filter") if isinstance(criterion.get("filter"), dict) else {}
+    return PerceptionCriteria(
+        methods=criterion.get("method") or None,
+        levels=criterion.get("level") if criterion.get("level") not in ("", None) else None,
+        filters=_criteria_filter_namespace(filter_obj),
+    )
+
+
+def _pass_fail_stats(frame: Any, method: str = "") -> dict[str, int]:
+    pf = getattr(frame, "pass_fail_result", None)
+    if pf is None:
+        return {
+            "gt_tp": 0,
+            "gt_tn": 0,
+            "gt_fn": 0,
+            "est_fp": 0,
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "tn": 0,
+            "success": 0,
+            "fail": 0,
+            "gt": 0,
+            "total": 0,
+        }
+    tp_results = getattr(pf, "tp_object_results", None) or []
+    fp_results = getattr(pf, "fp_object_results", None) or []
+    fn_objects = getattr(pf, "fn_objects", None) or []
+    tn_objects = getattr(pf, "tn_objects", None) or []
+    success = int(pf.get_num_success()) if hasattr(pf, "get_num_success") else len(tp_results) + len(tn_objects)
+    fail = int(pf.get_num_fail()) if hasattr(pf, "get_num_fail") else len(fp_results) + len(fn_objects)
+    gt = int(pf.get_num_gt()) if hasattr(pf, "get_num_gt") else success + fail
+    return {
+        "gt_tp": len(tp_results),
+        "gt_tn": len(tn_objects),
+        "gt_fn": len(fn_objects),
+        "est_fp": len(fp_results),
+        "tp": len(tp_results),
+        "fp": len(fp_results),
+        "fn": len(fn_objects),
+        "tn": len(tn_objects),
+        "success": success,
+        "fail": fail,
+        "gt": gt,
+        "total": gt if method == "num_gt_tp" else success + fail,
+    }
+
+
+def _frame_gate_detail(
+    frame: Any,
+    criterion: dict[str, Any],
+    idx: int,
+    evaluation_task: str,
+    PerceptionCriteria: Any,
+) -> dict[str, Any]:
+    method = _as_text(criterion.get("method")).lower()
+    level_raw = criterion.get("level")
+    level = _criteria_level_value(level_raw)
+    if not math.isfinite(level):
+        level = 0.0 if method in {"yaw_error", "velocity_x_error", "velocity_y_error", "speed_error"} else 100.0
+    filter_obj = criterion.get("filter") if isinstance(criterion.get("filter"), dict) else {}
+    distance_label = _criteria_filter_label(filter_obj)
+    metric_label, meaning = _gate_label_for_method(method, evaluation_task, level)
+    base = {
+        "index": idx,
+        "method": method,
+        "metric_label": metric_label,
+        "meaning": meaning,
+        "distance_label": distance_label,
+        "filter": filter_obj,
+        "criteria_level": _as_text(level_raw),
+        "criteria_level_value": None if not math.isfinite(level) else level,
+        "evaluation_task": evaluation_task,
+        "level": None if not math.isfinite(level) else level,
+        "source": "scene_result.pkl",
+    }
+    try:
+        evaluator_criteria = PerceptionCriteria(
+            methods=criterion.get("method") or None,
+            levels=criterion.get("level") if criterion.get("level") not in ("", None) else None,
+            filters=_criteria_filter_namespace(filter_obj),
+        )
+        result, ret_frame = evaluator_criteria.get_result(frame)
+    except Exception as exc:
+        return {
+            **base,
+            "judged": False,
+            "passed": None,
+            "score": None,
+            "score_unit": "rad" if method.endswith("_error") or method == "yaw_error" else "%",
+            "reason": f"Evaluator could not compute this frame gate: {exc}",
+            "counts": _pass_fail_stats(frame, method),
+        }
+    stats = _pass_fail_stats(ret_frame, method)
+    if result is None:
+        return {
+            **base,
+            "judged": False,
+            "passed": None,
+            "score": None,
+            "score_unit": "rad" if method.endswith("_error") or method == "yaw_error" else "%",
+            "reason": f"Evaluator skipped this frame: no success/fail objects after {distance_label}.",
+            "counts": stats,
+        }
+    score = None
+    score_unit = "rad" if method in {"yaw_error", "velocity_x_error", "velocity_y_error", "speed_error"} else "%"
+    try:
+        score = float(evaluator_criteria.methods[0].calculate_score(ret_frame))
+    except Exception:
+        score = None
+    passed = bool(result.is_success()) if hasattr(result, "is_success") else str(result).lower() == "success"
+    score_text = "-" if score is None else (f"{score:.3f} rad" if score_unit == "rad" else f"{score:.1f}%")
+    level_text = "-" if not math.isfinite(level) else (f"{level:.3f} rad" if score_unit == "rad" else f"{level:.0f}%")
+    return {
+        **base,
+        "judged": True,
+        "passed": passed,
+        "score": score,
+        "score_unit": score_unit,
+        "reason": f"{score_text} / {level_text}; evaluator counts success {stats['success']}, fail {stats['fail']}, gt {stats['gt']}.",
+        "counts": stats,
+    }
+
+
+def _pickle_devops_gates(
+    parquet_path: Path,
+    suite_name: str,
+    scenario_name: str,
+    criteria: list[dict[str, Any]],
+    evaluation_task: str,
+) -> list[dict[str, Any]] | None:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
+    pickle_path = _scenario_pickle_path(parquet_path, suite_name, scenario_name)
+    if not pickle_path or not criteria:
+        return None
+    try:
+        from driving_log_replayer_v2.criteria.perception import PerceptionCriteria  # type: ignore
+    except Exception:
+        _ensure_eval_lib_paths()
+        try:
+            from driving_log_replayer_v2.criteria.perception import PerceptionCriteria  # type: ignore
+        except Exception:
+            return None
+    try:
+        frames = _load_scene_result_pickle(pickle_path)
+    except Exception:
+        return None
+    gates: list[dict[str, Any]] = []
+    for idx, criterion in enumerate(criteria):
+        method = _as_text(criterion.get("method")).lower()
+        pass_rate = _as_float(criterion.get("pass_rate"), default=0.0)
+        level_raw = criterion.get("level")
+        level = _criteria_level_value(level_raw)
+        if not math.isfinite(level):
+            level = 0.0 if method in {"yaw_error", "velocity_x_error", "velocity_y_error", "speed_error"} else 100.0
+        filter_obj = criterion.get("filter") if isinstance(criterion.get("filter"), dict) else {}
+        distance_label = _criteria_filter_label(filter_obj)
+        try:
+            evaluator_criteria = PerceptionCriteria(
+                methods=criterion.get("method") or None,
+                levels=criterion.get("level") if criterion.get("level") not in ("", None) else None,
+                filters=_criteria_filter_namespace(filter_obj),
+            )
+        except Exception:
+            metric_label, _ = _gate_label_for_method(method, evaluation_task, level)
+            gates.append(
+                {
+                    "index": idx,
+                    "method": method,
+                    "metric_label": metric_label,
+                    "meaning": "Unsupported criterion method or level in this explorer.",
+                    "distance_label": distance_label,
+                    "filter": filter_obj,
+                    "required_rate": pass_rate / 100.0,
+                    "actual_rate": None,
+                    "passed": None,
+                    "passed_count": 0,
+                    "fail_count": 0,
+                    "total_count": 0,
+                    "object_success_count": 0,
+                    "object_fail_count": 0,
+                    "object_total_count": 0,
+                    "criteria_level": _as_text(level_raw),
+                    "criteria_level_value": None if not math.isfinite(level) else level,
+                    "evaluation_task": evaluation_task,
+                    "level": None if not math.isfinite(level) else level,
+                    "source": "scene_result.pkl",
+                }
+            )
+            continue
+        passed_count = 0
+        total_count = 0
+        object_success_count = 0
+        object_fail_count = 0
+        object_total_count = 0
+        for frame in frames:
+            try:
+                result, ret_frame = evaluator_criteria.get_result(frame)
+            except Exception:
+                continue
+            if result is None:
+                continue
+            total_count += 1
+            if result.is_success():
+                passed_count += 1
+            pf = ret_frame.pass_fail_result
+            success = int(pf.get_num_success())
+            fail = int(pf.get_num_fail())
+            object_success_count += success
+            object_fail_count += fail
+            object_total_count += int(pf.get_num_gt()) if method == "num_gt_tp" else success + fail
+        fail_count = max(0, total_count - passed_count)
+        actual_rate = passed_count / total_count if total_count else None
+        passed = (actual_rate * 100 >= pass_rate) if actual_rate is not None else None
+        metric_label, meaning = _gate_label_for_method(method, evaluation_task, level)
+        gates.append(
+            {
+                "index": idx,
+                "method": method,
+                "metric_label": metric_label,
+                "meaning": meaning,
+                "distance_label": distance_label,
+                "filter": filter_obj,
+                "required_rate": pass_rate / 100.0,
+                "actual_rate": actual_rate,
+                "passed": passed,
+                "passed_count": passed_count,
+                "fail_count": fail_count,
+                "total_count": total_count,
+                "object_success_count": object_success_count,
+                "object_fail_count": object_fail_count,
+                "object_total_count": object_total_count,
+                "criteria_level": _as_text(level_raw),
+                "criteria_level_value": None if not math.isfinite(level) else level,
+                "evaluation_task": evaluation_task,
+                "level": None if not math.isfinite(level) else level,
+                "source": "scene_result.pkl",
+            }
+        )
+    return gates
+
+
+def _pickle_fp_validation_gates_fast(
+    parquet_path: Path,
+    suite_name: str,
+    scenario_name: str,
+    criteria: list[dict[str, Any]],
+    evaluation_task: str,
+) -> list[dict[str, Any]] | None:
+    if evaluation_task != "fp_validation" or not criteria:
+        return None
+    supported_methods = {"num_gt_tp", "num_tp"}
+    for criterion in criteria:
+        method = _as_text(criterion.get("method")).lower()
+        filter_obj = criterion.get("filter") if isinstance(criterion.get("filter"), dict) else {}
+        low, high, _ = _parse_distance_filter(filter_obj.get("Distance"))
+        region, _ = _parse_region_filter(filter_obj.get("Region"))
+        if method not in supported_methods or low is not None or high is not None or region is not None:
+            return None
+    pickle_path = _scenario_pickle_path(parquet_path, suite_name, scenario_name)
+    if not pickle_path:
+        return None
+    try:
+        frames = _load_scene_result_pickle(pickle_path)
+    except Exception:
+        return None
+    gates: list[dict[str, Any]] = []
+    for idx, criterion in enumerate(criteria):
+        method = _as_text(criterion.get("method")).lower()
+        pass_rate = _as_float(criterion.get("pass_rate"), default=0.0)
+        level_raw = criterion.get("level")
+        level = _criteria_level_value(level_raw)
+        if not math.isfinite(level):
+            level = 100.0
+        filter_obj = criterion.get("filter") if isinstance(criterion.get("filter"), dict) else {}
+        passed_count = 0
+        total_count = 0
+        object_success_count = 0
+        object_fail_count = 0
+        object_total_count = 0
+        for frame in frames or []:
+            pf = getattr(frame, "pass_fail_result", None)
+            if pf is None:
+                continue
+            success = int(pf.get_num_success()) if hasattr(pf, "get_num_success") else 0
+            fail = int(pf.get_num_fail()) if hasattr(pf, "get_num_fail") else 0
+            if success + fail <= 0:
+                continue
+            gt = int(pf.get_num_gt()) if hasattr(pf, "get_num_gt") else success + fail
+            if method == "num_gt_tp":
+                denom = gt
+            else:
+                denom = success + fail
+            if denom <= 0:
+                continue
+            frame_score = 100.0 * success / denom
+            total_count += 1
+            if frame_score >= level:
+                passed_count += 1
+            object_success_count += success
+            object_fail_count += fail
+            object_total_count += denom
+        fail_count = max(0, total_count - passed_count)
+        actual_rate = passed_count / total_count if total_count else None
+        passed = (actual_rate * 100 >= pass_rate) if actual_rate is not None else None
+        metric_label, meaning = _gate_label_for_method(method, evaluation_task, level)
+        gates.append(
+            {
+                "index": idx,
+                "method": method,
+                "metric_label": metric_label,
+                "meaning": meaning,
+                "distance_label": _criteria_filter_label(filter_obj),
+                "filter": filter_obj,
+                "required_rate": pass_rate / 100.0,
+                "actual_rate": actual_rate,
+                "passed": passed,
+                "passed_count": passed_count,
+                "fail_count": fail_count,
+                "total_count": total_count,
+                "object_success_count": object_success_count,
+                "object_fail_count": object_fail_count,
+                "object_total_count": object_total_count,
+                "criteria_level": _as_text(level_raw),
+                "criteria_level_value": level,
+                "evaluation_task": evaluation_task,
+                "level": level,
+                "source": "scene_result.pkl_fast",
+            }
+        )
+    return gates
+
+
+def _load_scenario_context(parquet_path: Path, suite_name: str, scenario_name: str) -> dict[str, Any]:
+    key = (str(parquet_path.parent), suite_name, scenario_name)
+    if key in _SCENARIO_CONTEXT_CACHE:
+        return _SCENARIO_CONTEXT_CACHE[key]
+    ctx = _devops_context_from_name(suite_name, scenario_name)
+    suite_pass = _suite_pass_summary(parquet_path, suite_name)
+    if suite_pass:
+        ctx["suite_pass"] = suite_pass
+    yaml_path = _scenario_yaml_path(parquet_path, suite_name, scenario_name)
+    if yaml_path and yaml is not None:
+        try:
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            data = {}
+        if isinstance(data, dict):
+            eval_cfg = data.get("Evaluation") if isinstance(data.get("Evaluation"), dict) else {}
+            cond = eval_cfg.get("Conditions") if isinstance(eval_cfg.get("Conditions"), dict) else {}
+            pf_cfg = eval_cfg.get("PerceptionPassFailConfig") if isinstance(eval_cfg.get("PerceptionPassFailConfig"), dict) else {}
+            pe_cfg = eval_cfg.get("PerceptionEvaluationConfig") if isinstance(eval_cfg.get("PerceptionEvaluationConfig"), dict) else {}
+            eval_dict = pe_cfg.get("evaluation_config_dict") if isinstance(pe_cfg.get("evaluation_config_dict"), dict) else {}
+            target_labels = pf_cfg.get("target_labels") or eval_dict.get("target_labels") or []
+            thresholds = pf_cfg.get("matching_threshold_list") or []
+            evaluation_task = _as_text(eval_dict.get("evaluation_task"))
+            merge_similar_labels = bool(eval_dict.get("merge_similar_labels"))
+            matching_label_policy = _as_text(eval_dict.get("matching_label_policy")).lower()
+            description = _as_text(data.get("ScenarioDescription"))
+            ctx.update(
+                {
+                    "description": description,
+                    "criteria": _criterion_summary(cond.get("Criterion")),
+                    "target_labels": [str(x) for x in target_labels if _as_text(x)],
+                    "matching_thresholds": thresholds if isinstance(thresholds, list) else [],
+                    "evaluation_task": evaluation_task,
+                    "merge_similar_labels": merge_similar_labels,
+                    "matching_label_policy": matching_label_policy,
+                    "yaml_path": _short_path(yaml_path),
+                    "planning_factor": _planning_factor_summary(yaml_path.parent),
+                }
+            )
+            if not ctx.get("target_label"):
+                for label in ctx["target_labels"]:
+                    if label not in {"unknown"}:
+                        ctx["target_label"] = _normalize_devops_label(label)
+                        break
+    _SCENARIO_CONTEXT_CACHE[key] = ctx
+    return ctx
+
+
+def _load_scenario_context_light(parquet_path: Path, suite_name: str, scenario_name: str) -> dict[str, Any]:
+    ctx = _devops_context_from_name(suite_name, scenario_name)
+    suite_pass = _suite_pass_summary(parquet_path, suite_name)
+    if suite_pass:
+        ctx["suite_pass"] = suite_pass
+    return ctx
+
+
+def _parquet_list_cache_dir() -> Path:
+    return Path.cwd() / ".cache" / "local_bbox_api" / "parquets"
+
+
+def _directory_signature(root: Path) -> dict[str, Any]:
+    stat = root.stat()
+    return {"path": str(root), "mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
+
+
+def _parquet_list_cache_path(root: Path, payload: dict[str, Any]) -> Path:
+    key_payload = {
+        "version": 2,
+        "root": _path_signature(root) if root.is_file() else _directory_signature(root),
+        "bbox_only": payload.get("bbox_only", False) is True,
+        "limit": int(payload.get("limit") or 2000),
+    }
+    digest = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    return _parquet_list_cache_dir() / f"{digest}.json"
+
+
 def list_parquets(payload: dict[str, Any]) -> dict[str, Any]:
     root = _resolve_local_path(payload.get("root") or "", allow_file=True)
+    cache_path = _parquet_list_cache_path(root, payload)
+    if payload.get("no_cache") is not True:
+        cached = _read_dataset_summary_cache(cache_path)
+        if cached is not None:
+            cached["cache"] = {"hit": True, "path": _short_path(cache_path)}
+            return cached
     bbox_only = payload.get("bbox_only", False) is True
     required = {"frame_index", "x", "y", "length", "width", "yaw", "source"}
     if root.is_file():
@@ -356,7 +1264,10 @@ def list_parquets(payload: dict[str, Any]) -> dict[str, Any]:
                 skipped += 1
                 continue
         items.append({"path": str(p), "name": p.name, "display": _short_path(p)})
-    return {"items": items, "root": str(root), "skipped": skipped}
+    result = {"items": items, "root": str(root), "skipped": skipped, "cache": {"hit": False, "path": _short_path(cache_path)}}
+    if payload.get("no_cache") is not True:
+        _write_dataset_summary_cache(cache_path, result)
+    return result
 
 
 def describe(payload: dict[str, Any]) -> dict[str, Any]:
@@ -427,9 +1338,85 @@ def scenarios(payload: dict[str, Any]) -> dict[str, Any]:
     return {"items": df.to_dict("records")}
 
 
+def _dataset_summary_cache_dir() -> Path:
+    return Path.cwd() / ".cache" / "local_bbox_api" / "dataset_summary"
+
+
+def _path_signature(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {"path": str(path), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _devops_metadata_signature(parquet_path: Path) -> dict[str, Any]:
+    run_dir = parquet_path.parent
+    files = []
+    for rel in ("resources/summary.json", "summary.json"):
+        candidate = run_dir / rel
+        if candidate.exists():
+            files.append(_path_signature(candidate))
+    dirs = []
+    try:
+        for child in run_dir.iterdir():
+            if child.is_dir() and child.name.startswith("DevOps_"):
+                stat = child.stat()
+                dirs.append({"path": child.name, "mtime_ns": stat.st_mtime_ns})
+    except OSError:
+        pass
+    return {"summary_files": files, "suite_dirs": sorted(dirs, key=lambda x: x["path"])}
+
+
+def _dataset_summary_cache_path(path: Path, payload: dict[str, Any], cols: list[str]) -> Path:
+    key_payload = {
+        "version": 11,
+        "path": _path_signature(path),
+        "devops_metadata": _devops_metadata_signature(path),
+        "filters": payload.get("filters") if isinstance(payload.get("filters"), dict) else {},
+        "limit": int(payload.get("limit") or 800),
+        "include_criteria_results": payload.get("include_criteria_results") is True,
+        "columns": cols,
+    }
+    digest = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+    return _dataset_summary_cache_dir() / f"{digest}.json"
+
+
+def _read_dataset_summary_cache(cache_path: Path) -> dict[str, Any] | None:
+    try:
+        if not cache_path.is_file():
+            return None
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_dataset_summary_cache(cache_path: Path, result: dict[str, Any]) -> None:
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(_json_safe(result), separators=(",", ":"), ensure_ascii=False, allow_nan=False), encoding="utf-8")
+        tmp.replace(cache_path)
+    except Exception:
+        pass
+
+
 def dataset_summary(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
     cols = _columns(path)
+    cache_path = _dataset_summary_cache_path(path, payload, cols)
+    if payload.get("no_cache") is not True:
+        cached = _read_dataset_summary_cache(cache_path)
+        if cached is not None:
+            cached["cache"] = {"hit": True, "path": _short_path(cache_path)}
+            return cached
+    result = _dataset_summary_uncached(payload, path=path, cols=cols)
+    result["cache"] = {"hit": False, "path": _short_path(cache_path)}
+    if payload.get("no_cache") is not True:
+        _write_dataset_summary_cache(cache_path, result)
+    return result
+
+
+def _dataset_summary_uncached(payload: dict[str, Any], *, path: Path | None = None, cols: list[str] | None = None) -> dict[str, Any]:
+    path = path or _resolve_local_path(payload.get("path"))
+    cols = cols or _columns(path)
     _require_columns(cols, ("frame_index", "source", "x", "y", "length", "width", "yaw"))
     filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
     where, params = _where_from_filters(cols, filters)
@@ -501,10 +1488,43 @@ def dataset_summary(payload: dict[str, Any]) -> dict[str, Any]:
         for metric in ("tp", "fp", "fn", "rows"):
             total[metric] += item[metric]
 
+    scenario_records = scenario_df.to_dict("records")
+    contexts_by_key: dict[tuple[str, ...], dict[str, Any]] = {}
+    include_criteria_results = payload.get("include_criteria_results") is True
+    if include_criteria_results:
+        for row in scenario_records:
+            key = tuple(str(row.get(c) or "") for c in group_cols)
+            context = _load_scenario_context(path, _as_text(row.get("suite_name")), _as_text(row.get("scenario_name")))
+            if context.get("is_devops") and context.get("criteria"):
+                contexts_by_key[key] = context
+    criteria_results = (
+        _batch_devops_criteria_results(path, cols, where, params, group_cols, contexts_by_key)
+        if include_criteria_results
+        else {}
+    )
+
     scenarios_out: list[dict[str, Any]] = []
-    for row in scenario_df.to_dict("records"):
+    loaded_by_suite: dict[str, set[str]] = {}
+    suite_display_names: dict[str, str] = {}
+    for row in scenario_records:
         key = tuple(str(row.get(c) or "") for c in ("suite_name", "scenario_name", "t4dataset_name", "topic_name"))
         labels = sorted(label_by_key.get(key, []), key=lambda item: (item["fp"], item["fn"], item["rows"]), reverse=True)
+        scenario_name_text = _as_text(row.get("scenario_name"))
+        suite_name_text = _as_text(row.get("suite_name"))
+        suite_key = _suite_base_name(suite_name_text)
+        loaded_by_suite.setdefault(suite_key, set()).add(scenario_name_text)
+        suite_display_names.setdefault(suite_key, suite_name_text)
+        context = (
+            _load_scenario_context(path, suite_name_text, scenario_name_text)
+            if include_criteria_results
+            else _load_scenario_context_light(path, suite_name_text, scenario_name_text)
+        )
+        criteria_result = criteria_results.get(tuple(str(row.get(c) or "") for c in group_cols))
+        if criteria_result:
+            context = {
+                **context,
+                "criteria_result": criteria_result,
+            }
         tp = int(row.get("tp") or 0)
         fp = int(row.get("fp") or 0)
         fn = int(row.get("fn") or 0)
@@ -531,8 +1551,50 @@ def dataset_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 "avg_tp_error": None if row.get("avg_tp_error") is None else _as_float(row.get("avg_tp_error")),
                 "max_tp_error": None if row.get("max_tp_error") is None else _as_float(row.get("max_tp_error")),
                 "labels": labels[:12],
+                "devops": context,
             }
         )
+    for suite_key, loaded_names in loaded_by_suite.items():
+        suite_name_text = suite_display_names.get(suite_key) or suite_key
+        suite_pass = _suite_pass_summary(path, suite_name_text)
+        if not suite_pass or suite_pass.get("total", 0) <= len(loaded_names):
+            continue
+        for scenario_name_text in _suite_scenario_inventory(path, suite_name_text):
+            if scenario_name_text in loaded_names:
+                continue
+            context = (
+                _load_scenario_context(path, suite_name_text, scenario_name_text)
+                if include_criteria_results
+                else _load_scenario_context_light(path, suite_name_text, scenario_name_text)
+            )
+            scenarios_out.append(
+                {
+                    **{c: "" for c in group_cols},
+                    "suite_name": suite_name_text,
+                    "scenario_name": scenario_name_text,
+                    "rows": 0,
+                    "frames": 0,
+                    "first_frame": None,
+                    "last_frame": None,
+                    "gt": 0,
+                    "est": 0,
+                    "tp": 0,
+                    "fp": 0,
+                    "fn": 0,
+                    "precision": None,
+                    "recall": None,
+                    "fpr": None,
+                    "fnr": None,
+                    "avg_tp_error": None,
+                    "max_tp_error": None,
+                    "labels": [],
+                    "devops": {
+                        **context,
+                        "unavailable": True,
+                        "unavailable_reason": "Scenario exists in the DevOps suite folder but has no bbox/evaluation rows in this parquet.",
+                    },
+                }
+            )
     return {
         "items": scenarios_out,
         "labels": [{"label": label, **metrics} for label, metrics in sorted(label_totals.items())],
@@ -578,6 +1640,549 @@ def scenario_curve(payload: dict[str, Any]) -> dict[str, Any]:
     finally:
         con.close()
     return {"frames": df.to_dict("records")}
+
+
+def _batch_devops_criteria_results(
+    parquet_path: Path,
+    cols: list[str],
+    where: list[str],
+    params: list[Any],
+    group_cols: list[str],
+    contexts_by_key: dict[tuple[str, ...], dict[str, Any]],
+) -> dict[tuple[str, ...], dict[str, Any]]:
+    if not contexts_by_key or "status" not in cols or "x" not in cols or "y" not in cols:
+        return {}
+    out: dict[tuple[str, ...], dict[str, Any]] = {}
+    gates_by_key: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    signatures: dict[tuple[Any, ...], list[tuple[tuple[str, ...], int]]] = {}
+    for key, context in contexts_by_key.items():
+        criteria = context.get("criteria") or []
+        evaluation_task = _as_text(context.get("evaluation_task")).lower()
+        for idx, criterion in enumerate(criteria):
+            method = _as_text(criterion.get("method")).lower()
+            if method not in {"num_gt_tp", "num_tp", "yaw_error"}:
+                continue
+            low, high, distance_label = _parse_distance_filter((criterion.get("filter") or {}).get("Distance"))
+            distance_label = _criteria_filter_label(criterion.get("filter") or {})
+            level = _criteria_level_value(criterion.get("level"))
+            if not math.isfinite(level):
+                level = 0.0 if method == "yaw_error" else 100.0
+            pass_rate = _as_float(criterion.get("pass_rate"), default=0.0)
+            signature = (method, evaluation_task, low, high, distance_label, level, pass_rate)
+            signatures.setdefault(signature, []).append((key, idx))
+            gates_by_key.setdefault(key, []).append(
+                {
+                    "index": idx,
+                    "method": method,
+                    "distance_label": distance_label,
+                    "required_rate": pass_rate / 100.0,
+                    "actual_rate": None,
+                    "passed": None,
+                    "filter": criterion.get("filter") or {},
+                    "source": "parquet_fallback",
+                }
+            )
+    if not signatures:
+        return {}
+
+    group_select = ", ".join(group_cols)
+    source_expr = "UPPER(COALESCE(NULLIF(CAST(source AS VARCHAR), ''), ''))"
+    status_expr = "UPPER(COALESCE(NULLIF(CAST(status AS VARCHAR), ''), ''))"
+    label_expr = "LOWER(COALESCE(NULLIF(CAST(label AS VARCHAR), ''), ''))" if "label" in cols else "''"
+    yaw_expr = "TRY_CAST(yaw_error AS DOUBLE)" if "yaw_error" in cols else "CAST(NULL AS DOUBLE)"
+    con = duckdb.connect()
+    try:
+        for signature, members in signatures.items():
+            method, evaluation_task, low, high, _distance_label, level, pass_rate = signature
+            gate_where = list(where)
+            gate_params = list(params)
+            if low is not None:
+                gate_where.append("SQRT(TRY_CAST(x AS DOUBLE) * TRY_CAST(x AS DOUBLE) + TRY_CAST(y AS DOUBLE) * TRY_CAST(y AS DOUBLE)) >= ?")
+                gate_params.append(low)
+            if high is not None:
+                gate_where.append("SQRT(TRY_CAST(x AS DOUBLE) * TRY_CAST(x AS DOUBLE) + TRY_CAST(y AS DOUBLE) * TRY_CAST(y AS DOUBLE)) < ?")
+                gate_params.append(high)
+            if method in {"num_gt_tp", "num_tp"}:
+                if method == "num_gt_tp":
+                    success_expr = "gt_tp + gt_tn" if evaluation_task == "fp_validation" else "gt_tp"
+                    fail_expr = "est_fp" if evaluation_task == "fp_validation" else "gt_fn"
+                    denominator_expr = "est_fp + gt_tn" if evaluation_task == "fp_validation" else f"({success_expr}) + ({fail_expr})"
+                else:
+                    success_expr = "gt_tp + gt_tn"
+                    fail_expr = "gt_fn + est_fp"
+                    denominator_expr = f"({success_expr}) + ({fail_expr})"
+                df = con.execute(
+                    f"""
+                    WITH frame_counts AS (
+                        SELECT
+                            {group_select},
+                            TRY_CAST(frame_index AS INTEGER) AS frame,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS gt_tp,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FP' AND {label_expr} = 'false_positive' THEN 1 ELSE 0 END) AS gt_fp_validation,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS gt_fn,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'TN' THEN 1 ELSE 0 END) AS gt_tn,
+                            SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS est_fp
+                        FROM parquet_scan(?)
+                        WHERE {" AND ".join(gate_where)}
+                          AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+                        GROUP BY {group_select}, frame
+                    ),
+                    scored AS (
+                        SELECT
+                            {group_select},
+                            frame,
+                            {success_expr} AS object_success,
+                            {fail_expr} AS object_fail,
+                            CASE WHEN {denominator_expr} = 0
+                                THEN NULL
+                                ELSE 100.0 * ({success_expr}) / ({denominator_expr})
+                            END AS frame_score
+                        FROM frame_counts
+                        WHERE {denominator_expr} > 0
+                    )
+                    SELECT
+                        {group_select},
+                        SUM(CASE WHEN frame_score >= ? THEN 1 ELSE 0 END) AS passed_frames,
+                        COUNT(*) AS total_frames,
+                        SUM(CASE WHEN frame_score < ? THEN 1 ELSE 0 END) AS failed_frames
+                    FROM scored
+                    GROUP BY {group_select}
+                    """,
+                    [str(parquet_path)] + gate_params + [level, level],
+                ).df()
+            else:
+                df = con.execute(
+                    f"""
+                    WITH frame_scores AS (
+                        SELECT
+                            {group_select},
+                            TRY_CAST(frame_index AS INTEGER) AS frame,
+                            AVG(ABS({yaw_expr})) FILTER (WHERE {source_expr} = 'EST' AND {status_expr} = 'TP' AND {yaw_expr} IS NOT NULL) AS frame_score,
+                            COUNT(*) FILTER (WHERE {source_expr} = 'EST' AND {status_expr} = 'TP' AND {yaw_expr} IS NOT NULL) AS yaw_objects
+                        FROM parquet_scan(?)
+                        WHERE {" AND ".join(gate_where)}
+                          AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+                        GROUP BY {group_select}, frame
+                    )
+                    SELECT
+                        {group_select},
+                        SUM(CASE WHEN frame_score <= ? THEN 1 ELSE 0 END) AS passed_frames,
+                        COUNT(*) AS total_frames,
+                        SUM(CASE WHEN frame_score > ? THEN 1 ELSE 0 END) AS failed_frames
+                    FROM frame_scores
+                    WHERE yaw_objects > 0
+                    GROUP BY {group_select}
+                    """,
+                    [str(parquet_path)] + gate_params + [level, level],
+                ).df()
+            scored = {
+                tuple(_as_text(row.get(c)) for c in group_cols): row
+                for row in df.to_dict("records")
+            }
+            for key, idx in members:
+                row = scored.get(key)
+                passed_count = int(row.get("passed_frames") or 0) if row else 0
+                total_count = int(row.get("total_frames") or 0) if row else 0
+                actual_rate = passed_count / total_count if total_count else None
+                passed = (actual_rate * 100 >= pass_rate) if actual_rate is not None else None
+                for gate in gates_by_key.get(key, []):
+                    if gate["index"] == idx:
+                        gate.update({"actual_rate": actual_rate, "passed": passed})
+                        break
+    finally:
+        con.close()
+
+    for key, gates in gates_by_key.items():
+        known = [g for g in gates if g.get("passed") is not None]
+        failed = [g for g in known if g.get("passed") is False]
+        if not known:
+            continue
+        explanation = "All supported perception criteria pass for this scenario."
+        if failed:
+            worst = sorted(failed, key=lambda g: (g["actual_rate"] or 0) - g["required_rate"])[0]
+            actual = "-" if worst["actual_rate"] is None else f"{worst['actual_rate'] * 100:.1f}%"
+            explanation = (
+                f"Criterion {worst['index'] + 1} fails: {worst['method']} is {actual}, "
+                f"below required {worst['required_rate'] * 100:.1f}% in {worst['distance_label']}."
+            )
+        out[key] = {
+            "overall_pass": not failed,
+            "failed_count": len(failed),
+            "gate_count": len(known),
+            "explanation": explanation,
+            "source": "parquet_fallback",
+            "warning": "scene_result.pkl was not available; criteria were reconstructed from flattened parquet rows.",
+        }
+    return out
+
+
+def scenario_devops_result(payload: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_local_path(payload.get("path"))
+    cols = _columns(path)
+    _require_columns(cols, ("frame_index", "source", "status", "x", "y"))
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    where, params = _where_from_filters(cols, filters)
+    suite_name = _as_text(filters.get("suite_name"))
+    scenario_name = _as_text(filters.get("scenario_name"))
+    if not scenario_name:
+        raise ValueError("scenario_devops_result requires scenario_name filter")
+    context = _load_scenario_context(path, suite_name, scenario_name)
+    criteria = context.get("criteria") or []
+    evaluation_task = _as_text(context.get("evaluation_task")).lower()
+    use_exact_pickle = payload.get("exact") is True or payload.get("use_pickle") is True
+    if use_exact_pickle:
+        pickle_gates = _pickle_devops_gates(path, suite_name, scenario_name, criteria, evaluation_task)
+    else:
+        pickle_gates = _pickle_fp_validation_gates_fast(path, suite_name, scenario_name, criteria, evaluation_task)
+    source_expr = "UPPER(COALESCE(NULLIF(CAST(source AS VARCHAR), ''), ''))"
+    status_expr = "UPPER(COALESCE(NULLIF(CAST(status AS VARCHAR), ''), ''))"
+    label_expr = "LOWER(COALESCE(NULLIF(CAST(label AS VARCHAR), ''), ''))" if "label" in cols else "''"
+    yaw_expr = "TRY_CAST(yaw_error AS DOUBLE)" if "yaw_error" in cols else "CAST(NULL AS DOUBLE)"
+    con = duckdb.connect()
+    gates: list[dict[str, Any]] = [] if pickle_gates is None else pickle_gates
+    try:
+        for idx, criterion in ([] if pickle_gates is not None else list(enumerate(criteria))):
+            method = _as_text(criterion.get("method"))
+            pass_rate = _as_float(criterion.get("pass_rate"), default=0.0)
+            level_raw = criterion.get("level")
+            level = _criteria_level_value(level_raw)
+            filter_obj = criterion.get("filter") if isinstance(criterion.get("filter"), dict) else {}
+            low, high, distance_label = _parse_distance_filter(filter_obj.get("Distance"))
+            distance_label = _criteria_filter_label(filter_obj)
+            gate_where = list(where)
+            gate_params = list(params)
+            if low is not None:
+                gate_where.append("SQRT(POWER(TRY_CAST(x AS DOUBLE), 2) + POWER(TRY_CAST(y AS DOUBLE), 2)) >= ?")
+                gate_params.append(low)
+            if high is not None:
+                gate_where.append("SQRT(POWER(TRY_CAST(x AS DOUBLE), 2) + POWER(TRY_CAST(y AS DOUBLE), 2)) < ?")
+                gate_params.append(high)
+            if method == "num_gt_tp":
+                if not math.isfinite(level):
+                    level = 100.0
+                row = con.execute(
+                    f"""
+                    WITH frame_counts AS (
+                        SELECT
+                            TRY_CAST(frame_index AS INTEGER) AS frame,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS gt_tp,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FP' AND {label_expr} = 'false_positive' THEN 1 ELSE 0 END) AS gt_fp_validation,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS gt_fn,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'TN' THEN 1 ELSE 0 END) AS gt_tn,
+                            SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS est_fp
+                        FROM parquet_scan(?)
+                        WHERE {" AND ".join(gate_where)}
+                          AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+                        GROUP BY frame
+                    ),
+                    scored AS (
+                        SELECT
+                            *,
+                            {'gt_tp + gt_tn AS object_success' if evaluation_task == 'fp_validation' else 'gt_tp AS object_success'},
+                            {'est_fp AS object_fail' if evaluation_task == 'fp_validation' else 'gt_fn AS object_fail'},
+                            {'est_fp + gt_tn AS object_gt' if evaluation_task == 'fp_validation' else 'gt_tp + gt_fn AS object_gt'},
+                            CASE
+                                WHEN {'est_fp + gt_tn' if evaluation_task == 'fp_validation' else 'gt_tp + gt_fn'} = 0 THEN 100.0
+                                ELSE 100.0 * {'gt_tp + gt_tn' if evaluation_task == 'fp_validation' else 'gt_tp'} / ({'est_fp + gt_tn' if evaluation_task == 'fp_validation' else 'gt_tp + gt_fn'})
+                            END AS frame_score
+                        FROM frame_counts
+                        WHERE {'est_fp + gt_tn' if evaluation_task == 'fp_validation' else 'gt_tp + gt_fn'} > 0
+                    )
+                    SELECT
+                        SUM(CASE WHEN frame_score >= ? THEN 1 ELSE 0 END) AS passed_frames,
+                        COUNT(*) AS total_frames,
+                        SUM(CASE WHEN frame_score < ? THEN 1 ELSE 0 END) AS failed_frames,
+                        SUM(object_success) AS object_success_count,
+                        SUM(object_fail) AS object_fail_count,
+                        SUM(object_gt) AS object_total_count
+                    FROM scored
+                    """,
+                    [str(path)] + gate_params + [level, level],
+                ).fetchone()
+                passed_count = int(row[0] or 0)
+                total_count = int(row[1] or 0)
+                fail_count = int(row[2] or 0)
+                actual_rate = passed_count / total_count if total_count else None
+                passed = (actual_rate * 100 >= pass_rate) if actual_rate is not None else None
+                object_success_count = int(row[3] or 0)
+                object_fail_count = int(row[4] or 0)
+                object_total_count = int(row[5] or 0)
+                if evaluation_task == "fp_validation":
+                    meaning = "Each FP-validation frame must keep validation objects as TN, then enough frames must satisfy PassRate."
+                    metric_label = "frame FP-validation pass rate"
+                else:
+                    meaning = "Each non-empty frame must reach the CriteriaLevel GT recall, then enough frames must satisfy PassRate."
+                    metric_label = "frame GT recall pass rate"
+            elif method == "num_tp":
+                if not math.isfinite(level):
+                    level = 100.0
+                row = con.execute(
+                    f"""
+                    WITH frame_counts AS (
+                        SELECT
+                            TRY_CAST(frame_index AS INTEGER) AS frame,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS gt_tp,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FP' AND {label_expr} = 'false_positive' THEN 1 ELSE 0 END) AS gt_fp_validation,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'TN' THEN 1 ELSE 0 END) AS gt_tn,
+                            SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS gt_fn,
+                            SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS est_fp
+                        FROM parquet_scan(?)
+                        WHERE {" AND ".join(gate_where)}
+                          AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+                        GROUP BY frame
+                    ),
+                    scored AS (
+                        SELECT
+                            *,
+                            gt_tp + gt_tn AS object_success,
+                            gt_fn + est_fp AS object_fail,
+                            CASE
+                                WHEN gt_tp + gt_tn + gt_fn + est_fp = 0 THEN 100.0
+                                ELSE 100.0 * (gt_tp + gt_tn) / (gt_tp + gt_tn + gt_fn + est_fp)
+                            END AS frame_score
+                        FROM frame_counts
+                        WHERE gt_tp + gt_tn + gt_fn + est_fp > 0
+                    )
+                    SELECT
+                        SUM(CASE WHEN frame_score >= ? THEN 1 ELSE 0 END) AS passed_frames,
+                        COUNT(*) AS total_frames,
+                        SUM(CASE WHEN frame_score < ? THEN 1 ELSE 0 END) AS failed_frames,
+                        SUM(object_success) AS object_success_count,
+                        SUM(object_fail) AS object_fail_count,
+                        SUM(object_success + object_fail) AS object_total_count
+                    FROM scored
+                    """,
+                    [str(path)] + gate_params + [level, level],
+                ).fetchone()
+                passed_count = int(row[0] or 0)
+                total_count = int(row[1] or 0)
+                fail_count = int(row[2] or 0)
+                actual_rate = passed_count / total_count if total_count else None
+                passed = (actual_rate * 100 >= pass_rate) if actual_rate is not None else None
+                object_success_count = int(row[3] or 0)
+                object_fail_count = int(row[4] or 0)
+                object_total_count = int(row[5] or 0)
+                meaning = "Each non-empty frame must reach the CriteriaLevel TP/TN success rate, then enough frames must satisfy PassRate."
+                metric_label = "frame object pass rate"
+            elif method == "yaw_error":
+                if not math.isfinite(level):
+                    level = 0.0
+                row = con.execute(
+                    f"""
+                    WITH frame_scores AS (
+                        SELECT
+                            TRY_CAST(frame_index AS INTEGER) AS frame,
+                            AVG(ABS({yaw_expr})) FILTER (WHERE {source_expr} = 'EST' AND {status_expr} = 'TP' AND {yaw_expr} IS NOT NULL) AS frame_score,
+                            COUNT(*) FILTER (WHERE {source_expr} = 'EST' AND {status_expr} = 'TP' AND {yaw_expr} IS NOT NULL) AS yaw_objects
+                        FROM parquet_scan(?)
+                        WHERE {" AND ".join(gate_where)}
+                          AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+                        GROUP BY frame
+                    )
+                    SELECT
+                        SUM(CASE WHEN frame_score <= ? THEN 1 ELSE 0 END) AS passed_frames,
+                        COUNT(*) FILTER (WHERE yaw_objects > 0) AS total_frames,
+                        SUM(CASE WHEN yaw_objects > 0 AND frame_score > ? THEN 1 ELSE 0 END) AS failed_frames,
+                        SUM(CASE WHEN yaw_objects > 0 THEN yaw_objects ELSE 0 END) AS object_total_count,
+                        AVG(frame_score) FILTER (WHERE yaw_objects > 0) AS avg_error,
+                        MAX(frame_score) FILTER (WHERE yaw_objects > 0) AS max_error
+                    FROM frame_scores
+                    WHERE yaw_objects > 0
+                    """,
+                    [str(path)] + gate_params + [level, level],
+                ).fetchone()
+                passed_count = int(row[0] or 0)
+                total_count = int(row[1] or 0)
+                fail_count = max(0, total_count - passed_count)
+                actual_rate = passed_count / total_count if total_count else None
+                passed = (actual_rate * 100 >= pass_rate) if actual_rate is not None else None
+                object_success_count = max(0, int((row[3] or 0) - fail_count))
+                object_fail_count = fail_count
+                object_total_count = int(row[3] or 0)
+                meaning = f"Each frame's average TP yaw error must be <= {level:.3f} rad, then enough frames must satisfy PassRate."
+                metric_label = "frame yaw-error pass rate"
+            else:
+                passed_count = 0
+                total_count = 0
+                fail_count = 0
+                actual_rate = None
+                passed = None
+                object_success_count = 0
+                object_fail_count = 0
+                object_total_count = 0
+                meaning = "Unsupported criterion method in this explorer."
+                metric_label = method or "criterion"
+            gates.append(
+                {
+                    "index": idx,
+                    "method": method,
+                    "metric_label": metric_label,
+                    "meaning": meaning,
+                    "distance_label": distance_label,
+                    "filter": filter_obj,
+                    "required_rate": pass_rate / 100.0,
+                    "actual_rate": actual_rate,
+                    "passed": passed,
+                    "passed_count": passed_count,
+                    "fail_count": fail_count,
+                    "total_count": total_count,
+                    "object_success_count": object_success_count,
+                    "object_fail_count": object_fail_count,
+                    "object_total_count": object_total_count,
+                    "criteria_level": _as_text(level_raw),
+                    "criteria_level_value": None if not math.isfinite(level) else level,
+                    "evaluation_task": evaluation_task,
+                    "level": None if not math.isfinite(level) else level,
+                    "source": "parquet_fallback",
+                }
+            )
+        frame_df = con.execute(
+            f"""
+            SELECT
+                TRY_CAST(frame_index AS INTEGER) AS frame,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN 1 ELSE 0 END) AS tp,
+                SUM(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'FP' THEN 1 ELSE 0 END) AS fp,
+                SUM(CASE WHEN {source_expr} = 'GT' AND {status_expr} = 'FN' THEN 1 ELSE 0 END) AS fn,
+                MAX(CASE WHEN {source_expr} = 'EST' AND {status_expr} = 'TP' THEN ABS({yaw_expr}) ELSE NULL END) AS max_yaw_error
+            FROM parquet_scan(?)
+            WHERE {" AND ".join(where)}
+              AND TRY_CAST(frame_index AS INTEGER) IS NOT NULL
+            GROUP BY frame
+            ORDER BY fn DESC, fp DESC, max_yaw_error DESC NULLS LAST, frame
+            LIMIT 12
+            """,
+            [str(path)] + params,
+        ).df()
+    finally:
+        con.close()
+    known_gates = [g for g in gates if g["passed"] is not None]
+    failed_gates = [g for g in known_gates if not g["passed"]]
+    overall_pass = bool(known_gates) and not failed_gates
+    pf = context.get("planning_factor") or {}
+    if pf.get("failed_frames"):
+        overall_pass = False
+    reasons: list[str] = []
+    if failed_gates:
+        worst = sorted(
+            failed_gates,
+            key=lambda g: (g["actual_rate"] if g["actual_rate"] is not None else 0) - g["required_rate"],
+        )[0]
+        actual = "-" if worst["actual_rate"] is None else f"{worst['actual_rate'] * 100:.1f}%"
+        reasons.append(
+            f"Criterion {worst['index'] + 1} fails: {worst['metric_label']} is {actual}, "
+            f"below required {worst['required_rate'] * 100:.1f}% in {worst['distance_label']}."
+        )
+    elif known_gates:
+        reasons.append("All supported perception criteria pass for this scenario.")
+    else:
+        reasons.append("No supported perception criteria could be evaluated from the flattened bbox rows.")
+    if pf.get("path"):
+        if pf.get("failed_frames"):
+            reasons.append(f"Planning factor check has {pf.get('failed_frames')} failed frames.")
+        elif pf.get("passed_frames"):
+            reasons.append(f"Planning factor check passes on {pf.get('passed_frames')} frames.")
+    return {
+        "context": context,
+        "overall_pass": overall_pass,
+        "failed_count": len(failed_gates),
+        "gate_count": len(known_gates),
+        "gates": gates,
+        "hot_frames": frame_df.to_dict("records"),
+        "explanation": reasons,
+        "warning": None
+        if use_exact_pickle
+        else (
+            "FP-validation pass rate uses fast TN/FP counts from scene_result.pkl."
+            if any(g.get("source") == "scene_result.pkl_fast" for g in gates)
+            else "Fast result explanation uses flattened parquet/YAML criteria. Exact pickle-backed frame evidence loads separately in the viewer."
+        ),
+    }
+
+
+def scenario_devops_frame_results(payload: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_local_path(payload.get("path"))
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    suite_name = _as_text(filters.get("suite_name"))
+    scenario_name = _as_text(filters.get("scenario_name"))
+    if not scenario_name:
+        raise ValueError("scenario_devops_frame_results requires scenario_name filter")
+    context = _load_scenario_context(path, suite_name, scenario_name)
+    criteria = context.get("criteria") or []
+    if not criteria:
+        return {"available": False, "source": "scene_result.pkl", "frames": [], "frame_count": 0, "reason": "No YAML criteria found."}
+    pickle_path = _scenario_pickle_path(path, suite_name, scenario_name)
+    if not pickle_path:
+        return {
+            "available": False,
+            "source": "scene_result.pkl",
+            "frames": [],
+            "frame_count": 0,
+            "reason": "scene_result.pkl was not found; frame judgement is only approximate from parquet boxes.",
+        }
+    try:
+        from driving_log_replayer_v2.criteria.perception import PerceptionCriteria  # type: ignore
+    except Exception:
+        _ensure_eval_lib_paths()
+        try:
+            from driving_log_replayer_v2.criteria.perception import PerceptionCriteria  # type: ignore
+        except Exception as exc:
+            return {
+                "available": False,
+                "source": "scene_result.pkl",
+                "frames": [],
+                "frame_count": 0,
+                "reason": f"Evaluator library unavailable: {exc}",
+            }
+    frame_exact_raw = payload.get("frame_index", filters.get("frame_index"))
+    frame_exact = None if frame_exact_raw in (None, "") else int(_as_float(frame_exact_raw))
+    frame_min = filters.get("frame_min")
+    frame_max = filters.get("frame_max")
+    max_frames = min(max(int(payload.get("max_frames") or 600), 1), 5000)
+    try:
+        frames_in = _load_scene_result_pickle(pickle_path)
+    except Exception as exc:
+        return {
+            "available": False,
+            "source": "scene_result.pkl",
+            "frames": [],
+            "frame_count": 0,
+            "reason": f"scene_result.pkl could not be read: {exc}",
+        }
+    evaluation_task = _as_text(context.get("evaluation_task")).lower()
+    out_frames: list[dict[str, Any]] = []
+    for frame in frames_in or []:
+        frame_index = int(_as_float(getattr(frame, "frame_name", getattr(frame, "frame_index", 0))))
+        if frame_exact is not None and frame_index != frame_exact:
+            continue
+        if frame_min not in (None, "") and frame_index < int(_as_float(frame_min)):
+            continue
+        if frame_max not in (None, "") and frame_index > int(_as_float(frame_max)):
+            continue
+        gates = [
+            _frame_gate_detail(frame, criterion, idx, evaluation_task, PerceptionCriteria)
+            for idx, criterion in enumerate(criteria)
+        ]
+        judged = [g for g in gates if g.get("judged")]
+        failed = [g for g in judged if g.get("passed") is False]
+        out_frames.append(
+            {
+                "frame": frame_index,
+                "judged": bool(judged),
+                "passed": None if not judged else not failed,
+                "gates": gates,
+                "source": "scene_result.pkl",
+            }
+        )
+        if len(out_frames) >= max_frames:
+            break
+    return {
+        "available": True,
+        "source": "scene_result.pkl",
+        "pickle_path": str(pickle_path),
+        "frames": out_frames,
+        "frame_count": len(out_frames),
+        "truncated": len(out_frames) >= max_frames,
+    }
 
 
 def dataset_stats(payload: dict[str, Any]) -> dict[str, Any]:
@@ -912,6 +2517,172 @@ def _row_footprint_base_link(row: dict[str, Any]) -> list[list[float]] | None:
         return [[p[0] * cos_y - p[1] * sin_y + x, p[0] * sin_y + p[1] * cos_y + y] for p in pts]
 
 
+def _enum_or_text(value: Any) -> str:
+    if value is None:
+        return ""
+    inner = getattr(value, "value", None)
+    return _as_text(inner if inner is not None else value)
+
+
+def _seq_item(value: Any, index: int, default: float = 0.0) -> float:
+    try:
+        return _as_float(value[index], default)
+    except Exception:
+        return default
+
+
+def _orientation_yaw(orientation: Any) -> float:
+    if orientation is None:
+        return 0.0
+    try:
+        ypr = getattr(orientation, "yaw_pitch_roll")
+        return _as_float(ypr[0])
+    except Exception:
+        pass
+    elements = getattr(orientation, "elements", orientation)
+    try:
+        vals = [float(v) for v in elements]
+    except Exception:
+        return 0.0
+    if len(vals) != 4:
+        return 0.0
+    # pyquaternion stores [w, x, y, z]; ROS-style arrays are commonly [x, y, z, w].
+    if abs(vals[0]) >= abs(vals[3]):
+        w, x, y, z = vals
+    else:
+        x, y, z, w = vals
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _dynamic_label(dynamic_object: Any) -> str:
+    semantic_label = getattr(dynamic_object, "semantic_label", None)
+    label = getattr(semantic_label, "label", None)
+    return _enum_or_text(label) or _enum_or_text(semantic_label)
+
+
+def _dynamic_object_box(dynamic_object: Any, transforms: Any = None, run_label: str = "A") -> dict[str, Any] | None:
+    try:
+        from perception_catalog_analyzer.dataframe.record import ObjectRecord
+
+        box = ObjectRecord.from_dynamic_object(dynamic_object, transforms).as_dict()
+    except Exception:
+        state = getattr(dynamic_object, "state", None)
+        if state is None:
+            return None
+        position = getattr(state, "position", None)
+        shape = getattr(state, "shape", None)
+        size = getattr(shape, "size", None) or getattr(state, "size", None) or (0.0, 0.0, 0.0)
+        width, length, height = _seq_item(size, 0), _seq_item(size, 1), _seq_item(size, 2, 1.5)
+        velocity = getattr(state, "velocity", None)
+        shape_type = _enum_or_text(getattr(state, "shape_type", None)) or _enum_or_text(getattr(shape, "type", None))
+        footprint = None
+        raw_footprint = getattr(shape, "footprint", None)
+        try:
+            coords = list(raw_footprint.exterior.coords)[:-1] if raw_footprint is not None else []
+            if coords:
+                footprint = [[float(p[0]), float(p[1])] for p in coords]
+        except Exception:
+            footprint = None
+        box = {
+            "unix_time": getattr(dynamic_object, "unix_time", None),
+            "frame_id": _enum_or_text(getattr(dynamic_object, "frame_id", None)),
+            "x": _seq_item(position, 0),
+            "y": _seq_item(position, 1),
+            "z": _seq_item(position, 2),
+            "length": length,
+            "width": width,
+            "height": height,
+            "yaw": _orientation_yaw(getattr(state, "orientation", None)),
+            "shape_type": shape_type,
+            "vx": None if velocity is None else _seq_item(velocity, 0),
+            "vy": None if velocity is None else _seq_item(velocity, 1),
+            "confidence": None if getattr(dynamic_object, "semantic_score", None) is None else _as_float(getattr(dynamic_object, "semantic_score")),
+            "label": _dynamic_label(dynamic_object),
+            "pointcloud_num": getattr(dynamic_object, "pointcloud_num", None),
+            "uuid": getattr(dynamic_object, "uuid", None),
+            "visibility": None if getattr(dynamic_object, "visibility", None) is None else str(getattr(dynamic_object, "visibility")),
+            "footprint": footprint,
+        }
+    box.update(
+        {
+            "source": "GT",
+            "status": "TN",
+            "run": run_label,
+            "evaluator_status": "TN",
+            "devops_exact_source": "scene_result.pkl",
+        }
+    )
+    if not box.get("label"):
+        box["label"] = "false_positive"
+    if box.get("footprint"):
+        footprint_base_link = _row_footprint_base_link(box)
+        if footprint_base_link:
+            box["footprint"] = footprint_base_link
+    return box
+
+
+def scenario_devops_tn_objects(payload: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_local_path(payload.get("path"))
+    run_label = _as_text(payload.get("run")) or "A"
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    suite_name = _as_text(filters.get("suite_name"))
+    scenario_name = _as_text(filters.get("scenario_name"))
+    if not scenario_name:
+        raise ValueError("scenario_devops_tn_objects requires scenario_name filter")
+    pickle_path = _scenario_pickle_path(path, suite_name, scenario_name)
+    if not pickle_path:
+        return {"available": False, "source": "scene_result.pkl", "frames": [], "row_count": 0, "frame_count": 0}
+    frame_exact_raw = payload.get("frame_index", filters.get("frame_index"))
+    frame_exact = None if frame_exact_raw in (None, "") else int(_as_float(frame_exact_raw))
+    frame_min = filters.get("frame_min")
+    frame_max = filters.get("frame_max")
+    max_rows = min(max(int(payload.get("max_rows") or 120000), 1), 600000)
+    try:
+        frames_in = _load_scene_result_pickle(pickle_path)
+    except Exception as exc:
+        return {
+            "available": False,
+            "source": "scene_result.pkl",
+            "frames": [],
+            "row_count": 0,
+            "frame_count": 0,
+            "error": str(exc),
+        }
+    out: dict[int, list[dict[str, Any]]] = {}
+    row_count = 0
+    for frame in frames_in or []:
+        frame_index = int(_as_float(getattr(frame, "frame_name", getattr(frame, "frame_index", 0))))
+        if frame_exact is not None and frame_index != frame_exact:
+            continue
+        if frame_min not in (None, "") and frame_index < int(_as_float(frame_min)):
+            continue
+        if frame_max not in (None, "") and frame_index > int(_as_float(frame_max)):
+            continue
+        pf = getattr(frame, "pass_fail_result", None)
+        tn_objects = getattr(pf, "tn_objects", None) or []
+        frame_ground_truth = getattr(frame, "frame_ground_truth", None)
+        transforms = getattr(frame, "transforms", None) or getattr(frame_ground_truth, "transforms", None)
+        for dynamic_object in tn_objects:
+            if row_count >= max_rows:
+                break
+            box = _dynamic_object_box(dynamic_object, transforms=transforms, run_label=run_label)
+            if box is None:
+                continue
+            out.setdefault(frame_index, []).append(box)
+            row_count += 1
+        if row_count >= max_rows:
+            break
+    return {
+        "available": True,
+        "source": "scene_result.pkl",
+        "pickle_path": str(pickle_path),
+        "frames": [{"frame": frame, "boxes": boxes} for frame, boxes in sorted(out.items())],
+        "row_count": row_count,
+        "frame_count": len(out),
+        "truncated": row_count >= max_rows,
+    }
+
+
 def frames(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
     run_label = _as_text(payload.get("run")) or "A"
@@ -1096,6 +2867,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         "/api/dataset_summary": dataset_summary,
         "/api/dataset_stats": dataset_stats,
         "/api/scenario_curve": scenario_curve,
+        "/api/scenario_devops_result": scenario_devops_result,
+        "/api/scenario_devops_tn_objects": scenario_devops_tn_objects,
+        "/api/scenario_devops_frame_results": scenario_devops_frame_results,
         "/api/frames": frames,
         "/api/compare_frames": compare_frames,
     }

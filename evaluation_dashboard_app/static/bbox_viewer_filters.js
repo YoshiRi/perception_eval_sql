@@ -304,6 +304,7 @@ async function loadScene(options = {}) {
     fitBounds();
     updateStats(data);
     updateCompareBanner();
+    await loadDevopsViewerResult(filters);
     renderHeatStrip();
     updateInspect();
     render();
@@ -320,6 +321,54 @@ async function loadScene(options = {}) {
     }
   } catch (err) { toast(err.message); }
   finally { loading(false); }
+}
+async function loadDevopsViewerResult(filters) {
+  if (!els.devopsViewerPanel) return;
+  const isDevops = state.deepLink?.devops || /DevOps/i.test(`${filters.suite_name || ""} ${filters.scenario_name || ""}`);
+  if (!isDevops || !filters.scenario_name) {
+    state.devopsResult = null;
+    els.devopsViewerPanel.classList.remove("show");
+    els.devopsViewerPanel.innerHTML = "";
+    return;
+  }
+  els.devopsViewerPanel.classList.add("show");
+  els.devopsViewerPanel.innerHTML = `<div class="devops-viewer-title"><strong>DevOps Judgement</strong><span>Loading criteria...</span></div>`;
+  try {
+    const data = await api("/api/scenario_devops_result", {path: state.compare ? (els.parquetB.value || state.path) : state.path, filters});
+    state.devopsResult = data;
+    renderDevopsViewerResult();
+  } catch (err) {
+    state.devopsResult = {error: err.message};
+    els.devopsViewerPanel.innerHTML = `<div class="devops-viewer-title"><strong>DevOps Judgement</strong><span>${escapeHtml(err.message)}</span></div>`;
+  }
+}
+function pctText(value) {
+  return value == null || !Number.isFinite(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(1)}%`;
+}
+function renderDevopsViewerResult() {
+  if (!els.devopsViewerPanel || !state.devopsResult || state.devopsResult.error) return;
+  const result = state.devopsResult;
+  const verdict = result.overall_pass ? "PASS" : "FAIL";
+  const gates = (result.gates || []).slice(0, 4).map(g => {
+    const actual = Number(g.actual_rate);
+    const required = Number(g.required_rate);
+    const actualPct = Number.isFinite(actual) ? Math.max(0, Math.min(100, actual * 100)) : 0;
+    const requiredPct = Number.isFinite(required) ? Math.max(0, Math.min(100, required * 100)) : 0;
+    const status = g.passed === true ? "pass" : (g.passed === false ? "fail" : "review");
+    return `<div class="viewer-gate ${status}">
+      <div><b>${escapeHtml(g.metric_label || g.method || "criterion")}</b><i>${g.passed === true ? "PASS" : (g.passed === false ? "FAIL" : "CHECK")}</i></div>
+      <span><em style="width:${actualPct}%"></em><strong style="left:${requiredPct}%"></strong></span>
+      <small>${escapeHtml(`${pctText(g.actual_rate)} / ${pctText(g.required_rate)} · ${g.distance_label || "all distances"}`)}</small>
+    </div>`;
+  }).join("");
+  els.devopsViewerPanel.classList.add("show");
+  els.devopsViewerPanel.innerHTML = `
+    <div class="devops-viewer-title ${result.overall_pass ? "pass" : "fail"}">
+      <strong>${verdict}</strong>
+      <span>${escapeHtml((result.explanation || []).join(" "))}</span>
+    </div>
+    ${gates}
+  `;
 }
 function normalizeFrames(frames) {
   return [...frames]

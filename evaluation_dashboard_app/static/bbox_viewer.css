@@ -648,6 +648,76 @@ input[type="range"] { padding: 0; accent-color: var(--cyan); }
   line-height: 1.35;
 }
 .compare-note.show { display: block; }
+.devops-viewer-panel {
+  display: none;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(56,189,248,.24);
+  border-radius: 7px;
+  background: rgba(2,6,23,.46);
+}
+.devops-viewer-panel.show { display: grid; }
+.devops-viewer-title {
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid rgba(148,163,184,.2);
+  border-radius: 6px;
+  background: rgba(15,23,42,.58);
+}
+.devops-viewer-title.pass { border-color: rgba(52,211,153,.38); background: rgba(6,78,59,.32); }
+.devops-viewer-title.fail { border-color: rgba(251,113,133,.44); background: rgba(127,29,29,.30); }
+.devops-viewer-title strong { font-size: 14px; line-height: 1; color: var(--text); }
+.devops-viewer-title.pass strong { color: var(--green); }
+.devops-viewer-title.fail strong { color: var(--red); }
+.devops-viewer-title span { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.viewer-gate {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid rgba(148,163,184,.18);
+  border-radius: 6px;
+  background: rgba(15,23,42,.5);
+}
+.viewer-gate.fail { border-color: rgba(251,113,133,.36); }
+.viewer-gate.pass { border-color: rgba(52,211,153,.30); }
+.viewer-gate > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.viewer-gate b, .viewer-gate i, .viewer-gate small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-gate b { font-size: 10px; }
+.viewer-gate i { color: var(--muted); font-size: 9px; font-style: normal; font-weight: 900; }
+.viewer-gate.fail i { color: var(--red); }
+.viewer-gate.pass i { color: var(--green); }
+.viewer-gate span {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(2,6,23,.78);
+  border: 1px solid rgba(148,163,184,.14);
+  overflow: hidden;
+}
+.viewer-gate span em {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(56,189,248,.88), rgba(52,211,153,.8));
+}
+.viewer-gate.fail span em { background: linear-gradient(90deg, rgba(251,191,36,.82), rgba(251,113,133,.78)); }
+.viewer-gate span strong {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: #fff;
+}
+.viewer-gate small { color: var(--muted); font-size: 9px; }
 .split-label {
   position: absolute;
   top: 72px;
