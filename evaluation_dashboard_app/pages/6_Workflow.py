@@ -70,6 +70,7 @@ from lib.ui.recent_evaluator_jobs import (
     _render_recent_evaluator_jobs_section,
     configure_recent_evaluator_jobs_ui,
 )
+from lib.ui.pixel_office import render_pixel_office
 from lib.ui.task_history import get_task_list_current_user, render_task_list
 from lib.ui.styles_download import inject_download_page_styles
 from lib.auth import get_current_user_identity
@@ -2026,12 +2027,21 @@ def _render_current_tasks_section() -> None:
         st.caption(f"Showing **{total_tasks}** tasks across **{page_count}** page(s) for **{label}**.")
 
     offset = (current_page - 1) * page_size
+    show_office = st.toggle(
+        "🕹️ Pixel office view",
+        value=False,
+        key="workflow_pixel_office_view",
+        help="Animated live floor: one desk per task, with progress and status.",
+    )
     use_fragment = getattr(st, "fragment", None) is not None
     if use_fragment:
         try:
 
             @st.fragment(run_every=timedelta(seconds=3))
             def _task_list_poll():
+                # The office draws every active task, not just the current history page.
+                if st.session_state.get("workflow_pixel_office_view"):
+                    render_pixel_office(list_recent_tasks(limit=50, session_id=current_user))
                 current_tasks = list_recent_tasks(
                     limit=page_size,
                     offset=offset,
@@ -2045,6 +2055,8 @@ def _render_current_tasks_section() -> None:
         except (TypeError, AttributeError):
             use_fragment = False
 
+    if show_office:
+        render_pixel_office(list_recent_tasks(limit=50, session_id=current_user))
     tasks = list_recent_tasks(
         limit=page_size,
         offset=offset,
