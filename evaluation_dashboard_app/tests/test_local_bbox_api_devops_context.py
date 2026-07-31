@@ -816,3 +816,46 @@ def test_list_parquets_maps_host_data_root_and_uses_cache(tmp_path: Path, monkey
     assert first["cache"]["hit"] is False
     assert second["cache"]["hit"] is True
     assert first["items"][0]["path"] == str(parquet)
+
+
+def test_list_parquets_cache_invalidates_when_nested_parquet_is_added(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("LOCAL_BBOX_ALLOWED_ROOTS", str(tmp_path))
+    root = tmp_path / "data"
+    first_dir = root / "old_run" / "devops"
+    first_dir.mkdir(parents=True)
+    first_parquet = first_dir / "current.parquet"
+
+    def write_parquet(path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            [
+                {
+                    "frame_index": 1,
+                    "source": "GT",
+                    "status": "TP",
+                    "x": 1.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "yaw": 0.0,
+                    "length": 1.0,
+                    "width": 1.0,
+                    "height": 1.0,
+                    "scenario_name": "case",
+                }
+            ]
+        ).to_parquet(path)
+
+    write_parquet(first_parquet)
+    payload = {"root": str(root), "limit": 20, "bbox_only": True}
+    first = list_parquets(payload)
+    second = list_parquets(payload)
+    assert first["cache"]["hit"] is False
+    assert second["cache"]["hit"] is True
+    assert [x["path"] for x in second["items"]] == [str(first_parquet)]
+
+    added_parquet = root / "eval_2.4a_0710_streampetr_ptv3_off" / "devops" / "current.parquet"
+    write_parquet(added_parquet)
+    third = list_parquets(payload)
+
+    assert third["cache"]["hit"] is False
+    assert {x["path"] for x in third["items"]} == {str(first_parquet), str(added_parquet)}

@@ -111,6 +111,46 @@ async function loadPreview(s, options = {}) {
         return;
       }
       data = {frames: mergePreviewFrames(dataA.frames || [], dataB.frames || [])};
+      if (requestId !== state.previewRequestId) return;
+      setPreviewFrames(data.frames || []);
+      if (devopsContext(s).is_devops) {
+        (async () => {
+          const resultPath = els.parquetB.value || state.pathB || state.path;
+          try {
+            const tn = await api("/api/scenario_devops_tn_objects", {
+              ...request,
+              path: resultPath,
+              run: "B",
+              max_rows: 70000,
+              timeout_ms: 8000,
+            });
+            if (requestId !== state.previewRequestId) return;
+            setPreviewFramesPreserveFrame(mergePreviewFrames(state.previewFrames || [], tn.frames || []));
+            if (typeof renderResultPanel === "function") renderResultPanel();
+          } catch (err) {
+            if (requestId !== state.previewRequestId) return;
+            console.warn("DevOps Run B TN objects unavailable", err);
+          }
+          try {
+            const frameResult = await api("/api/scenario_devops_frame_results", {
+              ...request,
+              path: resultPath,
+              max_frames: 5000,
+              timeout_ms: 8000,
+            });
+            if (requestId !== state.previewRequestId) return;
+            state.devopsFrameResults = frameResult;
+          } catch (err) {
+            if (requestId !== state.previewRequestId) return;
+            state.devopsFrameResults = {available: false, reason: err.message, frames: []};
+            console.warn("DevOps Run B frame judgement unavailable", err);
+          }
+          if (requestId !== state.previewRequestId) return;
+          renderPreview();
+          if (typeof renderResultPanel === "function") renderResultPanel();
+        })();
+        return;
+      }
     } else {
       data = await api("/api/frames", { ...request, path: state.path, run: "A" });
       if (requestId !== state.previewRequestId) return;

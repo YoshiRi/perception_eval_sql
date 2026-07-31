@@ -103,6 +103,7 @@ async function loadSummary(options = {}) {
     if (alt) els.parquetB.value = alt.path;
   }
   state.compare = els.compareEnabled.checked && els.parquetB.value && els.parquetB.value !== els.parquet.value;
+  updateExplorerModeClass();
   if (els.compareEnabled.checked && !state.compare) toast("Choose a different Run B parquet for comparison.");
   if (state.compare && !["changed_only", "delta_fp", "delta_fn", "regression", "fp", "fn", "fpr", "fnr", "intent_risk", "target_fn", "target_fp"].includes(state.lens)) setLens("changed_only");
   setBusy(true, state.compare ? "Comparing Run B against Run A..." : "Building dataset bbox summary...");
@@ -214,6 +215,7 @@ function updateCompareControls() {
   els.parquetB.disabled = !els.compareEnabled.checked;
   els.lensChips.querySelectorAll(".compare-chip").forEach(chip => chip.classList.toggle("disabled", !els.compareEnabled.checked));
   if (!els.compareEnabled.checked && ["changed_only", "delta_fp", "delta_fn", "regression"].includes(state.lens)) setLens("fp");
+  updateExplorerModeClass();
   updateCompareBanner();
 }
 function buildLabelChips() {
@@ -352,8 +354,10 @@ function renderDevopsReviewList(container = els.list, options = {}) {
     const bTotal = group.bPass + group.bFail + group.bReview + group.bMissing;
     const aRateValue = group.suitePassA ? group.suitePassA.pass_rate : group.aPass / Math.max(1, aTotal);
     const bRateValue = group.suitePassB ? group.suitePassB.pass_rate : group.bPass / Math.max(1, bTotal);
+    const aPassText = `${fmt(group.suitePassA ? group.suitePassA.passed : group.aPass)}/${fmt(group.suitePassA ? group.suitePassA.total : aTotal)}`;
+    const bPassText = `${fmt(group.suitePassB ? group.suitePassB.passed : group.bPass)}/${fmt(group.suitePassB ? group.suitePassB.total : bTotal)}`;
     const passText = state.compare
-      ? `A ${fmt(group.suitePassA ? group.suitePassA.passed : group.aPass)}/${fmt(group.suitePassA ? group.suitePassA.total : aTotal)} → B ${fmt(group.suitePassB ? group.suitePassB.passed : group.bPass)}/${fmt(group.suitePassB ? group.suitePassB.total : bTotal)}`
+      ? `${fmt(group.changed)} changed · ${fmt(group.regressed)} regressed · ${fmt(group.fixed)} fixed`
       : (group.suitePass
         ? `${fmt(group.suitePass.passed)}/${fmt(group.suitePass.total)} pass`
         : `${fmt(group.pass)} pass · ${fmt(group.fail)} fail · ${fmt(group.review)} check`);
@@ -363,18 +367,36 @@ function renderDevopsReviewList(container = els.list, options = {}) {
     const bRatePct = Math.max(0, Math.min(100, Number(bRateValue || 0) * 100));
     const rateDelta = bRateValue - aRateValue;
     const compareMeta = state.compare
-      ? `<div class="suite-compare-meta">
-          <i class="${rateDelta >= 0 ? "good" : "bad"}">${escapeHtml(`${rateDelta >= 0 ? "+" : ""}${Math.round(rateDelta * 100)}pp`)}</i>
-          <span>${fmt(group.changed)} changed</span>
-          <span class="${group.regressed ? "bad" : ""}">${fmt(group.regressed)} regressed</span>
-          <span class="${group.fixed ? "good" : ""}">${fmt(group.fixed)} fixed</span>
-          ${group.added || group.removed ? `<span>${fmt(group.added)} new · ${fmt(group.removed)} gone</span>` : ""}
+      ? `<div class="suite-compare-board">
+          <div class="run-cell">
+            <div class="run-cell-head"><b>A</b><strong>${escapeHtml(aPassText)}</strong><span>${rate(aRateValue)}</span></div>
+            <div class="suite-meter" title="Run A pass rate"><i style="width:${aRatePct}%"></i></div>
+            <small>${fmt(group.aFail)} fail · ${fmt(group.aReview)} check</small>
+          </div>
+          <div class="change-cell ${rateDelta >= 0 ? "good" : "bad"}">
+            <b>${escapeHtml(`${rateDelta >= 0 ? "+" : ""}${Math.round(rateDelta * 100)}pp`)}</b>
+            <span>${fmt(group.changed)} changed</span>
+            <small>${fmt(group.regressed)} regressed · ${fmt(group.fixed)} fixed${group.added || group.removed ? ` · ${fmt(group.added)} new · ${fmt(group.removed)} gone` : ""}</small>
+          </div>
+          <div class="run-cell">
+            <div class="run-cell-head"><b>B</b><strong>${escapeHtml(bPassText)}</strong><span>${rate(bRateValue)}</span></div>
+            <div class="suite-meter" title="Run B pass rate"><i style="width:${bRatePct}%"></i></div>
+            <small>${fmt(group.bFail)} fail · ${fmt(group.bReview)} check</small>
+          </div>
         </div>`
       : "";
     const title = group.missing
       ? `${fmt(group.missing)} suite scenarios are unavailable in this parquet.`
       : "";
     const sortedItems = [...group.items].sort((a, b) => {
+      if (state.compare) {
+        const ac = scenarioCompareSummary(a), bc = scenarioCompareSummary(b);
+        return Number(bc.regressed) - Number(ac.regressed)
+          || Number(bc.fixed) - Number(ac.fixed)
+          || Number(bc.changed) - Number(ac.changed)
+          || bc.magnitude - ac.magnitude
+          || scenarioName(a).localeCompare(scenarioName(b));
+      }
       const aj = scenarioJudgement(a), bj = scenarioJudgement(b);
       const order = {fail: 0, review: 1, pass: 2, missing: 3};
       return order[aj.status] - order[bj.status]
@@ -396,36 +418,51 @@ function renderDevopsReviewList(container = els.list, options = {}) {
         const compareDetail = state.compare
           ? `${aJudgement.label} → ${bJudgement.label} · ΔFP ${fmtDelta(cmp.deltaFp)} · ΔFN ${fmtDelta(cmp.deltaFn)} · ΔTP ${fmtDelta(cmp.deltaTp)}`
           : "";
+        const aView = state.compare ? scenarioRunView(s, "a") : null;
+        const bView = state.compare ? scenarioRunView(s, "b") : null;
+        const compareCells = state.compare
+          ? `<div class="case-compare-grid">
+              <div class="case-run-cell ${aJudgement.status}">
+                <b>A</b>
+                <strong>${escapeHtml(aJudgement.label)}</strong>
+                <span>TP ${fmt(targetMetric(aView, "tp"))} · FP ${fmt(targetMetric(aView, "fp"))} · FN ${fmt(targetMetric(aView, "fn"))}</span>
+              </div>
+              <div class="case-change-cell ${compareClass}">
+                <b>${cmp.regressed ? "REGRESSED" : (cmp.fixed ? "FIXED" : (cmp.changed ? "CHANGED" : "STABLE"))}</b>
+                <span>ΔFP ${fmtDelta(cmp.deltaFp)} · ΔFN ${fmtDelta(cmp.deltaFn)}</span>
+              </div>
+              <div class="case-run-cell ${bJudgement.status}">
+                <b>B</b>
+                <strong>${escapeHtml(bJudgement.label)}</strong>
+                <span>TP ${fmt(targetMetric(bView, "tp"))} · FP ${fmt(targetMetric(bView, "fp"))} · FN ${fmt(targetMetric(bView, "fn"))}</span>
+              </div>
+            </div>`
+          : "";
         const detail = state.compare
           ? compareDetail
           : unavailable
           ? (ctx.unavailable_reason || "No bbox/evaluation rows were recorded or downloaded for this parquet.")
           : `${judgement.reason} · TP ${fmt(targetMetric(s, "tp"))} · FP ${fmt(targetMetric(s, "fp"))} · FN ${fmt(targetMetric(s, "fn"))}`;
-        return `<div class="devops-case ${active ? "active" : ""} ${unavailable ? "unavailable" : ""} ${compareClass}" data-key="${escapeHtml(scenarioKey(s))}" data-unavailable="${unavailable ? "1" : "0"}">
-          ${state.compare
-            ? `<span class="compare-verdict">
-                <i class="${aJudgement.status}">${escapeHtml(aJudgement.label)}</i>
-                <b>→</b>
-                <i class="${bJudgement.status}">${escapeHtml(bJudgement.label)}</i>
-              </span>`
-            : `<span class="status-pill ${judgement.status}">${escapeHtml(judgement.label)}</span>`}
+        return `<div class="devops-case ${state.compare ? "compare-case" : ""} ${active ? "active" : ""} ${unavailable ? "unavailable" : ""} ${compareClass}" data-key="${escapeHtml(scenarioKey(s))}" data-unavailable="${unavailable ? "1" : "0"}">
+          ${state.compare ? "" : `<span class="status-pill ${judgement.status}">${escapeHtml(judgement.label)}</span>`}
           <div>
             <strong>${escapeHtml(scenarioName(s))}</strong>
             <span>${escapeHtml([ctx.intent_type, ctx.target_label, ctx.behavior, ctx.city].filter(Boolean).join(" · "))}</span>
             <small>${escapeHtml(detail)}</small>
+            ${compareCells}
           </div>
         </div>`;
       }).join("") : "";
-    return `<div class="suite-group">
-      <button class="suite-head" data-suite="${escapeHtml(group.key)}" title="${escapeHtml(title)}">
-        <span>${expanded ? "▾" : "▸"}</span>
-        <strong>${escapeHtml(group.key.replace(/^DevOps_V1_/, ""))}</strong>
-        <em>${escapeHtml(passText)}</em>
+    return `<div class="suite-group ${state.compare ? "compare-suite" : ""}">
+      <button class="suite-head ${state.compare ? "compare-suite-head" : ""}" data-suite="${escapeHtml(group.key)}" title="${escapeHtml(title)}">
+        <div class="suite-title-row">
+          <span>${expanded ? "▾" : "▸"}</span>
+          <strong>${escapeHtml(group.key.replace(/^DevOps_V1_/, ""))}</strong>
+          <em>${escapeHtml(passText)}</em>
+        </div>
+        ${compareMeta}
       </button>
-      ${compareMeta}
-      ${state.compare
-        ? `<div class="suite-rate compare-rate"><i class="run-a" style="width:${aRatePct}%"></i><i class="run-b" style="width:${bRatePct}%"></i></div>`
-        : `<div class="suite-rate"><i style="width:${ratePct}%"></i></div>`}
+      ${state.compare ? "" : `<div class="suite-rate"><i style="width:${ratePct}%"></i></div>`}
       ${scenarios ? `<div class="suite-cases">${scenarios}</div>` : ""}
     </div>`;
   }).join("");
@@ -562,7 +599,43 @@ async function loadScenarioResult(s) {
     renderResultPanel();
     return;
   }
-  const resultPath = state.compare ? (els.parquetB.value || state.path) : state.path;
+  if (state.compare) {
+    const filters = sceneFilters(s);
+    const runA = scenarioRunView(s, "a");
+    const runB = scenarioRunView(s, "b");
+    const [resA, resB] = await Promise.allSettled([
+      api("/api/scenario_devops_result", {path: state.path, filters, timeout_ms: 12000}),
+      api("/api/scenario_devops_result", {path: els.parquetB.value || state.pathB || state.path, filters, timeout_ms: 12000}),
+    ]);
+    if (requestId !== state.resultRequestId) return;
+    const resultA = resA.status === "fulfilled"
+      ? normalizeScenarioDevopsResult(resA.value, runA)
+      : fallbackScenarioResult(runA, resA.reason && resA.reason.message || String(resA.reason || "Run A unavailable"));
+    const resultB = resB.status === "fulfilled"
+      ? normalizeScenarioDevopsResult(resB.value, runB)
+      : fallbackScenarioResult(runB, resB.reason && resB.reason.message || String(resB.reason || "Run B unavailable"));
+    resultA.run_label = "Run A";
+    resultA.run_path = state.path;
+    resultB.run_label = "Run B";
+    resultB.run_path = els.parquetB.value || state.pathB || "";
+    state.devopsResult = {
+      compare: true,
+      a: resultA,
+      b: resultB,
+      gates: resultB.gates || [],
+      overall_pass: resultB.overall_pass,
+      failed_count: resultB.failed_count,
+      gate_count: resultB.gate_count,
+      explanation: resultB.explanation || [],
+    };
+    applyScenarioCriteriaResult(s, resultA, "a");
+    applyScenarioCriteriaResult(s, resultB, "b");
+    renderResultPanel();
+    if (state.previewVisible) renderPreview();
+    render();
+    return;
+  }
+  const resultPath = state.path;
   try {
     const data = await api("/api/scenario_devops_result", {path: resultPath, filters: sceneFilters(s), timeout_ms: 12000});
     if (requestId !== state.resultRequestId) return;
@@ -579,7 +652,7 @@ async function loadScenarioResult(s) {
     render();
   }
 }
-function applyScenarioCriteriaResult(s, result) {
+function applyScenarioCriteriaResult(s, result, side = null) {
   if (!s || !result || result.fallback) return;
   const criteriaResult = {
     overall_pass: result.overall_pass,
@@ -588,10 +661,16 @@ function applyScenarioCriteriaResult(s, result) {
     explanation: (result.explanation || [""])[0],
   };
   const key = scenarioKey(s);
-  const fullContext = result.context ? {...(s.devops || {}), ...result.context, criteria_result: criteriaResult} : null;
+  const baseContext = side && s[side] && s[side].devops ? s[side].devops : (s.devops || {});
+  const fullContext = result.context ? {...baseContext, ...result.context, criteria_result: criteriaResult} : null;
   const apply = item => {
     if (!item || scenarioKey(item) !== key) return;
-    item.devops = fullContext || {...(item.devops || {}), criteria_result: criteriaResult};
+    if (side && item[side]) {
+      item[side].devops = fullContext || {...(item[side].devops || {}), criteria_result: criteriaResult};
+      item.devops = item.b && item.b.devops && item.b.devops.is_devops ? item.b.devops : (item.a && item.a.devops || item.devops);
+    } else {
+      item.devops = fullContext || {...(item.devops || {}), criteria_result: criteriaResult};
+    }
   };
   apply(s);
   if (state.selected && scenarioKey(state.selected) === key) apply(state.selected);
@@ -615,6 +694,7 @@ function normalizeScenarioDevopsResult(result, s) {
   const gates = (result.gates || []).map(g => {
     if (String(g.method || "").toLowerCase() !== "num_gt_tp") return g;
     if (String(g.evaluation_task || "").toLowerCase() === "fp_validation") return g;
+    if (g.passed != null || g.actual_rate != null) return g;
     const required = Number(g.required_rate);
     const actual = fp > 0 ? 0 : 1;
     return {
@@ -642,6 +722,114 @@ function normalizeScenarioDevopsResult(result, s) {
 }
 function pctText(value) {
   return value == null || !Number.isFinite(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(1)}%`;
+}
+function verdictText(result) {
+  if (!result) return "UNKNOWN";
+  if (result.overall_pass === true) return "PASS";
+  if (result.overall_pass === false) return "FAIL";
+  return "UNKNOWN";
+}
+function verdictClass(result) {
+  if (!result || result.overall_pass == null) return "unknown";
+  return result.overall_pass ? "pass" : "fail";
+}
+function compareVerdictChange(a, b) {
+  const av = verdictText(a), bv = verdictText(b);
+  if (av === "PASS" && bv === "FAIL") return {label: "REGRESSED", cls: "fail"};
+  if (av === "FAIL" && bv === "PASS") return {label: "FIXED", cls: "pass"};
+  if (av === "PASS" && bv === "PASS") return {label: "UNCHANGED PASS", cls: "pass"};
+  if (av === "FAIL" && bv === "FAIL") return {label: "UNCHANGED FAIL", cls: "fail"};
+  return {label: "CHECK", cls: "unknown"};
+}
+function gateByIndex(result) {
+  const out = new Map();
+  (result && result.gates || []).forEach(g => out.set(Number(g.index), g));
+  return out;
+}
+function gateStatusText(g) {
+  if (!g || g.passed == null) return "UNKNOWN";
+  return g.passed ? "PASS" : "FAIL";
+}
+function gateStatusClass(g) {
+  if (!g || g.passed == null) return "unknown";
+  return g.passed ? "pass" : "fail";
+}
+function gateDeltaText(a, b) {
+  const av = a && Number(a.actual_rate);
+  const bv = b && Number(b.actual_rate);
+  if (!Number.isFinite(av) || !Number.isFinite(bv)) return "-";
+  const delta = Math.round((bv - av) * 100);
+  return `${delta > 0 ? "+" : ""}${delta}pp`;
+}
+function runResultSourceNote(result) {
+  if (!result) return "";
+  const sources = [...new Set((result.gates || []).map(g => g.source).filter(Boolean))];
+  return result.warning || (sources.length ? `Criteria source: ${sources.join(", ")}.` : "");
+}
+function renderCompareResultPanel(result, s) {
+  const a = result.a || null;
+  const b = result.b || null;
+  const change = compareVerdictChange(a, b);
+  const aMap = gateByIndex(a);
+  const bMap = gateByIndex(b);
+  const gateIndexes = [...new Set([...aMap.keys(), ...bMap.keys()])].sort((x, y) => x - y);
+  const frame = currentPreviewFrameForResult();
+  const frameBoxes = currentFrameBoxesForResult(frame);
+  const gateHtml = gateIndexes.length ? gateIndexes.map(idx => {
+    const ga = aMap.get(idx);
+    const gb = bMap.get(idx);
+    const label = (gb && (gb.metric_label || gb.method)) || (ga && (ga.metric_label || ga.method)) || "criterion";
+    const distance = (gb && gb.distance_label) || (ga && ga.distance_label) || "all distances";
+    const required = (gb && gb.required_rate != null ? gb.required_rate : ga && ga.required_rate);
+    const delta = gateDeltaText(ga, gb);
+    const changed = gateStatusText(ga) !== gateStatusText(gb);
+    return `<div class="compare-gate ${changed ? "changed" : ""}">
+      <div class="compare-gate-title">
+        <b>${escapeHtml(`#${idx + 1} ${label}`)}</b>
+        <i>${escapeHtml(distance)}</i>
+      </div>
+      <div class="compare-gate-grid">
+        <div class="compare-gate-run ${gateStatusClass(ga)}">
+          <b>A</b>
+          <strong>${escapeHtml(gateStatusText(ga))}</strong>
+          <span>${escapeHtml(`${pctText(ga && ga.actual_rate)} / ${pctText(required)} · ${ga ? `${ga.passed_count || 0}/${ga.total_count || 0}` : "-"}`)}</span>
+        </div>
+        <div class="compare-gate-delta ${delta.startsWith("-") ? "bad" : (delta.startsWith("+") ? "good" : "")}">
+          <b>${escapeHtml(delta)}</b>
+          <span>${changed ? "status changed" : "same status"}</span>
+        </div>
+        <div class="compare-gate-run ${gateStatusClass(gb)}">
+          <b>B</b>
+          <strong>${escapeHtml(gateStatusText(gb))}</strong>
+          <span>${escapeHtml(`${pctText(gb && gb.actual_rate)} / ${pctText(required)} · ${gb ? `${gb.passed_count || 0}/${gb.total_count || 0}` : "-"}`)}</span>
+        </div>
+      </div>
+      ${gb ? `<div class="compare-frame-judge"><b>Run B current frame</b>${frameJudgementHtml(gb, frame, frameBoxes)}</div>` : ""}
+    </div>`;
+  }).join("") : `<div class="criterion"><b>No supported gates</b><span>No criterion could be evaluated for A or B.</span></div>`;
+  const note = [runResultSourceNote(a), runResultSourceNote(b)].filter(Boolean).join(" ");
+  const html = `
+    <div class="compare-verdict-panel">
+      <div class="compare-result-run ${verdictClass(a)}">
+        <b>A</b>
+        <strong>${escapeHtml(verdictText(a))}</strong>
+        <span>${escapeHtml(shortPathName(a && a.run_path || state.path))}</span>
+      </div>
+      <div class="compare-result-change ${change.cls}">
+        <b>${escapeHtml(change.label)}</b>
+        <span>${escapeHtml(`${verdictText(a)} → ${verdictText(b)}`)}</span>
+      </div>
+      <div class="compare-result-run ${verdictClass(b)}">
+        <b>B</b>
+        <strong>${escapeHtml(verdictText(b))}</strong>
+        <span>${escapeHtml(shortPathName(b && b.run_path || els.parquetB.value || state.pathB))}</span>
+      </div>
+    </div>
+    <div class="intent-note">Viewer shows Run B. Result comparison is Run B against Run A.</div>
+    <div class="gates compare-gates">${gateHtml}</div>
+    ${note ? `<div class="intent-note">${escapeHtml(note)}</div>` : ""}
+  `;
+  [els.resultPanel].filter(Boolean).forEach(panel => { panel.innerHTML = html; });
 }
 function currentPreviewFrameForResult() {
   if (!state.previewFrames.length) return null;
@@ -779,8 +967,13 @@ function renderResultPanel(message = "") {
     panels.forEach(panel => { panel.innerHTML = `<div class="scenario"><strong>No result loaded</strong><span>Select a scenario to evaluate criteria and hot frames.</span></div>`; });
     return;
   }
+  if (result.compare) {
+    renderCompareResultPanel(result, s);
+    return;
+  }
   const status = result.overall_pass ? "PASS" : "FAIL";
   const statusClass = result.overall_pass ? "pass" : "fail";
+  const runLabel = state.compare ? `Run B · ${shortPathName(els.parquetB.value || state.pathB)}` : shortPathName(state.path);
   const gates = result.gates || [];
   const ctx = devopsContext(s);
   const sources = [...new Set(gates.map(g => g.source).filter(Boolean))];
@@ -814,6 +1007,7 @@ function renderResultPanel(message = "") {
   const html = `
     <div class="verdict ${statusClass}">
       <strong>${status}${result.fallback ? " (estimated)" : ""}</strong>
+      <small>${escapeHtml(runLabel)}</small>
       <span>${escapeHtml((result.explanation || []).join(" "))}</span>
       ${sourceNote ? `<small>${escapeHtml(sourceNote)}</small>` : ""}
     </div>
@@ -1030,7 +1224,10 @@ els.layoutStats.addEventListener("click", () => {
   saveExplorerSessionSoon();
 });
 function updateExplorerModeClass() {
-  document.querySelector(".app")?.classList.toggle("devops-review-mode", state.explorerMode === "devops");
+  const app = document.querySelector(".app");
+  if (!app) return;
+  app.classList.toggle("devops-review-mode", state.explorerMode === "devops");
+  app.classList.toggle("compare-mode", Boolean(state.compare));
 }
 function setExplorerMode(value, options = {}) {
   const previousRange = state.rangeMax;

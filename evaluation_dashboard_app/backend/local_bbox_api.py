@@ -1219,12 +1219,52 @@ def _directory_signature(root: Path) -> dict[str, Any]:
     return {"path": str(root), "mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
 
 
+def _parquet_tree_signature(root: Path, limit: int) -> dict[str, Any]:
+    root_stat = root.stat()
+    count = 0
+    total_size = 0
+    max_mtime_ns = root_stat.st_mtime_ns
+    latest_paths: list[str] = []
+    if root.is_file():
+        if root.suffix == ".parquet":
+            stat = root.stat()
+            count = 1
+            total_size = stat.st_size
+            max_mtime_ns = max(max_mtime_ns, stat.st_mtime_ns)
+            latest_paths = [str(root)]
+    else:
+        latest: list[tuple[int, str]] = []
+        for path in root.rglob("*.parquet"):
+            if ".dashboard_cache" in path.parts or "__pycache__" in path.parts:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            count += 1
+            total_size += stat.st_size
+            max_mtime_ns = max(max_mtime_ns, stat.st_mtime_ns)
+            latest.append((stat.st_mtime_ns, str(path.relative_to(root))))
+            if count >= limit:
+                break
+        latest_paths = [p for _, p in sorted(latest, reverse=True)[:12]]
+    return {
+        "path": str(root),
+        "root_mtime_ns": root_stat.st_mtime_ns,
+        "count": count,
+        "total_size": total_size,
+        "max_mtime_ns": max_mtime_ns,
+        "latest_paths": latest_paths,
+    }
+
+
 def _parquet_list_cache_path(root: Path, payload: dict[str, Any]) -> Path:
+    limit = int(payload.get("limit") or 2000)
     key_payload = {
-        "version": 2,
-        "root": _path_signature(root) if root.is_file() else _directory_signature(root),
+        "version": 3,
+        "root": _path_signature(root) if root.is_file() else _parquet_tree_signature(root, limit),
         "bbox_only": payload.get("bbox_only", False) is True,
-        "limit": int(payload.get("limit") or 2000),
+        "limit": limit,
     }
     digest = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
     return _parquet_list_cache_dir() / f"{digest}.json"
