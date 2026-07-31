@@ -290,8 +290,52 @@ def test_build_default_server_is_used_when_nothing_is_configured(home, monkeypat
     assert cfg.require_server() == "https://baked.example"
 
 
-def test_stored_and_env_settings_outrank_the_build_default(home, monkeypatch):
+def test_server_precedence_is_env_then_stored_then_default(home, monkeypatch):
+    """An environment override must win, or it is useless: connect() persists the
+    resolved default on first use, so almost every install has a stored URL."""
     monkeypatch.setattr(config, "DEFAULT_SERVER", "https://baked.example")
+
+    assert config.Config().server_source() == "default"
+    assert config.Config().effective_server() == "https://baked.example"
+
+    stored = config.Config(server_url="https://stored.example")
+    assert stored.server_source() == "stored"
+    assert stored.effective_server() == "https://stored.example"
+
     monkeypatch.setenv("EVALDASH_SERVER", "https://env.example")
-    assert config.Config().effective_server() == "https://env.example"
-    assert config.Config(server_url="https://stored.example").effective_server() == "https://stored.example"
+    assert stored.server_source() == "env"
+    assert stored.effective_server() == "https://env.example"
+
+
+def test_no_server_anywhere_is_reported_as_none(home, monkeypatch):
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "")
+    cfg = config.Config()
+    assert cfg.server_source() == "none"
+    assert cfg.effective_server() == ""
+    with pytest.raises(RuntimeError, match="login"):
+        cfg.require_server()
+
+
+def test_reset_falls_back_to_the_build_default(home, monkeypatch):
+    """A stored URL shadows a newer baked-in one, so rebuilding with a different
+    --server would keep talking to the old host without a way to clear it."""
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "https://baked.example")
+    cfg = config.Config(server_url="https://old.example", token="secret")
+    cfg.save()
+
+    assert config.Config.load().effective_server() == "https://old.example"
+    fallback = config.Config.load().reset_server()
+    assert fallback == "https://baked.example"
+
+    after = config.Config.load()
+    assert after.server_url == ""
+    assert after.resolved_token() == ""
+    assert after.server_source() == "default"
+
+
+def test_reset_with_no_default_leaves_nothing_configured(home, monkeypatch):
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "")
+    cfg = config.Config(server_url="https://old.example")
+    cfg.save()
+    assert config.Config.load().reset_server() == ""
+    assert config.Config.load().server_source() == "none"

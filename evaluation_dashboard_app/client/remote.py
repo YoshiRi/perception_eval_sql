@@ -169,16 +169,21 @@ def connect(cfg: Config) -> Remote:
     default or ``EVALDASH_SERVER``, where no ``login`` step ever ran, so resolve here and
     persist the answer once rather than re-probing on every call.
     """
-    if cfg.server_url:
+    source = cfg.server_source()
+    if source == "stored":
         return Remote(cfg)
     resolved, _ = probe_server(cfg, cfg.require_server())
-    cfg.server_url = resolved
-    try:
-        cfg.save()
-    except OSError:
-        # A read-only home is survivable: this run still works, the next one re-probes.
-        pass
-    return Remote(cfg)
+    if source == "default":
+        # Cache the build default's resolved form so later runs skip the probe. An env
+        # override is deliberately not persisted: it is meant to be transient, and
+        # writing it would silently become the new saved setting.
+        cfg.server_url = resolved
+        try:
+            cfg.save()
+        except OSError:
+            # A read-only home is survivable: this run works, the next one re-probes.
+            pass
+    return Remote(cfg, base_url=resolved)
 
 
 def probe_server(config: Config, base_url: str) -> tuple[str, dict[str, Any]]:

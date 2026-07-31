@@ -109,20 +109,48 @@ class Config:
             pass
         return path
 
+    def server_source(self) -> str:
+        """Where the effective server URL comes from: env, stored, default, or none.
+
+        The environment wins because that is what an environment override is for -- a
+        one-off run against a different server, without disturbing saved settings. It
+        used to lose to the stored value, which made it dead on arrival once
+        :func:`client.remote.connect` began persisting the resolved URL on first use.
+        """
+        if os.environ.get("EVALDASH_SERVER", "").strip():
+            return "env"
+        if self.server_url.strip():
+            return "stored"
+        if DEFAULT_SERVER:
+            return "default"
+        return "none"
+
     def effective_server(self) -> str:
-        """Server URL in force. Stored value, then environment, then build default."""
-        return (
-            self.server_url
-            or os.environ.get("EVALDASH_SERVER", "")
-            or DEFAULT_SERVER
-        ).strip().rstrip("/")
+        """Server URL in force: environment, then stored value, then build default."""
+        return {
+            "env": os.environ.get("EVALDASH_SERVER", ""),
+            "stored": self.server_url,
+            "default": DEFAULT_SERVER,
+            "none": "",
+        }[self.server_source()].strip().rstrip("/")
 
     def effective_t4_base_url(self) -> str:
         return (
-            self.t4_base_url
-            or os.environ.get("EVALDASH_T4_BASE_URL", "")
+            os.environ.get("EVALDASH_T4_BASE_URL", "")
+            or self.t4_base_url
             or DEFAULT_T4_BASE_URL
         ).strip().rstrip("/")
+
+    def reset_server(self) -> str:
+        """Forget the saved server and token, falling back to env or the build default.
+
+        Needed because a stored URL shadows a newer baked-in one: rebuilding the app
+        with a different ``--server`` would otherwise keep talking to the old host.
+        """
+        self.server_url = ""
+        self.token = ""
+        self.save()
+        return self.effective_server()
 
     def require_server(self) -> str:
         url = self.effective_server()

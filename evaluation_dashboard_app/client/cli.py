@@ -48,6 +48,13 @@ def _print_table(rows: list[list[str]], headers: list[str]) -> None:
 
 def cmd_login(args: argparse.Namespace) -> int:
     cfg = config.Config.load()
+    if getattr(args, "reset", False):
+        fallback = cfg.reset_server()
+        print("cleared the saved server and token")
+        print(f"now using {fallback or '<nothing configured>'} ({config.Config.load().server_source()})")
+        if not args.server:
+            return 0
+        cfg = config.Config.load()
     if args.server:
         cfg.server_url = args.server.rstrip("/")
     if args.token is not None:
@@ -73,7 +80,7 @@ def cmd_login(args: argparse.Namespace) -> int:
     cfg.server_url = resolved
     path = cfg.save()
 
-    print(f"server   {resolved}")
+    print(f"server   {resolved}  (source: {config.Config.load().server_source()})")
     print(f"exports  {'enabled' if health.get('enabled') else 'DISABLED (set EVAL_EXPORT_TOKEN there)'}")
     print(f"data     {health.get('data_root')}")
     print(f"config   {path}")
@@ -444,7 +451,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # none of it and is not broken, so the exit code must stay 0 for scripted checks.
     server = cfg.effective_server()
     checks.append(("server configured", True if server else None,
-                   server or "not set yet - use the app's home page or 'login'"))
+                   f"{server}  (from {cfg.server_source()})" if server
+                   else "not set yet - use the app's home page or 'login'"))
     checks.append(("token stored", True if cfg.resolved_token() else None,
                    "yes" if cfg.resolved_token() else "none - usually not needed"))
 
@@ -516,6 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cf-client-secret", help="Cloudflare Access service token secret")
     p.add_argument("--t4-base-url", help="T4 visualizer URL used for 3D point clouds")
     p.add_argument("--insecure", action="store_true", help="skip TLS verification")
+    p.add_argument("--reset", action="store_true",
+                   help="forget the saved server and token, falling back to $EVALDASH_SERVER "
+                        "or the URL baked into this build")
     p.set_defaults(func=cmd_login)
 
     p = sub.add_parser("runs", help="list runs on the server with per-tier download sizes")

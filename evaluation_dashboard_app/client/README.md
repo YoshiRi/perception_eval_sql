@@ -227,8 +227,35 @@ evaldash-local t4 ls
 for real defects (missing duckdb or viewer assets, a configured server that will not
 answer).
 
-`--server` / `--token` on `login` are stored in `~/.evaldash/config.json` (mode 0600).
-`EVALDASH_SERVER` and `EVALDASH_TOKEN` override them per-invocation.
+### Which server it talks to
+
+Three sources, highest priority first:
+
+| Source | Set by | Persists? |
+|---|---|---|
+| `EVALDASH_SERVER` env | the shell, per invocation | no — a transient override, never written to disk |
+| Saved setting | the home page's **Connect**, or `login --server` | yes, `~/.evaldash/config.json` (mode 0600) |
+| Build default | `build_app.sh --server URL` | baked into the executable |
+
+The environment wins deliberately: `connect()` caches the resolved build default on
+first use, so nearly every install ends up with a saved URL, and an override that lost
+to it would be useless.
+
+Change it any time from the home page, or:
+
+```bash
+evaldash-local login --server https://other-dashboard   # change and save
+evaldash-local login --reset                            # forget it, fall back to the default
+evaldash-local doctor                                   # shows the URL and where it came from
+```
+
+**Reset matters more than it sounds.** A saved URL shadows the baked-in one, so
+rebuilding the app with a different `--server` would otherwise keep talking to the old
+host. Reset (button on the home page, or `--reset`) clears the saved server and token;
+downloaded runs are untouched.
+
+A failed `login` leaves the previous setting intact and exits 1, so a typo cannot strand
+the app.
 
 ### Behind Cloudflare Access
 

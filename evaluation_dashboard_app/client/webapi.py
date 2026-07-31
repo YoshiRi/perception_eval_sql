@@ -136,7 +136,8 @@ def _config_view() -> dict[str, Any]:
     cfg = config.Config.load()
     return {
         "server_url": cfg.effective_server(),
-        "server_is_default": not cfg.server_url and bool(config.DEFAULT_SERVER),
+        "server_source": cfg.server_source(),
+        "can_reset": bool(cfg.server_url),
         # Never return the token itself; the UI only needs to know whether one is set.
         "token_set": bool(cfg.resolved_token()),
         "cf_configured": bool(cfg.cf_client_id and cfg.cf_client_secret),
@@ -216,6 +217,19 @@ def client_login(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "config": _config_view(), "health": health, "server": _server_status()}
 
 
+def client_reset_server(payload: dict[str, Any]) -> dict[str, Any]:
+    """Forget the saved server/token so the build default or $EVALDASH_SERVER applies."""
+    cfg = config.Config.load()
+    fallback = cfg.reset_server()
+    return {
+        "ok": True,
+        "server_url": fallback,
+        "message": f"Reset to {fallback}" if fallback else "Cleared; no server configured.",
+        "config": _config_view(),
+        "server": _server_status() if fallback else None,
+    }
+
+
 def client_remote_runs(payload: dict[str, Any]) -> dict[str, Any]:
     remote = connect(config.Config.load())
     data = remote.runs(sizes=payload.get("sizes", True) is not False, query=str(payload.get("q") or ""))
@@ -277,6 +291,7 @@ def client_parquets(payload: dict[str, Any]) -> dict[str, Any]:
 CLIENT_ROUTES = {
     "/api/client/state": client_state,
     "/api/client/login": client_login,
+    "/api/client/reset_server": client_reset_server,
     "/api/client/remote_runs": client_remote_runs,
     "/api/client/pull": client_pull,
     "/api/client/pull_status": client_pull_status,

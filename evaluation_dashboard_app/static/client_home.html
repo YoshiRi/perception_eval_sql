@@ -137,6 +137,7 @@
         <input id="token" type="password" placeholder="only if the server asks for one" spellcheck="false">
       </label>
       <button class="primary" id="connectBtn" style="align-self: flex-end">Connect</button>
+      <button id="resetBtn" style="align-self: flex-end" title="Forget the saved server and use this build's default">Reset</button>
     </div>
     <details style="margin-top:12px">
       <summary class="muted small" style="cursor:pointer">Cloudflare Access service token</summary>
@@ -390,7 +391,8 @@
 
   function describeServer(cfg, srv) {
     if (!cfg.server_url) return "Not connected.";
-    const where = cfg.server_url + (cfg.server_is_default ? " (built-in default)" : "");
+    const SOURCES = {env: "from $EVALDASH_SERVER", stored: "saved", default: "built into this app"};
+    const where = `${cfg.server_url} (${SOURCES[cfg.server_source] || cfg.server_source})`;
     if (!srv) return where;
     if (!srv.reachable) return `${where} — unreachable: ${srv.reason}`;
     if (srv.authorized) {
@@ -408,6 +410,7 @@
       ? "•••••• stored (leave blank to keep)" : "only if the server asks for one";
     $("workspacePath").textContent = `Workspace: ${cfg.workspace || ""}`;
     $("connStatus").textContent = describeServer(cfg, data.server);
+    $("resetBtn").disabled = !cfg.can_reset;
     if (!tiers.length && data.tiers) { tiers = data.tiers; renderTiers(); }
     renderLocal(data.local_runs);
     if (data.job) renderJob(data.job);
@@ -489,6 +492,18 @@
 
   $("connectBtn").onclick = connect;
   $("refreshBtn").onclick = loadRemote;
+  $("resetBtn").onclick = async () => {
+    if (!confirm("Forget the saved server and token?\n\nThe app falls back to the URL "
+                 + "built into it (or $EVALDASH_SERVER). Downloaded runs are untouched.")) return;
+    try {
+      const res = await api("/api/client/reset_server");
+      $("serverUrl").value = res.server_url || "";
+      remoteRuns = []; renderRemote();
+      banner("ok", res.message);
+      const data = await refreshState();
+      if (data.server && data.server.reachable && data.server.authorized) loadRemote();
+    } catch (e) { banner("err", String(e.message || e)); }
+  };
   $("cancelBtn").onclick = async () => {
     $("cancelBtn").disabled = true;
     try { banner("info", (await api("/api/client/pull_cancel")).message); } catch (e) {}
