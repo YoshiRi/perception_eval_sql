@@ -18,7 +18,9 @@
       </div>
       <div class="field">
         <label>Data root or parquet</label>
-        <div class="row"><input id="rootInput" value="data" spellcheck="false"><button id="scanBtn" class="icon">↻</button></div>
+        <!-- Empty means the server's data root: the workspace in the packaged client, data/ on
+     the dashboard. A literal "data" here broke the client, whose cwd has no such dir. -->
+        <div class="row"><input id="rootInput" value="" placeholder="data root (default)" spellcheck="false"><button id="scanBtn" class="icon">↻</button></div>
       </div>
       <div class="field"><label>Run A parquet</label><select id="parquetSelect"></select></div>
       <div class="field">

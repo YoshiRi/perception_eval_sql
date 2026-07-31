@@ -22,7 +22,8 @@
       <div class="field">
         <label>Data root or parquet path</label>
         <div class="input-row">
-          <input id="rootInput" value="data" spellcheck="false">
+          <!-- Empty means the server's data root; see local_bbox_explorer.html. -->
+          <input id="rootInput" value="" placeholder="data root (default)" spellcheck="false">
           <button class="icon" id="scanBtn" title="Scan">↻</button>
         </div>
       </div>

@@ -42,7 +42,10 @@ function applyInitialSession() {
   state.restoreSession = saved;
   if (!saved) return;
   state.savingSession = true;
-  if (saved.root) els.root.value = saved.root;
+  // "data" was the old hardcoded input default, echoed into every saved session. It
+  // resolves to the same place as "" on the dashboard and to nothing in the client,
+  // so restoring it would keep a once-visited client broken forever.
+  if (saved.root && saved.root !== "data") els.root.value = saved.root;
   if (saved.search != null) els.search.value = saved.search;
   if (saved.lens) state.lens = saved.lens;
   if (saved.label != null) state.label = saved.label;
