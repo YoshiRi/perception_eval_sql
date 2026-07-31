@@ -18,6 +18,27 @@ CONFIG_NAME = "config.json"
 RUN_STATE_NAME = ".evaldash_manifest.json"
 
 
+def _build_defaults() -> tuple[str, str]:
+    """Server URL and T4 URL compiled into this build, if any.
+
+    ``client/build_app.sh --server URL`` writes ``client/_defaults.py`` before packaging,
+    so the executable handed to a teammate already knows where to connect and needs no
+    configuration at all. Absent in a plain source checkout, which is why the import is
+    optional rather than a missing-file error.
+    """
+    try:
+        from client import _defaults  # type: ignore[attr-defined]
+    except Exception:
+        return "", ""
+    return (
+        str(getattr(_defaults, "DEFAULT_SERVER", "") or "").strip(),
+        str(getattr(_defaults, "DEFAULT_T4_BASE_URL", "") or "").strip(),
+    )
+
+
+DEFAULT_SERVER, DEFAULT_T4_BASE_URL = _build_defaults()
+
+
 def home() -> Path:
     override = os.environ.get("EVALDASH_HOME", "").strip()
     base = Path(override).expanduser() if override else Path.home() / ".evaldash"
@@ -89,14 +110,25 @@ class Config:
         return path
 
     def effective_server(self) -> str:
-        """Server URL in force, stored or from the environment. Empty when unset."""
-        return (self.server_url or os.environ.get("EVALDASH_SERVER", "")).strip().rstrip("/")
+        """Server URL in force. Stored value, then environment, then build default."""
+        return (
+            self.server_url
+            or os.environ.get("EVALDASH_SERVER", "")
+            or DEFAULT_SERVER
+        ).strip().rstrip("/")
+
+    def effective_t4_base_url(self) -> str:
+        return (
+            self.t4_base_url
+            or os.environ.get("EVALDASH_T4_BASE_URL", "")
+            or DEFAULT_T4_BASE_URL
+        ).strip().rstrip("/")
 
     def require_server(self) -> str:
         url = self.effective_server()
         if not url:
             raise RuntimeError(
-                "No server configured. Run: evaldash-local login --server <url> --token <token>"
+                "No server configured. Run: evaldash-local login --server <url>"
             )
         return url
 

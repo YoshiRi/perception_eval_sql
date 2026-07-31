@@ -10,3 +10,6 @@
 deploy/.env
 deploy/.env.local
 
+
+# Generated per build by client/build_app.sh (baked-in server URL).
+client/_defaults.py

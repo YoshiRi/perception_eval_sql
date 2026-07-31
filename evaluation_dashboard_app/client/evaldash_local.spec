@@ -58,6 +58,10 @@ hiddenimports = [
     "client.webapi",
 ]
 
+# Only present when build_app.sh was given --server; config.py imports it optionally.
+if (REPO_ROOT / "client" / "_defaults.py").exists():
+    hiddenimports.append("client._defaults")
+
 # pywebview is optional: when it is installed at build time the window backend is
 # bundled, and when it is not the app falls back to the system browser. Only backends
 # that actually import here are named -- listing an absent one (no qtpy, say) just

@@ -13,6 +13,12 @@ from client import config, sync
 def home(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("EVALDASH_HOME", str(tmp_path / "home"))
     config.ensure_dirs()
+    # A build may have written client/_defaults.py with a baked-in server; these tests
+    # describe a plain source checkout, so neutralise it explicitly.
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "")
+    monkeypatch.setattr(config, "DEFAULT_T4_BASE_URL", "")
+    monkeypatch.delenv("EVALDASH_SERVER", raising=False)
+    monkeypatch.delenv("EVALDASH_TOKEN", raising=False)
     return tmp_path / "home"
 
 
@@ -270,3 +276,22 @@ def test_apply_server_env_points_the_api_at_the_workspace(home, monkeypatch):
     assert os.environ["EVAL_BBOX_CACHE_DIR"] == str(config.cache_dir())
     # The client must not expose export routes of its own.
     assert "EVAL_EXPORT_TOKEN" not in os.environ
+
+
+def test_build_default_server_is_used_when_nothing_is_configured(home, monkeypatch):
+    """A build made with `build_app.sh --server URL` must connect with no setup at all.
+
+    This is what makes the packaged app zero-configuration, so it needs a test of its
+    own rather than relying on whether a build happened to leave _defaults.py behind.
+    """
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "https://baked.example")
+    cfg = config.Config()
+    assert cfg.effective_server() == "https://baked.example"
+    assert cfg.require_server() == "https://baked.example"
+
+
+def test_stored_and_env_settings_outrank_the_build_default(home, monkeypatch):
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "https://baked.example")
+    monkeypatch.setenv("EVALDASH_SERVER", "https://env.example")
+    assert config.Config().effective_server() == "https://env.example"
+    assert config.Config(server_url="https://stored.example").effective_server() == "https://stored.example"

@@ -7,18 +7,31 @@ and fetch their bytes. These four routes add exactly that and nothing else.
 They plug into ``LocalBBoxHandler`` so they inherit the existing GET/POST dispatch,
 JSON error shape, and the nginx ``/bbox-api/`` mapping -- no new port or process.
 
-Security note. The rest of this API is unauthenticated and nginx proxies it straight
-through, which is tolerable while every response is an aggregate over data the caller
-already named. :func:`export_file` streams raw bytes, which is a materially different
-capability, so these routes are **closed unless ``EVAL_EXPORT_TOKEN`` is set** and
-require it as a bearer token. Every path is additionally confined to the resolved run
-directory, on top of the data-root sandbox the rest of the API uses.
+Access control reuses the dashboard's own identity model rather than inventing a second
+one. The dashboard has no in-app login: it trusts Cloudflare Access at the edge and
+treats a direct hit as an internal request (``lib/auth.py``). These routes do the same:
+
+* **Via Cloudflare** -- allow when the edge authenticated the user, and record who. A
+  request that arrives through Cloudflare *without* an identity is refused, so the gate
+  fails closed rather than open.
+* **Direct hit** (LAN, container port) -- allow. Anyone who can reach this port can
+  already list run files through ``/api/parquets`` and query every one of them through
+  the existing routes, so requiring a separate secret here would be friction without a
+  boundary.
+* **Bearer token** -- still honoured when ``EVAL_EXPORT_TOKEN`` is set, for automation
+  and for deployments that want an explicit gate.
+
+Two env knobs tighten this when the exposure changes: ``EVAL_EXPORT_REQUIRE_TOKEN=1``
+demands a token from everyone, and ``EVAL_EXPORT_ALLOW_DIRECT=0`` refuses non-Cloudflare
+requests. Every path is confined to the resolved run directory regardless, on top of the
+data-root sandbox the rest of the API uses.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -64,24 +77,99 @@ def export_token() -> str:
     return os.environ.get("EVAL_EXPORT_TOKEN", "").strip()
 
 
+def _flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
+def require_token_always() -> bool:
+    return _flag("EVAL_EXPORT_REQUIRE_TOKEN", False)
+
+
+def allow_direct() -> bool:
+    return _flag("EVAL_EXPORT_ALLOW_DIRECT", True)
+
+
 def exports_enabled() -> bool:
-    return bool(export_token())
+    """Whether any caller can be authorized at all.
+
+    Unlike the token-only design this replaced, exports are normally usable without a
+    token; they are only unreachable if a token is demanded but none is configured.
+    """
+    if require_token_always():
+        return bool(export_token())
+    return True
 
 
-def require_auth(handler: Any) -> None:
-    """Authorize a request, or raise. Closed by default -- never open when unset."""
-    expected = export_token()
-    if not expected:
-        raise ExportDisabledError(
-            "Export API is disabled on this server. Set EVAL_EXPORT_TOKEN to enable it."
-        )
+def _headers_dict(handler: Any) -> dict[str, str]:
+    try:
+        return {str(k): str(v) for k, v in handler.headers.items()}
+    except Exception:
+        return {}
+
+
+def _identity(headers: dict[str, str]) -> tuple[str, str]:
+    """Return ``(origin, email)`` using the dashboard's own trust rules.
+
+    ``lib.auth`` is stdlib-only and is the single source of truth for how far a Cf-*
+    header may be believed, so it is reused rather than reimplemented. It is imported
+    lazily: the packaged client drops these routes entirely and does not ship ``lib/``.
+    """
+    try:
+        from lib import auth
+    except Exception:
+        # No lib/ available (packaged client). Treat as a direct, unidentified hit.
+        return "direct", ""
+    origin = "cloudflare" if auth.detect_access_origin(headers).get("is_cloudflare") else "direct"
+    # get_access_user_email() deliberately returns "" when the Cf-* signals are absent,
+    # so a forged email header on a direct hit cannot manufacture an identity.
+    return origin, auth.get_access_user_email(headers)
+
+
+def _presented_token(handler: Any) -> str:
     raw = str(handler.headers.get("authorization") or "")
     prefix = "bearer "
-    presented = raw[len(prefix) :].strip() if raw.lower().startswith(prefix) else ""
-    if not presented:
-        presented = str(handler.headers.get("x-export-token") or "").strip()
-    if not presented or not hmac.compare_digest(presented, expected):
-        raise ExportAuthError("Invalid or missing export token.")
+    if raw.lower().startswith(prefix):
+        return raw[len(prefix) :].strip()
+    return str(handler.headers.get("x-export-token") or "").strip()
+
+
+def require_auth(handler: Any) -> dict[str, str]:
+    """Authorize a request, or raise. Returns how the caller was identified."""
+    expected = export_token()
+    presented = _presented_token(handler)
+
+    if expected and presented:
+        if hmac.compare_digest(presented, expected):
+            return {"via": "token", "actor": "token"}
+        raise ExportAuthError("Invalid export token.")
+
+    if require_token_always():
+        if not expected:
+            raise ExportDisabledError(
+                "EVAL_EXPORT_REQUIRE_TOKEN is set but EVAL_EXPORT_TOKEN is not, so no "
+                "caller can be authorized. Set a token or unset the requirement."
+            )
+        raise ExportAuthError("This server requires an export token.")
+
+    origin, email = _identity(_headers_dict(handler))
+
+    if origin == "cloudflare":
+        if email:
+            return {"via": "cloudflare", "actor": email}
+        # Through the edge but unauthenticated: fail closed rather than fall back to the
+        # permissive direct-hit rule, which would make the edge trivially bypassable.
+        raise ExportAuthError(
+            "Request arrived via Cloudflare without an authenticated identity."
+        )
+
+    if not allow_direct():
+        raise ExportAuthError(
+            "Direct (non-Cloudflare) access to the export API is disabled on this server."
+        )
+    return {"via": "direct", "actor": "anonymous"}
 
 
 def _data_root() -> Path:
@@ -401,9 +489,16 @@ def _parse_range(header: str, size: int) -> tuple[int, int] | None:
 
 def export_file(handler: Any, payload: dict[str, Any], *, head_only: bool = False) -> None:
     """Stream one file from a run, honouring ``Range`` so large pulls can resume."""
-    require_auth(handler)
+    who = require_auth(handler)
     run_dir = _resolve_run(payload.get("run"))
     path = _resolve_in_run(run_dir, payload.get("rel_path"))
+    # Exports leave the machine, so record who took what. Enabled with the same switch
+    # as the rest of this server's access logging.
+    if os.environ.get("LOCAL_BBOX_API_DEBUG") == "1":
+        logging.getLogger(__name__).info(
+            "export_file %s/%s by %s (%s)", run_dir.name, payload.get("rel_path"),
+            who.get("actor"), who.get("via"),
+        )
     stat = path.stat()
     size = int(stat.st_size)
     # Cheap, stable validator: content is immutable once written, and rehashing a
@@ -457,11 +552,28 @@ def export_file(handler: Any, payload: dict[str, Any], *, head_only: bool = Fals
 
 
 def export_health(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """Advertise the export API without requiring a token, so clients can probe."""
+    """Advertise the API and the effective access policy, without authorizing.
+
+    Clients use this to decide whether to ask the user for a token at all, so it must
+    answer even to a caller that would be refused everywhere else.
+    """
+    origin, email = _identity(_headers_dict(handler))
+    try:
+        require_auth(handler)
+        authorized, reason = True, ""
+    except ExportAuthError as exc:
+        authorized, reason = False, str(exc)
     return {
         "ok": True,
         "service": "eval_dashboard_export",
         "enabled": exports_enabled(),
+        "authorized": authorized,
+        "auth_reason": reason,
+        "token_required": require_token_always(),
+        "token_configured": bool(export_token()),
+        "direct_allowed": allow_direct(),
+        "origin": origin,
+        "identity": email,
         "tiers": TIER_DESCRIPTIONS,
         "data_root": str(_data_root()),
     }

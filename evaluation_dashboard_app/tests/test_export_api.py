@@ -68,41 +68,116 @@ def data_root(tmp_path, monkeypatch) -> Path:
 
 
 # ------------------------------------------------------------------------- auth
+#
+# Policy under test (see backend/export_api.py): access reuses the dashboard's identity
+# model instead of a second secret. Direct hits are internal and allowed; Cloudflare
+# hits must carry an authenticated identity; a token still works and can be demanded.
 
 
-def test_exports_are_closed_when_no_token_is_configured(monkeypatch):
+def _cf(email: str = "", **extra) -> _Handler:
+    """A request that looks like it came through Cloudflare."""
+    headers = {"Cf-Ray": "8abc123-NRT", "Cdn-Loop": "cloudflare", **extra}
+    if email:
+        headers["Cf-Access-Authenticated-User-Email"] = email
+    return _Handler(headers)
+
+
+def test_direct_hit_is_allowed_without_a_token(data_root, monkeypatch):
+    """Anyone who can reach this port can already list and query every run file
+    through the existing routes, so a separate secret would be friction, not a boundary."""
     monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
-    assert export_api.exports_enabled() is False
-    with pytest.raises(export_api.ExportDisabledError):
-        export_api.require_auth(_auth())
+    who = export_api.require_auth(_Handler())
+    assert who == {"via": "direct", "actor": "anonymous"}
+    assert export_api.exports_enabled() is True
 
 
-def test_blank_token_does_not_enable_exports(monkeypatch):
-    monkeypatch.setenv("EVAL_EXPORT_TOKEN", "   ")
-    with pytest.raises(export_api.ExportDisabledError):
-        export_api.require_auth(_auth())
+def test_cloudflare_with_identity_is_allowed_and_attributed(data_root, monkeypatch):
+    monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
+    who = export_api.require_auth(_cf("lei.gu@tier4.jp"))
+    assert who == {"via": "cloudflare", "actor": "lei.gu@tier4.jp"}
 
 
-def test_missing_and_wrong_tokens_are_rejected(data_root):
-    with pytest.raises(export_api.ExportAuthError):
-        export_api.require_auth(_Handler())
-    with pytest.raises(export_api.ExportAuthError):
-        export_api.require_auth(_auth("wrong"))
-    with pytest.raises(export_api.ExportAuthError):
-        export_api.require_auth(_Handler({"Authorization": "secret"}))  # missing scheme
+def test_cloudflare_without_identity_fails_closed(data_root, monkeypatch):
+    """Falling back to the permissive direct rule here would make the edge bypassable
+    by anyone who can set a Cf-Ray header."""
+    monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
+    with pytest.raises(export_api.ExportAuthError, match="without an authenticated identity"):
+        export_api.require_auth(_cf())
+
+
+def test_forged_identity_on_a_direct_hit_is_not_believed(data_root, monkeypatch):
+    """The email header is only meaningful alongside the other Cf-* signals; a direct
+    caller must not be able to manufacture an identity for the audit log."""
+    monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
+    forged = _Handler({"Cf-Access-Authenticated-User-Email": "attacker@evil.com"})
+    who = export_api.require_auth(forged)
+    assert who["actor"] == "anonymous"
+    assert who["via"] == "direct"
 
 
 def test_correct_token_is_accepted_in_either_header(data_root):
-    export_api.require_auth(_auth())
+    assert export_api.require_auth(_auth())["via"] == "token"
     export_api.require_auth(_Handler({"Authorization": "bearer secret"}))  # case-insensitive
     export_api.require_auth(_Handler({"X-Export-Token": "secret"}))
 
 
-def test_health_needs_no_token_so_clients_can_probe(monkeypatch):
+def test_wrong_token_is_rejected_even_though_direct_would_pass(data_root):
+    """Presenting a bad credential is an error, not something to silently fall back from."""
+    with pytest.raises(export_api.ExportAuthError, match="Invalid export token"):
+        export_api.require_auth(_auth("wrong"))
+
+
+def test_no_token_presented_falls_through_to_identity(data_root):
+    # EVAL_EXPORT_TOKEN is set by the fixture, but presenting none is still fine on a
+    # direct hit: the token is an alternative, not a requirement.
+    assert export_api.require_auth(_Handler())["via"] == "direct"
+
+
+def test_require_token_closes_the_identity_paths(data_root, monkeypatch):
+    monkeypatch.setenv("EVAL_EXPORT_REQUIRE_TOKEN", "1")
+    with pytest.raises(export_api.ExportAuthError, match="requires an export token"):
+        export_api.require_auth(_Handler())
+    with pytest.raises(export_api.ExportAuthError):
+        export_api.require_auth(_cf("lei.gu@tier4.jp"))
+    assert export_api.require_auth(_auth())["via"] == "token"
+
+
+def test_require_token_without_a_token_is_unusable_and_says_so(monkeypatch):
+    monkeypatch.setenv("EVAL_EXPORT_REQUIRE_TOKEN", "1")
     monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
-    health = export_api.export_health(_Handler(), {})
+    assert export_api.exports_enabled() is False
+    with pytest.raises(export_api.ExportDisabledError, match="no caller can be authorized"):
+        export_api.require_auth(_Handler())
+
+
+def test_allow_direct_off_refuses_lan_but_keeps_cloudflare(data_root, monkeypatch):
+    monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
+    monkeypatch.setenv("EVAL_EXPORT_ALLOW_DIRECT", "0")
+    with pytest.raises(export_api.ExportAuthError, match="Direct .* is disabled"):
+        export_api.require_auth(_Handler())
+    assert export_api.require_auth(_cf("lei.gu@tier4.jp"))["via"] == "cloudflare"
+
+
+@pytest.mark.parametrize("value,expected", [("0", False), ("false", False), ("no", False),
+                                            ("off", False), ("1", True), ("yes", True)])
+def test_flag_parsing(monkeypatch, value, expected):
+    monkeypatch.setenv("EVAL_EXPORT_ALLOW_DIRECT", value)
+    assert export_api.allow_direct() is expected
+
+
+def test_health_reports_the_policy_without_authorizing(monkeypatch, data_root):
+    """Clients read this to decide whether to ask for a token at all, so it must answer
+    even to a caller that every other route would refuse."""
+    monkeypatch.delenv("EVAL_EXPORT_TOKEN", raising=False)
+    health = export_api.export_health(_cf(), {})   # would be refused elsewhere
     assert health["service"] == "eval_dashboard_export"
-    assert health["enabled"] is False
+    assert health["authorized"] is False
+    assert "without an authenticated identity" in health["auth_reason"]
+    assert health["origin"] == "cloudflare"
+
+    ok = export_api.export_health(_Handler(), {})
+    assert ok["authorized"] is True
+    assert ok["token_required"] is False
 
 
 # ---------------------------------------------------------------------- sandbox
@@ -215,9 +290,12 @@ def test_derived_and_published_artifacts_are_never_exported(data_root):
         assert not any("specsheet" in r for r in rels)
 
 
-def test_manifest_requires_auth(data_root):
+def test_manifest_enforces_the_access_policy(data_root):
+    # Direct hits are internal and allowed...
+    assert export_api.export_manifest(_Handler(), {"run": "run_one"})["run"] == "run_one"
+    # ...but a request through the edge without an identity is refused.
     with pytest.raises(export_api.ExportAuthError):
-        export_api.export_manifest(_Handler(), {"run": "run_one"})
+        export_api.export_manifest(_cf(), {"run": "run_one"})
 
 
 def test_unknown_tier_is_rejected(data_root):
@@ -262,9 +340,10 @@ def test_runs_query_filters(data_root):
     assert len(export_api.runs(_auth(), {"q": "run", "sizes": False})["items"]) == 1
 
 
-def test_runs_requires_auth(data_root):
+def test_runs_enforces_the_access_policy(data_root):
+    assert export_api.runs(_Handler(), {"sizes": False})["items"]
     with pytest.raises(export_api.ExportAuthError):
-        export_api.runs(_Handler(), {})
+        export_api.runs(_cf(), {"sizes": False})
 
 
 # ------------------------------------------------------------------ range parse
@@ -348,12 +427,17 @@ def test_head_sends_headers_without_a_body(data_root):
     assert handler.sent["x-export-size"] == "11"
 
 
-def test_file_stream_requires_auth(data_root):
-    handler = _Handler()
+def test_file_stream_enforces_the_access_policy(data_root):
+    allowed = _Handler()
+    export_api.export_file(allowed, {"run": "run_one", "rel_path": "metadata.yaml"})
+    assert allowed.status == 200
+
+    refused = _cf()
     with pytest.raises(export_api.ExportAuthError):
-        export_api.export_file(handler, {"run": "run_one", "rel_path": "metadata.yaml"})
-    # Nothing may be committed to the wire before authorization succeeds.
-    assert handler.status is None and handler.body == b""
+        export_api.export_file(refused, {"run": "run_one", "rel_path": "metadata.yaml"})
+    # Nothing may be committed to the wire before authorization succeeds, or the
+    # dispatcher cannot turn the failure into a clean JSON error.
+    assert refused.status is None and refused.body == b""
 
 
 def test_stream_marks_itself_committed(data_root):

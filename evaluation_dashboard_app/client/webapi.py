@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from client import config, sync
-from client.remote import Remote, probe_server
+from client.remote import connect, probe_server
 
 
 class PullJob:
@@ -73,7 +73,7 @@ def _current_job() -> PullJob | None:
 
 def _run_pull(job: PullJob) -> None:
     try:
-        remote = Remote(config.Config.load())
+        remote = connect(config.Config.load())
         job.state = "planning"
         job.message = "Asking the server what this run contains..."
         manifest = remote.manifest(
@@ -135,13 +135,40 @@ def _run_pull(job: PullJob) -> None:
 def _config_view() -> dict[str, Any]:
     cfg = config.Config.load()
     return {
-        "server_url": cfg.server_url,
+        "server_url": cfg.effective_server(),
+        "server_is_default": not cfg.server_url and bool(config.DEFAULT_SERVER),
         # Never return the token itself; the UI only needs to know whether one is set.
         "token_set": bool(cfg.resolved_token()),
         "cf_configured": bool(cfg.cf_client_id and cfg.cf_client_secret),
         "verify_tls": cfg.verify_tls,
-        "t4_base_url": cfg.t4_base_url,
+        "t4_base_url": cfg.effective_t4_base_url(),
         "workspace": str(config.workspace_dir()),
+    }
+
+
+def _server_status() -> dict[str, Any]:
+    """Whether the configured server will actually serve this user, without a token.
+
+    The export API authorizes on the dashboard's own identity model, so in most
+    deployments no token is needed and the UI should not ask for one. Probing here lets
+    the page say which case it is in rather than making the user guess.
+    """
+    cfg = config.Config.load()
+    blank = {"reachable": False, "authorized": False, "token_required": False,
+             "identity": "", "origin": "", "reason": ""}
+    if not cfg.effective_server():
+        return {**blank, "reason": "no server configured"}
+    try:
+        health = connect(cfg).export_health()
+    except Exception as exc:
+        return {**blank, "reason": str(exc)[:200]}
+    return {
+        "reachable": True,
+        "authorized": bool(health.get("authorized")),
+        "token_required": bool(health.get("token_required")),
+        "identity": health.get("identity") or "",
+        "origin": health.get("origin") or "",
+        "reason": health.get("auth_reason") or "",
     }
 
 
@@ -149,6 +176,7 @@ def client_state(payload: dict[str, Any]) -> dict[str, Any]:
     job = _current_job()
     return {
         "config": _config_view(),
+        "server": _server_status() if payload.get("probe") is not False else None,
         "local_runs": sync.local_run_summary(),
         "job": job.snapshot() if job else None,
         "tiers": [
@@ -166,7 +194,7 @@ def client_state(payload: dict[str, Any]) -> dict[str, Any]:
 
 def client_login(payload: dict[str, Any]) -> dict[str, Any]:
     cfg = config.Config.load()
-    server = str(payload.get("server_url") or "").strip()
+    server = str(payload.get("server_url") or "").strip() or cfg.effective_server()
     if not server:
         raise ValueError("A server URL is required.")
     cfg.server_url = server.rstrip("/")
@@ -185,11 +213,11 @@ def client_login(payload: dict[str, Any]) -> dict[str, Any]:
     resolved, health = probe_server(cfg, cfg.server_url)
     cfg.server_url = resolved
     cfg.save()
-    return {"ok": True, "config": _config_view(), "health": health}
+    return {"ok": True, "config": _config_view(), "health": health, "server": _server_status()}
 
 
 def client_remote_runs(payload: dict[str, Any]) -> dict[str, Any]:
-    remote = Remote(config.Config.load())
+    remote = connect(config.Config.load())
     data = remote.runs(sizes=payload.get("sizes", True) is not False, query=str(payload.get("q") or ""))
     return {"server": remote.base_url, **data}
 

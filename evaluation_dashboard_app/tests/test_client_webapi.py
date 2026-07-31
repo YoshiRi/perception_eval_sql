@@ -12,6 +12,12 @@ from client import config, webapi
 def home(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("EVALDASH_HOME", str(tmp_path / "home"))
     config.ensure_dirs()
+    # A build may have written client/_defaults.py with a baked-in server; these tests
+    # describe a plain source checkout, so neutralise it explicitly.
+    monkeypatch.setattr(config, "DEFAULT_SERVER", "")
+    monkeypatch.setattr(config, "DEFAULT_T4_BASE_URL", "")
+    monkeypatch.delenv("EVALDASH_SERVER", raising=False)
+    monkeypatch.delenv("EVALDASH_TOKEN", raising=False)
     # Each test starts with no in-flight job; the manager is module-level state.
     webapi._JOB = None
     yield tmp_path / "home"

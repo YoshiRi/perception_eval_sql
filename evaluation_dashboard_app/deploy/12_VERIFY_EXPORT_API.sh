@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Verify the export API end to end through the real edge (nginx, TLS, Cloudflare).
 #
-#   ./deploy/12_VERIFY_EXPORT_API.sh <base-url> <token> [cf-client-id] [cf-client-secret]
+#   ./deploy/12_VERIFY_EXPORT_API.sh <base-url> [token] [cf-client-id] [cf-client-secret]
 #
 # Example:
 #   ./deploy/12_VERIFY_EXPORT_API.sh https://dash.example.com hunter2
@@ -17,7 +17,7 @@ TOKEN="${2:-}"
 CF_ID="${3:-}"
 CF_SECRET="${4:-}"
 
-if [[ -z "$BASE" || -z "$TOKEN" ]]; then
+if [[ -z "$BASE" ]]; then
   sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 fi
@@ -29,7 +29,7 @@ FAIL=0
 CURL=(curl -sS --max-time 60)
 [[ -n "$CF_ID" ]] && CURL+=(-H "CF-Access-Client-Id: $CF_ID")
 [[ -n "$CF_SECRET" ]] && CURL+=(-H "CF-Access-Client-Secret: $CF_SECRET")
-AUTH=(-H "Authorization: Bearer $TOKEN")
+AUTH=(); [[ -n "$TOKEN" ]] && AUTH=(-H "Authorization: Bearer $TOKEN")
 
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); }
@@ -57,25 +57,49 @@ if [[ -z "$API" ]]; then
 fi
 
 HEALTH="$("${CURL[@]}" "$API/api/export_health")"
+policy() { printf '%s' "$HEALTH" | python3 -c "import json,sys; print(json.load(sys.stdin).get('$1'))" 2>/dev/null; }
 if [[ "$HEALTH" == *'"enabled":true'* ]]; then
-  ok "exports enabled on the server"
+  ok "exports enabled (token_required=$(policy token_required), direct_allowed=$(policy direct_allowed))"
 else
-  bad "exports are DISABLED (EVAL_EXPORT_TOKEN not set in the container)"
-  note "1. ./deploy/11_ENABLE_EXPORT_API.sh --apply     (writes deploy/.env)"
-  note "2. cd deploy && docker compose --env-file .env up -d --no-build streamlit1"
-  note "   A plain 'docker compose restart' will NOT work: it reuses the existing"
-  note "   container config and does not re-read env_file."
+  bad "exports unusable: EVAL_EXPORT_REQUIRE_TOKEN is set but EVAL_EXPORT_TOKEN is not"
+  note "set a token in deploy/.env, or unset the requirement, then RECREATE:"
+  note "  cd deploy && docker compose --env-file .env up -d --no-build streamlit1"
+  note "  (a plain 'docker compose restart' does not re-read env_file)"
 fi
+note "this request was seen as: origin=$(policy origin) identity='$(policy identity)' authorized=$(policy authorized)"
 note "data root: $(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("data_root"))' 2>/dev/null || echo '?')"
 
-echo "==> auth"
-CODE="$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "$API/api/runs" -d '{}')"
-[[ "$CODE" == "401" ]] && ok "unauthenticated request rejected (401)" \
-  || bad "expected 401 without a token, got $CODE"
+echo "==> access policy"
+# Access mirrors the dashboard's own identity model, so what counts as correct depends
+# on whether this server demands a token.
+if [[ "$(policy token_required)" == "True" ]]; then
+  CODE="$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "$API/api/runs" -d '{}')"
+  [[ "$CODE" == "401" ]] && ok "token required, and a tokenless request is rejected (401)" \
+    || bad "server demands a token but a tokenless request returned $CODE"
+else
+  CODE="$("${CURL[@]}" -o /dev/null -w '%{http_code}' -X POST "$API/api/runs" -d '{}')"
+  [[ "$CODE" == "200" ]] && ok "no token needed from here (identity-based access)" \
+    || bad "expected 200 without a token, got $CODE"
+fi
 
-CODE="$("${CURL[@]}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong-$TOKEN" -X POST "$API/api/runs" -d '{}')"
-[[ "$CODE" == "401" ]] && ok "wrong token rejected (401)" \
-  || bad "expected 401 for a wrong token, got $CODE"
+# A request that looks like it came through Cloudflare but carries no identity must be
+# refused, otherwise the edge is bypassable by setting one header.
+CODE="$("${CURL[@]}" -o /dev/null -w '%{http_code}' -H "Cf-Ray: 0000test-NRT" \
+        -H "Cdn-Loop: cloudflare" -X POST "$API/api/runs" -d '{}')"
+[[ "$CODE" == "401" ]] && ok "Cloudflare-shaped request without identity refused (401)" \
+  || bad "expected 401 for an unidentified Cloudflare request, got $CODE"
+
+# A forged identity header without the other Cf-* signals must not be believed.
+FORGED="$("${CURL[@]}" -H "Cf-Access-Authenticated-User-Email: attacker@example.com" "$API/api/export_health" \
+          | python3 -c "import json,sys; print(json.load(sys.stdin).get('identity') or '')" 2>/dev/null)"
+[[ -z "$FORGED" ]] && ok "forged identity header on a direct hit is ignored" \
+  || bad "server believed a forged identity: $FORGED"
+
+if [[ -n "$TOKEN" ]]; then
+  CODE="$("${CURL[@]}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong-$TOKEN" -X POST "$API/api/runs" -d '{}')"
+  [[ "$CODE" == "401" ]] && ok "a wrong token is rejected rather than ignored" \
+    || bad "expected 401 for a wrong token, got $CODE"
+fi
 
 RUNS="$("${CURL[@]}" "${AUTH[@]}" -X POST "$API/api/runs" -d '{"sizes":false}')"
 if [[ "$RUNS" == *'"items"'* ]]; then
@@ -144,7 +168,14 @@ echo "$PASS passed, $FAIL failed"
 if [[ "$FAIL" -eq 0 ]]; then
   echo
   echo "Ready. Teammates can now run:"
-  echo "    evaldash-local login --server $BASE --token <token>"
+  if [[ "$(policy token_required)" == "True" ]]; then
+    echo "    evaldash-local login --server $BASE --token <token>"
+  else
+    echo "    evaldash-local login --server $BASE      # no token needed"
+  fi
   echo "    evaldash-local runs"
+  echo
+  echo "Better still, hand them a build that needs no setup at all:"
+  echo "    ./client/build_app.sh --server $BASE"
 fi
 exit $(( FAIL > 0 ? 1 : 0 ))

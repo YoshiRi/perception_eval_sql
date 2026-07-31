@@ -133,8 +133,8 @@
       <label class="field grow">Dashboard URL
         <input id="serverUrl" placeholder="https://dashboard.example.com" spellcheck="false">
       </label>
-      <label class="field grow">Export token
-        <input id="token" type="password" placeholder="EVAL_EXPORT_TOKEN" spellcheck="false">
+      <label class="field grow">Export token <span class="muted">(usually not needed)</span>
+        <input id="token" type="password" placeholder="only if the server asks for one" spellcheck="false">
       </label>
       <button class="primary" id="connectBtn" style="align-self: flex-end">Connect</button>
     </div>
@@ -388,15 +388,26 @@
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
+  function describeServer(cfg, srv) {
+    if (!cfg.server_url) return "Not connected.";
+    const where = cfg.server_url + (cfg.server_is_default ? " (built-in default)" : "");
+    if (!srv) return where;
+    if (!srv.reachable) return `${where} — unreachable: ${srv.reason}`;
+    if (srv.authorized) {
+      const who = srv.identity ? ` as ${srv.identity}` : "";
+      return `${where} — ready${who}`;
+    }
+    return `${where} — not authorized: ${srv.reason || "a token may be required"}`;
+  }
+
   async function refreshState() {
     const data = await api("/api/client/state");
     const cfg = data.config || {};
     if (!$("serverUrl").value) $("serverUrl").value = cfg.server_url || "";
-    $("token").placeholder = cfg.token_set ? "•••••• stored (leave blank to keep)" : "EVAL_EXPORT_TOKEN";
+    $("token").placeholder = cfg.token_set
+      ? "•••••• stored (leave blank to keep)" : "only if the server asks for one";
     $("workspacePath").textContent = `Workspace: ${cfg.workspace || ""}`;
-    $("connStatus").textContent = cfg.server_url
-      ? `${cfg.server_url}${cfg.token_set ? " · token stored" : " · no token"}`
-      : "Not connected.";
+    $("connStatus").textContent = describeServer(cfg, data.server);
     if (!tiers.length && data.tiers) { tiers = data.tiers; renderTiers(); }
     renderLocal(data.local_runs);
     if (data.job) renderJob(data.job);
@@ -488,9 +499,15 @@
   $("token").onkeydown = e => { if (e.key === "Enter") connect(); };
 
   refreshState().then(data => {
-    // Auto-list when a working connection is already stored, so the common case needs
-    // no clicks at all.
-    if (data.config && data.config.server_url && data.config.token_set) loadRemote();
+    // Auto-list whenever the server says it will serve us. With identity-based access
+    // that is the normal case, so the common path needs no clicks and no token.
+    const srv = data.server;
+    if (srv && srv.reachable && srv.authorized) {
+      loadRemote();
+    } else if (srv && srv.reachable && !srv.authorized) {
+      banner("info", `The server did not authorize this client: ${srv.reason
+        || "a token may be required"}. Enter one above if you have it.`);
+    }
   }).catch(e => banner("err", String(e.message || e)));
 })();
 </script>

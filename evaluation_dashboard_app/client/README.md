@@ -13,8 +13,9 @@ a workspace, and a window.
 
 ## Quick start (from a fresh clone)
 
-You need Python 3.10+ and the URL and token of a dashboard whose export API is enabled
-(see [Server setup](#server-setup-once) — a one-off, done by whoever runs the server).
+You need Python 3.10+ and the URL of the dashboard. **No token in most deployments** —
+access reuses the dashboard's own identity model, so if you can reach the dashboard you
+can use the client.
 
 ```bash
 git clone <repo> && cd <repo>/evaluation_dashboard_app
@@ -26,17 +27,21 @@ python3 -m client doctor                        # sanity check; should exit 0
 python3 -m client open                          # opens the home page in your browser
 ```
 
-On the home page: enter the dashboard URL and token, press **Connect**, pick a run,
-press **Download**, then **Open**. Nothing else is required — no Streamlit, no Docker,
-no database.
+On the home page: enter the dashboard URL, press **Connect**, pick a run, press
+**Download**, then **Open**. Nothing else is required — no Streamlit, no Docker, no
+database, and normally no token.
 
 **Want a real application window instead of a browser tab, and a double-clickable file?**
 
 ```bash
 pip install pywebview pyinstaller
 sudo apt install gir1.2-webkit2-4.0 python3-gi   # Linux: the native webview
-./client/build_app.sh                            # -> dist/evaldash-local
+./client/build_app.sh --server http://your-dashboard    # -> dist/evaldash-local
 ```
+
+Passing `--server` bakes the URL into the executable, so the app connects on launch and
+the recipient types nothing at all. Combined with identity-based access, double-clicking
+is the entire setup.
 
 Then double-click `dist/evaldash-local`. That single file is self-contained: it needs
 neither the repo nor a Python install, so it is the thing to hand to a teammate. The same
@@ -69,7 +74,27 @@ Measured on a real 11 GB run:
 
 ## Server setup (once)
 
-The export routes are **closed by default**. Generate a token and enable them:
+**Usually nothing to do.** The export routes reuse the dashboard's own access model
+rather than adding a second secret:
+
+| How the request arrives | Result |
+|---|---|
+| Direct hit (LAN, container port) | **Allowed.** Anyone who can reach this port can already list run files via `/api/parquets` and query them through the existing routes, so a separate secret would be friction without a boundary. |
+| Via Cloudflare, authenticated | **Allowed**, and the identity is recorded. |
+| Via Cloudflare, no identity | **Refused.** Failing closed here is what stops the edge being bypassed by setting one header. |
+| Valid `EVAL_EXPORT_TOKEN` presented | **Allowed.** Useful for automation. |
+
+A forged `Cf-Access-Authenticated-User-Email` on a direct hit is ignored: `lib/auth.py`
+only believes that header alongside the other `Cf-*` signals, and these routes reuse that
+rule rather than reimplementing it.
+
+Two knobs tighten this if exposure changes — both need a container **recreate**, not a
+restart:
+
+- `EVAL_EXPORT_REQUIRE_TOKEN=1` — demand a token from everyone.
+- `EVAL_EXPORT_ALLOW_DIRECT=0` — refuse non-Cloudflare requests.
+
+To issue a token for the first, or for automation:
 
 ```bash
 ./deploy/11_ENABLE_EXPORT_API.sh --apply     # appends EVAL_EXPORT_TOKEN to deploy/.env
@@ -99,7 +124,8 @@ That script checks the things which only differ in production: that nginx forwar
 bearer token, that it forwards `Range` (so a 465 MB pull can resume), and that you are
 getting JSON rather than a Cloudflare sign-in page.
 
-Without the token, every export route answers `503`. With a wrong token, `401`.
+A wrong token is rejected outright (`401`) rather than falling back to the identity
+rules — presenting a bad credential is an error, not something to paper over.
 
 ### Pre-baking
 

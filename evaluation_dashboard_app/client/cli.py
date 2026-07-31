@@ -7,7 +7,7 @@ import json
 import sys
 
 from client import config, serve, sync
-from client.remote import AuthError, Remote, RemoteError, probe_server
+from client.remote import AuthError, Remote, RemoteError, connect, probe_server
 
 EPILOG = """\
 typical use:
@@ -26,7 +26,7 @@ def _remote(args: argparse.Namespace) -> Remote:
         cfg.server_url = args.server
     if getattr(args, "token", None):
         cfg.token = args.token
-    return Remote(cfg)
+    return connect(cfg)
 
 
 def _print_table(rows: list[list[str]], headers: list[str]) -> None:
@@ -60,9 +60,10 @@ def cmd_login(args: argparse.Namespace) -> int:
         cfg.t4_base_url = args.t4_base_url
     if args.insecure:
         cfg.verify_tls = False
-    if not cfg.server_url:
+    if not cfg.effective_server():
         print("error: --server is required the first time", file=sys.stderr)
         return 2
+    cfg.server_url = cfg.server_url or cfg.effective_server()
 
     try:
         resolved, health = probe_server(cfg, cfg.server_url)
@@ -91,7 +92,16 @@ def cmd_login(args: argparse.Namespace) -> int:
             # that were just verified and saved.
             print(f"auth     could not be confirmed: {exc}", file=sys.stderr)
     else:
-        print("auth     no token stored; pass --token to enable pulls")
+        # No token is the normal case now: the server authorizes on the dashboard's own
+        # identity model, so only deployments that opt in will ask for one.
+        try:
+            count = len(Remote(cfg).runs(sizes=False).get("items") or [])
+            print(f"access   ok without a token, {count} run(s) visible")
+        except AuthError as exc:
+            print(f"access   this server wants a token: {exc}", file=sys.stderr)
+            return 1
+        except RemoteError as exc:
+            print(f"access   could not be confirmed: {exc}", file=sys.stderr)
     return 0
 
 
@@ -436,7 +446,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks.append(("server configured", True if server else None,
                    server or "not set yet - use the app's home page or 'login'"))
     checks.append(("token stored", True if cfg.resolved_token() else None,
-                   "yes" if cfg.resolved_token() else "not set yet - required for pull"))
+                   "yes" if cfg.resolved_token() else "none - usually not needed"))
 
     runs = config.local_runs()
     checks.append((
@@ -501,7 +511,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("login", help="store and verify server connection settings")
     p.add_argument("--server", help="dashboard base URL, e.g. https://dash.example.com")
-    p.add_argument("--token", help="value of EVAL_EXPORT_TOKEN on the server")
+    p.add_argument("--token", help="only if the server sets EVAL_EXPORT_REQUIRE_TOKEN")
     p.add_argument("--cf-client-id", help="Cloudflare Access service token id")
     p.add_argument("--cf-client-secret", help="Cloudflare Access service token secret")
     p.add_argument("--t4-base-url", help="T4 visualizer URL used for 3D point clouds")

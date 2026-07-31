@@ -160,6 +160,27 @@ class Remote:
         return response
 
 
+def connect(cfg: Config) -> Remote:
+    """Build a Remote against a base URL that is known to serve the export API.
+
+    A URL that was never run through :func:`probe_server` may be missing the ``/bbox-api``
+    prefix that nginx mounts the API under, in which case requests land on Streamlit and
+    come back as ``405 Method Not Allowed``. That is the normal state for a build-time
+    default or ``EVALDASH_SERVER``, where no ``login`` step ever ran, so resolve here and
+    persist the answer once rather than re-probing on every call.
+    """
+    if cfg.server_url:
+        return Remote(cfg)
+    resolved, _ = probe_server(cfg, cfg.require_server())
+    cfg.server_url = resolved
+    try:
+        cfg.save()
+    except OSError:
+        # A read-only home is survivable: this run still works, the next one re-probes.
+        pass
+    return Remote(cfg)
+
+
 def probe_server(config: Config, base_url: str) -> tuple[str, dict[str, Any]]:
     """Find the URL that actually serves the export API, tolerating a bare hostname.
 
