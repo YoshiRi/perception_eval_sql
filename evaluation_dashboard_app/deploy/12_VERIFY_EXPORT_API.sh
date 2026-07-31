@@ -61,7 +61,10 @@ if [[ "$HEALTH" == *'"enabled":true'* ]]; then
   ok "exports enabled on the server"
 else
   bad "exports are DISABLED (EVAL_EXPORT_TOKEN not set in the container)"
-  note "run ./deploy/11_ENABLE_EXPORT_API.sh --apply then ./deploy/10_RESTART_STREAMLIT.sh"
+  note "1. ./deploy/11_ENABLE_EXPORT_API.sh --apply     (writes deploy/.env)"
+  note "2. cd deploy && docker compose --env-file .env up -d --no-build streamlit1"
+  note "   A plain 'docker compose restart' will NOT work: it reuses the existing"
+  note "   container config and does not re-read env_file."
 fi
 note "data root: $(printf '%s' "$HEALTH" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("data_root"))' 2>/dev/null || echo '?')"
 

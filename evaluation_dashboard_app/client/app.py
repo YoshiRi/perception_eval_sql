@@ -43,16 +43,25 @@ def _page_url(base_url: str, page: str) -> str:
     return f"{base_url}/{suffix}" if suffix else f"{base_url}/"
 
 
+def _say(message: str, *, error: bool = False) -> None:
+    """Print immediately.
+
+    When the app is double-clicked its stdout is a pipe or a log file, so Python block
+    buffers it and nothing appears until exit. That leaves the launcher's only visible
+    output being GTK's own chatter on stderr, which is both unhelpful and alarming.
+    """
+    print(message, file=sys.stderr if error else sys.stdout, flush=True)
+
+
 def launch(port: int | None = None, page: str = "home", prefer_browser: bool = False) -> int:
-    if not config.local_runs():
-        # Not a warning any more: the home page is where you download a run, so an
-        # empty workspace is the expected first-run state.
-        print("workspace is empty - use the app's home page to download a run", file=sys.stderr)
     server = serve.LocalServer(port=port)
     base_url = server.start()
     url = _page_url(base_url, page)
-    print(f"serving   {base_url}")
-    print(f"workspace {config.workspace_dir()}")
+    _say(f"serving   {base_url}")
+    _say(f"workspace {config.workspace_dir()}")
+    if not config.local_runs():
+        # Expected on first run: the home page is where a run gets downloaded.
+        _say("note      workspace is empty - use the home page to download a run")
 
     if not prefer_browser and _has_pywebview():
         return _run_window(server, url)
@@ -62,14 +71,18 @@ def launch(port: int | None = None, page: str = "home", prefer_browser: bool = F
 def _run_window(server: serve.LocalServer, url: str) -> int:
     import webview
 
-    print(f"opening   {url} (native window)")
+    _say(f"opening   {url} (native window)")
+    # GTK inside a PyInstaller bundle cannot see the system module directory, so it
+    # reports optional modules such as canberra-gtk-module as failed. Cosmetic, and
+    # silencing it would mean redirecting fd 2 and hiding real errors too.
+    _say('note      any \'Failed to load module "canberra-gtk-module"\' lines below are harmless')
     try:
         webview.create_window(WINDOW_TITLE, url, width=DEFAULT_SIZE[0], height=DEFAULT_SIZE[1])
         webview.start()
     except Exception as exc:
         # A missing/broken native webview only shows up at start(); fall back rather
         # than leaving the user with a started server and no visible UI.
-        print(f"native window unavailable ({exc}); falling back to the browser", file=sys.stderr)
+        _say(f"native window unavailable ({exc}); falling back to the browser", error=True)
         return _run_browser(server, url)
     finally:
         server.stop()
@@ -77,10 +90,10 @@ def _run_window(server: serve.LocalServer, url: str) -> int:
 
 
 def _run_browser(server: serve.LocalServer, url: str) -> int:
-    print(f"opening   {url} (system browser)")
+    _say(f"opening   {url} (system browser)")
     # Open on a timer so the server is already accepting connections.
     threading.Timer(0.4, lambda: webbrowser.open(url)).start()
-    print("\nCtrl-C to stop.")
+    _say("\nCtrl-C to stop.")
     server.serve_forever()
     return 0
 

@@ -1,0 +1,22 @@
+# Dependencies for the local desktop client only.
+#
+# Deliberately NOT the dashboard's requirements.txt: the client never imports Streamlit,
+# plotly, reportlab or the queue/DB stack, and pulling those in would multiply both the
+# install and the packaged bundle for no benefit.
+
+# Query engine. Reads parquet natively -- pyarrow is not needed.
+duckdb>=0.9.0
+# duckdb's .df() returns a DataFrame, so the query routes need pandas + numpy.
+pandas>=2.0.0
+numpy>=1.24.0
+# Optional but recommended: without it, scenario.yaml criteria are skipped and DevOps
+# context falls back to filename heuristics.
+PyYAML>=6.0
+
+# Optional, for a native application window instead of a browser tab.
+# On Linux this also needs system packages:
+#   sudo apt install gir1.2-webkit2-4.0 python3-gi
+# pywebview>=5.0
+
+# Build-only, for ./client/build_app.sh:
+# pyinstaller>=6.0

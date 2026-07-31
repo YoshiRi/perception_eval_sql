@@ -33,7 +33,8 @@ show_current() {
     echo "configured in $ENV_FILE:"
     grep '^EVAL_EXPORT_TOKEN=' "$ENV_FILE"
     echo
-    echo "Note: a running container only sees this after ./deploy/10_RESTART_STREAMLIT.sh"
+    echo "Note: a running container only sees this after a RECREATE, not a restart:"
+    echo "  cd deploy && docker compose --env-file .env up -d --no-build streamlit1"
   else
     echo "EVAL_EXPORT_TOKEN is not set in $ENV_FILE — the export API is disabled."
   fi
@@ -66,8 +67,11 @@ if [[ "$MODE" == "--apply" ]]; then
   echo "==> appended EVAL_EXPORT_TOKEN to $ENV_FILE"
   warn_stray_local
   echo
-  echo "Now restart so the container picks it up:"
-  echo "    ./deploy/10_RESTART_STREAMLIT.sh"
+  echo "Now RECREATE the container so it picks up the new variable:"
+  echo "    cd deploy && docker compose --env-file .env up -d --no-build streamlit1"
+  echo
+  echo "  (10_RESTART_STREAMLIT.sh is NOT enough: 'docker compose restart' reuses the"
+  echo "   existing container config and does not re-read env_file.)"
   echo
   echo "Then verify:"
   echo "    ./deploy/12_VERIFY_EXPORT_API.sh http://localhost $TOKEN"
@@ -81,7 +85,7 @@ else
   echo
   echo "To apply it automatically:  $0 --apply"
   echo "Or append the line above to: $ENV_FILE"
-  echo "Then:                       ./deploy/10_RESTART_STREAMLIT.sh"
+  echo "Then recreate the container: docker compose --env-file .env up -d --no-build streamlit1"
   echo
   show_current
 fi

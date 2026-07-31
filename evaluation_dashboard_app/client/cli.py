@@ -78,11 +78,18 @@ def cmd_login(args: argparse.Namespace) -> int:
     print(f"config   {path}")
     if cfg.resolved_token():
         try:
-            count = len(_remote(args).runs(sizes=False).get("items") or [])
+            # Use the *resolved* base URL, not what the user typed: probe_server may have
+            # appended /bbox-api, and re-applying the bare hostname here would send the
+            # check to Streamlit instead of the API.
+            count = len(Remote(cfg).runs(sizes=False).get("items") or [])
             print(f"auth     ok, {count} run(s) visible")
         except AuthError as exc:
             print(f"auth     FAILED: {exc}", file=sys.stderr)
             return 1
+        except RemoteError as exc:
+            # Connectivity wobble on the follow-up call does not invalidate the settings
+            # that were just verified and saved.
+            print(f"auth     could not be confirmed: {exc}", file=sys.stderr)
     else:
         print("auth     no token stored; pass --token to enable pulls")
     return 0
@@ -234,11 +241,13 @@ def cmd_rm(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     server = serve.LocalServer(port=args.port)
     url = server.start()
-    print(f"home      {url}/")
-    print(f"explorer  {url}/explorer")
-    print(f"viewer    {url}/viewer")
-    print(f"workspace {config.workspace_dir()}")
-    print("\nCtrl-C to stop.")
+    # flush=True: stdout is block buffered when this is piped to a log, and a server
+    # whose address never appears is useless.
+    print(f"home      {url}/", flush=True)
+    print(f"explorer  {url}/explorer", flush=True)
+    print(f"viewer    {url}/viewer", flush=True)
+    print(f"workspace {config.workspace_dir()}", flush=True)
+    print("\nCtrl-C to stop.", flush=True)
     server.serve_forever()
     return 0
 

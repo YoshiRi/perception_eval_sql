@@ -1,0 +1,496 @@
+<!--
+  Home page for the local desktop client (evaldash-local).
+
+  Served only by client.webapi.ClientHandler at "/", never by the dashboard server.
+  Self-contained: the shared theme module is inlined by _render_page_html, and the
+  palette below mirrors bbox_theme.js so this page matches the explorer in both themes.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evaluation Dashboard — Local</title>
+
+<!-- Loads before body paint so the saved theme applies without a flash. -->
+<script>/*__BBOX_THEME_JS__*/</script>
+
+<style>
+  :root[data-theme="dark"] {
+    --bg: #050812; --panel: #080d1c; --panel2: #0d1426; --surface: #0f172a;
+    --line: rgba(148,163,184,.22); --line-strong: rgba(148,163,184,.4);
+    --text: #eaf2ff; --muted: #91a4bf;
+    --accent: #38bdf8; --accent-fg: #bae6fd; --on-accent: #07111f;
+    --good: #34d399; --bad: #fb7185; --warn: #fbbf24;
+    --good-bg: rgba(6,78,59,.5); --bad-bg: rgba(127,29,29,.45); --warn-bg: rgba(120,53,15,.45);
+  }
+  :root[data-theme="light"] {
+    --bg: #f1f5f9; --panel: #ffffff; --panel2: #f8fafc; --surface: #ffffff;
+    --line: rgba(71,85,105,.2); --line-strong: rgba(71,85,105,.38);
+    --text: #0f172a; --muted: #52627a;
+    --accent: #0891b2; --accent-fg: #075985; --on-accent: #ffffff;
+    --good: #047857; --bad: #be123c; --warn: #b45309;
+    --good-bg: rgba(16,185,129,.14); --bad-bg: rgba(244,63,94,.12); --warn-bg: rgba(245,158,11,.15);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 48px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 22px;
+  }
+  header .wrap { display: flex; align-items: center; gap: 14px; padding: 14px 20px; }
+  h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .spacer { flex: 1; }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 200px; }
+
+  button, .btn {
+    font: inherit; font-weight: 550; cursor: pointer;
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    padding: 7px 13px; text-decoration: none; display: inline-block;
+    transition: border-color .12s, background .12s;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button.icon { padding: 6px 9px; }
+
+  input, select {
+    font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--panel2); }
+  .scroll { overflow-x: auto; }
+  .name { font-weight: 550; word-break: break-all; }
+
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.ok { background: var(--good-bg); color: var(--good); }
+  .pill.no { background: var(--warn-bg); color: var(--warn); }
+  .pill.err { background: var(--bad-bg); color: var(--bad); }
+
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .empty { color: var(--muted); padding: 18px 4px; text-align: center; }
+
+  .bar { height: 8px; border-radius: 999px; background: var(--panel2);
+         border: 1px solid var(--line); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent);
+             width: 0; transition: width .25s ease; }
+
+  .banner { border-radius: 9px; padding: 10px 13px; margin-bottom: 14px; font-size: 13px; }
+  .banner.err { background: var(--bad-bg); color: var(--bad); }
+  .banner.ok { background: var(--good-bg); color: var(--good); }
+  .banner.info { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="wrap">
+    <h1>Evaluation Dashboard <span>· Local</span></h1>
+    <div class="spacer"></div>
+    <a class="btn" id="lnkExplorer" href="/explorer">Explorer</a>
+    <a class="btn" id="lnkViewer" href="/viewer">Viewer</a>
+    <button class="icon" id="themeBtn" title="Toggle theme">☀</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="banner" hidden></div>
+
+  <!-- Connection -->
+  <div class="card">
+    <h2>Server</h2>
+    <div class="row">
+      <label class="field grow">Dashboard URL
+        <input id="serverUrl" placeholder="https://dashboard.example.com" spellcheck="false">
+      </label>
+      <label class="field grow">Export token
+        <input id="token" type="password" placeholder="EVAL_EXPORT_TOKEN" spellcheck="false">
+      </label>
+      <button class="primary" id="connectBtn" style="align-self: flex-end">Connect</button>
+    </div>
+    <details style="margin-top:12px">
+      <summary class="muted small" style="cursor:pointer">Cloudflare Access service token</summary>
+      <div class="row" style="margin-top:10px">
+        <label class="field grow">Client ID <input id="cfId" spellcheck="false"></label>
+        <label class="field grow">Client secret <input id="cfSecret" type="password" spellcheck="false"></label>
+      </div>
+      <p class="hint">Only needed when the dashboard sits behind Cloudflare Access.</p>
+    </details>
+    <p class="hint" id="connStatus">Not connected.</p>
+  </div>
+
+  <!-- Active pull -->
+  <div class="card" id="jobCard" hidden>
+    <h2>Downloading</h2>
+    <div class="row" style="margin-bottom:8px">
+      <strong id="jobRun" class="name"></strong>
+      <span class="pill" id="jobState"></span>
+      <div class="spacer"></div>
+      <button class="danger" id="cancelBtn">Cancel</button>
+    </div>
+    <div class="bar"><i id="jobBar"></i></div>
+    <p class="hint" id="jobDetail"></p>
+  </div>
+
+  <!-- Server runs -->
+  <div class="card">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0">Runs on the server</h2>
+      <div class="spacer"></div>
+      <input id="filter" placeholder="Filter by name" spellcheck="false" style="max-width:220px">
+      <button id="refreshBtn">Refresh</button>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <label class="field">Role
+        <select id="role">
+          <option value="all">all</option><option value="devops">devops</option>
+          <option value="performance">performance</option>
+        </select>
+      </label>
+      <label class="field">Tier <select id="tier"></select></label>
+      <label class="field" style="align-self:flex-end">
+        <span class="row small" style="gap:6px">
+          <input type="checkbox" id="includeFuture" style="width:auto"> future.parquet
+        </span>
+      </label>
+      <p class="hint grow" id="tierHint"></p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr>
+        <th>Run</th><th>Roles</th><th class="num">Total</th>
+        <th class="num">This tier</th><th>Pre-baked</th><th></th>
+      </tr></thead>
+      <tbody id="remoteBody"><tr><td colspan="6" class="empty">Connect to a server to list runs.</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <!-- Local runs -->
+  <div class="card">
+    <h2>Downloaded on this machine</h2>
+    <div class="scroll"><table>
+      <thead><tr>
+        <th>Run</th><th>Tier</th><th>Roles</th><th class="num">Files</th>
+        <th class="num">Size</th><th>Updated</th><th></th>
+      </tr></thead>
+      <tbody id="localBody"></tbody>
+    </table></div>
+    <p class="hint" id="workspacePath"></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  if (window.TH) TH.bindToggle($("themeBtn"));
+
+  let remoteRuns = [];
+  let tiers = [];
+  let pollTimer = null;
+
+  function human(bytes) {
+    if (bytes === null || bytes === undefined) return "-";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let n = Number(bytes), i = 0;
+    while (Math.abs(n) >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return i === 0 ? `${n.toFixed(0)} B` : `${n.toFixed(1)} ${units[i]}`;
+  }
+  function secs(s) {
+    if (!s || !isFinite(s)) return "-";
+    s = Math.round(s);
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+    return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
+  }
+  function banner(kind, text) {
+    const el = $("banner");
+    if (!text) { el.hidden = true; return; }
+    el.hidden = false;
+    el.className = "banner " + kind;
+    el.textContent = text;
+  }
+  async function api(route, body) {
+    const res = await fetch(route, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify(body || {})
+    });
+    let data;
+    try { data = await res.json(); }
+    catch (e) { throw new Error(`${route}: HTTP ${res.status}`); }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  // ---------------------------------------------------------------- rendering
+
+  function renderTiers() {
+    const sel = $("tier");
+    sel.innerHTML = "";
+    tiers.forEach(t => {
+      const o = document.createElement("option");
+      o.value = t.name; o.textContent = t.label;
+      if (t.name === "criteria") o.selected = true;
+      sel.appendChild(o);
+    });
+    syncTierHint();
+  }
+  function syncTierHint() {
+    const t = tiers.find(x => x.name === $("tier").value);
+    $("tierHint").textContent = t ? t.hint : "";
+    renderRemote();
+  }
+
+  function renderRemote() {
+    const body = $("remoteBody");
+    const tier = $("tier").value;
+    const needle = $("filter").value.trim().toLowerCase();
+    const rows = remoteRuns.filter(r => !needle || r.name.toLowerCase().includes(needle));
+    body.innerHTML = "";
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="6" class="empty">${
+        remoteRuns.length ? "No run matches that filter." : "Connect to a server to list runs."}</td></tr>`;
+      return;
+    }
+    rows.forEach(run => {
+      const tr = document.createElement("tr");
+      const tierBytes = (run.tier_bytes || {})[tier];
+      const baked = Object.keys(run.prebaked || {}).length;
+      tr.innerHTML = `
+        <td class="name">${esc(run.name)}</td>
+        <td class="small muted">${esc((run.roles || []).join(", ")) || "-"}</td>
+        <td class="num small muted">${human(run.total_bytes)}</td>
+        <td class="num"><strong>${human(tierBytes)}</strong></td>
+        <td>${baked ? `<span class="pill ok">${baked} parquet</span>`
+                    : `<span class="pill no">none</span>`}</td>
+        <td style="text-align:right"></td>`;
+      const btn = document.createElement("button");
+      btn.className = "primary";
+      btn.textContent = "Download";
+      btn.onclick = () => startPull(run.name);
+      tr.lastElementChild.appendChild(btn);
+      body.appendChild(tr);
+    });
+  }
+
+  function renderLocal(runs) {
+    const body = $("localBody");
+    body.innerHTML = "";
+    if (!runs || !runs.length) {
+      body.innerHTML = `<tr><td colspan="7" class="empty">Nothing downloaded yet.</td></tr>`;
+      return;
+    }
+    runs.forEach(run => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="name">${esc(run.name)}</td>
+        <td class="small">${esc(run.tier || "?")}</td>
+        <td class="small muted">${esc((run.roles || []).join(", ")) || "-"}</td>
+        <td class="num small">${run.files}</td>
+        <td class="num">${human(run.bytes)}</td>
+        <td class="small muted">${esc((run.updated_at || "").slice(0, 16).replace("T", " "))}</td>
+        <td style="text-align:right"></td>`;
+      const cell = tr.lastElementChild;
+      const open = document.createElement("a");
+      open.className = "btn"; open.href = "/explorer"; open.textContent = "Open";
+      cell.appendChild(open);
+      const del = document.createElement("button");
+      del.className = "danger"; del.textContent = "Delete";
+      del.style.marginLeft = "6px";
+      del.onclick = () => deleteRun(run.name, run.bytes);
+      cell.appendChild(del);
+      if (run.incomplete) {
+        const p = document.createElement("span");
+        p.className = "pill no"; p.style.marginLeft = "6px";
+        p.textContent = `${run.incomplete} partial`;
+        cell.appendChild(p);
+      }
+      body.appendChild(tr);
+    });
+  }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderJob(job) {
+    const card = $("jobCard");
+    if (!job) { card.hidden = true; stopPolling(); return; }
+    card.hidden = false;
+    $("jobRun").textContent = `${job.run}  ·  ${job.role} / ${job.tier}`;
+    const st = $("jobState");
+    st.textContent = job.state;
+    st.className = "pill " + (job.state === "done" ? "ok"
+      : (job.state === "failed" ? "err" : (job.state === "cancelled" ? "no" : "ok")));
+    const p = job.progress || {};
+    $("jobBar").style.width = `${Math.max(0, Math.min(100, p.percent || 0)).toFixed(1)}%`;
+    const bits = [];
+    if (p.total_bytes) bits.push(`${human(p.done_bytes)} / ${human(p.total_bytes)}`);
+    if (p.rate_bps) bits.push(`${human(p.rate_bps)}/s`);
+    if (p.eta_sec) bits.push(`eta ${secs(p.eta_sec)}`);
+    if (p.total_files) bits.push(`file ${p.done_files}/${p.total_files}`);
+    if (p.current) bits.push(p.current);
+    $("jobDetail").textContent = job.error || job.message || bits.join("  ·  ");
+    if (!job.active && bits.length) $("jobDetail").textContent = job.error || job.message;
+    $("cancelBtn").disabled = !job.active;
+
+    if (job.active) startPolling();
+    else {
+      stopPolling();
+      refreshState();
+      if (job.state === "done") banner("ok", `${job.run}: ${job.message}`);
+      else if (job.state === "failed") banner("err", `${job.run}: ${job.error}`);
+    }
+  }
+
+  // ------------------------------------------------------------------ actions
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(async () => {
+      try { renderJob((await api("/api/client/pull_status")).job); }
+      catch (e) { /* transient; keep polling */ }
+    }, 500);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  async function refreshState() {
+    const data = await api("/api/client/state");
+    const cfg = data.config || {};
+    if (!$("serverUrl").value) $("serverUrl").value = cfg.server_url || "";
+    $("token").placeholder = cfg.token_set ? "•••••• stored (leave blank to keep)" : "EVAL_EXPORT_TOKEN";
+    $("workspacePath").textContent = `Workspace: ${cfg.workspace || ""}`;
+    $("connStatus").textContent = cfg.server_url
+      ? `${cfg.server_url}${cfg.token_set ? " · token stored" : " · no token"}`
+      : "Not connected.";
+    if (!tiers.length && data.tiers) { tiers = data.tiers; renderTiers(); }
+    renderLocal(data.local_runs);
+    if (data.job) renderJob(data.job);
+    return data;
+  }
+
+  async function connect() {
+    const btn = $("connectBtn");
+    btn.disabled = true; btn.textContent = "Connecting...";
+    banner("");
+    try {
+      const payload = {
+        server_url: $("serverUrl").value.trim(),
+        cf_client_id: $("cfId").value.trim(),
+        cf_client_secret: $("cfSecret").value.trim()
+      };
+      const tok = $("token").value.trim();
+      if (tok) payload.token = tok;
+      const res = await api("/api/client/login", payload);
+      $("token").value = "";
+      $("serverUrl").value = res.config.server_url;
+      if (!res.health || !res.health.enabled) {
+        banner("err", "Connected, but the export API is disabled on that server. "
+          + "Set EVAL_EXPORT_TOKEN there and restart it.");
+      } else {
+        banner("ok", `Connected to ${res.config.server_url}.`);
+      }
+      await refreshState();
+      await loadRemote();
+    } catch (e) {
+      banner("err", String(e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = "Connect";
+    }
+  }
+
+  async function loadRemote() {
+    const btn = $("refreshBtn");
+    btn.disabled = true; btn.textContent = "Loading...";
+    try {
+      const data = await api("/api/client/remote_runs", {sizes: true});
+      remoteRuns = data.items || [];
+      renderRemote();
+      if (!remoteRuns.length) banner("info", `No runs found under ${data.root || "the data root"}.`);
+    } catch (e) {
+      banner("err", `Could not list runs: ${e.message || e}`);
+    } finally {
+      btn.disabled = false; btn.textContent = "Refresh";
+    }
+  }
+
+  async function startPull(run) {
+    banner("");
+    try {
+      const res = await api("/api/client/pull", {
+        run: run,
+        role: $("role").value,
+        tier: $("tier").value,
+        include_future: $("includeFuture").checked
+      });
+      renderJob(res.job);
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  }
+
+  async function deleteRun(run, bytes) {
+    if (!confirm(`Delete the local copy of ${run} (${human(bytes)})?\n\nThe server copy is untouched.`)) return;
+    try {
+      const res = await api("/api/client/delete_run", {run: run});
+      renderLocal(res.local_runs);
+      banner("ok", res.message);
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  }
+
+  // -------------------------------------------------------------------- wiring
+
+  $("connectBtn").onclick = connect;
+  $("refreshBtn").onclick = loadRemote;
+  $("cancelBtn").onclick = async () => {
+    $("cancelBtn").disabled = true;
+    try { banner("info", (await api("/api/client/pull_cancel")).message); } catch (e) {}
+  };
+  $("tier").onchange = syncTierHint;
+  $("filter").oninput = renderRemote;
+  $("serverUrl").onkeydown = e => { if (e.key === "Enter") connect(); };
+  $("token").onkeydown = e => { if (e.key === "Enter") connect(); };
+
+  refreshState().then(data => {
+    // Auto-list when a working connection is already stored, so the common case needs
+    // no clicks at all.
+    if (data.config && data.config.server_url && data.config.token_set) loadRemote();
+  }).catch(e => banner("err", String(e.message || e)));
+})();
+</script>

@@ -5,10 +5,15 @@ downloads/
 evaluation_dashboard_app/deploy/postgres_data/
 *.pyc
 *.txt
+# Requirements files are source, not output.
+!evaluation_dashboard_app/client/requirements.txt
 *.pkl
 *.zip
 evaluation_dashboard_app/deploy/configs/autoware_evaluator_dl_config.json
 evaluation_dashboard_app/configs/autoware_evaluator_dl_config.json
+# Per-user "last selected runs" state written at runtime (lib/run_selection_store.py)
+evaluation_dashboard_app/configs/run_selection_state.json
+evaluation_dashboard_app/deploy/configs/run_selection_state.json
 evaluation_dashboard_app/static/
 
 # Keep local bbox explorer's split static assets tracked.
@@ -31,3 +36,5 @@ evaluation_dashboard_app/static/*
 !evaluation_dashboard_app/static/bbox_viewer_renderer.js
 !evaluation_dashboard_app/static/bbox_viewer_timeline.js
 !evaluation_dashboard_app/static/bbox_viewer_events.js
+!evaluation_dashboard_app/static/bbox_theme.js
+!evaluation_dashboard_app/static/client_home.html

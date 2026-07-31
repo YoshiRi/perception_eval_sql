@@ -11,6 +11,42 @@ a workspace, and a window.
 
 ---
 
+## Quick start (from a fresh clone)
+
+You need Python 3.10+ and the URL and token of a dashboard whose export API is enabled
+(see [Server setup](#server-setup-once) — a one-off, done by whoever runs the server).
+
+```bash
+git clone <repo> && cd <repo>/evaluation_dashboard_app
+
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r client/requirements.txt          # duckdb, pandas, numpy, PyYAML
+
+python3 -m client doctor                        # sanity check; should exit 0
+python3 -m client open                          # opens the home page in your browser
+```
+
+On the home page: enter the dashboard URL and token, press **Connect**, pick a run,
+press **Download**, then **Open**. Nothing else is required — no Streamlit, no Docker,
+no database.
+
+**Want a real application window instead of a browser tab, and a double-clickable file?**
+
+```bash
+pip install pywebview pyinstaller
+sudo apt install gir1.2-webkit2-4.0 python3-gi   # Linux: the native webview
+./client/build_app.sh                            # -> dist/evaldash-local
+```
+
+Then double-click `dist/evaldash-local`. That single file is self-contained: it needs
+neither the repo nor a Python install, so it is the thing to hand to a teammate. The same
+executable is also the CLI, via `dist/evaldash-local --cli <command>`.
+
+Everything the client writes lives in `~/.evaldash/`; uninstalling is deleting that
+directory and the executable.
+
+---
+
 ## Why the download is small
 
 A large run is ~11 GB on the server, but the viewer needs almost none of that. About
@@ -36,9 +72,19 @@ Measured on a real 11 GB run:
 The export routes are **closed by default**. Generate a token and enable them:
 
 ```bash
-./deploy/11_ENABLE_EXPORT_API.sh --apply     # writes EVAL_EXPORT_TOKEN to deploy/.env.local
-./deploy/10_RESTART_STREAMLIT.sh
+./deploy/11_ENABLE_EXPORT_API.sh --apply     # appends EVAL_EXPORT_TOKEN to deploy/.env
+cd deploy && docker compose --env-file .env up -d --no-build streamlit1
 ```
+
+Two traps worth knowing, both of which cost time to discover:
+
+* **`deploy/.env` is the only env file that reaches the containers.** Compose is invoked
+  as `docker compose --env-file .env` (`deploy/04_START.sh:34`). `deploy/.env.local` is
+  only a naming convention mentioned in a `.env.example` comment — nothing loads it, so a
+  token written there silently has no effect.
+* **A restart is not enough.** `docker compose restart` (what
+  `10_RESTART_STREAMLIT.sh` does) reuses the existing container config and never
+  re-reads `env_file`. A new variable needs `up -d`, which recreates the container.
 
 The routes ride on the existing `/bbox-api/` nginx mapping — no new port, no compose
 change. Then verify through the real edge:
@@ -262,6 +308,33 @@ computed from the cached frame count rather than stored, so scrubbing works offl
 | `EVALDASH_HOME` | client | Workspace location (default `~/.evaldash`). |
 | `EVALDASH_SERVER` / `EVALDASH_TOKEN` | client | Override stored connection settings. |
 | `EVALDASH_FORCE_BROWSER` | client | `1` skips the native window. |
+
+---
+
+## Troubleshooting
+
+**`Failed to load module "canberra-gtk-module"`** — harmless, and the window works. GTK
+inside the PyInstaller bundle cannot see the system module directory, so it reports the
+optional sound-event module as failed. The package is usually installed system-wide
+already; the bundled GTK just does not look there. Silencing it would mean redirecting
+file descriptor 2, which would hide real errors too, so the launcher prints a note above
+the lines instead.
+
+**The window opens but the run list is empty** — nothing has been downloaded yet. Enter
+the server URL and token on the home page and click Download.
+
+**"Export API is disabled on this server" (HTTP 503)** — `EVAL_EXPORT_TOKEN` is not set
+*inside the container*. Check with:
+
+```bash
+cd deploy && docker compose --env-file .env exec streamlit1 sh -c 'echo $EVAL_EXPORT_TOKEN'
+```
+
+If it is empty but present in `deploy/.env`, the container predates the variable:
+recreate it (`up -d`), do not merely restart it.
+
+**DevOps criteria panels say "unavailable"** — that run has not been pre-baked. Check
+coverage with `python3 -m backend.prebake_cli --report`.
 
 ---
 
