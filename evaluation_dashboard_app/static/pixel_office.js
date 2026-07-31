@@ -29,8 +29,11 @@ const RECENT_FINISH_MS = 75000;                 // finished desks linger this lo
 const CHEER_MS = 45000, WALKOUT_MS = 14000, WALKIN_MS = 3800;
 const BREAK_EVERY = 6, BREAK_LEN_MS = 21000, BREAK_WALK_MS = 3800;
 const S = 3;                                    // css px per virtual pixel
-const CELL_W = 92, FLOOR_H = 100, IDLE_H = 68;  // virtual units
-const LEFT = 64, RIGHT = 46;                    // door/whiteboard wing, coffee corner
+const FLOOR_H = 100, IDLE_H = 68;               // virtual units
+// Full layout vs. the compact one used when the full floor would not fit the
+// container: narrower cells, door-only left wing, machine-only right corner.
+const LAYOUT_FULL = { CELL_W: 92, LEFT: 64, RIGHT: 46 };
+const LAYOUT_COMPACT = { CELL_W: 68, LEFT: 30, RIGHT: 28 };
 
 const THEMES = {
   dark: {
@@ -265,6 +268,86 @@ backSip: [
 '............',
 '............',
 ],
+frontWalkA: [                                   // walking toward the viewer
+'....HHHH....',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..hKKKKKKh..',
+'...KEKKEK...',
+'...KKKKKK...',
+'...kKKKKk...',
+'....KKKK....',
+'..SSSSSSSS..',
+'.SSSSSSSSSS.',
+'.SsSSSSSSsS.',
+'.Ss.SSSS.sS.',
+'.KK.SsSs.KK.',
+'...PPPPPP...',
+'...PP..PP...',
+'..PP...PP...',
+'.BBB....BB..',
+],
+frontWalkB: [
+'....HHHH....',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..hKKKKKKh..',
+'...KEKKEK...',
+'...KKKKKK...',
+'...kKKKKk...',
+'....KKKK....',
+'..SSSSSSSS..',
+'.SSSSSSSSSS.',
+'.SsSSSSSSsS.',
+'.Ss.SSSS.sS.',
+'.KK.SsSs.KK.',
+'...PPPPPP...',
+'...PP..PP...',
+'...PP...PP..',
+'..BB....BBB.',
+],
+backWalkA: [                                    // walking away, into the door
+'....HHHH....',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..hHHHHHHh..',
+'...HHHHHH...',
+'....hhhh....',
+'....KKKK....',
+'..SSSSSSSS..',
+'.SSSSSSSSSS.',
+'.SsSSSSSSsS.',
+'.Ss.SSSS.sS.',
+'.KK.SsSs.KK.',
+'...PPPPPP...',
+'...PP..PP...',
+'..PP...PP...',
+'.BBB....BB..',
+'............',
+],
+backWalkB: [
+'....HHHH....',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..HHHHHHHH..',
+'..hHHHHHHh..',
+'...HHHHHH...',
+'....hhhh....',
+'....KKKK....',
+'..SSSSSSSS..',
+'.SSSSSSSSSS.',
+'.SsSSSSSSsS.',
+'.Ss.SSSS.sS.',
+'.KK.SsSs.KK.',
+'...PPPPPP...',
+'...PP..PP...',
+'...PP...PP..',
+'..BB....BBB.',
+'............',
+],
 };
 
 const SKIN = ['#efb98d', '#d99c6b', '#a06a42', '#f3ccab', '#8a5433'];
@@ -303,6 +386,8 @@ function mount(container, opts) {
   const state = { tasks: [], overflow: 0, theme: 'light' };
   let T = THEMES.light, dark = false;
   let W = 0, H = 0, cells = 0, idle = true, FLOOR_Y = 0, DESK_Y = 0;
+  let CELL_W = LAYOUT_FULL.CELL_W, LEFT = LAYOUT_FULL.LEFT, RIGHT = LAYOUT_FULL.RIGHT;
+  let compact = false;
   const DOOR_X = 16;
   let canvas = null, ctx = null;
   const dpr = Math.min(2, (global.devicePixelRatio || 1));
@@ -333,10 +418,18 @@ function mount(container, opts) {
   function rebuild() {
     idle = state.tasks.length === 0;
     const avail = (container.clientWidth || (global.document && document.body.clientWidth) || 700);
+    // Compact mode: when the full floor would overflow the container, shrink the
+    // cells and drop the side wings before falling back to horizontal scrolling.
+    let lay = LAYOUT_FULL;
+    const wantCompact = !idle
+      && LAYOUT_FULL.LEFT + state.tasks.length * LAYOUT_FULL.CELL_W + LAYOUT_FULL.RIGHT > avail / S;
+    if (wantCompact) lay = LAYOUT_COMPACT;
+    CELL_W = lay.CELL_W; LEFT = lay.LEFT; RIGHT = lay.RIGHT;
     const minCells = Math.max(2, Math.ceil((avail / S - LEFT - RIGHT) / CELL_W));
     cells = idle ? minCells : state.tasks.length;
     const w = LEFT + cells * CELL_W + RIGHT, h = idle ? IDLE_H : FLOOR_H;
-    if (canvas && w === W && h === H) return;
+    if (canvas && w === W && h === H && wantCompact === compact) return;
+    compact = wantCompact;
     W = w; H = h; FLOOR_Y = H - 30; DESK_Y = H - 26;
     if (canvas) canvas.remove();
     canvas = document.createElement('canvas');
@@ -427,12 +520,17 @@ function mount(container, opts) {
   }
   function blinkNow(now, seed) { return Math.floor(now / 2600 + seed) % 8 === 0; }
   function walker(x, y, seed, now, opts) {
-    // Side-view walk with a 1px bob on alternate steps -- the bob is what sells it.
+    // Walk cycle with a 1px bob on alternate steps -- the bob is what sells it.
+    // facing: 'side' (default, mirror with flip), 'front' (out of the door),
+    // 'back' (into the door).
     opts = opts || {};
     const period = opts.slow ? 240 : 150;
     const step = Math.floor(now / period) % 2;
+    const name = opts.facing === 'front' ? (step ? 'frontWalkA' : 'frontWalkB')
+               : opts.facing === 'back' ? (step ? 'backWalkA' : 'backWalkB')
+               : (step ? 'sideA' : 'sideB');
     groundShadow(x + 2, 8, y + 17);
-    drawAt(x, y - (step ? 1 : 0), !!opts.flip, () => sprite(step ? 'sideA' : 'sideB', seed, now));
+    drawAt(x, y - (step ? 1 : 0), !!opts.flip, () => sprite(name, seed, now));
   }
 
   // ------------------------------------------------------------------- set dressing
@@ -657,7 +755,7 @@ function mount(container, opts) {
 
   function bubble(cx, topY, msg, now, seed) {
     if (!msg) return;
-    const maxChars = 26;
+    const maxChars = compact ? 16 : 26;
     let show = msg;
     if (msg.length > maxChars) {                                   // deterministic marquee
       const loop = msg + '   ';
@@ -716,7 +814,12 @@ function mount(container, opts) {
       const age = task.created ? now - task.created : WALKIN_MS;
       if (age < WALKIN_MS) {
         const t = age / WALKIN_MS;
-        walker(lerp(DOOR_X - 6, standX, t), lerp(doorY, standY, t), seed, now, {});
+        if (t < 0.22) {                          // stepping out of the doorway
+          walker(DOOR_X - 6, lerp(doorY - 7, doorY, t / 0.22), seed, now, { facing: 'front' });
+        } else {
+          const tt = (t - 0.22) / 0.78;
+          walker(lerp(DOOR_X - 6, standX, tt), lerp(doorY, standY, tt), seed, now, {});
+        }
         return true;
       }
       return false;
@@ -738,8 +841,15 @@ function mount(container, opts) {
       const dwell = dwellFor(task);
       if (since >= dwell && since < dwell + WALKOUT_MS) {          // clocking off
         const t = (since - dwell) / WALKOUT_MS;
-        walker(lerp(standX, DOOR_X - 6, t), lerp(standY, doorY, t), seed, now,
-               { flip: true, slow: task.status === 'failed' });
+        const slow = task.status === 'failed';
+        if (t < 0.8) {
+          const tt = t / 0.8;
+          walker(lerp(standX, DOOR_X - 6, tt), lerp(standY, doorY, tt), seed, now,
+                 { flip: true, slow });
+        } else {                                 // through the doorway, away from us
+          walker(DOOR_X - 6, lerp(doorY, doorY - 7, (t - 0.8) / 0.2), seed, now,
+                 { facing: 'back', slow });
+        }
         return true;
       }
     }
@@ -804,8 +914,10 @@ function mount(container, opts) {
     const deskY = DESK_Y, cx = x0 + CELL_W / 2;
     const gone = isGone(task, now);
 
-    serverRack(x0 + 3, deskY - 12, seed, now, gone ? T.faint : color);
-    if (i % 2 === 1) plant(x0 + CELL_W - 10, seed);
+    if (!compact) {
+      serverRack(x0 + 3, deskY - 12, seed, now, gone ? T.faint : color);
+      if (i % 2 === 1) plant(x0 + CELL_W - 10, seed);
+    }
     monitorUnit(x0, deskY, seed, now, task, gone);
     crewStanding(i, task, now, walking);
     deskTable(x0, deskY);
@@ -821,8 +933,9 @@ function mount(container, opts) {
     if (elapsed !== null && (task.status === 'running' || task.status === 'pending')) {
       text(fmtElapsed(elapsed), x0 + CELL_W - 6, 4, T.muted, 4, 'right');
     }
+    const maxName = compact ? 13 : 19;
     let name = task.name || '';
-    if (name.length > 19) name = name.slice(0, 17) + '..';
+    if (name.length > maxName) name = name.slice(0, maxName - 2) + '..';
     text(name, x0 + 6, 11, T.text, 5);
 
     // progress bar
@@ -844,11 +957,38 @@ function mount(container, opts) {
     }
     const msg = task.status === 'failed' && task.error ? task.error : task.message;
     bubble(cx, 29, msg || (task.status === 'pending' ? 'waiting for a worker...' : ''), now, seed);
+    if ((task.status === 'completed' || task.status === 'failed') && task.updated) {
+      const since = now - task.updated;
+      if (since >= 0 && since < 2600) toast(x0, task, since);
+    }
+  }
+
+  function toast(x0, task, since) {
+    // A short "it just finished" banner: zooms in over the desk, holds, fades.
+    const ok = task.status === 'completed';
+    const color = ok ? T.completed : T.failed;
+    const ease = 1 - Math.pow(1 - Math.min(1, since / 260), 2);
+    const fullW = Math.min(CELL_W - 16, 42), h = 11;
+    const w = Math.max(6, Math.round(fullW * ease));
+    const cx = x0 + CELL_W / 2, y = 38;
+    ctx.globalAlpha = since > 1900 ? Math.max(0, 1 - (since - 1900) / 700) : 1;
+    px(cx - w / 2 + 1, y + 1, w, h, T.shadow);
+    px(cx - w / 2 - 1, y - 1, w + 2, h + 2, T.outline);
+    px(cx - w / 2, y, w, h, color);
+    if (ease > 0.75) {
+      text(ok ? 'DONE!' : 'FAILED', cx, y + 2.8, dark ? '#10141f' : '#ffffff', 6, 'center');
+      if (ok) {                                  // twinkling sparks beside the banner
+        const tw = Math.floor(since / 160) % 2;
+        px(cx - w / 2 - 4, y + (tw ? 1 : 6), 2, 2, '#e8c44a');
+        px(cx + w / 2 + 2, y + (tw ? 7 : 2), 2, 2, '#e8c44a');
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   function hiresQueue(now) {
     // Overflow tasks queue up outside the door, waiting for a desk to open.
-    const n = Math.min(4, state.overflow);
+    const n = Math.min(compact ? 2 : 4, state.overflow);
     if (n <= 0) return;
     for (let i = 0; i < n; i++) {
       const seed = hash('hire:' + i);
@@ -1003,13 +1143,13 @@ function mount(container, opts) {
     const now = Date.now();
     room(now);
     door(now);
-    if (!idle) window_(32, 6);                   // the short idle strip has no wall space for it
-    whiteboard({
+    if (!idle && !compact) window_(32, 6);       // no wall space when idle or compact
+    if (!compact) whiteboard({
       running: state.tasks.filter(t => t.status === 'running').length,
       pending: state.tasks.filter(t => t.status === 'pending').length,
     });
     coffeeMachine(now, anyoneAtMachine(now));
-    plant(W - RIGHT + 30, 3);
+    if (!compact) plant(W - RIGHT + 30, 3);
     if (idle) {
       wanderer(now);
       text('ALL QUIET - NO ACTIVE JOBS', LEFT + (W - LEFT - RIGHT) / 2, 6, T.muted, 5, 'center');
@@ -1031,10 +1171,16 @@ function mount(container, opts) {
 
   setData({ tasks: opts.tasks || [], overflow: opts.overflow || 0, theme: opts.theme || 'light' });
   frame();
+  let resizeObserver = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => { if (!destroyed) rebuild(); });
+    resizeObserver.observe(container);
+  }
   return {
     setData,
     destroy() {
       destroyed = true;
+      if (resizeObserver) resizeObserver.disconnect();
       if (raf) cancelAnimationFrame(raf);
       if (canvas) canvas.remove();
       canvas = null;
