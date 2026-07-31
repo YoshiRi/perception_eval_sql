@@ -105,6 +105,11 @@
          border: 1px solid var(--line); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--accent);
              width: 0; transition: width .25s ease; }
+  /* Per-scene frame coverage: same construction as .bar, sized for a table cell. */
+  .coverage { display: inline-block; vertical-align: middle; width: 56px; height: 5px;
+              margin-left: 7px; border-radius: 999px; background: var(--panel2);
+              border: 1px solid var(--line); overflow: hidden; }
+  .coverage > i { display: block; height: 100%; background: var(--accent); }
 
   .banner { border-radius: 9px; padding: 10px 13px; margin-bottom: 14px; font-size: 13px; }
   .banner.err { background: var(--bad-bg); color: var(--bad); }
@@ -207,6 +212,61 @@
       <tbody id="localBody"></tbody>
     </table></div>
     <p class="hint" id="workspacePath"></p>
+  </div>
+
+  <!-- 3D point clouds -->
+  <div class="card">
+    <h2>3D point clouds &amp; cameras</h2>
+    <div class="row">
+      <label class="field grow">T4 dataset server <span class="muted">(t4-server, not the dashboard)</span>
+        <input id="t4Url" placeholder="http://t4host:8000" spellcheck="false">
+      </label>
+      <button id="t4SaveBtn" style="align-self: flex-end">Save &amp; check</button>
+      <span class="pill" id="t4Pill" style="align-self: flex-end; margin-bottom: 8px"></span>
+    </div>
+    <p class="hint" id="t4Status">Point clouds and camera overlays come from a separate
+      t4-server host. The 3D viewer here plays cached scenes, so fetch a scenario first.</p>
+
+    <div class="row" style="margin-top:14px">
+      <label class="field grow">Dataset ID
+        <input id="t4Dataset" placeholder="t4 dataset id" spellcheck="false">
+      </label>
+      <button id="t4ListBtn" style="align-self: flex-end">List scenarios</button>
+      <label class="field grow">Scenario
+        <select id="t4Scenario" disabled><option value="">list a dataset first</option></select>
+      </label>
+      <label class="field" style="max-width:110px">Frames
+        <input id="t4Frames" placeholder="all" spellcheck="false" title="A slice like 0-49, or empty for the whole scene">
+      </label>
+      <button class="primary" id="t4SizeBtn" style="align-self: flex-end" disabled>Check size</button>
+    </div>
+    <div class="row small" style="margin-top:8px">
+      <label class="row small" style="gap:6px"><input type="checkbox" id="t4Camera" checked style="width:auto"> camera overlays</label>
+      <label class="row small" style="gap:6px"><input type="checkbox" id="t4Lanelet" checked style="width:auto"> lanelet lines</label>
+    </div>
+    <!-- The size gate: a scene is hundreds of MB, so the download button only appears
+         once the estimate has been shown. Mirrors the CLI's ask-before-committing. -->
+    <div class="banner info" id="t4Estimate" hidden style="margin-top:12px; font-variant-numeric: tabular-nums"></div>
+
+    <div id="t4JobBox" hidden style="margin-top:12px">
+      <div class="row" style="margin-bottom:8px">
+        <strong id="t4JobName" class="name"></strong>
+        <span class="pill" id="t4JobState"></span>
+        <div class="spacer"></div>
+        <button class="danger" id="t4CancelBtn">Cancel</button>
+      </div>
+      <div class="bar"><i id="t4JobBar"></i></div>
+      <p class="hint" id="t4JobDetail"></p>
+    </div>
+
+    <div class="scroll" style="margin-top:14px"><table>
+      <thead><tr>
+        <th>Dataset</th><th>Scenario</th><th>Frames</th>
+        <th class="num">Size</th><th>Fetched</th><th></th>
+      </tr></thead>
+      <tbody id="t4Body"></tbody>
+    </table></div>
+    <p class="hint" id="t4CachePath"></p>
   </div>
 </div>
 
@@ -489,6 +549,226 @@
     }
   }
 
+  // ------------------------------------------------------------- 3D point clouds
+
+  let t4Scenarios = [];
+  let t4Estimate = null;   // last estimate, so Download knows what was agreed to
+  let t4Timer = null;
+
+  function t4Pill(kind, text) {
+    const el = $("t4Pill");
+    el.hidden = !text;
+    el.className = "pill " + kind;
+    el.textContent = text;
+  }
+
+  function t4FramesCount(spec, total) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(spec.trim());
+    if (!m) return total;
+    const low = Number(m[1]), high = m[2] === undefined ? low : Number(m[2]);
+    return Math.max(0, Math.min(high, Math.max(total - 1, 0)) - low + 1);
+  }
+
+  function renderT4Scenes(scenes) {
+    const body = $("t4Body");
+    body.innerHTML = "";
+    if (!scenes || !scenes.length) {
+      body.innerHTML = `<tr><td colspan="6" class="empty">No scenes cached yet.
+        Set the T4 server above, list a dataset's scenarios and fetch one.</td></tr>`;
+      return;
+    }
+    scenes.forEach(scene => {
+      const total = scene.frames_total || 0;
+      const cached = scene.frames_cached || 0;
+      const partial = total > 0 && cached < total;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="small muted" style="word-break:break-all">${esc(scene.dataset_id)}</td>
+        <td class="name small">${esc(scene.scenario)}</td>
+        <td class="small" style="white-space:nowrap; font-variant-numeric:tabular-nums">
+          ${cached}/${total || "?"}${partial ? `<span class="coverage"><i style="width:${
+            total ? (100 * cached / total).toFixed(0) : 0}%"></i></span>` : ""}
+        </td>
+        <td class="num small">${human(scene.bytes)}</td>
+        <td class="small muted">${esc((scene.fetched_at || "").slice(0, 16).replace("T", " "))}</td>
+        <td style="text-align:right; white-space:nowrap"></td>`;
+      const cell = tr.lastElementChild;
+      if (cached > 0) {
+        const open = document.createElement("a");
+        open.className = "btn";
+        open.href = `/viewer/three?t4dataset_id=${encodeURIComponent(scene.dataset_id)}`
+          + `&scenario_name=${encodeURIComponent(scene.scenario)}`;
+        open.textContent = "Open 3D";
+        cell.appendChild(open);
+      }
+      if (partial) {
+        const resume = document.createElement("button");
+        resume.textContent = "Resume";
+        resume.style.marginLeft = "6px";
+        resume.title = "Fetch the missing frames; cached ones are skipped";
+        resume.onclick = () => t4StartFetch(scene.dataset_id, scene.scenario, "");
+        cell.appendChild(resume);
+      }
+      const del = document.createElement("button");
+      del.className = "danger"; del.textContent = "Delete";
+      del.style.marginLeft = "6px";
+      del.onclick = async () => {
+        if (!confirm(`Delete the cached scene ${scene.scenario} (${human(scene.bytes)})?`
+                     + `\n\nNothing is removed from the T4 server.`)) return;
+        try {
+          const res = await api("/api/client/t4_delete",
+            {dataset_id: scene.dataset_id, scenario: scene.scenario});
+          renderT4Scenes(res.scenes);
+        } catch (e) { banner("err", String(e.message || e)); }
+      };
+      cell.appendChild(del);
+      body.appendChild(tr);
+    });
+  }
+
+  function renderT4Job(job) {
+    const box = $("t4JobBox");
+    if (!job) { box.hidden = true; stopT4Polling(); return; }
+    box.hidden = false;
+    $("t4JobName").textContent = `${job.scenario}${job.frames ? `  ·  frames ${job.frames}` : ""}`;
+    const st = $("t4JobState");
+    st.textContent = job.state;
+    st.className = "pill " + (job.state === "done" ? "ok"
+      : (job.state === "failed" ? "err" : (job.state === "cancelled" ? "no" : "ok")));
+    const p = job.progress || {};
+    $("t4JobBar").style.width = p.total ? `${(100 * p.index / p.total).toFixed(1)}%` : "0%";
+    const bits = [];
+    if (p.total) bits.push(`frame ${p.index}/${p.total}`);
+    if (p.bytes) bits.push(human(p.bytes));
+    if (p.eta_sec) bits.push(`eta ${secs(p.eta_sec)}`);
+    $("t4JobDetail").textContent = job.error || (job.active ? bits.join("  ·  ") : job.message);
+    $("t4CancelBtn").disabled = !job.active;
+    if (job.active) startT4Polling();
+    else {
+      stopT4Polling();
+      refreshT4(false);
+      if (job.state === "done") banner("ok", `${job.scenario}: ${job.message}`);
+      else if (job.state === "failed") banner("err", `${job.scenario}: ${job.error}`);
+      // A finished job is fully told by the banner and the scene row; keeping the
+      // strip would leave stale chrome between the fetch controls and the list.
+      if (job.state === "done" || job.state === "cancelled") box.hidden = true;
+    }
+  }
+
+  function startT4Polling() {
+    if (t4Timer) return;
+    t4Timer = setInterval(async () => {
+      try { renderT4Job((await api("/api/client/t4_fetch_status")).job); }
+      catch (e) { /* transient; keep polling */ }
+    }, 700);
+  }
+  function stopT4Polling() {
+    if (t4Timer) { clearInterval(t4Timer); t4Timer = null; }
+  }
+
+  async function refreshT4(probe) {
+    try {
+      const data = await api("/api/client/t4_state", {probe: probe === true});
+      const cfg = data.config || {};
+      if (!$("t4Url").value) $("t4Url").value = cfg.t4_base_url || "";
+      $("t4CachePath").textContent = `Cache: ${cfg.cache_root || ""}`;
+      if (data.server) {
+        if (data.server.reachable) t4Pill("ok", "ready");
+        else t4Pill(cfg.t4_base_url ? "err" : "no", cfg.t4_base_url ? "unreachable" : "not set");
+        if (!data.server.reachable && data.server.reason && cfg.t4_base_url) {
+          $("t4Status").textContent = data.server.reason;
+        }
+      }
+      if (cfg.env_override) {
+        $("t4Status").textContent =
+          "EVALDASH_T4_BASE_URL is set in the environment and overrides the URL saved here.";
+      }
+      renderT4Scenes(data.scenes);
+      if (data.job) renderT4Job(data.job);
+    } catch (e) { /* card degrades quietly; the rest of the page still works */ }
+  }
+
+  function clearT4Estimate() {
+    t4Estimate = null;
+    $("t4Estimate").hidden = true;
+    $("t4SizeBtn").textContent = "Check size";
+    $("t4SizeBtn").disabled = !$("t4Scenario").value;
+  }
+
+  async function t4LoadScenarios() {
+    const btn = $("t4ListBtn");
+    btn.disabled = true; btn.textContent = "Listing...";
+    clearT4Estimate();
+    try {
+      const data = await api("/api/client/t4_scenarios", {dataset_id: $("t4Dataset").value.trim()});
+      t4Scenarios = data.scenarios || [];
+      const sel = $("t4Scenario");
+      sel.innerHTML = "";
+      if (!t4Scenarios.length) {
+        sel.disabled = true;
+        sel.innerHTML = `<option value="">no scenarios in that dataset</option>`;
+        return;
+      }
+      t4Scenarios.forEach(s => {
+        const o = document.createElement("option");
+        o.value = s.name;
+        o.textContent = s.frames ? `${s.name}  (${s.frames} frames)` : s.name;
+        sel.appendChild(o);
+      });
+      sel.disabled = false;
+      $("t4SizeBtn").disabled = false;
+    } catch (e) {
+      banner("err", String(e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = "List scenarios";
+    }
+  }
+
+  async function t4CheckOrDownload() {
+    if (t4Estimate) {  // second press: the size was shown, so this is the download
+      t4StartFetch($("t4Dataset").value.trim(), $("t4Scenario").value, $("t4Frames").value.trim());
+      clearT4Estimate();
+      return;
+    }
+    const btn = $("t4SizeBtn");
+    btn.disabled = true; btn.textContent = "Sizing...";
+    try {
+      const est = await api("/api/client/t4_estimate", {
+        dataset_id: $("t4Dataset").value.trim(),
+        scenario: $("t4Scenario").value
+      });
+      const count = t4FramesCount($("t4Frames").value, est.frames || 0);
+      const approx = (est.frame_bytes || 0) * count;
+      t4Estimate = est;
+      const strip = $("t4Estimate");
+      strip.hidden = false;
+      strip.textContent = `${count} of ${est.frames} frames · ${human(est.frame_bytes)}/frame `
+        + `· ${(est.points_per_frame || 0).toLocaleString()} points/frame `
+        + `· ≈${human(approx)} plus camera and lanelet data`;
+      btn.textContent = `Download ≈${human(approx)}`;
+      btn.disabled = false;
+    } catch (e) {
+      banner("err", String(e.message || e));
+      btn.textContent = "Check size";
+      btn.disabled = false;
+    }
+  }
+
+  async function t4StartFetch(datasetId, scenario, frames) {
+    try {
+      const res = await api("/api/client/t4_fetch", {
+        dataset_id: datasetId,
+        scenario: scenario,
+        frames: frames,
+        with_camera: $("t4Camera").checked,
+        with_lanelet: $("t4Lanelet").checked
+      });
+      renderT4Job(res.job);
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  }
+
   // -------------------------------------------------------------------- wiring
 
   $("connectBtn").onclick = connect;
@@ -511,9 +791,32 @@
   };
   $("tier").onchange = syncTierHint;
   $("filter").oninput = renderRemote;
+  $("t4SaveBtn").onclick = async () => {
+    const btn = $("t4SaveBtn");
+    btn.disabled = true; btn.textContent = "Checking...";
+    try {
+      const res = await api("/api/client/t4_config", {t4_base_url: $("t4Url").value.trim()});
+      $("t4Url").value = res.config.t4_base_url || "";
+      if (res.server.reachable) { t4Pill("ok", "ready"); banner("ok", "T4 server saved and reachable."); }
+      else if (!res.config.t4_base_url) { t4Pill("no", "not set"); }
+      else { t4Pill("err", "unreachable"); banner("err", `Saved, but not reachable: ${res.server.reason}`); }
+    } catch (e) { banner("err", String(e.message || e)); }
+    finally { btn.disabled = false; btn.textContent = "Save & check"; }
+  };
+  $("t4ListBtn").onclick = t4LoadScenarios;
+  $("t4SizeBtn").onclick = t4CheckOrDownload;
+  $("t4CancelBtn").onclick = async () => {
+    $("t4CancelBtn").disabled = true;
+    try { banner("info", (await api("/api/client/t4_fetch_cancel")).message); } catch (e) {}
+  };
+  // A changed scenario or frame slice invalidates a shown estimate.
+  $("t4Scenario").onchange = clearT4Estimate;
+  $("t4Frames").oninput = clearT4Estimate;
+  $("t4Dataset").onkeydown = e => { if (e.key === "Enter") t4LoadScenarios(); };
   $("serverUrl").onkeydown = e => { if (e.key === "Enter") connect(); };
   $("token").onkeydown = e => { if (e.key === "Enter") connect(); };
 
+  refreshT4(true);
   refreshState().then(data => {
     // Auto-list whenever the server says it will serve us. With identity-based access
     // that is the normal case, so the common path needs no clicks and no token.

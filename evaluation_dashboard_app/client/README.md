@@ -363,7 +363,10 @@ no external assets. This travels with the `minimal` tier and works fully offline
 never proxied it — the browser fetches `frame.bin` from it directly, which is why
 `T4_VISUALIZER_BROWSER_BASE_URL` exists.
 
-The client can either talk to it live, or cache a scenario for offline use:
+The home page's **3D point clouds & cameras** card does all of this without a terminal:
+save the t4-server URL (with a reachability check), list a dataset's scenarios, see the
+size before committing — the download button only appears after the estimate — fetch
+with a progress bar, and open, resume or delete cached scenes. The CLI equivalents:
 
 ```bash
 evaldash-local login --server https://dash --token <t> --t4-base-url http://t4host:8000

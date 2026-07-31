@@ -13,6 +13,7 @@ user running the app cannot already reach. The stored token is never echoed back
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any
@@ -288,6 +289,278 @@ def client_parquets(payload: dict[str, Any]) -> dict[str, Any]:
     return api.list_parquets({"bbox_only": True, "limit": 500})
 
 
+# --------------------------------------------------------------------- 3D point clouds
+
+
+class T4FetchJob:
+    """One in-flight scene fetch. Separate from PullJob: different host, different disk
+    budget, and caching a scene while a run downloads is a legitimate combination."""
+
+    def __init__(self, dataset_id: str, scenario: str, frames_label: str) -> None:
+        self.dataset_id = dataset_id
+        self.scenario = scenario
+        self.frames_label = frames_label
+        self.state = "starting"  # starting | fetching | done | failed | cancelled
+        self.message = ""
+        self.error = ""
+        self.progress: dict[str, Any] = {}
+        self.result: dict[str, Any] = {}
+        self.started_at = time.time()
+        self.finished_at: float | None = None
+        self._cancel = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "dataset_id": self.dataset_id,
+            "scenario": self.scenario,
+            "frames": self.frames_label,
+            "state": self.state,
+            "message": self.message,
+            "error": self.error,
+            "progress": self.progress,
+            "result": self.result,
+            "active": self.state in ("starting", "fetching"),
+        }
+
+
+_T4_JOB_LOCK = threading.Lock()
+_T4_JOB: T4FetchJob | None = None
+
+
+def _current_t4_job() -> T4FetchJob | None:
+    with _T4_JOB_LOCK:
+        return _T4_JOB
+
+
+def parse_frames_spec(text: str) -> range | None:
+    """``""`` -> everything, ``"7"`` -> frame 7, ``"0-49"`` -> that span (inclusive).
+
+    The same grammar the CLI's --frames accepts, so knowledge transfers between the two.
+    """
+    spec = str(text or "").strip()
+    if not spec:
+        return None
+    low, _, high = spec.partition("-")
+    try:
+        start = int(low)
+        end = int(high) if high else start
+    except ValueError:
+        raise ValueError(f"Frames must look like 12 or 0-49, got {spec!r}.")
+    if start < 0 or end < start:
+        raise ValueError(f"Frames must be an ascending range, got {spec!r}.")
+    return range(start, end + 1)
+
+
+def normalize_scenarios(payload: Any) -> list[dict[str, Any]]:
+    """Flatten t4-server's scenario listing into ``[{name, frames}]``.
+
+    The service has answered with both a bare list and a ``{"scenarios": [...]}``
+    wrapper across versions, and items as strings or dicts; accept all of them rather
+    than binding the UI to one deployment's vintage.
+    """
+    items = payload.get("scenarios") if isinstance(payload, dict) else payload
+    out: list[dict[str, Any]] = []
+    for item in items or []:
+        if isinstance(item, str):
+            name = item.strip()
+            frames = None
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("scenario_name") or "").strip()
+            raw = item.get("nbr_samples") or item.get("frames") or item.get("frame_count")
+            try:
+                frames = int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                frames = None
+        else:
+            continue
+        if name:
+            out.append({"name": name, "frames": frames})
+    return out
+
+
+def _t4_config_view() -> dict[str, Any]:
+    from client import t4
+
+    cfg = config.Config.load()
+    effective = cfg.effective_t4_base_url()
+    return {
+        "t4_base_url": effective,
+        # The env var shadows whatever this page saves, so say so instead of letting a
+        # save appear to have no effect.
+        "env_override": bool(os.environ.get("EVALDASH_T4_BASE_URL", "").strip()),
+        "cache_root": str(t4.t4_root()),
+    }
+
+
+def _t4_probe(base_url: str) -> dict[str, Any]:
+    from client import t4
+
+    if not base_url:
+        return {"reachable": False, "reason": "no T4 server configured"}
+    try:
+        t4.T4Client(base_url, config.Config.load(), timeout=6.0).health()
+        return {"reachable": True, "reason": ""}
+    except Exception as exc:
+        return {"reachable": False, "reason": str(exc)[:200]}
+
+
+def client_t4_state(payload: dict[str, Any]) -> dict[str, Any]:
+    from client import t4
+
+    view = _t4_config_view()
+    job = _current_t4_job()
+    return {
+        "config": view,
+        "server": _t4_probe(view["t4_base_url"]) if payload.get("probe") is True else None,
+        "scenes": t4.cached_scenes(),
+        "job": job.snapshot() if job else None,
+    }
+
+
+def client_t4_config(payload: dict[str, Any]) -> dict[str, Any]:
+    url = str(payload.get("t4_base_url") or "").strip().rstrip("/")
+    cfg = config.Config.load()
+    cfg.t4_base_url = url
+    cfg.save()
+    view = _t4_config_view()
+    return {"ok": True, "config": view, "server": _t4_probe(view["t4_base_url"])}
+
+
+def client_t4_scenarios(payload: dict[str, Any]) -> dict[str, Any]:
+    from client import t4
+
+    dataset_id = str(payload.get("dataset_id") or "").strip()
+    if not dataset_id:
+        raise ValueError("A dataset id is required.")
+    cfg = config.Config.load()
+    client = t4.T4Client(cfg.effective_t4_base_url(), cfg, timeout=30.0)
+    return {"dataset_id": dataset_id, "scenarios": normalize_scenarios(client.scenarios(dataset_id))}
+
+
+def client_t4_estimate(payload: dict[str, Any]) -> dict[str, Any]:
+    from client import t4
+
+    dataset_id = str(payload.get("dataset_id") or "").strip()
+    scenario = str(payload.get("scenario") or "").strip()
+    if not dataset_id or not scenario:
+        raise ValueError("A dataset id and scenario are required.")
+    cfg = config.Config.load()
+    estimate = t4.estimate_scene_bytes(
+        dataset_id, scenario, base_url=cfg.effective_t4_base_url()
+    )
+    return {"dataset_id": dataset_id, "scenario": scenario, **estimate}
+
+
+def _run_t4_fetch(job: T4FetchJob, frames: range | None, with_camera: bool, with_lanelet: bool, force: bool) -> None:
+    from client import t4
+
+    try:
+        cfg = config.Config.load()
+        job.state = "fetching"
+        job.message = "Downloading frames..."
+        stats = t4.fetch_scene(
+            job.dataset_id,
+            job.scenario,
+            base_url=cfg.effective_t4_base_url(),
+            frames=frames,
+            with_camera=with_camera,
+            with_lanelet=with_lanelet,
+            force=force,
+            progress=lambda snap: setattr(job, "progress", snap),
+            should_stop=lambda: job.cancelled,
+        )
+        job.result = stats
+        job.finished_at = time.time()
+        fetched = int(stats.get("frames_fetched") or 0)
+        skipped = int(stats.get("frames_skipped") or 0)
+        errors = stats.get("errors") or []
+        if stats.get("stopped_early"):
+            job.state = "cancelled"
+            job.message = "Cancelled. Cached frames are kept; fetching again resumes."
+        elif errors:
+            job.state = "failed"
+            job.error = f"{len(errors)} request(s) failed; fetching again retries just those."
+            job.message = f"Fetched {fetched}, skipped {skipped} already cached."
+        else:
+            job.state = "done"
+            job.message = (
+                f"Fetched {fetched} frame(s)"
+                + (f", skipped {skipped} already cached" if skipped else "")
+                + f" ({sync.human_bytes(stats.get('bytes') or 0)} on disk)."
+            )
+    except Exception as exc:
+        job.state = "failed"
+        job.error = str(exc)
+        job.message = "Fetch failed."
+        job.finished_at = time.time()
+
+
+def client_t4_fetch(payload: dict[str, Any]) -> dict[str, Any]:
+    global _T4_JOB
+    dataset_id = str(payload.get("dataset_id") or "").strip()
+    scenario = str(payload.get("scenario") or "").strip()
+    if not dataset_id or not scenario:
+        raise ValueError("A dataset id and scenario are required.")
+    frames_label = str(payload.get("frames") or "").strip()
+    frames = parse_frames_spec(frames_label)
+    with _T4_JOB_LOCK:
+        if _T4_JOB is not None and _T4_JOB.snapshot()["active"]:
+            raise ValueError(
+                f"A scene fetch is already running ({_T4_JOB.scenario}). Cancel it first."
+            )
+        job = T4FetchJob(dataset_id, scenario, frames_label)
+        _T4_JOB = job
+    threading.Thread(
+        target=_run_t4_fetch,
+        args=(
+            job,
+            frames,
+            payload.get("with_camera") is not False,
+            payload.get("with_lanelet") is not False,
+            payload.get("force") is True,
+        ),
+        name=f"t4-fetch-{scenario}",
+        daemon=True,
+    ).start()
+    return {"ok": True, "job": job.snapshot()}
+
+
+def client_t4_fetch_status(payload: dict[str, Any]) -> dict[str, Any]:
+    job = _current_t4_job()
+    return {"job": job.snapshot() if job else None}
+
+
+def client_t4_fetch_cancel(payload: dict[str, Any]) -> dict[str, Any]:
+    job = _current_t4_job()
+    if job is None or not job.snapshot()["active"]:
+        return {"ok": False, "message": "No scene fetch is running."}
+    job.cancel()
+    return {"ok": True, "message": "Cancelling after the current frame."}
+
+
+def client_t4_delete(payload: dict[str, Any]) -> dict[str, Any]:
+    from client import t4
+
+    dataset_id = str(payload.get("dataset_id") or "").strip()
+    scenario = str(payload.get("scenario") or "").strip()
+    if not dataset_id or not scenario:
+        raise ValueError("A dataset id and scenario are required.")
+    job = _current_t4_job()
+    if job is not None and job.snapshot()["active"] and (job.dataset_id, job.scenario) == (dataset_id, scenario):
+        raise ValueError("That scene is being fetched right now. Cancel the fetch first.")
+    ok, message = t4.remove_scene(dataset_id, scenario)
+    if not ok:
+        raise ValueError(message)
+    return {"ok": True, "message": message, "scenes": t4.cached_scenes()}
+
+
 def _forward(method: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Call one of the server's workflow routes with the stored credentials.
 
@@ -372,6 +645,14 @@ CLIENT_ROUTES = {
     "/api/client/workflow_tasks": client_workflow_tasks,
     "/api/client/workflow_task": client_workflow_task,
     "/api/client/workflow_cancel": client_workflow_cancel,
+    "/api/client/t4_state": client_t4_state,
+    "/api/client/t4_config": client_t4_config,
+    "/api/client/t4_scenarios": client_t4_scenarios,
+    "/api/client/t4_estimate": client_t4_estimate,
+    "/api/client/t4_fetch": client_t4_fetch,
+    "/api/client/t4_fetch_status": client_t4_fetch_status,
+    "/api/client/t4_fetch_cancel": client_t4_fetch_cancel,
+    "/api/client/t4_delete": client_t4_delete,
 }
 
 
