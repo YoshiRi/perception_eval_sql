@@ -302,7 +302,10 @@ def _render_page_html(name: str, api_base: str) -> str:
         raise FileNotFoundError(f"static/{name} not found")
     source = path.read_text(encoding="utf-8")
     source = source.replace("__API_BASE__", api_base.rstrip("/"))
-    return source.replace("/*__BBOX_THEME_JS__*/", _static_file_text("bbox_theme.js"))
+    source = source.replace("/*__BBOX_THEME_JS__*/", _static_file_text("bbox_theme.js"))
+    if "/*__PIXEL_OFFICE_JS__*/" in source:
+        source = source.replace("/*__PIXEL_OFFICE_JS__*/", _static_file_text("pixel_office.js"))
+    return source
 
 
 def _viewer_html(api_base: str = "") -> str:

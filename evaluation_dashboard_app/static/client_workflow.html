@@ -244,6 +244,17 @@
     <pre class="log" id="dryRun" hidden style="margin-top:14px"></pre>
   </div>
 
+  <!-- Pixel office: the same animated floor the dashboard's Workflow page shows. -->
+  <div class="card" id="officeCard">
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Office floor</h2>
+      <span class="hint" style="margin:0">hover a desk for status · click it for details</span>
+      <div class="spacer"></div>
+      <label class="check small"><input type="checkbox" id="officeToggle"> show</label>
+    </div>
+    <div id="office" hidden></div>
+  </div>
+
   <!-- Tasks -->
   <div class="card">
     <div class="row" style="margin-bottom:12px">
@@ -279,6 +290,8 @@
     <pre class="log" id="logBody"></pre>
   </div>
 </div>
+
+<script>/*__PIXEL_OFFICE_JS__*/</script>
 
 <script>
 (function () {
@@ -327,6 +340,36 @@
     if (status === "failed") return "err";
     return "no";  // pending / running
   }
+
+  // ------------------------------------------------------------------ pixel office
+
+  let office = null;
+  // data-mode collapses theme families (blueprint is a light-family theme).
+  const officeTheme = () =>
+    document.documentElement.dataset.mode === "light" ? "light" : "dark";
+  function officeWanted() { return $("officeToggle").checked; }
+  function renderOffice() {
+    if (!window.PixelOffice) return;
+    if (!officeWanted()) {
+      $("office").hidden = true;
+      if (office) { office.destroy(); office = null; }  // stop the rAF loop while hidden
+      return;
+    }
+    $("office").hidden = false;
+    const data = PixelOffice.fromWorkflowApi(tasks);
+    data.theme = officeTheme();
+    if (office) office.setData(data);
+    else office = PixelOffice.mount($("office"), data);
+  }
+  // Hidden by default, matching the dashboard; the choice sticks across visits.
+  try { $("officeToggle").checked = localStorage.getItem("evaldash.office") === "1"; } catch (e) {}
+  $("officeToggle").onchange = () => {
+    try { localStorage.setItem("evaldash.office", officeWanted() ? "1" : "0"); } catch (e) {}
+    renderOffice();
+  };
+  // Repaint the floor whenever the theme changes (TH notifies its listeners).
+  if (window.TH && TH.onChange) TH.onChange(() => renderOffice());
+  else $("themeBtn").addEventListener("click", () => setTimeout(renderOffice, 0));
 
   // ------------------------------------------------------------------ launcher
 
@@ -459,6 +502,7 @@
   // --------------------------------------------------------------------- tasks
 
   function renderTasks() {
+    renderOffice();
     const body = $("taskBody");
     body.innerHTML = "";
     if (!tasks.length) {
