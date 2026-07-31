@@ -194,6 +194,53 @@ def _open_task_detail(task_id: str) -> None:
     st.session_state["_task_detail_id"] = str(task_id)
 
 
+def open_task_detail(task_id: str) -> None:
+    """Queue the shared task-details dialog for `task_id` (shown on the next render)."""
+    _open_task_detail(str(task_id))
+
+
+def render_task_detail_dialog() -> None:
+    """Open the shared details dialog if a task was queued via ``open_task_detail``.
+
+    ``render_task_list`` calls this at its end; callers that show tasks some other way
+    (the pixel office view) call it directly so their View buttons use the same dialog.
+    """
+    if not callable(getattr(st, "dialog", None)) or not st.session_state.get("_task_detail_id"):
+        return
+    task_id = st.session_state["_task_detail_id"]
+    try:
+        detail_task = get_task(task_id)
+        if detail_task:
+
+            @st.dialog("Task details", width="large")
+            def _task_detail_modal():
+                render_task_detail_content(detail_task)
+                if st.button("Close"):
+                    st.session_state.pop("_task_detail_id", None)
+                    st.rerun()
+
+            _task_detail_modal()
+    except Exception as e:
+        st.error(f"Could not open task details: {e}")
+    finally:
+        st.session_state.pop("_task_detail_id", None)
+
+
+def task_row_caption(t: Dict[str, Any]) -> str:
+    """One-line description of a task row: type, summary, progress. For compact lists."""
+    parts = [_task_type_label(t.get("type", ""))]
+    summary = _task_summary(t)
+    if summary:
+        parts.append(summary)
+    pct = t.get("progress_pct")
+    if pct is not None:
+        try:
+            parts.append(f"{float(pct):.0f}%")
+        except (TypeError, ValueError):
+            pass
+    return " · ".join(parts)
+
+
 def _render_one_task_row(
     t: Dict[str, Any],
     current_user: Optional[str],
@@ -285,24 +332,7 @@ def render_task_list(
             for t in history:
                 _render_one_task_row(t, current_user, use_dialog, mode="history", on_delete=on_delete)
 
-    if use_dialog and st.session_state.get("_task_detail_id"):
-        task_id = st.session_state["_task_detail_id"]
-        try:
-            detail_task = get_task(task_id)
-            if detail_task:
-
-                @st.dialog("Task details", width="large")
-                def _task_detail_modal():
-                    render_task_detail_content(detail_task)
-                    if st.button("Close"):
-                        st.session_state.pop("_task_detail_id", None)
-                        st.rerun()
-
-                _task_detail_modal()
-        except Exception as e:
-            st.error(f"Could not open task details: {e}")
-        finally:
-            st.session_state.pop("_task_detail_id", None)
+    render_task_detail_dialog()
 
     return len(active) > 0
 

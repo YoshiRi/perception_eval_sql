@@ -26,6 +26,7 @@ import yaml
 from lib.db import (
     count_recent_tasks,
     create_task,
+    delete_task,
     is_task_queue_enabled,
     list_recent_tasks,
     update_task_rq_job_id,
@@ -71,7 +72,13 @@ from lib.ui.recent_evaluator_jobs import (
     configure_recent_evaluator_jobs_ui,
 )
 from lib.ui.pixel_office import render_pixel_office
-from lib.ui.task_history import get_task_list_current_user, render_task_list
+from lib.ui.task_history import (
+    get_task_list_current_user,
+    open_task_detail,
+    render_task_detail_dialog,
+    render_task_list,
+    task_row_caption,
+)
 from lib.ui.styles_download import inject_download_page_styles
 from lib.auth import get_current_user_identity
 from lib.user_config import UserConfig
@@ -1978,6 +1985,46 @@ def _render_local_runs_section() -> None:
             _render_local_run_details(detail_run)
 
 
+def _render_office_active_controls(rows: List[Dict[str, object]], current_user: Optional[str]) -> None:
+    """Native View/Stop controls for the tasks shown on the pixel office floor.
+
+    The canvas can show everything but cannot run server actions, so the actions the
+    task cards offered live here, reusing the same details dialog and cancel semantics.
+    """
+    active = [t for t in rows if str(t.get("status")) in ("pending", "running")]
+    if not active:
+        render_task_detail_dialog()  # keeps View working for recently finished desks
+        return
+    with st.expander(f"Manage active tasks ({len(active)})", expanded=False):
+        for t in active:
+            sid = str(t.get("id", ""))
+            status = str(t.get("status", ""))
+            info_col, view_col, stop_col = st.columns([4.4, 0.8, 0.8])
+            with info_col:
+                icon = "🟦" if status == "running" else "⬜"
+                st.caption(f"{icon} {task_row_caption(t)}")
+            with view_col:
+                st.button(
+                    "View",
+                    key=f"office_view_{sid}",
+                    on_click=open_task_detail,
+                    args=(sid,),
+                    use_container_width=True,
+                )
+            with stop_col:
+                if st.button(
+                    "Stop",
+                    key=f"office_stop_{sid}",
+                    type="secondary",
+                    help="Cancels the Redis/RQ job when possible, then removes this row.",
+                    use_container_width=True,
+                ):
+                    _close_workflow_dialogs()
+                    delete_task(sid, session_id=current_user)
+                    st.rerun()
+    render_task_detail_dialog()
+
+
 def _render_current_tasks_section() -> None:
     section_header("Current Tasks", "")
     if not is_task_queue_enabled():
@@ -2027,43 +2074,58 @@ def _render_current_tasks_section() -> None:
         st.caption(f"Showing **{total_tasks}** tasks across **{page_count}** page(s) for **{label}**.")
 
     offset = (current_page - 1) * page_size
-    show_office = st.toggle(
+    st.toggle(
         "🕹️ Pixel office view",
         value=False,
         key="workflow_pixel_office_view",
-        help="Animated live floor: one desk per task, with progress and status.",
+        help=(
+            "Show active tasks as an animated office floor instead of the task cards. "
+            "Hover a desk for status, click it for details; View/Stop live in the "
+            "'Manage active tasks' row below the floor. Finished tasks stay in the "
+            "history list either way."
+        ),
     )
+
+    def _render_tasks_section():
+        if st.session_state.get("workflow_pixel_office_view"):
+            # The office draws every active task, not just the current history page.
+            office_rows = list_recent_tasks(limit=50, session_id=current_user)
+            render_pixel_office(office_rows)
+            _render_office_active_controls(office_rows, current_user)
+            history_tasks = [
+                t
+                for t in list_recent_tasks(
+                    limit=page_size, offset=offset, session_id=current_user, since_days=since_days
+                )
+                if str(t.get("status")) not in ("pending", "running")
+            ]
+            if history_tasks:
+                render_task_list(history_tasks, current_user, on_delete=_close_workflow_dialogs)
+            else:
+                st.caption("No finished tasks in this range.")
+            return True  # office always reflects live state
+        current_tasks = list_recent_tasks(
+            limit=page_size,
+            offset=offset,
+            session_id=current_user,
+            since_days=since_days,
+        )
+        return render_task_list(current_tasks, current_user, on_delete=_close_workflow_dialogs)
+
     use_fragment = getattr(st, "fragment", None) is not None
     if use_fragment:
         try:
 
             @st.fragment(run_every=timedelta(seconds=3))
             def _task_list_poll():
-                # The office draws every active task, not just the current history page.
-                if st.session_state.get("workflow_pixel_office_view"):
-                    render_pixel_office(list_recent_tasks(limit=50, session_id=current_user))
-                current_tasks = list_recent_tasks(
-                    limit=page_size,
-                    offset=offset,
-                    session_id=current_user,
-                    since_days=since_days,
-                )
-                render_task_list(current_tasks, current_user, on_delete=_close_workflow_dialogs)
+                _render_tasks_section()
 
             _task_list_poll()
             return
         except (TypeError, AttributeError):
             use_fragment = False
 
-    if show_office:
-        render_pixel_office(list_recent_tasks(limit=50, session_id=current_user))
-    tasks = list_recent_tasks(
-        limit=page_size,
-        offset=offset,
-        session_id=current_user,
-        since_days=since_days,
-    )
-    has_active = render_task_list(tasks, current_user, on_delete=_close_workflow_dialogs)
+    has_active = _render_tasks_section()
     if st.button("Refresh tasks", key="workflow_refresh_tasks"):
         st.rerun()
     if has_active:

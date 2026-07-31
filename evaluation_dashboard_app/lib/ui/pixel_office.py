@@ -112,6 +112,7 @@ def _payload(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "run": output.rstrip("/").rsplit("/", 1)[-1] if output else "",
             "target": str(params.get("target_name") or "").strip(),
             "by": _requested_by(task),
+            "result": str(task.get("result_path") or "").strip(),
         })
     # Active first (running before pending), then the recently finished.
     order = {"running": 0, "pending": 1, "completed": 2, "failed": 2}
@@ -955,6 +956,7 @@ function detailCard(task, now) {
   if (task.run && task.run !== task.target) rows.push(['RUN', task.run]);
   if (task.by) rows.push(['BY', task.by]);
   rows.push(['START', fmtClock(task.created)]);
+  if (task.result) rows.push(['RESULT', task.result.split('/').slice(-2).join('/')]);
   const msg = task.status === 'failed' && task.error ? task.error : task.message;
   const msgLines = msg ? wrapLines(msg, 42, 3) : [];
   const ph = 13 + rows.length * lineH + (msgLines.length ? msgLines.length * 5.5 + 4 : 0) + 8;
