@@ -54,20 +54,30 @@ def _epoch_ms(value: Any) -> Optional[int]:
     return None
 
 
-def _task_name(task: Dict[str, Any]) -> str:
+def _params(task: Dict[str, Any]) -> Dict[str, Any]:
     params = task.get("parameters") or {}
     if isinstance(params, str):
         try:
             params = json.loads(params)
         except ValueError:
             params = {}
-    if not isinstance(params, dict):
-        params = {}
+    return params if isinstance(params, dict) else {}
+
+
+def _task_name(task: Dict[str, Any]) -> str:
+    params = _params(task)
     for key in ("target_name", "output_path", "job_id", "eval_root", "pkl_dir"):
         value = str(params.get(key) or "").strip()
         if value:
             return value.rstrip("/").rsplit("/", 1)[-1]
     return str(task.get("type") or "task")
+
+
+def _requested_by(task: Dict[str, Any]) -> str:
+    requester = _params(task).get("_requester")
+    if isinstance(requester, dict):
+        return str(requester.get("name") or requester.get("email") or "").strip()
+    return ""
 
 
 def _payload(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -87,6 +97,8 @@ def _payload(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             pct = None if pct is None else max(0.0, min(100.0, float(pct)))
         except (TypeError, ValueError):
             pct = None
+        params = _params(task)
+        output = str(params.get("output_path") or "").strip()
         items.append({
             "id": str(task.get("id") or ""),
             "status": status,
@@ -97,6 +109,9 @@ def _payload(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "error": str(task.get("error_message") or "").strip(),
             "created": _epoch_ms(task.get("created_at")),
             "updated": updated,
+            "run": output.rstrip("/").rsplit("/", 1)[-1] if output else "",
+            "target": str(params.get("target_name") or "").strip(),
+            "by": _requested_by(task),
         })
     # Active first (running before pending), then the recently finished.
     order = {"running": 0, "pending": 1, "completed": 2, "failed": 2}
@@ -182,6 +197,42 @@ canvas.style.borderRadius = '8px';
 wrap.appendChild(canvas);
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
+
+// ---------------------------------------------------------------- mouse interaction
+// Hovering a desk shows a tooltip; clicking it opens a detail card. The selection is
+// kept in sessionStorage so the card survives the fragment's periodic iframe reloads.
+const mouse = { x: -1, y: -1, over: false };
+let selectedId = null;
+try { selectedId = sessionStorage.getItem('pxOfficeSel') || null; } catch (e) {}
+if (selectedId && !tasks.some(t => t.id === selectedId)) selectedId = null;
+let closeRect = null, panelRect = null;                    // set while the card is drawn
+
+function setSelected(id) {
+  selectedId = id;
+  try {
+    if (id) sessionStorage.setItem('pxOfficeSel', id);
+    else sessionStorage.removeItem('pxOfficeSel');
+  } catch (e) {}
+}
+function hoverCell() {
+  if (idle || !mouse.over || mouse.y < 2) return -1;
+  const i = Math.floor((mouse.x - LEFT) / CELL_W);
+  return (mouse.x >= LEFT && i >= 0 && i < tasks.length) ? i : -1;
+}
+const inRect = r => r && mouse.x >= r[0] && mouse.x <= r[0] + r[2] && mouse.y >= r[1] && mouse.y <= r[1] + r[3];
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) / S; mouse.y = (e.clientY - r.top) / S; mouse.over = true;
+});
+canvas.addEventListener('mouseleave', () => { mouse.over = false; mouse.x = mouse.y = -1; });
+canvas.addEventListener('click', () => {
+  if (selectedId) {
+    if (!inRect(panelRect) || inRect(closeRect)) setSelected(null);
+    return;
+  }
+  const i = hoverCell();
+  if (i >= 0) setSelected(tasks[i].id);
+});
 
 function hash(str) {
   let h = 2166136261;
@@ -826,6 +877,131 @@ function desk(i, task, now, walking) {
   bubble(cx, 29, msg || (task.status === 'pending' ? 'waiting for a worker...' : ''), now, seed);
 }
 
+// ------------------------------------------------------------- tooltip + detail card
+
+const TYPE_LABEL = {
+  run_evaluator_and_process: 'Run Evaluator + Process',
+  run_release_specsheet_workflow: 'Release Specsheet',
+  download_results: 'Download results',
+  download_scenarios: 'Download scenarios',
+  download_and_eval: 'Download + Eval',
+  run_eval_dirs: 'Run eval dirs',
+  build_parquet: 'Build parquet',
+  generate_summary_csv: 'Generate summary CSV',
+  prepare_pr_test_branch: 'Prepare PR Test Branch',
+  local_evaluator_debug: 'Local Evaluator Debug',
+};
+function fmtElapsed(sec) {
+  if (sec == null || sec < 0) return '-';
+  return sec >= 3600 ? Math.floor(sec / 3600) + 'h' + Math.floor((sec % 3600) / 60) + 'm'
+       : sec >= 60 ? Math.floor(sec / 60) + 'm' + (sec % 60) + 's' : sec + 's';
+}
+function fmtClock(ms) {
+  if (!ms) return '-';
+  const d = new Date(ms);
+  const p = n => (n < 10 ? '0' : '') + n;
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function wrapLines(str, maxChars, maxLines) {
+  const words = String(str).split(/\s+/), lines = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > maxChars) {
+      if (cur) lines.push(cur);
+      cur = w.length > maxChars ? w.slice(0, maxChars - 1) + '-' : w;
+      if (lines.length >= maxLines) break;
+    } else cur = (cur + ' ' + w).trim();
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  if (lines.length === maxLines && str.length > lines.join(' ').length) {
+    lines[maxLines - 1] = lines[maxLines - 1].slice(0, maxChars - 2) + '..';
+  }
+  return lines;
+}
+
+function tooltip(task, now) {
+  const status = STATUS_LABEL[task.status] || task.status;
+  const pct = task.pct != null ? ' ' + Math.round(task.pct) + '%' : '';
+  const elapsed = task.created ? fmtElapsed(Math.floor((now - task.created) / 1000)) : '-';
+  const lines = [task.name, status + pct + ' · ' + elapsed];
+  const msg = task.status === 'failed' && task.error ? task.error : task.message;
+  if (msg) lines.push(...wrapLines(msg, 34, 2));
+  lines.push('[ click for details ]');
+  ctx.font = 'bold 4px "Courier New", monospace';
+  const tw = Math.max(...lines.map(l => Math.ceil(ctx.measureText(l).width))) + 8;
+  const th = lines.length * 6 + 5;
+  const tx = Math.max(2, Math.min(W - tw - 2, mouse.x + 4));
+  const ty = Math.max(2, Math.min(H - th - 2, mouse.y + 6));
+  px(tx + 1, ty + 1, tw, th, dark ? 'rgba(0,0,0,0.4)' : 'rgba(15,23,42,0.18)');   // shadow
+  px(tx - 1, ty - 1, tw + 2, th + 2, T.outline);
+  px(tx, ty, tw, th, T.bubbleBg);
+  px(tx, ty, tw, 1, statusColor(task.status));
+  lines.forEach((l, i) => {
+    const last = i === lines.length - 1;
+    text(l, tx + 4, ty + 3 + i * 6, last ? T.muted : (i === 0 ? T.bubbleInk : T.bubbleInk), i === 0 ? 4.5 : 4);
+  });
+}
+
+function detailCard(task, now) {
+  const pw = Math.min(W - 12, 216), lineH = 6.5;
+  const rows = [];
+  const pct = task.pct != null ? Math.round(task.pct) + '%' : (task.status === 'running' ? 'working...' : '-');
+  const elapsed = task.created
+    ? fmtElapsed(Math.floor(((task.status === 'completed' || task.status === 'failed') && task.updated
+        ? task.updated : now) - task.created) / 1000 | 0) : '-';
+  rows.push(['STATUS', (STATUS_LABEL[task.status] || task.status) + '  ' + pct + '  ·  ' + elapsed]);
+  rows.push(['TYPE', TYPE_LABEL[task.type] || task.type || '-']);
+  if (task.target) rows.push(['TARGET', task.target]);
+  if (task.run && task.run !== task.target) rows.push(['RUN', task.run]);
+  if (task.by) rows.push(['BY', task.by]);
+  rows.push(['START', fmtClock(task.created)]);
+  const msg = task.status === 'failed' && task.error ? task.error : task.message;
+  const msgLines = msg ? wrapLines(msg, 42, 3) : [];
+  const ph = 13 + rows.length * lineH + (msgLines.length ? msgLines.length * 5.5 + 4 : 0) + 8;
+  const x = Math.round((W - pw) / 2), y = Math.max(4, Math.round((H - ph) / 2));
+  panelRect = [x, y, pw, ph];
+  px(x + 2, y + 2, pw, ph, dark ? 'rgba(0,0,0,0.45)' : 'rgba(15,23,42,0.2)');     // shadow
+  px(x - 1, y - 1, pw + 2, ph + 2, T.outline);
+  px(x, y, pw, ph, T.boardBg);
+  px(x, y, pw, 9, statusColor(task.status));                                      // title bar
+  let title = task.name || task.id;
+  if (title.length > 40) title = title.slice(0, 38) + '..';
+  text(title, x + 4, y + 2.4, dark ? '#10141f' : '#ffffff', 5);
+  closeRect = [x + pw - 9, y + 1.5, 7, 6];
+  px(closeRect[0], closeRect[1], 7, 6, dark ? 'rgba(16,20,31,0.25)' : 'rgba(255,255,255,0.3)');
+  text('X', x + pw - 6.5, y + 2.4, dark ? '#10141f' : '#ffffff', 4.5);
+  let ty = y + 13;
+  for (const [k, v] of rows) {
+    text(k, x + 5, ty, T.muted, 4);
+    let val = String(v);
+    if (val.length > 42) val = val.slice(0, 40) + '..';
+    text(val, x + 26, ty, T.boardInk, 4.5);
+    ty += lineH;
+  }
+  if (msgLines.length) {
+    px(x + 4, ty + 0.5, pw - 8, 1, T.boardEdge);
+    ty += 3.5;
+    for (const l of msgLines) { text(l, x + 5, ty, task.status === 'failed' ? T.failed : T.boardInk, 4); ty += 5.5; }
+  }
+  text('id ' + task.id, x + 5, y + ph - 6, T.faint, 3.5);
+}
+
+function overlay(now) {
+  closeRect = panelRect = null;
+  const selected = selectedId && tasks.find(t => t.id === selectedId);
+  const hov = hoverCell();
+  if (hov >= 0 && !selected) {                                     // corner brackets
+    const x0 = LEFT + hov * CELL_W, c = statusColor(tasks[hov].status);
+    const bx = x0 + 2, by = 2, bw = CELL_W - 5, bh = H - 5;
+    for (const [cx, cy, dx, dy] of [[bx, by, 1, 1], [bx + bw, by, -1, 1], [bx, by + bh, 1, -1], [bx + bw, by + bh, -1, -1]]) {
+      px(cx, cy, dx * 5, 1, c); px(cx, cy, 1, dy * 5, c);
+    }
+  }
+  if (selected) detailCard(selected, now);
+  else if (hov >= 0) tooltip(tasks[hov], now);
+  canvas.style.cursor = (selected ? inRect(closeRect) || !inRect(panelRect) : hov >= 0) ? 'pointer' : 'default';
+}
+
 function wanderer(now) {
   // Off-hours: one worker pacing between the door and the coffee machine.
   const seed = 7;
@@ -857,6 +1033,7 @@ function draw() {
     const walking = tasks.map((t, i) => crewWalking(i, t, now));    // corridor pass first
     tasks.forEach((t, i) => desk(i, t, now, walking[i]));
     if (DATA.overflow > 0) text('+' + DATA.overflow + ' more on the task list', W - 4, H - 6, T.muted, 4, 'right');
+    overlay(now);
   }
   requestAnimationFrame(draw);
 }
