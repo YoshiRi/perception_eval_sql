@@ -12,6 +12,7 @@ import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
 from lib.page_chrome import inject_app_page_styles, render_page_hero
+from lib.ui.theme import apply_plotly_theme, is_dark, pick, tokens
 
 try:
     import plotly.graph_objects as go
@@ -26,6 +27,35 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 inject_app_page_styles()
+
+# Pre-dark-theme light palette: the flat-ui colorscales this page shipped with. Light must
+# keep rendering exactly these; only dark uses the token-derived scales.
+_LEGACY_RESULT_SCALE = [[0, "#e74c3c"], [0.5, "#95a5a6"], [1, "#27ae60"]]
+_LEGACY_CRITERIA_SCALE = [[0, "#bdc3c7"], [0.3, "#e74c3c"], [0.5, "#95a5a6"], [1, "#27ae60"]]
+
+
+def _result_colorscale() -> list:
+    """Fail → N/A → Success, from the semantic tokens (colorbar keeps the text labels)."""
+    t = tokens()
+    return pick(_LEGACY_RESULT_SCALE, [[0.0, t["bad"]], [0.5, t["neutral"]], [1.0, t["ok"]]])
+
+
+def _criteria_colorscale() -> list:
+    """NoGTNoObj / Fail / — / Success, from the semantic tokens."""
+    t = tokens()
+    return pick(
+        _LEGACY_CRITERIA_SCALE,
+        [[0.0, t["neutral_border"]], [0.3, t["bad"]], [0.5, t["neutral"]], [1.0, t["ok"]]],
+    )
+
+
+def _theme_chart(fig):
+    """Token Plotly theme on dark; on light leave the figure with its pre-dark-theme defaults."""
+    if is_dark():
+        apply_plotly_theme(fig)
+    return fig
+
+
 render_page_hero(
     kicker="Developer tools",
     title="Parquet, PKL & result.json inspector",
@@ -549,7 +579,7 @@ if file_type == "result.json":
                         x=line_indices,
                         y=success_vals,
                         mode="markers",
-                        marker=dict(size=4, color=success_vals, colorscale=[[0, "#e74c3c"], [0.5, "#95a5a6"], [1, "#27ae60"]], showscale=True, colorbar=dict(tickvals=[0, 0.5, 1], ticktext=["Fail", "—", "Success"])),
+                        marker=dict(size=4, color=success_vals, colorscale=_result_colorscale(), showscale=True, colorbar=dict(tickvals=[0, 0.5, 1], ticktext=["Fail", "—", "Success"])),
                         name="Result",
                     )
                 )
@@ -561,6 +591,7 @@ if file_type == "result.json":
                     height=220,
                     margin=dict(t=40, b=40, l=50, r=30),
                 )
+                _theme_chart(fig_timeline)
                 st.plotly_chart(fig_timeline, width='stretch')
 
             # Criteria heatmap: rows = frames (optionally downsampled), cols = criteria_0..N
@@ -591,7 +622,7 @@ if file_type == "result.json":
                             y=[r.get("frame_name") or str(r["line_index"]) for r in subset],
                             text=customtext,
                             hovertemplate="Frame: %{y}<br>Criteria: %{x}<br>Status: %{text}<extra></extra>",
-                            colorscale=[[0, "#bdc3c7"], [0.3, "#e74c3c"], [0.5, "#95a5a6"], [1, "#27ae60"]],
+                            colorscale=_criteria_colorscale(),
                             colorbar=dict(tickvals=[0, 0.3, 0.5, 1], ticktext=["NoGTNoObj", "Fail", "—", "Success"]),
                         )
                     )
@@ -602,6 +633,7 @@ if file_type == "result.json":
                         height=min(500, 80 + len(subset) * 12),
                         margin=dict(t=40, b=40, l=80, r=100),
                     )
+                    _theme_chart(fig_heat)
                     st.plotly_chart(fig_heat, width='stretch')
 
         if viz["final_score"]:

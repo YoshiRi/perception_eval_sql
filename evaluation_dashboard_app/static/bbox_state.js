@@ -28,7 +28,8 @@ var els = {
   statsDetail: $("statsDetail"), statsDetailTitle: $("statsDetailTitle"), statsDetailMeta: $("statsDetailMeta"), statsDetailTable: $("statsDetailTable"),
   statsDetailClose: $("statsDetailClose"), statsDetailDownload: $("statsDetailDownload"),
   viewerShell: $("viewerShell"), viewerFrame: $("viewerFrame"), viewerShellTitle: $("viewerShellTitle"), viewerShellMeta: $("viewerShellMeta"),
-  viewerClose: $("viewerCloseBtn"), viewerNewTab: $("viewerNewTabBtn")
+  viewerClose: $("viewerCloseBtn"), viewerNewTab: $("viewerNewTabBtn"),
+  themeToggle: $("themeToggleBtn")
 };
 var ctx = els.canvas.getContext("2d");
 var curveCtx = els.curve.getContext("2d");

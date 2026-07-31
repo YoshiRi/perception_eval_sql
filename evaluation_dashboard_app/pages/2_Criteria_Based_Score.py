@@ -26,6 +26,14 @@ from lib.criteria_absolute_gates import (
     failing_scenarios_table,
     gate_summary,
 )
+from lib.ui.theme import (
+    CATEGORICAL,
+    DIVERGING_SCALE,
+    apply_plotly_theme,
+    is_dark,
+    pick,
+    tokens,
+)
 from lib.score_schema import (
     SCORE_BLOCK_SIZE,
     SCORE_NUM_COLS,
@@ -45,8 +53,53 @@ st.set_page_config(
 try_hydrate_session_from_overview_query_params()
 
 # Plotly theme (multi-run palette aligned with Overview / run cards)
-_COMPARE_RUN_COLORS = ["#312e81", "#0f766e", "#e86a33", "#6b8e23", "#9b59b6", "#1abc9c"]
-_PX_COLOR_QUAL = px.colors.qualitative.Bold
+# Pre-dark-theme light chart values. Light mode must keep rendering exactly these;
+# dark mode uses the token-derived palettes from lib.ui.theme.
+_LEGACY_COMPARE_RUN_COLORS = ["#312e81", "#0f766e", "#e86a33", "#6b8e23", "#9b59b6", "#1abc9c"]
+_LEGACY_PX_COLOR_QUAL = px.colors.qualitative.Bold
+_LEGACY_DIVERGING_SCALE = "RdYlGn"
+_LEGACY_ACCENT = "#312e81"       # baseline / "A" hue (Euler left disk, grouped-mean bars)
+_LEGACY_ACCENT_2 = "#0f766e"     # candidate / "B" hue (Euler right disk, histograms)
+_LEGACY_TEAL = "#0d9488"
+_LEGACY_INFO = "#0369a1"
+_LEGACY_TEXT = "#0f172a"
+_LEGACY_MUTED = "#64748b"
+_LEGACY_WARN = "#b45309"
+_LEGACY_OK = "#047857"
+_LEGACY_DONUT_COLORS = ["#22c55e", "#ef4444"]
+_LEGACY_DONUT_SLICE_LINE = "#ffffff"
+_LEGACY_SANKEY_NODE_COLORS = ["#22c55e", "#fca5a5", "#22c55e", "#fca5a5"]
+_LEGACY_SANKEY_LINK_COLORS = [
+    "rgba(34, 197, 94, 0.35)",
+    "rgba(239, 68, 68, 0.45)",
+    "rgba(52, 211, 153, 0.45)",
+    "rgba(185, 28, 28, 0.4)",
+]
+_LEGACY_SANKEY_NODE_LINE = "rgba(15,23,42,0.35)"
+_LEGACY_EULER_FILL_A = "rgba(49, 46, 129, 0.22)"
+_LEGACY_EULER_FILL_B = "rgba(15, 118, 110, 0.22)"
+_LEGACY_EULER_HIT_COLORS = [
+    "rgba(49,46,129,0.12)",
+    "rgba(180,83,9,0.14)",
+    "rgba(15,118,110,0.12)",
+    "rgba(4,120,87,0.12)",
+]
+_LEGACY_PARITY_LINE = "rgba(100,116,139,0.8)"
+_LEGACY_MARKER_OUTLINE = "white"
+
+_COMPARE_RUN_COLORS = pick(_LEGACY_COMPARE_RUN_COLORS, CATEGORICAL())
+_PX_COLOR_QUAL = pick(_LEGACY_PX_COLOR_QUAL, CATEGORICAL())
+
+
+def _alpha(color: str, a: float) -> str:
+    """Translucent variant of a token hex, for fills that must blend (Euler disks, Sankey links)."""
+    c = color.lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    if len(c) != 6:
+        return color
+    r, g, b = (int(c[i : i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r}, {g}, {b}, {a})"
 
 
 def _px_color_map_for_runs(run_labels: list[str]) -> dict[str, str]:
@@ -56,27 +109,54 @@ def _px_color_map_for_runs(run_labels: list[str]) -> dict[str, str]:
 
 
 def _plotly_apply_theme(fig, title: str, height: int = 440) -> None:
-    fig.update_layout(
-        template="plotly_white",
-        title=dict(text=title, font=dict(size=16, color="#0f172a"), x=0, xanchor="left", pad=dict(t=8, b=12)),
-        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", size=12, color="#334155"),
-        paper_bgcolor="rgba(248, 250, 252, 0.92)",
-        plot_bgcolor="rgba(255, 255, 255, 0.95)",
-        margin=dict(l=56, r=28, t=72, b=52),
-        height=height,
-        hoverlabel=dict(bgcolor="white", font_size=13, font_family="system-ui"),
-        legend=dict(
-            title_text="",
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-            bgcolor="rgba(255,255,255,0.7)",
-        ),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.25)", zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.25)", zeroline=False)
+    t = tokens()
+    if is_dark():
+        apply_plotly_theme(
+            fig,
+            title=dict(text=title, font=dict(size=16, color=t["text"]), x=0, xanchor="left", pad=dict(t=8, b=12)),
+            font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", size=12, color=t["chart_text"]),
+            margin=dict(l=56, r=28, t=72, b=52),
+            height=height,
+            hoverlabel=dict(
+                bgcolor=t["surface"], bordercolor=t["border_strong"], font_size=13, font_family="system-ui",
+                font_color=t["text"],
+            ),
+            legend=dict(
+                title_text="",
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                bgcolor="rgba(0,0,0,0)",
+                font=dict(color=t["chart_text"]),
+            ),
+        )
+        gridcolor = t["chart_grid"]
+    else:
+        # Pre-dark-theme light layout, kept byte-for-byte.
+        fig.update_layout(
+            template="plotly_white",
+            title=dict(text=title, font=dict(size=16, color="#0f172a"), x=0, xanchor="left", pad=dict(t=8, b=12)),
+            font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", size=12, color="#334155"),
+            paper_bgcolor="rgba(248, 250, 252, 0.92)",
+            plot_bgcolor="rgba(255, 255, 255, 0.95)",
+            margin=dict(l=56, r=28, t=72, b=52),
+            height=height,
+            hoverlabel=dict(bgcolor="white", font_size=13, font_family="system-ui"),
+            legend=dict(
+                title_text="",
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                bgcolor="rgba(255,255,255,0.7)",
+            ),
+        )
+        gridcolor = "rgba(148,163,184,0.25)"
+    fig.update_xaxes(showgrid=True, gridcolor=gridcolor, zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor=gridcolor, zeroline=False)
 
 
 def _safe_default(default_lst, options_lst):
@@ -395,13 +475,17 @@ def _gate_verdict_donut_fig(summ: dict) -> go.Figure:
     npass = summ["n_pass"]
     nfail = summ["n_fail"]
     pct = summ["pass_pct"]
+    t = tokens()
     fig = go.Figure(
         data=[
             go.Pie(
                 labels=["Pass", "Fail"],
                 values=[npass, nfail],
                 hole=0.58,
-                marker=dict(colors=["#22c55e", "#ef4444"], line=dict(color="#ffffff", width=2)),
+                marker=dict(
+                    colors=pick(_LEGACY_DONUT_COLORS, [t["ok"], t["bad"]]),
+                    line=dict(color=pick(_LEGACY_DONUT_SLICE_LINE, t["bg"]), width=2),
+                ),
                 textinfo="value",
                 textposition="outside",
                 textfont=dict(size=15),
@@ -418,10 +502,12 @@ def _gate_verdict_donut_fig(summ: dict) -> go.Figure:
         margin=dict(t=30, b=40, l=24, r=24),
         height=300,
         annotations=[
-            dict(text=center, x=0.5, y=0.5, font_size=22, showarrow=False, font_color="#0f172a")
+            dict(text=center, x=0.5, y=0.5, font_size=22, showarrow=False, font_color=pick(_LEGACY_TEXT, t["text"]))
         ],
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
+        # Light kept its Plotly-default font color (the pre-dark-theme look).
+        **({"font": dict(color=t["chart_text"])} if is_dark() else {}),
     )
     return fig
 
@@ -515,6 +601,14 @@ def _gate_compare_venn_style_fig(
 
     r = 0.52
     cx1, cx2 = -0.34, 0.34
+    t = tokens()
+    # Legacy light hues vs. dark tokens for every color this figure draws.
+    c_accent = pick(_LEGACY_ACCENT, t["accent"])
+    c_accent_2 = pick(_LEGACY_ACCENT_2, t["accent_2"])
+    c_warn = pick(_LEGACY_WARN, t["warn"])
+    c_ok = pick(_LEGACY_OK, t["ok"])
+    c_text = pick(_LEGACY_TEXT, t["text"])
+    c_muted = pick(_LEGACY_MUTED, t["muted"])
     fig = go.Figure()
     fig.add_shape(
         type="circle",
@@ -524,8 +618,8 @@ def _gate_compare_venn_style_fig(
         y0=-r,
         x1=cx1 + r,
         y1=r,
-        fillcolor="rgba(49, 46, 129, 0.22)",
-        line=dict(width=2.5, color="#312e81"),
+        fillcolor=pick(_LEGACY_EULER_FILL_A, _alpha(t["accent"], 0.22)),
+        line=dict(width=2.5, color=c_accent),
         layer="below",
     )
     fig.add_shape(
@@ -536,8 +630,8 @@ def _gate_compare_venn_style_fig(
         y0=-r,
         x1=cx2 + r,
         y1=r,
-        fillcolor="rgba(15, 118, 110, 0.22)",
-        line=dict(width=2.5, color="#0f766e"),
+        fillcolor=pick(_LEGACY_EULER_FILL_B, _alpha(t["accent_2"], 0.22)),
+        line=dict(width=2.5, color=c_accent_2),
         layer="below",
     )
 
@@ -546,18 +640,18 @@ def _gate_compare_venn_style_fig(
             x=x,
             y=y,
             text=f"<b style='font-size:22px;color:{color}'>{n:,}</b><br>"
-            f"<span style='font-size:12px;font-weight:700;color:#0f172a'>{title}</span><br>"
-            f"<span style='font-size:11px;color:#64748b'>{subtitle}</span>",
+            f"<span style='font-size:12px;font-weight:700;color:{c_text}'>{title}</span><br>"
+            f"<span style='font-size:11px;color:{c_muted}'>{subtitle}</span>",
             showarrow=False,
             align="center",
         )
 
     bx_af, bx_ff, bx_pf, bx_bp = -0.58, 0.0, 0.58, 0.0
     by_af, by_ff, by_pf, by_bp = 0.0, 0.0, 0.0, 0.78
-    _bubble(bx_af, by_af, c_af, "Baseline fail only", "Recovered on candidate", "#312e81")
-    _bubble(bx_ff, by_ff, c_ff, "Both fail", "Still failing A & B", "#b45309")
-    _bubble(bx_pf, by_pf, c_pf, "Candidate fail only", "Regression vs baseline", "#0f766e")
-    _bubble(bx_bp, by_bp, c_bp, "Both pass", "Clean on both runs", "#047857")
+    _bubble(bx_af, by_af, c_af, "Baseline fail only", "Recovered on candidate", c_accent)
+    _bubble(bx_ff, by_ff, c_ff, "Both fail", "Still failing A & B", c_warn)
+    _bubble(bx_pf, by_pf, c_pf, "Candidate fail only", "Regression vs baseline", c_accent_2)
+    _bubble(bx_bp, by_bp, c_bp, "Both pass", "Clean on both runs", c_ok)
 
     # Hit targets for hover (semi-transparent; shows scenario names on hover).
     hover_titles = [
@@ -579,7 +673,15 @@ def _gate_compare_venn_style_fig(
             mode="markers",
             marker=dict(
                 size=100,
-                color=["rgba(49,46,129,0.12)", "rgba(180,83,9,0.14)", "rgba(15,118,110,0.12)", "rgba(4,120,87,0.12)"],
+                color=pick(
+                    _LEGACY_EULER_HIT_COLORS,
+                    [
+                        _alpha(t["accent"], 0.12),
+                        _alpha(t["warn"], 0.14),
+                        _alpha(t["accent_2"], 0.12),
+                        _alpha(t["ok"], 0.12),
+                    ],
+                ),
                 line=dict(width=0),
             ),
             hovertemplate="%{customdata}<extra></extra>",
@@ -592,32 +694,52 @@ def _gate_compare_venn_style_fig(
         y=-0.72,
         text=f"<b>{la}</b> · fail set",
         showarrow=False,
-        font=dict(size=11, color="#312e81"),
+        font=dict(size=11, color=c_accent),
     )
     fig.add_annotation(
         x=cx2,
         y=-0.72,
         text=f"<b>{lb}</b> · fail set",
         showarrow=False,
-        font=dict(size=11, color="#0f766e"),
+        font=dict(size=11, color=c_accent_2),
     )
 
     fig.update_xaxes(visible=False, range=[-1.28, 1.28])
     fig.update_yaxes(visible=False, range=[-0.95, 1.02], scaleanchor="x", scaleratio=1)
-    fig.update_layout(
-        height=440,
-        margin=dict(l=8, r=8, t=52, b=8),
-        paper_bgcolor="rgba(248, 250, 252, 0.85)",
-        plot_bgcolor="rgba(255,255,255,0.4)",
-        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif"),
-        title=dict(
-            text="<b>Overlap map</b> · hover a region for scenario names",
-            x=0.5,
-            xanchor="center",
-            font=dict(size=15, color="#0f172a"),
-        ),
-        hoverlabel=dict(align="left", bgcolor="white", font_size=12, font_family="system-ui, sans-serif"),
-    )
+    if is_dark():
+        fig.update_layout(
+            height=440,
+            margin=dict(l=8, r=8, t=52, b=8),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor=t["chart_bg"],
+            font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=t["chart_text"]),
+            title=dict(
+                text="<b>Overlap map</b> · hover a region for scenario names",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=15, color=t["text"]),
+            ),
+            hoverlabel=dict(
+                align="left", bgcolor=t["surface"], bordercolor=t["border_strong"], font_size=12,
+                font_family="system-ui, sans-serif", font_color=t["text"],
+            ),
+        )
+    else:
+        # Pre-dark-theme light layout, kept byte-for-byte.
+        fig.update_layout(
+            height=440,
+            margin=dict(l=8, r=8, t=52, b=8),
+            paper_bgcolor="rgba(248, 250, 252, 0.85)",
+            plot_bgcolor="rgba(255,255,255,0.4)",
+            font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif"),
+            title=dict(
+                text="<b>Overlap map</b> · hover a region for scenario names",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=15, color="#0f172a"),
+            ),
+            hoverlabel=dict(align="left", bgcolor="white", font_size=12, font_family="system-ui, sans-serif"),
+        )
     return fig
 
 
@@ -643,13 +765,17 @@ def _gate_compare_sankey_fig(
     la = str(label_a).replace("<", "")
     lb = str(label_b).replace("<", "")
 
-    node_colors = ["#22c55e", "#fca5a5", "#22c55e", "#fca5a5"]
-    link_colors = [
-        "rgba(34, 197, 94, 0.35)",
-        "rgba(239, 68, 68, 0.45)",
-        "rgba(52, 211, 153, 0.45)",
-        "rgba(185, 28, 28, 0.4)",
-    ]
+    t = tokens()
+    node_colors = pick(_LEGACY_SANKEY_NODE_COLORS, [t["ok"], t["bad"], t["ok"], t["bad"]])
+    link_colors = pick(
+        _LEGACY_SANKEY_LINK_COLORS,
+        [
+            _alpha(t["ok"], 0.35),
+            _alpha(t["bad"], 0.45),
+            _alpha(t["ok"], 0.45),
+            _alpha(t["bad"], 0.4),
+        ],
+    )
     vals = [bp, pf, af, ff]
     if sum(vals) == 0:
         vals = [0, 0, 0, 0]
@@ -672,11 +798,11 @@ def _gate_compare_sankey_fig(
             go.Sankey(
                 arrangement="snap",
                 valueformat=",",
-                textfont=dict(family=_sans, size=13, color="#0f172a"),
+                textfont=dict(family=_sans, size=13, color=pick(_LEGACY_TEXT, t["text"])),
                 node=dict(
                     pad=28,
                     thickness=22,
-                    line=dict(color="rgba(15,23,42,0.35)", width=1),
+                    line=dict(color=pick(_LEGACY_SANKEY_NODE_LINE, t["border_strong"]), width=1),
                     label=[
                         f"{la}<br><b>Pass</b><br>{n_ap:,}",
                         f"{la}<br><b>Fail</b><br>{n_af:,}",
@@ -689,19 +815,38 @@ def _gate_compare_sankey_fig(
             )
         ]
     )
-    fig.update_layout(
-        height=420,
-        margin=dict(l=24, r=24, t=48, b=16),
-        font=dict(family=_sans, size=12, color="#0f172a"),
-        paper_bgcolor="rgba(248, 250, 252, 0.5)",
-        title=dict(
-            text="<b>Sankey</b> · hover a flow for scenario names",
-            x=0.5,
-            xanchor="center",
-            font=dict(size=15, color="#0f172a"),
-        ),
-        hoverlabel=dict(align="left", bgcolor="white", font_size=12, font_family="system-ui, sans-serif"),
-    )
+    if is_dark():
+        fig.update_layout(
+            height=420,
+            margin=dict(l=24, r=24, t=48, b=16),
+            font=dict(family=_sans, size=12, color=t["chart_text"]),
+            paper_bgcolor="rgba(0,0,0,0)",
+            title=dict(
+                text="<b>Sankey</b> · hover a flow for scenario names",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=15, color=t["text"]),
+            ),
+            hoverlabel=dict(
+                align="left", bgcolor=t["surface"], bordercolor=t["border_strong"], font_size=12,
+                font_family="system-ui, sans-serif", font_color=t["text"],
+            ),
+        )
+    else:
+        # Pre-dark-theme light layout, kept byte-for-byte.
+        fig.update_layout(
+            height=420,
+            margin=dict(l=24, r=24, t=48, b=16),
+            font=dict(family=_sans, size=12, color="#0f172a"),
+            paper_bgcolor="rgba(248, 250, 252, 0.5)",
+            title=dict(
+                text="<b>Sankey</b> · hover a flow for scenario names",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=15, color="#0f172a"),
+            ),
+            hoverlabel=dict(align="left", bgcolor="white", font_size=12, font_family="system-ui, sans-serif"),
+        )
     return fig
 
 
@@ -736,7 +881,7 @@ def _render_gate_compare_overlap(
     cand_short = _short_overlap_legend_label(label_b)
     if pair_heading:
         st.markdown(
-            f'<p style="font-size:1.02rem;font-weight:700;color:#0f172a;margin:0.85rem 0 0.35rem 0;">'
+            f'<p style="font-size:1.02rem;font-weight:700;color:var(--t4-text);margin:0.85rem 0 0.35rem 0;">'
             f"{html.escape(pair_heading)}</p>",
             unsafe_allow_html=True,
         )
@@ -1157,7 +1302,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
             x="ScenarioDisplay",
             y=delta_col,
             color=delta_col,
-            color_continuous_scale="RdYlGn",
+            color_continuous_scale=pick(_LEGACY_DIVERGING_SCALE, DIVERGING_SCALE()),
             text_auto=".2f",
         )
         _plotly_apply_theme(fig2, "Pass rate delta by scenario")
@@ -1198,7 +1343,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
                 y0=0,
                 x1=lim,
                 y1=lim,
-                line=dict(dash="dash", color="rgba(100,116,139,0.8)", width=2),
+                line=dict(dash="dash", color=pick(_LEGACY_PARITY_LINE, tokens()["muted"]), width=2),
                 xref="x",
                 yref="y",
             )
@@ -1206,7 +1351,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
             scatter_fig.update_yaxes(range=[0, lim])
             scatter_fig.update_traces(
                 textposition="top center",
-                marker=dict(size=10, line=dict(width=0.5, color="white")),
+                marker=dict(size=10, line=dict(width=0.5, color=pick(_LEGACY_MARKER_OUTLINE, tokens()["bg"]))),
             )
             _plotly_apply_theme(scatter_fig, "Baseline vs candidate pass rate (parity line = equal)")
             st.plotly_chart(scatter_fig, width="stretch")
@@ -1238,7 +1383,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
             x=f"{metric}_delta",
             nbins=30,
             marginal="box",
-            color_discrete_sequence=["#0d9488"],
+            color_discrete_sequence=[pick(_LEGACY_TEAL, tokens()["accent_2"])],
         )
         _plotly_apply_theme(fig, f"Δ {metric} ({focus_cand} − A)")
         st.plotly_chart(fig, width="stretch")
@@ -1254,7 +1399,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
             x=group_by,
             y=f"{metric}_delta",
             text_auto=".2f",
-            color_discrete_sequence=["#312e81"],
+            color_discrete_sequence=[pick(_LEGACY_ACCENT, tokens()["accent"])],
         )
         _plotly_apply_theme(fig, f"Grouped mean · Δ {metric}")
         fig.update_layout(showlegend=False)
@@ -1266,7 +1411,7 @@ if mode == "Compare Mode" and compare_runs and compare_labels:
             x=group_by,
             y="pass_rate_delta",
             points="all",
-            color_discrete_sequence=["#0369a1"],
+            color_discrete_sequence=[pick(_LEGACY_INFO, tokens()["info"])],
         )
         _plotly_apply_theme(fig, "Δ pass rate by group")
         fig.update_layout(showlegend=False)

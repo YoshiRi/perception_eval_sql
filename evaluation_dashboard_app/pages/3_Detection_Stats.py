@@ -30,6 +30,15 @@ from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_par
 from lib.parquet_schema import get_parquet_columns, missing_detection_stats_columns, schema_flags
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
 from lib.t4_dataset_embed import t4_dashboard_url
+from lib.ui.theme import (
+    CATEGORICAL,
+    DIVERGING_SCALE,
+    apply_plotly_theme,
+    is_dark,
+    pick,
+    plotly_layout,
+    tokens,
+)
 from lib.ui.detection_stats import (
     detection_stats_page_loading_banner_markup,
     ds_spot_loading,
@@ -64,26 +73,72 @@ SKIP_LAST_N_FRAMES = int(_SKIP_LAST_N_FRAMES or 0)
 # Bump when the eval_flat SQL changes so stale caches are rebuilt.
 _DS_EVAL_FLAT_CACHE_VERSION = "skipframe1_poly1"
 
-IMPROVED_COLOR = "#1a9850"
-DEGRADED_COLOR = "#d73027"
-IMPROVED_SCALE = [[0.0, "#f7fcf5"], [1.0, IMPROVED_COLOR]]
-DEGRADED_SCALE = [[0.0, "#fff5f0"], [1.0, DEGRADED_COLOR]]
-# Run-series colors (Panels 2–4, 6–8) — consistent across page
-RUN_COLORS = ["#4A90D9", "#E86A33", "#2d8f47", "#9B59B6", "#1ABC9C", "#95a5a6"]
-# Status distribution: semantic colors (TP=green, FN=red, FP=orange)
-STATUS_COLORS = {
+# Active design tokens for this script run (light/dark follows the viewer's theme).
+_T = tokens()
+
+# --- Pre-dark-theme light chart palette -----------------------------------------------
+# These literals are exactly what this page drew before the dark theme landed. Light mode
+# must keep them; dark mode uses the token-derived values. Paired through pick() below.
+_LEGACY_IMPROVED_COLOR = "#1a9850"
+_LEGACY_DEGRADED_COLOR = "#d73027"
+_LEGACY_IMPROVED_SCALE_LOW = "#f7fcf5"
+_LEGACY_DEGRADED_SCALE_LOW = "#fff5f0"
+_LEGACY_RUN_COLORS = ["#4A90D9", "#E86A33", "#2d8f47", "#9B59B6", "#1ABC9C", "#95a5a6"]
+_LEGACY_STATUS_COLORS = {
     "TP": "#2d8f47",
     "FN": "#d73027",
     "FP": "#E86A33",
     "TN": "#4A90D9",
 }
+# Reference lines, polar/small-multiple grids, matrix midpoint and marker outlines.
+_LEGACY_REF_LINE_STRONG = "rgba(0,0,0,0.2)"
+_LEGACY_REF_LINE_HLINE = "rgba(0,0,0,0.25)"
+_LEGACY_REF_LINE_FAINT = "rgba(0,0,0,0.12)"
+_LEGACY_GRID_08 = "rgba(0,0,0,0.08)"
+_LEGACY_GRID_06 = "rgba(0,0,0,0.06)"
+_LEGACY_GRID_04 = "rgba(0,0,0,0.04)"
+_LEGACY_MATRIX_MID = "#f8fafc"
+_LEGACY_MARKER_OUTLINE = "white"
+_LEGACY_TREEMAP_LINE = "rgba(255,255,255,0.45)"
+_LEGACY_TREEMAP_ROOT = "rgba(240,240,245,0.95)"
+_LEGACY_TPR_HEATMAP_SCALE = "RdYlGn"
+
+IMPROVED_COLOR = pick(_LEGACY_IMPROVED_COLOR, _T["ok"])
+DEGRADED_COLOR = pick(_LEGACY_DEGRADED_COLOR, _T["bad"])
+IMPROVED_SCALE = [[0.0, pick(_LEGACY_IMPROVED_SCALE_LOW, _T["surface_2"])], [1.0, IMPROVED_COLOR]]
+DEGRADED_SCALE = [[0.0, pick(_LEGACY_DEGRADED_SCALE_LOW, _T["surface_2"])], [1.0, DEGRADED_COLOR]]
+# Run-series colors (Panels 2–4, 6–8) — consistent across page
+RUN_COLORS = pick(_LEGACY_RUN_COLORS, CATEGORICAL())
+# Status distribution: semantic colors (TP=green, FN=red, FP=orange)
+STATUS_COLORS = pick(
+    _LEGACY_STATUS_COLORS,
+    {
+        "TP": _T["ok"],
+        "FN": _T["bad"],
+        "FP": _T["warn"],
+        "TN": _T["info"],
+    },
+)
+# Theme-resolved chart accents (light = the legacy literal, dark = the token).
+REF_LINE_STRONG = pick(_LEGACY_REF_LINE_STRONG, _T["chart_axis"])
+REF_LINE_HLINE = pick(_LEGACY_REF_LINE_HLINE, _T["chart_axis"])
+REF_LINE_FAINT = pick(_LEGACY_REF_LINE_FAINT, _T["chart_grid"])
+POLAR_GRID = pick(_LEGACY_GRID_08, _T["chart_grid"])
+SMALL_MULTIPLE_GRID_Y = pick(_LEGACY_GRID_06, _T["chart_grid"])
+SMALL_MULTIPLE_GRID_X = pick(_LEGACY_GRID_04, _T["chart_grid"])
+MATRIX_MID_COLOR = pick(_LEGACY_MATRIX_MID, _T["surface_2"])
+MARKER_OUTLINE = pick(_LEGACY_MARKER_OUTLINE, _T["surface"])
+TPR_HEATMAP_SCALE = pick(_LEGACY_TPR_HEATMAP_SCALE, DIVERGING_SCALE())
 DETECTION_STATS_SKIP_INITIAL_FRAMES = 3
 DETECTION_STATS_INITIAL_FRAME_FILTER = (
     f"(frame_index IS NULL OR TRY_CAST(frame_index AS BIGINT) >= {DETECTION_STATS_SKIP_INITIAL_FRAMES})"
 )
 
-# Unified Plotly layout theme for all charts
-PLOTLY_LAYOUT_THEME = dict(
+# Unified Plotly layout theme for all charts: typography/geometry here, colors from
+# the design tokens (lib/ui/theme.py) so figures follow the light/dark theme.
+_PLOTLY_BASE = plotly_layout()
+# Pre-dark-theme light layout — the exact kwargs every chart on this page used to get.
+_LEGACY_PLOTLY_LAYOUT_THEME = dict(
     font=dict(family='"Inter", "Segoe UI", sans-serif', size=11),
     title=dict(font=dict(size=14, color="#1f2937")),
     paper_bgcolor="rgba(0,0,0,0)",
@@ -114,6 +169,51 @@ PLOTLY_LAYOUT_THEME = dict(
     ),
     showlegend=True,
 )
+_DARK_PLOTLY_LAYOUT_THEME = dict(
+    template=_PLOTLY_BASE["template"],
+    font=dict(family='"Inter", "Segoe UI", sans-serif', size=11, color=_T["chart_text"]),
+    title=dict(font=dict(size=14, color=_T["text"])),
+    paper_bgcolor=_PLOTLY_BASE["paper_bgcolor"],
+    plot_bgcolor=_PLOTLY_BASE["plot_bgcolor"],
+    margin=dict(t=48, b=40, l=52, r=24),
+    height=380,
+    xaxis=dict(
+        tickfont=dict(size=11),
+        title_font=dict(size=12),
+        gridcolor=_T["chart_grid"],
+        linecolor=_T["chart_axis"],
+        zeroline=True,
+        zerolinecolor=_T["chart_axis"],
+    ),
+    yaxis=dict(
+        tickfont=dict(size=11),
+        title_font=dict(size=12),
+        gridcolor=_T["chart_grid"],
+        linecolor=_T["chart_axis"],
+        zeroline=True,
+        zerolinecolor=_T["chart_axis"],
+    ),
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1,
+        font=dict(size=11, color=_T["chart_text"]),
+        bgcolor="rgba(0,0,0,0)",
+    ),
+    hoverlabel=_PLOTLY_BASE["hoverlabel"],
+    showlegend=True,
+)
+PLOTLY_LAYOUT_THEME = pick(_LEGACY_PLOTLY_LAYOUT_THEME, _DARK_PLOTLY_LAYOUT_THEME)
+
+
+def _fill_rgba(color: str, alpha: float) -> str:
+    """Palette hex -> rgba() string, for the translucent area fill under a line trace."""
+    c = str(color).lstrip("#")
+    if len(c) != 6:
+        return color
+    return f"rgba({int(c[0:2], 16)},{int(c[2:4], 16)},{int(c[4:6], 16)},{alpha})"
 
 
 def _banner_html_with_note(note: str) -> str:
@@ -127,9 +227,16 @@ def _banner_html_with_note(note: str) -> str:
 
 
 def apply_chart_theme(fig, **overrides):
-    """Apply unified theme to a Plotly figure; overrides (e.g. height, margin) take precedence."""
+    """Apply unified theme to a Plotly figure; overrides (e.g. height, margin) take precedence.
+
+    Single choke point for the light/dark split: dark goes through the token themer, light
+    replays the exact pre-dark-theme ``update_layout`` call.
+    """
     layout_update = {**PLOTLY_LAYOUT_THEME, **overrides}
-    fig.update_layout(**layout_update)
+    if is_dark():
+        apply_plotly_theme(fig, **layout_update)
+    else:
+        fig.update_layout(**layout_update)
     return fig
 
 
@@ -143,7 +250,7 @@ def _tpr_lollipop_single(df: pd.DataFrame, title: str) -> go.Figure:
                 x=[0, row["tpr"]],
                 y=[row["label"], row["label"]],
                 mode="lines",
-                line=dict(color="rgba(74, 144, 217, 0.45)", width=2),
+                line=dict(color=_fill_rgba(RUN_COLORS[0], 0.45), width=2),
                 showlegend=False,
                 hoverinfo="skip",
             )
@@ -154,7 +261,7 @@ def _tpr_lollipop_single(df: pd.DataFrame, title: str) -> go.Figure:
             y=d["label"],
             mode="markers",
             name="TP rate",
-            marker=dict(size=14, color=RUN_COLORS[0], line=dict(width=1, color="white")),
+            marker=dict(size=14, color=RUN_COLORS[0], line=dict(width=1, color=MARKER_OUTLINE)),
             hovertemplate="%{y}<br>TP rate: %{x:.2%}<extra></extra>",
         )
     )
@@ -166,8 +273,8 @@ def _tpr_lollipop_single(df: pd.DataFrame, title: str) -> go.Figure:
         xaxis_range=[0, 1.15],
         showlegend=False,
     )
-    fig.add_vline(x=0.5, line_dash="dash", line_color="rgba(0,0,0,0.2)")
-    fig.add_vline(x=1.0, line_dash="dot", line_color="rgba(0,0,0,0.12)")
+    fig.add_vline(x=0.5, line_dash="dash", line_color=REF_LINE_STRONG)
+    fig.add_vline(x=1.0, line_dash="dot", line_color=REF_LINE_FAINT)
     return fig
 
 
@@ -193,7 +300,7 @@ def _tpr_spider_compare(
                 theta=theta,
                 name=str(run_lbl),
                 line=dict(color=c, width=2),
-                fillcolor=f"rgba({int(c[1:3],16)},{int(c[3:5],16)},{int(c[5:7],16)},0.12)",
+                fillcolor=_fill_rgba(c, 0.12),
                 fill="toself",
                 hovertemplate="%{theta}<br>TP rate: %{r:.2%}<extra></extra>",
             )
@@ -202,7 +309,7 @@ def _tpr_spider_compare(
     fig.update_layout(
         title=title,
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 1], tickformat=".0%", gridcolor="rgba(0,0,0,0.08)"),
+            radialaxis=dict(visible=True, range=[0, 1], tickformat=".0%", gridcolor=POLAR_GRID),
             angularaxis=dict(tickfont=dict(size=10)),
         ),
         legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5),
@@ -240,7 +347,7 @@ def _count_spider_compare(
                 theta=theta,
                 name=str(run_lbl),
                 line=dict(color=c, width=2),
-                fillcolor=f"rgba({int(c[1:3],16)},{int(c[3:5],16)},{int(c[5:7],16)},0.12)",
+                fillcolor=_fill_rgba(c, 0.12),
                 fill="toself",
                 hovertemplate=f"%{{theta}}<br>{hover_metric}: %{{r:,.0f}}<extra></extra>",
             )
@@ -253,7 +360,7 @@ def _count_spider_compare(
                 visible=True,
                 range=[0, r_max],
                 tickformat=",.0f",
-                gridcolor="rgba(0,0,0,0.08)",
+                gridcolor=POLAR_GRID,
             ),
             angularaxis=dict(tickfont=dict(size=9)),
         ),
@@ -302,7 +409,7 @@ def _scalar_metric_spider_compare(
                 theta=theta,
                 name=str(run_lbl),
                 line=dict(color=c, width=2),
-                fillcolor=f"rgba({int(c[1:3],16)},{int(c[3:5],16)},{int(c[5:7],16)},0.12)",
+                fillcolor=_fill_rgba(c, 0.12),
                 fill="toself",
                 hovertemplate="%{theta}<br>"
                 + hover_metric
@@ -318,7 +425,7 @@ def _scalar_metric_spider_compare(
                 visible=True,
                 range=[0, r_max],
                 tickformat=tickformat,
-                gridcolor="rgba(0,0,0,0.08)",
+                gridcolor=POLAR_GRID,
             ),
             angularaxis=dict(tickfont=dict(size=9)),
         ),
@@ -1371,17 +1478,17 @@ def _report_shell(
     return f"""
 <style>
 .ds-report-shell {{
-  border: 1px solid rgba(15, 23, 42, 0.12);
+  border: 1px solid var(--t4-border);
   border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+  background: var(--t4-surface);
+  box-shadow: var(--t4-shadow-md);
   overflow: hidden;
   margin: 0.6rem 0 1.2rem 0;
 }}
 .ds-report-head {{
   padding: 1.35rem 1.55rem;
-  background: linear-gradient(135deg, #f8fafc 0%, #eef6f3 52%, #f7f2ea 100%);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+  background: var(--t4-hero-bg);
+  border-bottom: 1px solid var(--t4-border);
 }}
 .ds-report-kicker {{
   display: flex;
@@ -1392,21 +1499,21 @@ def _report_shell(
 }}
 .ds-report-title {{
   margin: 0;
-  color: #0f172a;
+  color: var(--t4-text);
   font-size: 1.55rem;
   line-height: 1.2;
   letter-spacing: 0;
 }}
 .ds-report-subtitle {{
   margin: 0.35rem 0 0 0;
-  color: #475569;
+  color: var(--t4-text-3);
   font-size: 0.93rem;
   line-height: 1.45;
 }}
 .ds-report-lead {{
   margin: 0;
   padding: 1.15rem 1.55rem 0 1.55rem;
-  color: #1f2937;
+  color: var(--t4-text-2);
   font-size: 1.02rem;
   line-height: 1.55;
 }}
@@ -1419,10 +1526,10 @@ def _report_shell(
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }}
-.ds-report-badge-good {{ background: #dcfce7; color: #166534; }}
-.ds-report-badge-risk {{ background: #fee2e2; color: #991b1b; }}
-.ds-report-badge-mixed {{ background: #fef3c7; color: #92400e; }}
-.ds-report-badge-neutral {{ background: #e2e8f0; color: #334155; }}
+.ds-report-badge-good {{ background: var(--t4-ok-bg); color: var(--t4-ok); }}
+.ds-report-badge-risk {{ background: var(--t4-bad-bg); color: var(--t4-bad); }}
+.ds-report-badge-mixed {{ background: var(--t4-warn-bg); color: var(--t4-warn); }}
+.ds-report-badge-neutral {{ background: var(--t4-neutral-bg); color: var(--t4-neutral); }}
 .ds-report-metrics {{
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -1430,15 +1537,15 @@ def _report_shell(
   padding: 1.1rem 1.55rem 0.25rem 1.55rem;
 }}
 .ds-report-metric {{
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--t4-border);
   border-radius: 8px;
   padding: 0.85rem 0.95rem;
-  background: #f8fafc;
+  background: var(--t4-surface-2);
   min-height: 102px;
 }}
 .ds-report-metric span {{
   display: block;
-  color: #64748b;
+  color: var(--t4-muted);
   font-size: 0.74rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -1447,21 +1554,21 @@ def _report_shell(
 .ds-report-metric strong {{
   display: block;
   margin-top: 0.25rem;
-  color: #0f172a;
+  color: var(--t4-text);
   font-size: 1.35rem;
   line-height: 1.15;
 }}
 .ds-report-metric em {{
   display: block;
   margin-top: 0.35rem;
-  color: #475569;
+  color: var(--t4-text-3);
   font-size: 0.82rem;
   font-style: normal;
   line-height: 1.35;
 }}
-.ds-report-tone-good {{ background: #f0fdf4; border-color: rgba(22, 101, 52, 0.22); }}
-.ds-report-tone-risk {{ background: #fff7ed; border-color: rgba(194, 65, 12, 0.24); }}
-.ds-report-tone-neutral {{ background: #f8fafc; }}
+.ds-report-tone-good {{ background: var(--t4-ok-bg); border-color: var(--t4-ok-border); }}
+.ds-report-tone-risk {{ background: var(--t4-warn-bg); border-color: var(--t4-warn-border); }}
+.ds-report-tone-neutral {{ background: var(--t4-surface-2); }}
 .ds-report-body {{
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -1469,11 +1576,11 @@ def _report_shell(
   padding: 1rem 1.55rem 1.4rem 1.55rem;
 }}
 .ds-report-panel {{
-  border-top: 3px solid #0d9488;
-  background: #ffffff;
+  border-top: 3px solid var(--t4-accent-2);
+  background: var(--t4-surface);
   border-radius: 8px;
   padding: 0.95rem 1rem;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  box-shadow: inset 0 0 0 1px var(--t4-border-subtle);
 }}
 .ds-report-panel-wide {{
   grid-column: 1 / -1;
@@ -1488,30 +1595,30 @@ def _report_shell(
 }}
 .ds-report-table th {{
   text-align: left;
-  color: #475569;
-  background: #f8fafc;
+  color: var(--t4-text-3);
+  background: var(--t4-surface-2);
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }}
 .ds-report-table th, .ds-report-table td {{
   padding: 0.55rem 0.65rem;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  border-bottom: 1px solid var(--t4-border);
   white-space: nowrap;
 }}
 .ds-report-table td {{
-  color: #1f2937;
+  color: var(--t4-text-2);
   font-variant-numeric: tabular-nums;
 }}
 .ds-report-panel h4 {{
   margin: 0 0 0.45rem 0;
   font-size: 0.98rem;
   line-height: 1.25;
-  color: #0f172a;
+  color: var(--t4-text);
   letter-spacing: 0;
 }}
 .ds-report-panel p, .ds-report-footnote {{
-  color: #334155;
+  color: var(--t4-text-2);
   font-size: 0.9rem;
   line-height: 1.48;
 }}
@@ -1522,16 +1629,16 @@ def _report_shell(
 }}
 .ds-report-panel li {{
   margin: 0.28rem 0;
-  color: #1f2937;
+  color: var(--t4-text-2);
   font-size: 0.88rem;
   line-height: 1.42;
 }}
-.ds-report-muted {{ color: #64748b !important; font-style: italic; }}
+.ds-report-muted {{ color: var(--t4-muted) !important; font-style: italic; }}
 .ds-report-footnote {{
   margin: 0;
   padding: 0.85rem 1.55rem 1.1rem 1.55rem;
-  border-top: 1px solid rgba(15, 23, 42, 0.08);
-  background: #fafafa;
+  border-top: 1px solid var(--t4-border);
+  background: var(--t4-surface-2);
 }}
 </style>
 <article class="ds-report-shell">
@@ -4890,7 +4997,7 @@ try:
                             mode="lines",
                             line=dict(color=RUN_COLORS[0], width=2.5, shape="spline"),
                             fill="tozeroy",
-                            fillcolor="rgba(74, 144, 217, 0.2)",
+                            fillcolor=_fill_rgba(RUN_COLORS[0], 0.2),
                             hovertemplate="%{x}<br>TP rate: %{y:.2%}<extra></extra>",
                         )
                     )
@@ -4902,7 +5009,7 @@ try:
                             mode="lines",
                             line=dict(color=RUN_COLORS[1], width=2.5, shape="spline"),
                             fill="tozeroy",
-                            fillcolor="rgba(232, 106, 51, 0.2)",
+                            fillcolor=_fill_rgba(RUN_COLORS[1], 0.2),
                             hovertemplate="%{x}<br>FP rate: %{y:.2%}<extra></extra>",
                         )
                     )
@@ -4919,7 +5026,7 @@ try:
                         ),
                         hovermode="x unified",
                     )
-                    fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                    fig.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                     st.plotly_chart(fig, width='stretch')
                 else:
                     # Bar chart (histogram): combined TP + FP grouped bars
@@ -4956,7 +5063,7 @@ try:
                         ),
                         hovermode="x unified",
                     )
-                    fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                    fig.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                     st.plotly_chart(fig, width='stretch')
 
                 distance_summary_lines.extend(_distance_single_result_lines(df_both))
@@ -4986,7 +5093,6 @@ try:
                             d = df_label_rates[df_label_rates["label"].astype(str) == lab].sort_values("bin_order")
                             c = RUN_COLORS[j % len(RUN_COLORS)]
                             if use_line_chart:
-                                r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
                                 fig_label.add_trace(
                                     go.Scatter(
                                         x=d["bin_label"],
@@ -4995,7 +5101,7 @@ try:
                                         mode="lines",
                                         line=dict(color=c, width=2.2, shape="spline"),
                                         fill="tozeroy",
-                                        fillcolor=f"rgba({r},{g},{b},0.12)",
+                                        fillcolor=_fill_rgba(c, 0.12),
                                         hovertemplate=f"{lab}<br>%{{x}}<br>{metric_name}: %{{y:.2%}}<extra></extra>",
                                     )
                                 )
@@ -5023,7 +5129,7 @@ try:
                             hovermode="x unified",
                             **({"barmode": "group"} if not use_line_chart else {}),
                         )
-                        fig_label.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                        fig_label.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                         st.plotly_chart(fig_label, width='stretch')
                     distance_summary_lines.extend(
                         _distance_label_result_lines(
@@ -5083,7 +5189,6 @@ try:
                     for i, lbl in enumerate(run_labels_list):
                         d = df_tpr_dist[df_tpr_dist["run"] == lbl].sort_values("bin_order")
                         c = RUN_COLORS[i % len(RUN_COLORS)]
-                        r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
                         fig_tpr.add_trace(
                             go.Scatter(
                                 x=d["bin_label"],
@@ -5092,7 +5197,7 @@ try:
                                 mode="lines",
                                 line=dict(color=c, width=2.2, shape="spline"),
                                 fill="tozeroy",
-                                fillcolor=f"rgba({r},{g},{b},0.15)",
+                                fillcolor=_fill_rgba(c, 0.15),
                                 hovertemplate=f"{lbl}<br>%{{x}}<br>TP rate: %{{y:.2%}}<extra></extra>",
                             )
                         )
@@ -5105,7 +5210,7 @@ try:
                         xaxis=_xaxis_dist_bins,
                         hovermode="x unified",
                     )
-                    fig_tpr.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                    fig_tpr.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                     st.plotly_chart(fig_tpr, width='stretch')
                 else:
                     st.info("No TP rate by distance data.")
@@ -5115,7 +5220,6 @@ try:
                     for i, lbl in enumerate(run_labels_list):
                         d = df_fpr_dist[df_fpr_dist["run"] == lbl].sort_values("bin_order")
                         c = RUN_COLORS[i % len(RUN_COLORS)]
-                        r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
                         fig_fpr.add_trace(
                             go.Scatter(
                                 x=d["bin_label"],
@@ -5124,7 +5228,7 @@ try:
                                 mode="lines",
                                 line=dict(color=c, width=2.2, shape="spline"),
                                 fill="tozeroy",
-                                fillcolor=f"rgba({r},{g},{b},0.15)",
+                                fillcolor=_fill_rgba(c, 0.15),
                                 hovertemplate=f"{lbl}<br>%{{x}}<br>FP rate: %{{y:.2%}}<extra></extra>",
                             )
                         )
@@ -5137,7 +5241,7 @@ try:
                         xaxis=_xaxis_dist_bins,
                         hovermode="x unified",
                     )
-                    fig_fpr.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                    fig_fpr.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                     st.plotly_chart(fig_fpr, width='stretch')
                 else:
                     st.info("No FP rate by distance data.")
@@ -5166,7 +5270,7 @@ try:
                         xaxis=_xaxis_dist_bins,
                         hovermode="x unified",
                     )
-                    fig_tpr.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                    fig_tpr.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                     st.plotly_chart(fig_tpr, width='stretch')
                 else:
                     st.info("No TP rate by distance data.")
@@ -5194,7 +5298,7 @@ try:
                         xaxis=_xaxis_dist_bins,
                         hovermode="x unified",
                     )
-                    fig_fpr.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.25)")
+                    fig_fpr.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_HLINE)
                     st.plotly_chart(fig_fpr, width='stretch')
                 else:
                     st.info("No FP rate by distance data.")
@@ -5311,7 +5415,7 @@ try:
                             labels=dict(x="Distance bin", y="Label", color=color_label),
                             color_continuous_scale=[
                                 [0.0, IMPROVED_COLOR if fp_better_lower else DEGRADED_COLOR],
-                                [0.5, "#f8fafc"],
+                                [0.5, MATRIX_MID_COLOR],
                                 [1.0, DEGRADED_COLOR if fp_better_lower else IMPROVED_COLOR],
                             ],
                             zmin=-max_abs_delta,
@@ -5383,7 +5487,7 @@ try:
                                                 name=str(run_lbl),
                                                 mode="lines+markers",
                                                 line=dict(color=c, width=2.2),
-                                                marker=dict(size=4.5, color=c, line=dict(width=0.8, color="white")),
+                                                marker=dict(size=4.5, color=c, line=dict(width=0.8, color=MARKER_OUTLINE)),
                                                 showlegend=show_legend,
                                                 hovertemplate=(
                                                     f"{run_lbl}<br>{lab}<br>%{{x}}<br>"
@@ -5412,7 +5516,7 @@ try:
                                         range=[0, 1],
                                         tickformat=".0%",
                                         showticklabels=c_idx == 1,
-                                        gridcolor="rgba(0,0,0,0.06)",
+                                        gridcolor=SMALL_MULTIPLE_GRID_Y,
                                         zeroline=False,
                                         row=r_idx,
                                         col=c_idx,
@@ -5422,7 +5526,7 @@ try:
                                         categoryorder="array",
                                         categoryarray=rate_bin_labels_order,
                                         showticklabels=r_idx == small_multiple_rows,
-                                        gridcolor="rgba(0,0,0,0.04)",
+                                        gridcolor=SMALL_MULTIPLE_GRID_X,
                                         zeroline=False,
                                         row=r_idx,
                                         col=c_idx,
@@ -5502,7 +5606,6 @@ try:
                     if use_line_chart:
                         for j, lab in enumerate(pivot_oc.columns):
                             c = RUN_COLORS[j % len(RUN_COLORS)]
-                            r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
                             nm = str(lab)
                             fig_oc.add_trace(
                                 go.Scatter(
@@ -5512,7 +5615,7 @@ try:
                                     mode="lines",
                                     line=dict(color=c, width=2.2, shape="spline"),
                                     fill="tozeroy",
-                                    fillcolor=f"rgba({r},{g},{b},0.12)",
+                                    fillcolor=_fill_rgba(c, 0.12),
                                     hovertemplate=f"{nm}<br>%{{x}}<br>Count: %{{y:.0f}}<extra></extra>",
                                 )
                             )
@@ -5550,7 +5653,6 @@ try:
                     if use_line_chart:
                         for j, rl in enumerate(run_cols):
                             c = RUN_COLORS[j % len(RUN_COLORS)]
-                            r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
                             fig_oc.add_trace(
                                 go.Scatter(
                                     x=align_x,
@@ -5559,7 +5661,7 @@ try:
                                     mode="lines",
                                     line=dict(color=c, width=2.2, shape="spline"),
                                     fill="tozeroy",
-                                    fillcolor=f"rgba({r},{g},{b},0.15)",
+                                    fillcolor=_fill_rgba(c, 0.15),
                                     hovertemplate=f"{rl}<br>%{{x}}<br>Count: %{{y:.0f}}<extra></extra>",
                                 )
                             )
@@ -5661,7 +5763,7 @@ try:
                     )
                     apply_chart_theme(fig)
                     fig.update_layout(yaxis_range=[0, 1.2])
-                    fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.2)")
+                    fig.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_STRONG)
                     st.plotly_chart(fig, width='stretch')
                 else:
                     fig = _tpr_lollipop_single(df_tpr_base, title)
@@ -5748,7 +5850,7 @@ try:
                     )
                     apply_chart_theme(fig)
                     fig.update_layout(yaxis_range=[0, 1.2])
-                    fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.2)")
+                    fig.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_STRONG)
                     st.plotly_chart(fig, width='stretch')
                 elif tpr_viz == "Heatmap (label × run)":
                     pivot = df_tpr_all.pivot_table(index="label", columns="run", values="tpr", aggfunc="first")
@@ -5759,7 +5861,7 @@ try:
                         pivot,
                         labels=dict(x="Run", y="Label", color="TP rate"),
                         title=title,
-                        color_continuous_scale="RdYlGn",
+                        color_continuous_scale=TPR_HEATMAP_SCALE,
                         zmin=0,
                         zmax=1,
                         aspect="auto",
@@ -5781,7 +5883,7 @@ try:
                     fig.update_traces(line=dict(width=2.5), marker=dict(size=8))
                     apply_chart_theme(fig, height=400)
                     fig.update_layout(yaxis_range=[0, 1.15], xaxis_tickangle=-35, hovermode="x unified")
-                    fig.add_hline(y=0.5, line_dash="dash", line_color="rgba(0,0,0,0.2)")
+                    fig.add_hline(y=0.5, line_dash="dash", line_color=REF_LINE_STRONG)
                     st.plotly_chart(fig, width='stretch')
             else:
                 st.info("No data available")
@@ -5930,15 +6032,15 @@ try:
                 "% of parent: %{percentParent}<extra></extra>"
             ),
             marker_line_width=1.5,
-            marker_line_color="rgba(255,255,255,0.45)",
-            root_color="rgba(240,240,245,0.95)",
+            marker_line_color=pick(_LEGACY_TREEMAP_LINE, _fill_rgba(_T["surface"], 0.45)),
+            root_color=pick(_LEGACY_TREEMAP_ROOT, _T["surface_2"]),
         )
         _title_layout = {**PLOTLY_LAYOUT_THEME["title"], "text": title}
         apply_chart_theme(
             fig,
             height=560,
             margin=dict(t=20, l=2, r=2, b=2),
-            paper_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor=_PLOTLY_BASE["paper_bgcolor"],
             title=_title_layout,
         )
         st.plotly_chart(fig, width='stretch', key=st_key)

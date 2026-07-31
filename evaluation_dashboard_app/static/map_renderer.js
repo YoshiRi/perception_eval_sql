@@ -76,10 +76,10 @@ function resizeCanvas(c, context) {
 function colorFor(v, max) {
   const raw = Number(v || 0);
   const t = max > 0 ? Math.max(0, Math.min(1, Math.abs(raw) / max)) : 0;
-  if (raw < 0) return `rgba(52,211,153,${.34 + t * .58})`;
-  if (t < .35) return `rgba(56,189,248,${.45 + t})`;
-  if (t < .68) return `rgba(251,191,36,${.52 + t * .55})`;
-  return `rgba(251,113,133,${.58 + t * .42})`;
+  if (raw < 0) return TH.a("good", .34 + t * .58);
+  if (t < .35) return TH.a("accent", .45 + t);
+  if (t < .68) return TH.a("warn", .52 + t * .55);
+  return TH.a("bad", .58 + t * .42);
 }
 function screenRect(s, rect) {
   const scale = state.scale;
@@ -93,12 +93,21 @@ function screenRect(s, rect) {
 function drawBoardGrid(ctx, rect) {
   const step = 48 * state.scale;
   if (step < 10) return;
-  ctx.strokeStyle = "rgba(148,163,184,.08)";
+  // Grid weight is a theme token: it stays nearly invisible on the dark and paper
+  // themes, and reads as a drafting sheet on blueprint, where every 4th line
+  // becomes a major rule.
+  const minor = TH.num("gridAlpha", .08);
+  const major = TH.num("gridMajorAlpha", 0);
   ctx.lineWidth = 1;
-  for (let x = (rect.width / 2 + state.panX * state.scale) % step; x < rect.width; x += step) {
+  const originX = rect.width / 2 + state.panX * state.scale;
+  const originY = rect.height / 2 + state.panY * state.scale;
+  const isMajor = (v, origin) => major > 0 && Math.round((v - origin) / step) % 4 === 0;
+  for (let x = originX % step; x < rect.width; x += step) {
+    ctx.strokeStyle = TH.a("line", isMajor(x, originX) ? major : minor);
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke();
   }
-  for (let y = (rect.height / 2 + state.panY * state.scale) % step; y < rect.height; y += step) {
+  for (let y = originY % step; y < rect.height; y += step) {
+    ctx.strokeStyle = TH.a("line", isMajor(y, originY) ? major : minor);
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke();
   }
 }
@@ -116,12 +125,12 @@ function drawClusterBlocks(ctx, rect, arr) {
     const w = c.w * state.scale;
     const h = c.h * state.scale;
     if (x > rect.width || y > rect.height || x + w < 0 || y + h < 0) continue;
-    ctx.fillStyle = "rgba(8, 47, 73, .16)";
-    ctx.strokeStyle = "rgba(56,189,248,.24)";
+    ctx.fillStyle = TH.a("accentSoft", .16);
+    ctx.strokeStyle = TH.a("accent", .24);
     ctx.lineWidth = 1;
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = "rgba(234,242,255,.72)";
+    ctx.fillStyle = TH.a("text", .72);
     ctx.font = "800 11px Inter, sans-serif";
     ctx.fillText(`${name} · ${c.n}`, x + 9, y + 16);
   }
@@ -141,23 +150,23 @@ function drawHotspotGlyph(ctx, s, rect, max) {
   ctx.globalAlpha = .28 + absSeverity * .62;
   ctx.fillRect(box.x, box.y, box.w, box.h);
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = selected ? "#ffffff" : "rgba(226,232,240,.32)";
+  ctx.strokeStyle = selected ? TH.c("marker") : TH.a("lineStrong", .32);
   ctx.lineWidth = selected ? 2 : 1;
   ctx.strokeRect(box.x, box.y, box.w, box.h);
 
   const stripH = Math.max(4, Math.min(9, box.h * .22));
   const fpW = box.w * (fp / total);
   const fnW = box.w * (fn / total);
-  ctx.fillStyle = "rgba(251,113,133,.88)";
+  ctx.fillStyle = TH.a("bad", .88);
   ctx.fillRect(box.x, box.y + box.h - stripH, fpW, stripH);
-  ctx.fillStyle = "rgba(251,191,36,.84)";
+  ctx.fillStyle = TH.a("warn", .84);
   ctx.fillRect(box.x + fpW, box.y + box.h - stripH, fnW, stripH);
   const tpW = box.w * (tp / total);
-  ctx.fillStyle = "rgba(56,189,248,.85)";
+  ctx.fillStyle = TH.a("accent", .85);
   ctx.fillRect(box.x, box.y, tpW, Math.max(3, stripH * .55));
 
   if (selected || box.w > 58) {
-    ctx.fillStyle = selected ? "#ffffff" : "rgba(234,242,255,.8)";
+    ctx.fillStyle = selected ? TH.c("marker") : TH.a("text", .8);
     ctx.font = selected ? "800 11px Inter, sans-serif" : "700 9px Inter, sans-serif";
     ctx.fillText(scenarioName(s).slice(0, selected ? 30 : 16), box.x + 5, box.y + Math.min(17, box.h - 8));
   }
@@ -200,12 +209,12 @@ function drawLabelBubbles(rect, arr) {
   const cy = (bounds.minY + bounds.maxY) / 2;
   const ring = Math.max(78, Math.min(150, 34 + labels.length * 8));
   const center = mapPoint(cx, cy, rect);
-  ctx.strokeStyle = "rgba(56,189,248,.2)";
+  ctx.strokeStyle = TH.a("accent", .2);
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.arc(center.x, center.y, ring * state.scale, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.fillStyle = "rgba(234,242,255,.78)";
+  ctx.fillStyle = TH.a("text", .78);
   ctx.font = "800 12px Inter, sans-serif";
   ctx.fillText("labels", center.x - 18, center.y + 4);
   state.labelNodes = [];
@@ -222,7 +231,7 @@ function drawLabelBubbles(rect, arr) {
     ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = item.label === state.label ? "#ffffff" : "rgba(226,232,240,.28)";
+    ctx.strokeStyle = item.label === state.label ? TH.c("marker") : TH.a("lineStrong", .28);
     ctx.lineWidth = item.label === state.label ? 2 : 1;
     ctx.beginPath();
     ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
@@ -230,20 +239,20 @@ function drawLabelBubbles(rect, arr) {
     const fpArc = (item.row.fp || 0) / total * Math.PI * 2;
     const fnArc = (item.row.fn || 0) / total * Math.PI * 2;
     ctx.lineWidth = Math.max(2, radius * .16);
-    ctx.strokeStyle = "#fb7185";
+    ctx.strokeStyle = TH.c("bad");
     ctx.beginPath();
     ctx.arc(p.x, p.y, radius + 3, -Math.PI / 2, -Math.PI / 2 + fpArc);
     ctx.stroke();
-    ctx.strokeStyle = "#fbbf24";
+    ctx.strokeStyle = TH.c("warn");
     ctx.beginPath();
     ctx.arc(p.x, p.y, radius + 6, -Math.PI / 2 + fpArc, -Math.PI / 2 + fpArc + fnArc);
     ctx.stroke();
     ctx.lineWidth = 1;
-    ctx.fillStyle = "#eaf2ff";
+    ctx.fillStyle = TH.c("text");
     ctx.font = `${item.label === state.label ? "800" : "700"} ${Math.max(9, Math.min(12, radius * .42))}px Inter, sans-serif`;
     ctx.textAlign = "center";
     ctx.fillText(item.label.slice(0, 10), p.x, p.y + radius + 13);
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.fillText(state.compare ? fmtDelta(Math.round(v)) : fmt(Math.round(v)), p.x, p.y + radius + 25);
     ctx.textAlign = "left";
   });
@@ -269,14 +278,14 @@ function drawLabelConnections(rect, arr) {
     const t = Math.abs(v) / max;
     const midX = (source.x + tx) / 2;
     const midY = (source.y + ty) / 2 - Math.min(80, 18 + t * 54);
-    ctx.strokeStyle = v < 0 ? `rgba(52,211,153,${.16 + t * .58})` : `rgba(56,189,248,${.14 + t * .5})`;
+    ctx.strokeStyle = v < 0 ? TH.a("good", .16 + t * .58) : TH.a("accent", .14 + t * .5);
     ctx.lineWidth = Math.max(1, 1 + t * 4);
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
     ctx.quadraticCurveTo(midX, midY, tx, ty);
     ctx.stroke();
     if (i < 10) {
-      ctx.fillStyle = v < 0 ? "rgba(52,211,153,.9)" : "rgba(234,242,255,.82)";
+      ctx.fillStyle = v < 0 ? TH.a("good", .9) : TH.a("text", .82);
       ctx.beginPath();
       ctx.arc(tx, ty, Math.max(2.5, 2 + t * 4), 0, Math.PI * 2);
       ctx.fill();
@@ -317,9 +326,9 @@ function canvasRoundRect(x, y, w, h, radius = 8) {
 }
 function fillCard(x, y, w, h, options = {}) {
   canvasRoundRect(x, y, w, h, options.radius || 8);
-  ctx.fillStyle = options.fill || "rgba(8,13,28,.72)";
+  ctx.fillStyle = options.fill || TH.a("panel", .72);
   ctx.fill();
-  ctx.strokeStyle = options.stroke || "rgba(148,163,184,.18)";
+  ctx.strokeStyle = options.stroke || TH.a("line", .18);
   ctx.lineWidth = options.lineWidth || 1;
   ctx.stroke();
 }
@@ -341,11 +350,11 @@ function drawWrappedText(text, x, y, maxW, lineH, maxLines = 3) {
 }
 function drawCanvasBadge(text, status, x, y, w = 58, h = 21) {
   const colors = {
-    pass: ["rgba(52,211,153,.18)", "rgba(52,211,153,.72)", "#bbf7d0"],
-    fail: ["rgba(251,113,133,.18)", "rgba(251,113,133,.72)", "#fecdd3"],
-    review: ["rgba(251,191,36,.16)", "rgba(251,191,36,.66)", "#fde68a"],
-    unknown: ["rgba(148,163,184,.14)", "rgba(148,163,184,.46)", "#cbd5e1"]
-  }[status] || ["rgba(148,163,184,.14)", "rgba(148,163,184,.46)", "#cbd5e1"];
+    pass: [TH.a("good", .18), TH.a("good", .72), TH.c("goodFg")],
+    fail: [TH.a("bad", .18), TH.a("bad", .72), TH.c("badFg")],
+    review: [TH.a("warn", .16), TH.a("warn", .66), TH.c("warnFg")],
+    unknown: [TH.a("line", .14), TH.a("line", .46), TH.c("mutedBright")]
+  }[status] || [TH.a("line", .14), TH.a("line", .46), TH.c("mutedBright")];
   fillCard(x, y, w, h, {fill: colors[0], stroke: colors[1], radius: 7});
   ctx.fillStyle = colors[2];
   ctx.font = "800 10px Inter, sans-serif";
@@ -365,10 +374,10 @@ function devopsResultForCanvas(s) {
   return fallbackScenarioResult(s, "");
 }
 function drawDevopsSuiteCards(groups, x, y, w, h) {
-  ctx.fillStyle = "#eaf2ff";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "800 15px Inter, sans-serif";
   ctx.fillText("Suites", x, y);
-  ctx.fillStyle = "rgba(145,164,191,.9)";
+  ctx.fillStyle = TH.a("muted", .9);
   ctx.font = "600 11px Inter, sans-serif";
   ctx.fillText("Worst pass rate first. Select cases below or from the left list.", x, y + 20);
   const gap = 9;
@@ -385,24 +394,24 @@ function drawDevopsSuiteCards(groups, x, y, w, h) {
     const ratePct = Math.max(0, Math.min(100, Number(rateValue || 0) * 100));
     const isFailing = ratePct < 50 || group.fail > group.pass;
     fillCard(cx, cy, colW, cardH, {
-      fill: isFailing ? "rgba(69,10,10,.28)" : "rgba(6,78,59,.18)",
-      stroke: isFailing ? "rgba(251,113,133,.30)" : "rgba(52,211,153,.26)"
+      fill: isFailing ? TH.a("badBgDeep", .28) : TH.a("goodBg", .18),
+      stroke: isFailing ? TH.a("bad", .30) : TH.a("good", .26)
     });
-    ctx.fillStyle = "#eaf2ff";
+    ctx.fillStyle = TH.c("text");
     ctx.font = "800 11px Inter, sans-serif";
     drawWrappedText(group.key.replace(/^DevOps_V1_/, ""), cx + 10, cy + 16, colW - 88, 12, 2);
-    ctx.fillStyle = isFailing ? "#fecdd3" : "#bbf7d0";
+    ctx.fillStyle = isFailing ? TH.c("badFg") : TH.c("goodFg");
     ctx.font = "800 13px Inter, sans-serif";
     ctx.textAlign = "right";
     ctx.fillText(`${Math.round(ratePct)}%`, cx + colW - 10, cy + 18);
     ctx.textAlign = "left";
-    ctx.fillStyle = "rgba(15,23,42,.92)";
+    ctx.fillStyle = TH.a("surface", .92);
     canvasRoundRect(cx + 10, cy + cardH - 16, colW - 20, 5, 4);
     ctx.fill();
-    ctx.fillStyle = isFailing ? "#fb7185" : "#34d399";
+    ctx.fillStyle = isFailing ? TH.c("bad") : TH.c("good");
     canvasRoundRect(cx + 10, cy + cardH - 16, (colW - 20) * ratePct / 100, 5, 4);
     ctx.fill();
-    ctx.fillStyle = "rgba(203,213,225,.82)";
+    ctx.fillStyle = TH.a("mutedBright", .82);
     ctx.font = "600 10px Inter, sans-serif";
     const counts = suitePass
       ? `${fmt(suitePass.passed)}/${fmt(suitePass.total)} official pass`
@@ -411,17 +420,17 @@ function drawDevopsSuiteCards(groups, x, y, w, h) {
   });
 }
 function drawDevopsSuiteTree(groups, x, y, w, h, selected) {
-  ctx.fillStyle = "#eaf2ff";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "800 15px Inter, sans-serif";
   ctx.fillText("Suite Results", x, y);
-  ctx.fillStyle = "rgba(145,164,191,.9)";
+  ctx.fillStyle = TH.a("muted", .9);
   ctx.font = "600 11px Inter, sans-serif";
   ctx.fillText("Fold suites here, then select a scenario to inspect judgement gates.", x, y + 20);
   const listX = x;
   const listY = y + 36;
   const listW = w;
   const listH = h - 36;
-  fillCard(listX, listY, listW, listH, {fill: "rgba(2,6,23,.22)", stroke: "rgba(148,163,184,.14)"});
+  fillCard(listX, listY, listW, listH, {fill: TH.a("deep", .22), stroke: TH.a("line", .14)});
   ctx.save();
   ctx.beginPath();
   ctx.rect(listX, listY, listW, listH);
@@ -438,29 +447,29 @@ function drawDevopsSuiteTree(groups, x, y, w, h, selected) {
       const ratePct = Math.max(0, Math.min(100, Number(rateValue || 0) * 100));
       const failing = ratePct < 50 || group.fail > group.pass;
       fillCard(listX + 8, cursor, listW - 16, headH - 4, {
-        fill: failing ? "rgba(69,10,10,.24)" : "rgba(6,78,59,.16)",
-        stroke: failing ? "rgba(251,113,133,.28)" : "rgba(52,211,153,.22)"
+        fill: failing ? TH.a("badBgDeep", .24) : TH.a("goodBg", .16),
+        stroke: failing ? TH.a("bad", .28) : TH.a("good", .22)
       });
       state.devopsCanvasHits.push({kind: "suite", suite: group.key, x: listX + 8, y: cursor, w: listW - 16, h: headH - 4});
-      ctx.fillStyle = "#eaf2ff";
+      ctx.fillStyle = TH.c("text");
       ctx.font = "900 12px Inter, sans-serif";
       ctx.fillText(expanded ? "v" : ">", listX + 20, cursor + 24);
       drawWrappedText(group.key.replace(/^DevOps_V1_/, ""), listX + 42, cursor + 17, listW - 210, 13, 1);
       const countText = suitePass
         ? `${fmt(suitePass.passed)}/${fmt(suitePass.total)} pass`
         : `${fmt(group.pass)} pass / ${fmt(group.fail)} fail`;
-      ctx.fillStyle = failing ? "#fecdd3" : "#bbf7d0";
+      ctx.fillStyle = failing ? TH.c("badFg") : TH.c("goodFg");
       ctx.font = "900 12px Inter, sans-serif";
       ctx.textAlign = "right";
       ctx.fillText(`${Math.round(ratePct)}%`, listX + listW - 20, cursor + 17);
-      ctx.fillStyle = "rgba(203,213,225,.82)";
+      ctx.fillStyle = TH.a("mutedBright", .82);
       ctx.font = "700 10px Inter, sans-serif";
       ctx.fillText(countText, listX + listW - 20, cursor + 31);
       ctx.textAlign = "left";
-      ctx.fillStyle = "rgba(15,23,42,.92)";
+      ctx.fillStyle = TH.a("surface", .92);
       canvasRoundRect(listX + 42, cursor + 27, Math.max(80, listW - 250), 5, 4);
       ctx.fill();
-      ctx.fillStyle = failing ? "#fb7185" : "#34d399";
+      ctx.fillStyle = failing ? TH.c("bad") : TH.c("good");
       canvasRoundRect(listX + 42, cursor + 27, Math.max(80, listW - 250) * ratePct / 100, 5, 4);
       ctx.fill();
     }
@@ -479,16 +488,16 @@ function drawDevopsSuiteTree(groups, x, y, w, h, selected) {
           const active = scenarioKey(item) === selectedKey;
           const j = scenarioJudgement(item);
           fillCard(listX + 24, cursor, listW - 40, rowH - 5, {
-            fill: active ? "rgba(8,47,73,.74)" : "rgba(15,23,42,.54)",
-            stroke: active ? "rgba(56,189,248,.62)" : "rgba(148,163,184,.14)",
+            fill: active ? TH.a("accentSoft", .74) : TH.a("surface", .54),
+            stroke: active ? TH.a("accent", .62) : TH.a("line", .14),
             radius: 7
           });
           state.devopsCanvasHits.push({kind: "scenario", s: item, x: listX + 24, y: cursor, w: listW - 40, h: rowH - 5});
           drawCanvasBadge(j.label, j.status, listX + 34, cursor + 8, 50, 20);
-          ctx.fillStyle = "#eaf2ff";
+          ctx.fillStyle = TH.c("text");
           ctx.font = "800 11px Inter, sans-serif";
           drawWrappedText(scenarioName(item), listX + 94, cursor + 16, listW - 176, 12, 1);
-          ctx.fillStyle = "rgba(145,164,191,.9)";
+          ctx.fillStyle = TH.a("muted", .9);
           ctx.font = "600 10px Inter, sans-serif";
           drawWrappedText(`${j.reason} / TP ${fmt(targetMetric(item, "tp"))} / FP ${fmt(targetMetric(item, "fp"))} / FN ${fmt(targetMetric(item, "fn"))}`, listX + 94, cursor + 31, listW - 176, 12, 1);
         }
@@ -502,7 +511,7 @@ function drawDevopsSuiteTree(groups, x, y, w, h, selected) {
   if (state.devopsCanvasMaxScroll > 0) {
     const thumbH = Math.max(36, listH * listH / (listH + state.devopsCanvasMaxScroll));
     const thumbY = listY + (listH - thumbH) * (state.devopsCanvasScroll / state.devopsCanvasMaxScroll);
-    fillCard(listX + listW - 8, thumbY, 4, thumbH, {fill: "rgba(56,189,248,.5)", stroke: "rgba(56,189,248,.1)", radius: 3});
+    fillCard(listX + listW - 8, thumbY, 4, thumbH, {fill: TH.a("accent", .5), stroke: TH.a("accent", .1), radius: 3});
   }
 }
 function devopsGateLabel(g) {
@@ -515,43 +524,43 @@ function drawDevopsGate(g, x, y, w) {
   const failed = g.passed === false;
   const status = passed ? "pass" : (failed ? "fail" : "review");
   drawCanvasBadge(passed ? "PASS" : (failed ? "FAIL" : "CHECK"), status, x, y - 3, 58, 21);
-  ctx.fillStyle = "#dbeafe";
+  ctx.fillStyle = TH.c("accentFg");
   ctx.font = "800 11px Inter, sans-serif";
   drawWrappedText(devopsGateLabel(g), x + 68, y + 11, w - 74, 12, 1);
   const barY = y + 28;
-  ctx.fillStyle = "rgba(15,23,42,.92)";
+  ctx.fillStyle = TH.a("surface", .92);
   canvasRoundRect(x, barY, w, 7, 4);
   ctx.fill();
   const actual = Number(g.actual_rate);
   const required = Number(g.required_rate);
   const actualPct = Number.isFinite(actual) ? Math.max(0, Math.min(1, actual)) : 0;
   const requiredPct = Number.isFinite(required) ? Math.max(0, Math.min(1, required)) : null;
-  ctx.fillStyle = failed ? "#fb7185" : "#38bdf8";
+  ctx.fillStyle = failed ? TH.c("bad") : TH.c("accent");
   canvasRoundRect(x, barY, w * actualPct, 7, 4);
   ctx.fill();
   if (requiredPct != null) {
-    ctx.strokeStyle = "#fbbf24";
+    ctx.strokeStyle = TH.c("warn");
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(x + w * requiredPct, barY - 4);
     ctx.lineTo(x + w * requiredPct, barY + 11);
     ctx.stroke();
   }
-  ctx.fillStyle = "rgba(145,164,191,.92)";
+  ctx.fillStyle = TH.a("muted", .92);
   ctx.font = "600 10px Inter, sans-serif";
   const meta = `${pctText(g.actual_rate)} actual / ${pctText(g.required_rate)} required / ${fmt(g.fail_count)} failed / ${fmt(g.total_count)} total`;
   drawWrappedText(meta, x, y + 49, w, 12, 1);
 }
 function drawDevopsEvidenceCurve(s, result, x, y, w, h) {
-  fillCard(x, y, w, h, {fill: "rgba(2,6,23,.34)", stroke: "rgba(148,163,184,.16)"});
-  ctx.fillStyle = "#eaf2ff";
+  fillCard(x, y, w, h, {fill: TH.a("deep", .34), stroke: TH.a("line", .16)});
+  ctx.fillStyle = TH.c("text");
   ctx.font = "800 12px Inter, sans-serif";
   ctx.fillText("Frame Evidence", x + 12, y + 18);
   const frames = (state.selected && s && scenarioKey(state.selected) === scenarioKey(s) ? state.curve : []) || [];
   const hot = result && (result.hot_frames || []);
   const plotX = x + 12, plotY = y + 34, plotW = w - 24, plotH = h - 48;
   if (!frames.length) {
-    ctx.fillStyle = "rgba(145,164,191,.85)";
+    ctx.fillStyle = TH.a("muted", .85);
     ctx.font = "600 11px Inter, sans-serif";
     ctx.fillText("Select a scenario to load its per-frame TP / FP / FN curve.", plotX, plotY + 25);
     return;
@@ -563,18 +572,18 @@ function drawDevopsEvidenceCurve(s, result, x, y, w, h) {
     const fpH = Math.abs(f.fp || 0) / maxV * plotH;
     const fnH = Math.abs(f.fn || 0) / maxV * plotH;
     const tpH = Math.abs(f.tp || 0) / maxV * plotH;
-    ctx.fillStyle = "rgba(251,113,133,.7)";
+    ctx.fillStyle = TH.a("bad", .7);
     ctx.fillRect(bx, plotY + plotH - fpH, Math.max(1, plotW / sampled.length - 1), fpH);
-    ctx.fillStyle = "rgba(251,191,36,.72)";
+    ctx.fillStyle = TH.a("warn", .72);
     ctx.fillRect(bx, plotY + plotH - fpH - fnH, Math.max(1, plotW / sampled.length - 1), fnH);
-    ctx.fillStyle = "rgba(56,189,248,.66)";
+    ctx.fillStyle = TH.a("accent", .66);
     ctx.fillRect(bx, plotY + plotH - fpH - fnH - tpH, Math.max(1, plotW / sampled.length - 1), tpH);
   });
   (hot || []).slice(0, 5).forEach((f, i) => {
     const fx = plotX + (i + .5) * Math.min(92, plotW / Math.max(1, Math.min(5, hot.length)));
     const fy = y + h - 25;
-    fillCard(fx, fy, 78, 18, {fill: "rgba(15,23,42,.86)", stroke: "rgba(56,189,248,.25)", radius: 6});
-    ctx.fillStyle = "#bae6fd";
+    fillCard(fx, fy, 78, 18, {fill: TH.a("surface", .86), stroke: TH.a("accent", .25), radius: 6});
+    ctx.fillStyle = TH.c("accentFg");
     ctx.font = "800 10px Inter, sans-serif";
     ctx.fillText(`f${f.frame}`, fx + 8, fy + 12);
     state.devopsCanvasHits.push({kind: "frame", frame: Number(f.frame), x: fx, y: fy, w: 78, h: 18});
@@ -590,10 +599,10 @@ function renderDevopsCanvas(rect) {
   const topY = 92;
   const contentW = rect.width - pad * 2;
   const contentH = rect.height - topY - pad;
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "900 24px Inter, sans-serif";
   ctx.fillText("DevOps Result Review", pad, 42);
-  ctx.fillStyle = "rgba(186,230,253,.86)";
+  ctx.fillStyle = TH.a("accentFg", .86);
   ctx.font = "600 12px Inter, sans-serif";
   ctx.fillText("Suite pass/fail, scenario intent, criteria gates, and evidence frames in one place.", pad, 64);
   const totalPass = groups.reduce((n, g) => n + (g.suitePass ? g.suitePass.passed : g.pass), 0);
@@ -606,20 +615,20 @@ function renderDevopsCanvas(rect) {
   ];
   kpis.forEach((k, i) => {
     const x = rect.width - pad - (4 - i) * 126;
-    fillCard(x, 24, 112, 46, {fill: "rgba(8,13,28,.58)", stroke: "rgba(56,189,248,.18)"});
-    ctx.fillStyle = "#eaf2ff";
+    fillCard(x, 24, 112, 46, {fill: TH.a("panel", .58), stroke: TH.a("accent", .18)});
+    ctx.fillStyle = TH.c("text");
     ctx.font = "900 16px Inter, sans-serif";
     ctx.fillText(k[1], x + 10, 44);
-    ctx.fillStyle = "rgba(145,164,191,.9)";
+    ctx.fillStyle = TH.a("muted", .9);
     ctx.font = "700 10px Inter, sans-serif";
     ctx.fillText(k[0], x + 10, 60);
   });
   if (!all.length) {
-    fillCard(pad, topY, contentW, Math.min(280, contentH), {fill: "rgba(8,13,28,.58)", stroke: "rgba(251,191,36,.25)"});
-    ctx.fillStyle = "#fde68a";
+    fillCard(pad, topY, contentW, Math.min(280, contentH), {fill: TH.a("panel", .58), stroke: TH.a("warn", .25)});
+    ctx.fillStyle = TH.c("warnFg");
     ctx.font = "900 18px Inter, sans-serif";
     ctx.fillText("No DevOps scenario metadata was inferred.", pad + 18, topY + 38);
-    ctx.fillStyle = "rgba(203,213,225,.9)";
+    ctx.fillStyle = TH.a("mutedBright", .9);
     ctx.font = "600 12px Inter, sans-serif";
     drawWrappedText("Choose a devops parquet, clear the search, or restart the bbox API if the run metadata was loaded before the new parser.", pad + 18, topY + 64, contentW - 36, 16, 3);
     updateDevopsCanvasHover(rect);
@@ -635,55 +644,55 @@ function renderDevopsCanvas(rect) {
     label: result.overall_pass ? "PASS" : "FAIL",
     reason: (result.explanation || [])[0] || scenarioJudgement(s).reason
   } : scenarioJudgement(s)) : null;
-  fillCard(rightX, topY, rightW, contentH, {fill: "rgba(8,13,28,.62)", stroke: "rgba(56,189,248,.20)"});
+  fillCard(rightX, topY, rightW, contentH, {fill: TH.a("panel", .62), stroke: TH.a("accent", .20)});
   if (!s) {
-    ctx.fillStyle = "#eaf2ff";
+    ctx.fillStyle = TH.c("text");
     ctx.font = "900 16px Inter, sans-serif";
     ctx.fillText("Select a scenario", rightX + 16, topY + 32);
     return;
   }
   drawDevopsSuiteTree(groups, pad, topY, leftW, contentH, s);
   drawCanvasBadge(judgement.label, judgement.status, rightX + 16, topY + 16, 66, 24);
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "900 17px Inter, sans-serif";
   drawWrappedText(scenarioName(s), rightX + 94, topY + 34, rightW - 112, 18, 2);
   const c = devopsContext(s);
-  ctx.fillStyle = "rgba(186,230,253,.86)";
+  ctx.fillStyle = TH.a("accentFg", .86);
   ctx.font = "700 11px Inter, sans-serif";
   drawWrappedText([c.intent_type, c.target_label, c.behavior, c.pc_mode, c.city].filter(Boolean).join(" / "), rightX + 16, topY + 78, rightW - 32, 14, 2);
-  ctx.fillStyle = "rgba(226,232,240,.92)";
+  ctx.fillStyle = TH.a("lineStrong", .92);
   ctx.font = "600 12px Inter, sans-serif";
   drawWrappedText((result && result.explanation || [judgement.reason, devopsQuickRead(s)]).join(" "), rightX + 16, topY + 116, rightW - 32, 16, 4);
   const target = c.target_label || "target";
   const metricY = topY + 190;
   [
-    ["TP", targetMetric(s, "tp"), "#38bdf8"],
-    ["FP", targetMetric(s, "fp"), "#fb7185"],
-    ["FN", targetMetric(s, "fn"), "#fbbf24"],
-    ["Frames", s.frames || 0, "#cbd5e1"]
+    ["TP", targetMetric(s, "tp"), TH.c("accent")],
+    ["FP", targetMetric(s, "fp"), TH.c("bad")],
+    ["FN", targetMetric(s, "fn"), TH.c("warn")],
+    ["Frames", s.frames || 0, TH.c("mutedBright")]
   ].forEach((m, i) => {
     const mx = rightX + 16 + i * Math.max(92, (rightW - 32) / 4);
     ctx.fillStyle = m[2];
     ctx.font = "900 17px Inter, sans-serif";
     ctx.fillText(fmt(m[1]), mx, metricY);
-    ctx.fillStyle = "rgba(145,164,191,.9)";
+    ctx.fillStyle = TH.a("muted", .9);
     ctx.font = "700 10px Inter, sans-serif";
     ctx.fillText(`${target} ${m[0]}`.replace(`${target} Frames`, "Frames"), mx, metricY + 16);
   });
-  ctx.fillStyle = "#eaf2ff";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "900 13px Inter, sans-serif";
   ctx.fillText("Criteria Gates", rightX + 16, metricY + 50);
   const gates = (result && result.gates || []).slice(0, 4);
   if (gates.length) gates.forEach((g, i) => drawDevopsGate(g, rightX + 16, metricY + 70 + i * 72, rightW - 32));
   else {
-    ctx.fillStyle = "rgba(145,164,191,.9)";
+    ctx.fillStyle = TH.a("muted", .9);
     ctx.font = "600 11px Inter, sans-serif";
     drawWrappedText("No supported criteria gates for this scenario yet. The summary still shows target TP / FP / FN for investigation.", rightX + 16, metricY + 72, rightW - 32, 14, 2);
   }
   const evidenceY = Math.max(metricY + 70 + Math.max(1, gates.length) * 72 + 8, topY + contentH - 142);
   drawDevopsEvidenceCurve(s, result, rightX + 16, evidenceY, rightW - 32, Math.max(118, topY + contentH - evidenceY - 16));
-  fillCard(rightX + rightW - 120, topY + contentH - 44, 96, 26, {fill: "rgba(8,145,178,.26)", stroke: "rgba(56,189,248,.40)", radius: 7});
-  ctx.fillStyle = "#ddf7ff";
+  fillCard(rightX + rightW - 120, topY + contentH - 44, 96, 26, {fill: TH.a("accentDeep", .26), stroke: TH.a("accent", .40), radius: 7});
+  ctx.fillStyle = TH.c("btnFg");
   ctx.font = "900 11px Inter, sans-serif";
   ctx.fillText("Open Viewer", rightX + rightW - 103, topY + contentH - 27);
   state.devopsCanvasHits.push({kind: "viewer", x: rightX + rightW - 120, y: topY + contentH - 44, w: 96, h: 26});
@@ -696,7 +705,7 @@ function render() {
   const r = resizeCanvas(els.canvas, ctx);
   ctx.clearRect(0, 0, r.width, r.height);
   const bg = ctx.createLinearGradient(0, 0, r.width, r.height);
-  bg.addColorStop(0, "#07111f"); bg.addColorStop(.55, "#050812"); bg.addColorStop(1, "#020617");
+  bg.addColorStop(0, TH.c("onAccent")); bg.addColorStop(.55, TH.c("bg")); bg.addColorStop(1, TH.c("bgDeep"));
   ctx.fillStyle = bg; ctx.fillRect(0, 0, r.width, r.height);
   if (state.stageView === "stats") {
     els.legend.style.display = "none";
@@ -795,9 +804,9 @@ function updateHover(rect) {
 function renderCurve(message = "") {
   const r = resizeCanvas(els.curve, curveCtx);
   curveCtx.clearRect(0, 0, r.width, r.height);
-  curveCtx.fillStyle = "rgba(2,6,23,.72)";
+  curveCtx.fillStyle = TH.a("deep", .72);
   curveCtx.fillRect(0, 0, r.width, r.height);
-  curveCtx.strokeStyle = "rgba(148,163,184,.18)";
+  curveCtx.strokeStyle = TH.a("line", .18);
   curveCtx.lineWidth = 1;
   for (let i = 0; i < 4; i++) {
     const y = 24 + i * (r.height - 42) / 3;
@@ -806,7 +815,7 @@ function renderCurve(message = "") {
   if (!state.curve.length) {
     const text = message || "No frames matched the selected label/range.";
     els.curveStatus.textContent = text;
-    curveCtx.fillStyle = "#91a4bf";
+    curveCtx.fillStyle = TH.c("muted");
     curveCtx.font = "12px Inter, sans-serif";
     curveCtx.fillText(text, 12, Math.max(28, r.height / 2));
     return;
@@ -816,7 +825,7 @@ function renderCurve(message = "") {
   const barW = Math.max(1, plot.w / Math.max(1, state.curve.length) * .82);
   if (state.compare) {
     const mid = plot.y + plot.h / 2;
-    curveCtx.strokeStyle = "rgba(226,232,240,.32)";
+    curveCtx.strokeStyle = TH.a("lineStrong", .32);
     curveCtx.beginPath(); curveCtx.moveTo(plot.x, mid); curveCtx.lineTo(plot.x + plot.w, mid); curveCtx.stroke();
     const drawDeltaBar = (x, value, offset, colorPos, colorNeg) => {
       const h = (Math.abs(Number(value) || 0) / max) * (plot.h / 2);
@@ -825,11 +834,11 @@ function renderCurve(message = "") {
     };
     state.curve.forEach((f, i) => {
       const x = plot.x + i * plot.w / Math.max(1, state.curve.length - 1);
-      drawDeltaBar(x, f.fp || 0, -barW * .18, "rgba(251,113,133,.72)", "rgba(52,211,153,.64)");
-      drawDeltaBar(x, f.fn || 0, barW * .18, "rgba(251,191,36,.72)", "rgba(52,211,153,.5)");
+      drawDeltaBar(x, f.fp || 0, -barW * .18, TH.a("bad", .72), TH.a("good", .64));
+      drawDeltaBar(x, f.fn || 0, barW * .18, TH.a("warn", .72), TH.a("good", .5));
     });
-    curveCtx.fillStyle = "#fb7185"; curveCtx.font = "700 11px Inter, sans-serif";
-    curveCtx.fillText("ΔFP", 10, 16); curveCtx.fillStyle = "#fbbf24"; curveCtx.fillText("ΔFN", 52, 16); curveCtx.fillStyle = "#34d399"; curveCtx.fillText("below = improved", 96, 16);
+    curveCtx.fillStyle = TH.c("bad"); curveCtx.font = "700 11px Inter, sans-serif";
+    curveCtx.fillText("ΔFP", 10, 16); curveCtx.fillStyle = TH.c("warn"); curveCtx.fillText("ΔFN", 52, 16); curveCtx.fillStyle = TH.c("good"); curveCtx.fillText("below = improved", 96, 16);
     const peak = [...state.curve].sort((a, b) => (Math.abs(b.fp || 0) + Math.abs(b.fn || 0)) - (Math.abs(a.fp || 0) + Math.abs(a.fn || 0)))[0];
     els.curveStatus.textContent = `${state.curve.length} frames · largest change frame ${peak ? peak.frame : "-"} · max |delta| ${Math.round(max)}`;
     drawCurveFrameMarker(plot);
@@ -839,9 +848,9 @@ function renderCurve(message = "") {
     const x = plot.x + i * plot.w / Math.max(1, state.curve.length - 1);
     const fpH = ((Number(f.fp) || 0) / max) * plot.h;
     const fnH = ((Number(f.fn) || 0) / max) * plot.h;
-    curveCtx.fillStyle = "rgba(251,113,133,.58)";
+    curveCtx.fillStyle = TH.a("bad", .58);
     curveCtx.fillRect(x - barW / 2, plot.y + plot.h - fpH, barW * .48, fpH);
-    curveCtx.fillStyle = "rgba(251,191,36,.58)";
+    curveCtx.fillStyle = TH.a("warn", .58);
     curveCtx.fillRect(x, plot.y + plot.h - fnH, barW * .48, fnH);
   });
   const draw = (key, color) => {
@@ -853,12 +862,12 @@ function renderCurve(message = "") {
     });
     curveCtx.stroke();
   };
-  draw("tp", "#38bdf8");
-  draw("fp", "#fb7185");
-  draw("fn", "#fbbf24");
-  curveCtx.fillStyle = "#38bdf8"; curveCtx.font = "700 11px Inter, sans-serif";
-  curveCtx.fillText("TP", 10, 16); curveCtx.fillStyle = "#fb7185"; curveCtx.fillText("FP", 44, 16); curveCtx.fillStyle = "#fbbf24"; curveCtx.fillText("FN", 78, 16);
-  curveCtx.fillStyle = "#91a4bf"; curveCtx.fillText(`max ${Math.round(max)}`, r.width - 68, 16);
+  draw("tp", TH.c("accent"));
+  draw("fp", TH.c("bad"));
+  draw("fn", TH.c("warn"));
+  curveCtx.fillStyle = TH.c("accent"); curveCtx.font = "700 11px Inter, sans-serif";
+  curveCtx.fillText("TP", 10, 16); curveCtx.fillStyle = TH.c("bad"); curveCtx.fillText("FP", 44, 16); curveCtx.fillStyle = TH.c("warn"); curveCtx.fillText("FN", 78, 16);
+  curveCtx.fillStyle = TH.c("muted"); curveCtx.fillText(`max ${Math.round(max)}`, r.width - 68, 16);
   const peak = [...state.curve].sort((a, b) => ((b.fp || 0) + (b.fn || 0)) - ((a.fp || 0) + (a.fn || 0)))[0];
   els.curveStatus.textContent = `${state.curve.length} frames · peak frame ${peak ? peak.frame : "-"} · max ${Math.round(max)} objects/frame`;
   drawCurveFrameMarker(plot);
@@ -879,13 +888,13 @@ function drawCurveFrameMarker(plot) {
   const frame = currentPreviewFrameNumber();
   const x = curveXForFrame(frame, plot);
   if (x == null) return;
-  curveCtx.strokeStyle = "rgba(255,255,255,.88)";
+  curveCtx.strokeStyle = TH.a("marker", .88);
   curveCtx.lineWidth = 1.5;
   curveCtx.beginPath();
   curveCtx.moveTo(x, plot.y - 4);
   curveCtx.lineTo(x, plot.y + plot.h + 4);
   curveCtx.stroke();
-  curveCtx.fillStyle = "#ffffff";
+  curveCtx.fillStyle = TH.c("marker");
   curveCtx.beginPath();
   curveCtx.arc(x, plot.y - 5, 3, 0, Math.PI * 2);
   curveCtx.fill();

@@ -833,34 +833,34 @@ def _inject_workflow_page_styles() -> None:
             font-size: 0.66rem;
             letter-spacing: 0.12em;
             text-transform: uppercase;
-            color: #64748b;
+            color: var(--t4-muted);
             font-weight: 700;
         }
         .wf-panel {
-            border: 1px solid rgba(148, 163, 184, 0.24);
-            background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%);
+            border: 1px solid var(--t4-border);
+            background: var(--t4-panel-bg);
             border-radius: 18px;
             padding: 1rem 1rem 0.85rem 1rem;
-            box-shadow: 0 18px 50px -28px rgba(15, 23, 42, 0.22);
+            box-shadow: var(--t4-shadow-md);
             margin-bottom: 1rem;
         }
         .wf-panel-title {
             margin: 0;
             font-size: 1rem;
             font-weight: 800;
-            color: #0f172a;
+            color: var(--t4-text);
             letter-spacing: -0.02em;
         }
         .wf-panel-copy {
             margin: 0.3rem 0 0 0;
-            color: #475569;
+            color: var(--t4-text-3);
             font-size: 0.9rem;
             line-height: 1.5;
         }
         .wf-filter-strip,
         .wf-pager-strip {
             border: none;
-            background: linear-gradient(180deg, rgba(248,250,252,0.72) 0%, rgba(248,250,252,0.28) 100%);
+            background: linear-gradient(180deg, var(--t4-surface-2) 0%, var(--t4-surface) 100%);
             border-radius: 14px;
             padding: 0.72rem 0.78rem 0.28rem 0.78rem;
             box-shadow: none;
@@ -875,17 +875,17 @@ def _inject_workflow_page_styles() -> None:
         }
         .wf-pager-summary {
             padding-top: 0.2rem;
-            color: #475569;
+            color: var(--t4-text-3);
             font-size: 0.82rem;
             line-height: 1.35;
         }
         .wf-pager-summary strong {
-            color: #0f172a;
+            color: var(--t4-text);
             font-weight: 700;
         }
         .wf-meta-inline {
             margin-top: 0.2rem;
-            color: #64748b;
+            color: var(--t4-muted);
             font-size: 0.78rem;
         }
         .wf-meta-inline a {
@@ -897,12 +897,12 @@ def _inject_workflow_page_styles() -> None:
         }
         .wf-linked-ref {
             margin-top: 0.35rem;
-            color: #475569;
+            color: var(--t4-text-3);
             font-size: 0.82rem;
             line-height: 1.35;
         }
         .wf-linked-ref a {
-            color: #0f766e;
+            color: var(--t4-accent-2);
             text-decoration: none;
             font-weight: 600;
         }
@@ -920,7 +920,7 @@ def _inject_workflow_page_styles() -> None:
             font-size: 0.8rem;
             line-height: 1.2;
             font-weight: 700;
-            color: #0f172a;
+            color: var(--t4-text);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -934,11 +934,11 @@ def _inject_workflow_page_styles() -> None:
         }
         .wf-run-title--muted,
         .wf-run-title--muted a {
-            color: #94a3b8 !important;
+            color: var(--t4-muted) !important;
         }
         .wf-run-cell {
             min-width: 0;
-            color: #0f172a;
+            color: var(--t4-text);
             font-size: 0.78rem;
             line-height: 1.15;
             white-space: nowrap;
@@ -946,20 +946,20 @@ def _inject_workflow_page_styles() -> None:
             text-overflow: ellipsis;
         }
         .wf-run-cell--muted {
-            color: #94a3b8;
+            color: var(--t4-muted);
         }
         .wf-run-text {
             padding-top: 0.26rem;
         }
         .wf-meta-inline--muted {
-            color: #94a3b8;
+            color: var(--t4-muted);
         }
         .wf-run-code {
             padding-top: 0.22rem;
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
             font-size: 0.74rem;
             line-height: 1.22;
-            color: #0f172a;
+            color: var(--t4-text);
             white-space: normal;
             overflow-wrap: anywhere;
             word-break: break-all;
@@ -979,13 +979,13 @@ def _inject_workflow_page_styles() -> None:
             font-size: 0.68rem;
             font-weight: 700;
             letter-spacing: 0.02em;
-            background: #e2e8f0;
-            color: #475569;
+            background: var(--t4-neutral-bg);
+            color: var(--t4-neutral);
             white-space: nowrap;
         }
         .wf-flag--ok {
-            background: #dcfce7;
-            color: #166534;
+            background: var(--t4-ok-bg);
+            color: var(--t4-ok);
         }
         .wf-run-flags--muted {
             opacity: 0.58;
@@ -993,12 +993,12 @@ def _inject_workflow_page_styles() -> None:
         .wf-unavailable-note {
             margin-top: 0.18rem;
             font-size: 0.68rem;
-            color: #94a3b8;
+            color: var(--t4-muted);
             letter-spacing: 0.01em;
         }
         .wf-compare-bar {
             border: none;
-            background: linear-gradient(135deg, rgba(248,250,252,0.65) 0%, rgba(236,254,255,0.55) 100%);
+            background: linear-gradient(135deg, var(--t4-surface-2) 0%, var(--t4-accent-2-soft) 100%);
             border-radius: 12px;
             padding: 0.62rem 0.78rem;
             margin: 0.18rem 0 0.4rem 0;
@@ -1007,7 +1007,7 @@ def _inject_workflow_page_styles() -> None:
             margin: 0;
             font-size: 0.8rem;
             font-weight: 800;
-            color: #0f172a;
+            color: var(--t4-text);
             letter-spacing: 0.01em;
         }
         [class*="st-key-workflow_compare_pick__"] label[data-testid="stWidgetLabel"] {
@@ -1048,8 +1048,8 @@ def _inject_workflow_page_styles() -> None:
             letter-spacing: 0.01em;
         }
         .wf-launcher {
-            border: 1px solid rgba(20, 184, 166, 0.22);
-            background: linear-gradient(135deg, #f0fdfa 0%, #ffffff 100%);
+            border: 1px solid var(--t4-accent-2-border);
+            background: linear-gradient(135deg, var(--t4-accent-2-soft) 0%, var(--t4-surface) 100%);
             border-radius: 14px;
             padding: 0.85rem 1rem;
             margin-bottom: 0.8rem;
@@ -1058,24 +1058,24 @@ def _inject_workflow_page_styles() -> None:
             margin: 0;
             font-size: 0.95rem;
             font-weight: 800;
-            color: #0f172a;
+            color: var(--t4-text);
         }
         .wf-launcher-copy {
             margin: 0.25rem 0 0 0;
             font-size: 0.84rem;
-            color: #475569;
+            color: var(--t4-text-3);
         }
         .wf-launcher-meta {
             margin-top: 0.55rem;
             font-size: 0.78rem;
-            color: #475569;
+            color: var(--t4-text-3);
         }
         .wf-empty {
-            border: 1px dashed rgba(148, 163, 184, 0.45);
+            border: 1px dashed var(--t4-border-strong);
             border-radius: 12px;
-            background: rgba(248, 250, 252, 0.8);
+            background: var(--t4-surface-2);
             padding: 0.8rem 0.9rem;
-            color: #475569;
+            color: var(--t4-text-3);
             font-size: 0.84rem;
         }
         </style>

@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import streamlit.components.v1 as components
 
+from lib.ui.theme import token
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -635,10 +637,13 @@ def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height:
     _payload_stats = dict(_payload_stats)
     _payload_stats["base64_chars"] = len(_payload_binary_b64)
     _iframe_src = html.escape(viewer_three_url, quote=True)
+    # components.html renders in its own iframe, so page-level --t4-* vars are not
+    # visible here: resolve the placeholder surface from the palette in Python.
+    _placeholder_bg = html.escape(token("surface_3"), quote=True)
     components.html(
         (
             f'<iframe id="t4-three-viewer" src="{_iframe_src}" '
-            f'width="100%" height="{height}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'width="100%" height="{height}" style="border:none;border-radius:8px;background:{_placeholder_bg}" '
             f'allowfullscreen allow="fullscreen *" '
             f'loading="lazy" title="T4 three viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
             f'<script id="t4-three-layer-payload" type="application/octet-stream">{_payload_binary_b64}</script>'

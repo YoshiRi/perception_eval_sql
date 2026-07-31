@@ -425,7 +425,7 @@ function renderDevopsReviewList(container = els.list, options = {}) {
               <div class="case-run-cell ${aJudgement.status}">
                 <b>A</b>
                 <strong>${escapeHtml(aJudgement.label)}</strong>
-                <span>TP ${fmt(targetMetric(aView, "tp"))} · FP ${fmt(targetMetric(aView, "fp"))} · FN ${fmt(targetMetric(aView, "fn"))}</span>
+                <span>${escapeHtml(devopsMetricLine(aView))}</span>
               </div>
               <div class="case-change-cell ${compareClass}">
                 <b>${cmp.regressed ? "REGRESSED" : (cmp.fixed ? "FIXED" : (cmp.changed ? "CHANGED" : "STABLE"))}</b>
@@ -434,7 +434,7 @@ function renderDevopsReviewList(container = els.list, options = {}) {
               <div class="case-run-cell ${bJudgement.status}">
                 <b>B</b>
                 <strong>${escapeHtml(bJudgement.label)}</strong>
-                <span>TP ${fmt(targetMetric(bView, "tp"))} · FP ${fmt(targetMetric(bView, "fp"))} · FN ${fmt(targetMetric(bView, "fn"))}</span>
+                <span>${escapeHtml(devopsMetricLine(bView))}</span>
               </div>
             </div>`
           : "";
@@ -442,7 +442,7 @@ function renderDevopsReviewList(container = els.list, options = {}) {
           ? compareDetail
           : unavailable
           ? (ctx.unavailable_reason || "No bbox/evaluation rows were recorded or downloaded for this parquet.")
-          : `${judgement.reason} · TP ${fmt(targetMetric(s, "tp"))} · FP ${fmt(targetMetric(s, "fp"))} · FN ${fmt(targetMetric(s, "fn"))}`;
+          : `${judgement.reason} · ${devopsMetricLine(s)}`;
         return `<div class="devops-case ${state.compare ? "compare-case" : ""} ${active ? "active" : ""} ${unavailable ? "unavailable" : ""} ${compareClass}" data-key="${escapeHtml(scenarioKey(s))}" data-unavailable="${unavailable ? "1" : "0"}">
           ${state.compare ? "" : `<span class="status-pill ${judgement.status}">${escapeHtml(judgement.label)}</span>`}
           <div>
@@ -569,7 +569,7 @@ function renderScenarioLabels(s) {
       const delta = (state.lens === "delta_fn" ? x.delta_fn : x.delta_fp) || 0;
       const width = Math.min(50, Math.abs(delta) / maxDelta * 50);
       const left = delta >= 0 ? 50 : 50 - width;
-      const color = delta >= 0 ? "#fb7185" : "#34d399";
+      const color = delta >= 0 ? TH.c("bad") : TH.c("good");
       return `<div class="label-viz">
         <strong>${escapeHtml(x.label)}</strong>
         <div class="delta-bar"><i class="delta-fill" style="left:${left}%;width:${width}%;background:${color}"></i></div>
@@ -1097,6 +1097,7 @@ function openViewer(frame = null) {
     p.set("lens", lensMap[state.lens] || "all");
     p.set("layout", "side_by_side");
   }
+  p.set("theme", TH.current);
   p.set("suite", state.selected.suite_name || "");
   p.set("scenario", state.selected.scenario_name || "");
   p.set("topic", state.selected.topic_name || "");
@@ -1497,5 +1498,12 @@ window.addEventListener("keydown", e => {
   if (e.key === "Escape" && els.viewerShell.classList.contains("show")) closeViewer();
 });
 window.addEventListener("resize", () => { clampPreviewWindow(); render(); renderCurve(); renderPreview(); });
+// Guarded: if bbox_theme.js is missing this must not abort the rest of the script,
+// which is what loads the parquet list.
+if (window.TH) {
+  TH.bindToggle(els.themeToggle);
+  // Canvases hold no CSS-derived colors, so they must be repainted by hand.
+  TH.onChange(() => { render(); renderCurve(); renderPreview(); });
+}
 applyInitialSession();
 scan();

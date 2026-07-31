@@ -858,21 +858,21 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-card {
             border-radius: 16px;
             padding: 0.7rem 0.85rem;
-            border: 1px solid rgba(148, 163, 184, 0.22);
-            background: rgba(255, 255, 255, 0.92);
-            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+            border: 1px solid var(--t4-border);
+            background: var(--t4-surface);
+            box-shadow: var(--t4-shadow-sm);
         }
         .evj-card--running {
-            border-color: rgba(245, 158, 11, 0.28);
-            background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255,255,255,0.98));
+            border-color: var(--t4-warn-border);
+            background: linear-gradient(180deg, var(--t4-warn-bg), var(--t4-surface));
         }
         .evj-card--success {
-            border-color: rgba(16, 185, 129, 0.24);
-            background: linear-gradient(180deg, rgba(236, 253, 245, 0.98), rgba(255,255,255,0.98));
+            border-color: var(--t4-ok-border);
+            background: linear-gradient(180deg, var(--t4-ok-bg), var(--t4-surface));
         }
         .evj-card--failed {
-            border-color: rgba(239, 68, 68, 0.24);
-            background: linear-gradient(180deg, rgba(254, 242, 242, 0.98), rgba(255,255,255,0.98));
+            border-color: var(--t4-bad-border);
+            background: linear-gradient(180deg, var(--t4-bad-bg), var(--t4-surface));
         }
         .evj-top, .evj-meta, .evj-stats {
             display: flex;
@@ -890,7 +890,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-title {
             font-size: 0.9rem;
             font-weight: 800;
-            color: #0f172a;
+            color: var(--t4-text);
             margin: 0;
             word-break: break-word;
         }
@@ -915,7 +915,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         .evj-name-sub {
             margin-top: 0.15rem;
             font-size: 0.74rem;
-            color: #64748b;
+            color: var(--t4-muted);
         }
         .evj-name-sub a {
             color: inherit;
@@ -936,11 +936,11 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             letter-spacing: 0.01em;
             border: 1px solid transparent;
         }
-        .evj-status--running { color: #9a6700; background: #fff7db; border-color: rgba(245, 158, 11, 0.28); }
-        .evj-status--success { color: #047857; background: #dcfce7; border-color: rgba(16, 185, 129, 0.28); }
-        .evj-status--failed { color: #b91c1c; background: #fee2e2; border-color: rgba(239, 68, 68, 0.28); }
-        .evj-status--canceled { color: #7c3aed; background: #f3e8ff; border-color: rgba(124, 58, 237, 0.24); }
-        .evj-status--unknown { color: #475569; background: #f1f5f9; border-color: rgba(148, 163, 184, 0.28); }
+        .evj-status--running { color: var(--t4-warn); background: var(--t4-warn-bg); border-color: var(--t4-warn-border); }
+        .evj-status--success { color: var(--t4-ok); background: var(--t4-ok-bg); border-color: var(--t4-ok-border); }
+        .evj-status--failed { color: var(--t4-bad); background: var(--t4-bad-bg); border-color: var(--t4-bad-border); }
+        .evj-status--canceled { color: var(--t4-neutral); background: var(--t4-neutral-bg); border-color: var(--t4-neutral-border); }
+        .evj-status--unknown { color: var(--t4-muted); background: var(--t4-chip-bg); border-color: var(--t4-border); }
         .evj-status-mark {
             display: inline-flex;
             align-items: center;
@@ -955,21 +955,21 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             flex: 0 0 auto;
         }
         .evj-status-mark--success {
-            background: rgba(4, 120, 87, 0.08);
+            background: var(--t4-overlay);
         }
         .evj-status-mark--failed {
-            background: rgba(185, 28, 28, 0.08);
+            background: var(--t4-overlay);
         }
         .evj-status-mark--canceled {
-            background: rgba(124, 58, 237, 0.08);
+            background: var(--t4-overlay);
         }
         .evj-status-mark--unknown {
-            background: rgba(71, 85, 105, 0.08);
+            background: var(--t4-overlay);
         }
         .evj-status-mark--running {
             position: relative;
             border-radius: 999px;
-            border: 1.5px solid rgba(154, 103, 0, 0.18);
+            border: 1.5px solid var(--t4-warn-border);
             border-top-color: currentColor;
             border-right-color: currentColor;
             background: transparent;
@@ -996,7 +996,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             100% { transform: rotate(360deg); }
         }
         .evj-meta {
-            color: #475569;
+            color: var(--t4-text-3);
             font-size: 0.82rem;
         }
         .evj-list {
@@ -1010,22 +1010,22 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             font-size: 0.72rem;
             font-weight: 700;
             letter-spacing: 0.02em;
-            color: #64748b;
+            color: var(--t4-muted);
             text-transform: uppercase;
         }
         .evj-pager-note {
             margin-top: 0.28rem;
             font-size: 0.76rem;
-            color: #475569;
+            color: var(--t4-text-3);
             white-space: nowrap;
         }
         .evj-cell {
             min-width: 0;
             font-size: 0.78rem;
-            color: #334155;
+            color: var(--t4-text-2);
         }
         .evj-cell a {
-            color: #0f766e;
+            color: var(--t4-accent-2);
             text-decoration: none;
             font-weight: 700;
         }
@@ -1033,7 +1033,7 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             text-decoration: underline;
         }
         .evj-cell strong {
-            color: #0f172a;
+            color: var(--t4-text);
         }
         .evj-cell--nowrap {
             white-space: nowrap;
@@ -1042,26 +1042,26 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             margin-top: 1rem;
             padding: 1rem 1rem 0.8rem;
             border-radius: 18px;
-            border: 1px solid rgba(15, 118, 110, 0.14);
+            border: 1px solid var(--t4-accent-2-border);
             background:
-                radial-gradient(circle at top right, rgba(45, 212, 191, 0.10), transparent 24%),
-                linear-gradient(180deg, rgba(255,255,255,0.99), rgba(247,250,252,0.99));
-            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+                radial-gradient(circle at top right, var(--t4-accent-2-soft), transparent 24%),
+                linear-gradient(180deg, var(--t4-surface), var(--t4-surface-2));
+            box-shadow: var(--t4-shadow-md);
         }
         .evj-stat {
             flex: 1 1 80px;
             min-width: 72px;
             padding: 0.55rem 0.7rem;
             border-radius: 14px;
-            background: rgba(248, 250, 252, 0.92);
-            border: 1px solid rgba(148, 163, 184, 0.16);
+            background: var(--t4-surface-2);
+            border: 1px solid var(--t4-border);
         }
         .evj-inline-stats {
             display: flex;
             flex-wrap: wrap;
             gap: 6px;
             font-size: 0.76rem;
-            color: #334155;
+            color: var(--t4-text-2);
         }
         [class*="st-key-recent_eval_view_"] button,
         [class*="st-key-recent_eval_run_"] button,
@@ -1083,9 +1083,9 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         [class*="st-key-recent_eval_jobs_next"] button,
         [class*="st-key-recent_eval_jobs_pagebtn_"] button,
         [class*="st-key-refresh_recent_eval_jobs"] button {
-            border-color: rgba(148, 163, 184, 0.34);
-            color: #334155;
-            background: #ffffff;
+            border-color: var(--t4-border-strong);
+            color: var(--t4-text-2);
+            background: var(--t4-surface);
         }
         [class*="st-key-recent_eval_view_"] button:hover,
         [class*="st-key-recent_eval_retest_"] button:hover,
@@ -1093,41 +1093,41 @@ def _inject_recent_evaluator_jobs_styles() -> None:
         [class*="st-key-recent_eval_jobs_next"] button:hover,
         [class*="st-key-recent_eval_jobs_pagebtn_"] button:hover,
         [class*="st-key-refresh_recent_eval_jobs"] button:hover {
-            border-color: rgba(15, 118, 110, 0.28);
-            color: #0f766e;
-            background: #f8fffd;
+            border-color: var(--t4-accent-2-border);
+            color: var(--t4-accent-2);
+            background: var(--t4-accent-2-soft);
         }
         [class*="st-key-recent_eval_jobs_pagebtn_active_"] button {
-            border-color: rgba(13, 148, 136, 0.26);
-            background: linear-gradient(180deg, #f0fdfa, #ecfeff);
-            color: #0f766e;
+            border-color: var(--t4-accent-2-border);
+            background: var(--t4-accent-2-soft);
+            color: var(--t4-accent-2);
         }
         [class*="st-key-recent_eval_run_"] button {
-            border-color: rgba(13, 148, 136, 0.22);
-            background: linear-gradient(180deg, #f0fdfa, #ecfeff);
-            color: #0f766e;
+            border-color: var(--t4-accent-2-border);
+            background: var(--t4-accent-2-soft);
+            color: var(--t4-accent-2);
         }
         [class*="st-key-recent_eval_run_"] button:hover {
-            border-color: rgba(13, 148, 136, 0.34);
-            background: linear-gradient(180deg, #ccfbf1, #ecfeff);
-            color: #115e59;
+            border-color: var(--t4-accent-2);
+            background: var(--t4-accent-2-soft);
+            color: var(--t4-accent-2);
         }
         [class*="st-key-recent_eval_retest_"] button {
-            border-color: rgba(251, 191, 36, 0.22);
-            background: linear-gradient(180deg, #fffbeb, #fff7ed);
-            color: #b45309;
+            border-color: var(--t4-warn-border);
+            background: var(--t4-warn-bg);
+            color: var(--t4-warn);
         }
         [class*="st-key-recent_eval_retest_"] button:hover {
-            border-color: rgba(245, 158, 11, 0.34);
-            background: linear-gradient(180deg, #fef3c7, #fff7ed);
-            color: #92400e;
+            border-color: var(--t4-warn);
+            background: var(--t4-warn-bg);
+            color: var(--t4-warn);
         }
         .evj-stat-label {
             display: block;
             font-size: 0.68rem;
             letter-spacing: 0.06em;
             text-transform: uppercase;
-            color: #64748b;
+            color: var(--t4-muted);
             font-weight: 800;
             margin-bottom: 0.14rem;
         }
@@ -1135,19 +1135,19 @@ def _inject_recent_evaluator_jobs_styles() -> None:
             display: block;
             font-size: 1rem;
             font-weight: 800;
-            color: #0f172a;
+            color: var(--t4-text);
         }
         .evj-desc {
             margin-top: 0.55rem;
             font-size: 0.86rem;
-            color: #334155;
+            color: var(--t4-text-2);
         }
         .evj-empty {
             padding: 1rem 1.1rem;
             border-radius: 18px;
-            background: #f8fafc;
-            border: 1px dashed rgba(148, 163, 184, 0.4);
-            color: #475569;
+            background: var(--t4-surface-2);
+            border: 1px dashed var(--t4-border-strong);
+            color: var(--t4-text-3);
         }
         @media (max-width: 1080px) {
             .evj-row {

@@ -1,7 +1,7 @@
 # Public dependencies only (no private git+ssh).
 # For Download/Scenario API auth, extend the image and:
 #   pip install git+ssh://git@github.com/tier4/webauto-auth-py.git
-streamlit>=1.30.0
+streamlit>=1.50.0
 pandas>=2.0.0
 plotly>=5.18.0
 kaleido>=0.2.1

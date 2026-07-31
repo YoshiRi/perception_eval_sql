@@ -7,12 +7,12 @@ function drawGrid() {
   const yMin = Math.floor((state.panY - m) / 10) * 10;
   const yMax = Math.ceil((state.panY + m) / 10) * 10;
   for (let i = xMin; i <= xMax; i += 10) {
-    ctx.strokeStyle = i === 0 ? "rgba(226,232,240,.34)" : "rgba(148,163,184,.14)";
+    ctx.strokeStyle = i === 0 ? TH.a("lineStrong", .34) : TH.a("neutralEst", .14);
     const a = project([i, yMin, 0]), b = project([i, yMax, 0]);
     ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
   }
   for (let i = yMin; i <= yMax; i += 10) {
-    ctx.strokeStyle = i === 0 ? "rgba(226,232,240,.34)" : "rgba(148,163,184,.14)";
+    ctx.strokeStyle = i === 0 ? TH.a("lineStrong", .34) : TH.a("neutralEst", .14);
     const a = project([xMin, i, 0]), b = project([xMax, i, 0]);
     ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
   }
@@ -20,8 +20,8 @@ function drawGrid() {
 }
 function drawRangeRings(maxRange) {
   ctx.save();
-  ctx.strokeStyle = "rgba(56,189,248,.18)";
-  ctx.fillStyle = "rgba(148,163,184,.62)";
+  ctx.strokeStyle = TH.a("accent", .18);
+  ctx.fillStyle = TH.a("neutralEst", .62);
   ctx.font = "11px Inter, sans-serif";
   for (let r = 20; r <= maxRange; r += 20) {
     if (els.viewMode.value === "bev") {
@@ -49,8 +49,8 @@ function drawRangeRings(maxRange) {
 function drawEgoGlyph() {
   const car = [[2.35, .98, .05], [1.55, 1.08, .05], [-2.25, .92, .05], [-2.45, -.92, .05], [1.55, -1.08, .05], [2.35, -.98, .05]].map(project);
   const cabin = [[.8, .64, .18], [-.85, .58, .18], [-.85, -.58, .18], [.8, -.64, .18]].map(project);
-  ctx.fillStyle = "rgba(15,23,42,.88)";
-  ctx.strokeStyle = "rgba(226,232,240,.78)";
+  ctx.fillStyle = TH.a("surface", .88);
+  ctx.strokeStyle = TH.a("lineStrong", .78);
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   ctx.moveTo(car[0][0], car[0][1]);
@@ -58,8 +58,8 @@ function drawEgoGlyph() {
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = "rgba(56,189,248,.22)";
-  ctx.strokeStyle = "rgba(56,189,248,.75)";
+  ctx.fillStyle = TH.a("accent", .22);
+  ctx.strokeStyle = TH.a("accent", .75);
   ctx.beginPath();
   ctx.moveTo(cabin[0][0], cabin[0][1]);
   for (let i = 1; i < cabin.length; i++) ctx.lineTo(cabin[i][0], cabin[i][1]);
@@ -70,8 +70,8 @@ function drawEgoGlyph() {
   const forward = project([7.5, 0, .25]);
   const left = project([0, 4.5, .25]);
   ctx.lineWidth = 2;
-  ctx.strokeStyle = "rgba(56,189,248,.95)";
-  ctx.fillStyle = "rgba(56,189,248,.95)";
+  ctx.strokeStyle = TH.a("accent", .95);
+  ctx.fillStyle = TH.a("accent", .95);
   ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(forward[0], forward[1]); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(left[0], left[1]); ctx.stroke();
   ctx.beginPath(); ctx.arc(p[0], p[1], 4, 0, Math.PI * 2); ctx.fill();
@@ -81,10 +81,10 @@ function drawEgoGlyph() {
 }
 function boxColor(b) {
   if (els.colorMode.value === "run") {
-    if (b.run === "A") return b.status === "FP" ? "#f59e0b" : "#60a5fa";
-    if (b.run === "B") return b.status === "FP" ? "#ef4444" : "#a78bfa";
+    if (b.run === "A") return b.status === "FP" ? TH.c("warn") : TH.c("runA");
+    if (b.run === "B") return b.status === "FP" ? TH.c("errHigh") : TH.c("runB");
   }
-  if (els.colorMode.value === "source") return b.source === "GT" ? "#60a5fa" : "#fb7185";
+  if (els.colorMode.value === "source") return b.source === "GT" ? TH.c("runA") : TH.c("bad");
   if (els.colorMode.value === "confidence") {
     const c = Math.max(0, Math.min(1, Number(b.confidence ?? (b.source === "GT" ? 1 : 0))));
     const r = Math.round(255 * (1 - c));
@@ -93,27 +93,27 @@ function boxColor(b) {
   }
   if (els.colorMode.value === "error") {
     const e = Number(b.center_distance ?? 0);
-    if (b.status !== "TP" || !Number.isFinite(e)) return b.source === "GT" ? "#64748b" : "#94a3b8";
-    if (e > 2.0) return "#ef4444";
-    if (e > 1.0) return "#f97316";
-    if (e > 0.5) return "#facc15";
-    return "#34d399";
+    if (b.status !== "TP" || !Number.isFinite(e)) return b.source === "GT" ? TH.c("neutralGt") : TH.c("neutralEst");
+    if (e > 2.0) return TH.c("errHigh");
+    if (e > 1.0) return TH.c("errMid");
+    if (e > 0.5) return TH.c("errLow");
+    return TH.c("good");
   }
   return evalLayerColor(b);
 }
 function evalLayerColor(b) {
   const source = String(b.source || "").toUpperCase();
   const status = String(b.status || "").toUpperCase();
-  if (source === "GT" && status === "TP") return "#00cc66";
-  if (source === "GT" && status === "FN") return "#ff9933";
-  if (source === "EST" && status === "TP") return "#66b3ff";
-  if (source === "EST" && status === "FP") return "#ff6666";
-  if (source === "GT") return "#4bd08d";
-  if (source === "EST") return "#66b3ff";
-  if (status === "FN") return "#ff9933";
-  if (status === "FP") return "#ff6666";
-  if (status === "TP") return "#00cc66";
-  return "#94a3b8";
+  if (source === "GT" && status === "TP") return TH.c("gtTp");
+  if (source === "GT" && status === "FN") return TH.c("gtFn");
+  if (source === "EST" && status === "TP") return TH.c("estTp");
+  if (source === "EST" && status === "FP") return TH.c("estFp");
+  if (source === "GT") return TH.c("gtOther");
+  if (source === "EST") return TH.c("estTp");
+  if (status === "FN") return TH.c("gtFn");
+  if (status === "FP") return TH.c("estFp");
+  if (status === "TP") return TH.c("gtTp");
+  return TH.c("neutralEst");
 }
 function hexToRgb(hex) {
   const m = String(hex || "").replace("#", "").match(/^([0-9a-f]{6})$/i);
@@ -137,12 +137,12 @@ function drawLabel(b, pts, color, rank, total) {
   ctx.font = "700 11px Inter, sans-serif";
   const tw = ctx.measureText(text).width;
   const x = top[0] + 5, y = top[1] - 8;
-  ctx.fillStyle = "rgba(2,6,23,.76)";
+  ctx.fillStyle = TH.a("deep", .76);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   roundRect(x - 4, y - 13, tw + 8, 17, 5);
   ctx.fill(); ctx.stroke();
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = TH.c("text");
   ctx.fillText(text, x, y);
 }
 function drawFootprintPolygon(b, rank, total) {
@@ -164,7 +164,7 @@ function drawFootprintPolygon(b, rank, total) {
     ctx.closePath();
     ctx.fill();
   }
-  ctx.strokeStyle = selected ? "#ffffff" : color;
+  ctx.strokeStyle = selected ? TH.c("marker") : color;
   ctx.lineWidth = selected ? 3.2 : (b.source === "GT" ? 1.35 : 2.1);
   ctx.globalAlpha = (b.source === "GT" ? .76 : .92) * opacity;
   for (const face of [baseP, topP]) {
@@ -199,7 +199,7 @@ function drawPointObject(b, rank, total) {
   const radius = Math.max(4, Math.min(12, base[2] * .45));
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.strokeStyle = selected ? "#ffffff" : color;
+  ctx.strokeStyle = selected ? TH.c("marker") : color;
   ctx.fillStyle = color;
   ctx.lineWidth = selected ? 3 : (b.source === "GT" ? 1.4 : 2.1);
   ctx.beginPath();
@@ -235,10 +235,10 @@ function drawVelocity(b) {
   const a = project([b.x || 0, b.y || 0, (b.z || 0) + Math.max(.2, (b.height || 1.5) * .55)]);
   const scale = Math.min(2.2, Math.max(.55, speed * .35));
   const bpt = project([(b.x || 0) + (Number(b.vx) || 0) * scale, (b.y || 0) + (Number(b.vy) || 0) * scale, (b.z || 0) + Math.max(.2, (b.height || 1.5) * .55)]);
-  ctx.strokeStyle = "rgba(125,211,252,.86)";
+  ctx.strokeStyle = TH.a("accentBright", .86);
   ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(bpt[0], bpt[1]); ctx.stroke();
-  ctx.fillStyle = "rgba(125,211,252,.86)";
+  ctx.fillStyle = TH.a("accentBright", .86);
   ctx.beginPath(); ctx.arc(bpt[0], bpt[1], 2.3, 0, Math.PI * 2); ctx.fill();
 }
 function drawErrorGlyph(b) {
@@ -248,14 +248,14 @@ function drawErrorGlyph(b) {
   const a = project([b.x || 0, b.y || 0, (b.z || 0) + .15]);
   const e = project([(b.x || 0) + ex, (b.y || 0) + ey, (b.z || 0) + .15]);
   const mag = Math.hypot(ex, ey);
-  ctx.strokeStyle = mag > 1.0 ? "rgba(239,68,68,.9)" : "rgba(250,204,21,.82)";
+  ctx.strokeStyle = mag > 1.0 ? TH.a("errHigh", .9) : TH.a("halo", .82);
   ctx.lineWidth = mag > 1.0 ? 2 : 1.2;
   ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
 }
 function objectCenterPoint(b) {
   return [b.x || 0, b.y || 0, (b.z || 0) + Math.max(.2, (b.height || 1.5) * .5)];
 }
-function drawObjectHalo(b, color = "#ffffff") {
+function drawObjectHalo(b, color = TH.c("marker")) {
   const p = project(objectCenterPoint(b));
   ctx.save();
   ctx.strokeStyle = color;
@@ -293,7 +293,7 @@ function drawBox(b, rank, total) {
       ctx.fill();
     }
   }
-  ctx.strokeStyle = selected ? "#ffffff" : color;
+  ctx.strokeStyle = selected ? TH.c("marker") : color;
   ctx.lineWidth = b.source === "GT" ? 1.35 : 2.2;
   if (selected) ctx.lineWidth = 3.4;
   ctx.globalAlpha = (b.source === "GT" ? .76 : .92) * opacity;
@@ -307,7 +307,7 @@ function drawBox(b, rank, total) {
 }
 function drawTrails(filterFn = null) {
   if (!state.trails) return;
-  ctx.fillStyle = "rgba(56,189,248,.18)";
+  ctx.fillStyle = TH.a("accent", .18);
   for (const f of state.frames) for (const b of f.boxes) {
     if (filterFn && !filterFn(b)) continue;
     const p = project([b.x || 0, b.y || 0, b.z || 0]);
@@ -329,8 +329,8 @@ function drawViewportLabel(text, vp, color) {
     drawText = `${drawText}${suffix}`;
   }
   const boxW = Math.max(72, Math.min(maxW, ctx.measureText(drawText).width + 24));
-  ctx.fillStyle = "rgba(2,6,23,.72)";
-  ctx.strokeStyle = "rgba(148,163,184,.3)";
+  ctx.fillStyle = TH.a("deep", .72);
+  ctx.strokeStyle = TH.a("neutralEst", .3);
   ctx.lineWidth = 1;
   roundRect(vp.x + 12, vp.y + 12, boxW, 26, 13);
   ctx.fill(); ctx.stroke();
@@ -349,11 +349,11 @@ function drawScene(frame, boxes, viewport, label = "") {
   sorted.forEach((b, i) => drawBox({...b, frame: frame.frame}, i, sorted.length));
   if (state.compare && state.selected) {
     const peer = findComparePeer(frame, state.selected);
-    if (state.selected.run === label) drawObjectHalo(state.selected, "#ffffff");
-    if (peer && peer.run === label) drawObjectHalo(peer, "#facc15");
+    if (state.selected.run === label) drawObjectHalo(state.selected, TH.c("marker"));
+    if (peer && peer.run === label) drawObjectHalo(peer, TH.c("errLow"));
   }
   ctx.restore();
-  if (label) drawViewportLabel(`Run ${label}`, viewport, label === "A" ? "#60a5fa" : "#a78bfa");
+  if (label) drawViewportLabel(`Run ${label}`, viewport, label === "A" ? TH.c("runA") : TH.c("runB"));
   activeViewport = null;
 }
 function drawCurtainScene(frame, visible, w, h) {
@@ -369,8 +369,8 @@ function drawCurtainScene(frame, visible, w, h) {
   visible.filter(b => b.run === "A").sort((a, b) => (a.y || 0) - (b.y || 0)).forEach((b, i, arr) => drawBox({...b, frame: frame.frame}, i, arr.length));
   if (state.selected) {
     const peer = findComparePeer(frame, state.selected);
-    if (state.selected.run === "A") drawObjectHalo(state.selected, "#ffffff");
-    if (peer && peer.run === "A") drawObjectHalo(peer, "#facc15");
+    if (state.selected.run === "A") drawObjectHalo(state.selected, TH.c("marker"));
+    if (peer && peer.run === "A") drawObjectHalo(peer, TH.c("errLow"));
   }
   ctx.restore();
   ctx.save();
@@ -382,21 +382,21 @@ function drawCurtainScene(frame, visible, w, h) {
   visible.filter(b => b.run === "B").sort((a, b) => (a.y || 0) - (b.y || 0)).forEach((b, i, arr) => drawBox({...b, frame: frame.frame}, i, arr.length));
   if (state.selected) {
     const peer = findComparePeer(frame, state.selected);
-    if (state.selected.run === "B") drawObjectHalo(state.selected, "#ffffff");
-    if (peer && peer.run === "B") drawObjectHalo(peer, "#facc15");
+    if (state.selected.run === "B") drawObjectHalo(state.selected, TH.c("marker"));
+    if (peer && peer.run === "B") drawObjectHalo(peer, TH.c("errLow"));
   }
   ctx.restore();
   activeViewport = null;
-  ctx.fillStyle = "rgba(226,232,240,.88)";
+  ctx.fillStyle = TH.a("lineStrong", .88);
   ctx.fillRect(x - 1, 0, 2, h);
-  drawViewportLabel("Run A", {x: 0, y: 0, w: x, h}, "#60a5fa");
-  drawViewportLabel("Run B", {x, y: 0, w: w - x, h}, "#a78bfa");
+  drawViewportLabel("Run A", {x: 0, y: 0, w: x, h}, TH.c("runA"));
+  drawViewportLabel("Run B", {x, y: 0, w: w - x, h}, TH.c("runB"));
 }
 function render() {
   resize();
   const w = els.canvas.clientWidth, h = els.canvas.clientHeight;
   const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, "#0f172a"); bg.addColorStop(.48, "#0b1120"); bg.addColorStop(1, "#020617");
+  bg.addColorStop(0, TH.c("sceneBg1")); bg.addColorStop(.48, TH.c("sceneBg2")); bg.addColorStop(1, TH.c("sceneBg3"));
   ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
   const f = state.frames[state.framePos] || {frame: 0, boxes: []};
   const visible = displayedBoxes(f);
@@ -405,7 +405,7 @@ function render() {
     const half = (w - gap) / 2;
     const left = {x: 0, y: 0, w: half, h};
     const right = {x: half + gap, y: 0, w: half, h};
-    ctx.fillStyle = "rgba(226,232,240,.34)";
+    ctx.fillStyle = TH.a("lineStrong", .34);
     ctx.fillRect(half, 0, gap, h);
     drawScene(f, visible.filter(b => b.run === "A"), left, "A");
     drawScene(f, visible.filter(b => b.run === "B"), right, "B");

@@ -18,6 +18,8 @@ from lib.path_utils import (
 import plotly.express as px
 import plotly.graph_objects as go
 from lib.user_config import UserConfig
+from lib.run_selection_cookie import persist_selection_cookie
+from lib.run_selection_store import save_run_selection
 from lib.summary_compare import build_summary_delta, summary_delta_overlap_stats
 from lib.overview_pdf_report import build_overview_pdf_report, make_report_filename
 from lib.specsheet_report import (
@@ -43,6 +45,26 @@ from lib.page_chrome import (
     section_header,
 )
 from lib.deploy_debug import running_in_docker
+from lib.ui.theme import CATEGORICAL, apply_plotly_theme, is_dark, pick, tokens
+
+# ====== CHART COLORS ======
+# Pre-dark-theme light palette. Light mode must keep rendering exactly these hues
+# (up to 6 runs: A, B, C, D, E, F); dark mode uses the theme's categorical tokens.
+_LEGACY_COMPARE_COLORS = ["#31356E", "#008E9B", "#E86A33", "#6B8E23", "#9B59B6", "#1ABC9C"]
+# Delta-bar marker outline: plain "gray" before the dark theme.
+_LEGACY_DELTA_OUTLINE = "gray"
+
+
+def _chart_palette() -> list:
+    """Run series colors: legacy light palette on light, tokens on dark."""
+    return pick(_LEGACY_COMPARE_COLORS, CATEGORICAL())
+
+
+def _theme_chart(fig):
+    """Dark-only figure theming; light keeps the pre-dark-theme Plotly defaults."""
+    if is_dark():
+        apply_plotly_theme(fig)
+    return fig
 
 # ====== URL QUERY PARAMS (OPTIONAL OVERRIDE) ======
 params = st.query_params
@@ -205,7 +227,8 @@ def show_grouped_metrics_plot(df, group_col, label_map=None, mode="single", df_b
     df = df[df[group_col].notna() & (df[group_col].astype(str).str.strip() != "")]
     df["__label_jp"] = df[group_col].map(col_map) if col_map else df[group_col]
     show_mode = "compare" if (mode == "compare" and df_b is not None) else "single"
-    colors = {"A": "#31356E", "B": "#008E9B", "Δ(B-A)": "#E86A33"}
+    _palette = _chart_palette()
+    colors = {"A": _palette[0], "B": _palette[1], "Δ(B-A)": _palette[2]}
     for m in metrics:
         st.markdown(f"##### {m.upper()} by {group_col.replace('_', ' ').title()}")
         if show_mode == "single":
@@ -213,8 +236,9 @@ def show_grouped_metrics_plot(df, group_col, label_map=None, mode="single", df_b
                 st.info("No data for group breakdown."); continue
             plot_df = df.groupby("__label_jp")[m].mean().reset_index().rename(columns={m:"Mean"})
             fig = px.bar(plot_df, x="__label_jp", y="Mean", labels={"__label_jp": group_col, "Mean": f"{m} mean"},
-                         text_auto=".2f", color_discrete_sequence=["#31356E"])
+                         text_auto=".2f", color_discrete_sequence=[_palette[0]])
             fig.update_layout(xaxis_title=None, yaxis_title=f"{m} Mean", showlegend=False, height=400, margin=dict(t=40, b=0))
+            _theme_chart(fig)
             st.plotly_chart(fig, width="stretch")
         else:
             df_b_c = df_b.copy()
@@ -236,6 +260,7 @@ def show_grouped_metrics_plot(df, group_col, label_map=None, mode="single", df_b
                          labels={"__label_jp": group_col, "Mean": f"{m} mean"})
             fig.update_layout(xaxis_title=None, yaxis_title=f"{m} Mean", legend_title="Run",
                               height=400, margin=dict(t=40, b=0))
+            _theme_chart(fig)
             st.plotly_chart(fig, width="stretch")
 
 def show_grouped_metrics_plot_multi(df_list, run_labels, group_col, label_map=None):
@@ -286,6 +311,7 @@ def show_grouped_metrics_plot_multi(df_list, run_labels, group_col, label_map=No
                      labels={"__label_jp": group_col, "Mean": f"{m} mean"})
         fig.update_layout(xaxis_title=None, yaxis_title=f"{m} Mean", legend_title="Run",
                           height=400, margin=dict(t=40, b=0))
+        _theme_chart(fig)
         st.plotly_chart(fig, width="stretch")
 
 # ====== SIDEBAR UI ======
@@ -435,6 +461,11 @@ query = {
 for j, name in enumerate(compare_run_names):
     query[f"run_{chr(98 + j)}"] = name  # run_b, run_c, ...
 st.query_params.update(query)
+# Remember this selection so pages opened directly later (no query params, fresh browser session)
+# restore it instead of asking the user to come back through Overview: a cookie for per-browser
+# memory, plus a per-user server-side copy for when cookies are unavailable.
+persist_selection_cookie(mode, run_a_name, compare_run_names)
+save_run_selection(mode, run_a_name, compare_run_names)
 # ====== LOAD DATA ======
 def safe_load_run(path, label='Run'):
     try:
@@ -595,14 +626,15 @@ def show_tp_mean_by_label(df, label_col, label_jp_map=None, run_name=None):
     st.markdown(f"**{title}**")
     fig = go.Figure(go.Bar(
         x=labels_disp, y=group_tp.values, text=[f"{x:.2f}" for x in group_tp.values],
-        textposition="auto", marker=dict(color="#31356E"),
+        textposition="auto", marker=dict(color=_chart_palette()[0]),
     ))
     fig.update_layout(xaxis_title=label_col.replace('_', ' ').title(),
                       yaxis_title="TP mean", height=400, margin=dict(t=40, b=0))
+    _theme_chart(fig)
     st.plotly_chart(fig, width="stretch")
 
 # Colors for up to 6 runs (A, B, C, D, E, F)
-COMPARE_COLORS = ["#31356E", "#008E9B", "#E86A33", "#6B8E23", "#9B59B6", "#1ABC9C"]
+COMPARE_COLORS = _chart_palette()
 
 def show_tp_mean_by_label_compare(df_list, run_labels, label_col, label_jp_map=None):
     """Grouped TP mean by label for N runs. df_list and run_labels same length."""
@@ -639,12 +671,13 @@ def show_tp_mean_by_label_compare(df_list, run_labels, label_col, label_jp_map=N
             deltas = [v - b if pd.notna(v) and pd.notna(b) else float('nan') for v, b in zip(vals, base_vals)]
             traces.append(
                 go.Bar(name=f"Δ({run_labels[i]}-A)", x=labels_disp, y=deltas,
-                       marker=dict(color=COMPARE_COLORS[i % len(COMPARE_COLORS)], line=dict(width=1, color="gray")),
+                       marker=dict(color=COMPARE_COLORS[i % len(COMPARE_COLORS)], line=dict(width=1, color=pick(_LEGACY_DELTA_OUTLINE, tokens()["muted"]))),
                        text=[f"{x:+.2f}" if pd.notna(x) else "N/A" for x in deltas], textposition="auto")
             )
     fig = go.Figure(traces)
     fig.update_layout(barmode="group", xaxis_title=label_col.replace('_', ' ').title(),
                       yaxis_title="TP mean", height=400, margin=dict(t=40, b=0), legend_title="Run")
+    _theme_chart(fig)
     st.plotly_chart(fig, width="stretch")
 
 if mode == "Compare Mode" and compare_run_dirs:

@@ -244,11 +244,11 @@ function previewInteractionViewport(rect, clientX = null) {
 function previewColor(b) {
   const status = String(b.status || "").toUpperCase();
   const source = String(b.source || "").toUpperCase();
-  if (source === "GT" && status === "FN") return "#fbbf24";
-  if (source === "GT") return "#34d399";
-  if (status === "FP") return "#fb7185";
-  if (status === "TP") return "#38bdf8";
-  return "#cbd5e1";
+  if (source === "GT" && status === "FN") return TH.c("warn");
+  if (source === "GT") return TH.c("good");
+  if (status === "FP") return TH.c("bad");
+  if (status === "TP") return TH.c("accent");
+  return TH.c("mutedBright");
 }
 function previewLayerKey(b) {
   const source = String(b.source || "").toUpperCase();
@@ -515,23 +515,23 @@ function drawDevopsCriteriaRings(sx, sy, scale, maxAbs) {
       const right = sx - (g.region.yMin - state.previewPanY) * scale;
       const top = sy - (g.region.xMax - state.previewPanX) * scale;
       const bottom = sy - (g.region.xMin - state.previewPanX) * scale;
-      const color = g.passed === false ? "rgba(251,113,133,.62)" : "rgba(52,211,153,.46)";
+      const color = g.passed === false ? TH.a("bad", .62) : TH.a("good", .46);
       previewCtx.strokeStyle = color;
-      previewCtx.fillStyle = g.passed === false ? "rgba(251,113,133,.08)" : "rgba(52,211,153,.05)";
+      previewCtx.fillStyle = g.passed === false ? TH.a("bad", .08) : TH.a("good", .05);
       previewCtx.lineWidth = g.passed === false ? 2 : 1.2;
       previewCtx.setLineDash(g.passed === false ? [7, 5] : [3, 6]);
       previewCtx.strokeRect(left, top, right - left, bottom - top);
       previewCtx.fillRect(left, top, right - left, bottom - top);
       previewCtx.setLineDash([]);
-      previewCtx.fillStyle = g.passed === false ? "#fecdd3" : "#bbf7d0";
+      previewCtx.fillStyle = g.passed === false ? TH.c("badFg") : TH.c("goodFg");
       previewCtx.font = "900 10px Inter, sans-serif";
       previewCtx.fillText(`${g.passed === false ? "FAIL" : "PASS"} ${g.distance_label || "region"}`, left + 5, top + 13);
       return;
     }
     const max = g.bounds.max;
     if (!Number.isFinite(max) || max <= 0 || max > maxAbs * 1.2) return;
-    previewCtx.strokeStyle = g.passed === false ? "rgba(251,113,133,.62)" : "rgba(52,211,153,.46)";
-    previewCtx.fillStyle = g.passed === false ? "rgba(251,113,133,.08)" : "rgba(52,211,153,.05)";
+    previewCtx.strokeStyle = g.passed === false ? TH.a("bad", .62) : TH.a("good", .46);
+    previewCtx.fillStyle = g.passed === false ? TH.a("bad", .08) : TH.a("good", .05);
     previewCtx.lineWidth = g.passed === false ? 2 : 1.2;
     previewCtx.setLineDash(g.passed === false ? [7, 5] : [3, 6]);
     previewCtx.beginPath();
@@ -541,7 +541,7 @@ function drawDevopsCriteriaRings(sx, sy, scale, maxAbs) {
     previewCtx.arc(sx, sy, max * scale, 0, Math.PI * 2);
     previewCtx.fill();
     previewCtx.setLineDash([]);
-    previewCtx.fillStyle = g.passed === false ? "#fecdd3" : "#bbf7d0";
+    previewCtx.fillStyle = g.passed === false ? TH.c("badFg") : TH.c("goodFg");
     previewCtx.font = "900 10px Inter, sans-serif";
     previewCtx.fillText(`${g.passed === false ? "FAIL" : "PASS"} ${g.distance_label}`, sx + max * scale + 5, sy - 5);
   });
@@ -580,19 +580,19 @@ function drawPreviewHoverLabel() {
   const tw = previewCtx.measureText(text).width;
   const x = Math.max(8, Math.min(els.preview.clientWidth - tw - 18, state.previewMouseX + 12));
   const y = Math.max(24, Math.min(els.preview.clientHeight - 10, state.previewMouseY - 12));
-  previewCtx.fillStyle = "rgba(2,6,23,.84)";
+  previewCtx.fillStyle = TH.a("deep", .84);
   previewCtx.strokeStyle = previewColor(b);
   previewCtx.lineWidth = 1;
   previewCtx.fillRect(x - 5, y - 16, tw + 10, 21);
   previewCtx.strokeRect(x - 5, y - 16, tw + 10, 21);
-  previewCtx.fillStyle = "#f8fafc";
+  previewCtx.fillStyle = TH.c("text");
   previewCtx.fillText(text, x, y);
 }
 function drawPreviewRings(sx, sy, scale, maxAbs) {
   if (!state.previewShowRings) return;
   previewCtx.save();
-  previewCtx.strokeStyle = "rgba(56,189,248,.2)";
-  previewCtx.fillStyle = "rgba(145,164,191,.76)";
+  previewCtx.strokeStyle = TH.a("accent", .2);
+  previewCtx.fillStyle = TH.a("muted", .76);
   previewCtx.font = "700 10px Inter, sans-serif";
   previewCtx.setLineDash([5, 8]);
   const maxRing = Math.min(PREVIEW_MAX_VIEW_EXTENT, Math.max(20, Math.ceil(maxAbs / 20) * 20));
@@ -616,12 +616,12 @@ function drawPreviewPersistentLabels(boxes, sx, sy, scale) {
     const tw = previewCtx.measureText(text).width;
     const x = p[0] + 7;
     const y = p[1] - 7;
-    previewCtx.fillStyle = "rgba(2,6,23,.72)";
+    previewCtx.fillStyle = TH.a("deep", .72);
     previewCtx.fillRect(x - 3, y - 8, tw + 6, 16);
     previewCtx.strokeStyle = previewColor(b);
     previewCtx.lineWidth = 1;
     previewCtx.strokeRect(x - 3, y - 8, tw + 6, 16);
-    previewCtx.fillStyle = "#f8fafc";
+    previewCtx.fillStyle = TH.c("text");
     previewCtx.fillText(text, x, y);
   });
   previewCtx.restore();
@@ -673,7 +673,7 @@ function drawPreviewDevopsHighlights(boxes, sx, sy, scale) {
   previewCtx.save();
   evidence.forEach(({box: b, ann}) => {
     const p = previewBoxScreenCenter(b, sx, sy, scale);
-    const color = ann.kind === "fail" ? previewColor(b) : "#a7f3d0";
+    const color = ann.kind === "fail" ? previewColor(b) : TH.c("goodFg");
     const distance = previewDistanceFromEgo(b);
     previewCtx.strokeStyle = color;
     previewCtx.fillStyle = color;
@@ -691,11 +691,11 @@ function drawPreviewDevopsHighlights(boxes, sx, sy, scale) {
     const label = `${ann.title}${ann.merged ? " MATCH" : ""} · ${b.source}/${b.status} ${b.label || ""} ${distance.toFixed(1)}m`;
     previewCtx.font = "900 10px Inter, sans-serif";
     const tw = previewCtx.measureText(label).width;
-    previewCtx.fillStyle = ann.kind === "fail" ? "rgba(2,6,23,.86)" : "rgba(6,78,59,.78)";
+    previewCtx.fillStyle = ann.kind === "fail" ? TH.a("deep", .86) : TH.a("goodBg", .78);
     previewCtx.fillRect(p[0] + 8, p[1] - 18, tw + 10, 18);
     previewCtx.strokeStyle = color;
     previewCtx.strokeRect(p[0] + 8, p[1] - 18, tw + 10, 18);
-    previewCtx.fillStyle = "#f8fafc";
+    previewCtx.fillStyle = TH.c("text");
     previewCtx.fillText(label, p[0] + 13, p[1] - 5);
   });
   previewCtx.restore();
@@ -708,7 +708,7 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
   previewCtx.beginPath();
   previewCtx.rect(viewport.x, viewport.y, viewport.w, viewport.h);
   previewCtx.clip();
-  previewCtx.strokeStyle = "rgba(148,163,184,.13)";
+  previewCtx.strokeStyle = TH.a("line", .13);
   previewCtx.lineWidth = 1;
   for (let m = -Math.ceil(maxAbs / 10) * 10; m <= maxAbs; m += 10) {
     previewCtx.beginPath(); previewCtx.moveTo(sx - (m - state.previewPanY) * scale, viewport.y); previewCtx.lineTo(sx - (m - state.previewPanY) * scale, viewport.y + viewport.h); previewCtx.stroke();
@@ -720,7 +720,7 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
   drawDevopsCriteriaRings(egoScreenX, egoScreenY, scale, maxAbs);
   const egoX = sx - (0 - state.previewPanY) * scale;
   const egoY = sy - (0 - state.previewPanX) * scale;
-  previewCtx.fillStyle = "rgba(234,242,255,.86)";
+  previewCtx.fillStyle = TH.a("text", .86);
   previewCtx.beginPath();
   previewCtx.moveTo(egoX, egoY - 9); previewCtx.lineTo(egoX - 6, egoY + 8); previewCtx.lineTo(egoX + 6, egoY + 8); previewCtx.closePath(); previewCtx.fill();
   const sorted = [...boxes].filter(previewLayerVisible).sort((a, b) => (String(a.source) === "GT" ? -1 : 1) - (String(b.source) === "GT" ? -1 : 1));
@@ -731,8 +731,8 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
   if (label) {
     const runName = label === "A" ? shortPathName(state.path) : shortPathName(els.parquetB.value || state.pathB);
     let text = `Run ${label}: ${runName}`;
-    previewCtx.fillStyle = "rgba(2,6,23,.72)";
-    previewCtx.strokeStyle = "rgba(148,163,184,.28)";
+    previewCtx.fillStyle = TH.a("deep", .72);
+    previewCtx.strokeStyle = TH.a("line", .28);
     previewCtx.lineWidth = 1;
     previewCtx.font = "800 11px Inter, sans-serif";
     const maxW = Math.max(60, Math.min(viewport.w - 20, 190));
@@ -748,7 +748,7 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
     previewCtx.rect(viewport.x + 10, viewport.y + 9, labelW, 23);
     previewCtx.fill();
     previewCtx.stroke();
-    previewCtx.fillStyle = label === "A" ? "#60a5fa" : "#a78bfa";
+    previewCtx.fillStyle = label === "A" ? TH.c("runA") : TH.c("runB");
     previewCtx.fillText(text, viewport.x + 20, viewport.y + 25);
   }
 }
@@ -839,12 +839,12 @@ function updatePreviewHover() {
 function renderPreview(message = "") {
   const r = resizeCanvas(els.preview, previewCtx);
   previewCtx.clearRect(0, 0, r.width, r.height);
-  previewCtx.fillStyle = "rgba(2,6,23,.76)";
+  previewCtx.fillStyle = TH.a("deep", .76);
   previewCtx.fillRect(0, 0, r.width, r.height);
   if (!state.previewFrames.length) {
     const text = message || "No preview frames matched.";
     els.previewStatus.textContent = text;
-    previewCtx.fillStyle = "#91a4bf";
+    previewCtx.fillStyle = TH.c("muted");
     previewCtx.font = "12px Inter, sans-serif";
     previewCtx.fillText(text, 12, Math.max(28, r.height / 2));
     renderPreviewDevopsOverlay({frame: "-"}, []);
@@ -855,17 +855,17 @@ function renderPreview(message = "") {
   const boxes = [...frame.boxes].sort((a, b) => (String(a.source) === "GT" ? -1 : 1) - (String(b.source) === "GT" ? -1 : 1));
   if (state.compare) {
     const vps = previewViewportsForRect(r);
-    previewCtx.fillStyle = "rgba(226,232,240,.34)";
+    previewCtx.fillStyle = TH.a("lineStrong", .34);
     previewCtx.fillRect(vps[0].w, 0, 3, r.height);
     drawPreviewScene(frame, boxes.filter(b => b.run === "A"), vps[0], "A", maxAbs);
     drawPreviewScene(frame, boxes.filter(b => b.run === "B"), vps[1], "B", maxAbs);
   } else {
     drawPreviewScene(frame, boxes, {x: 0, y: 0, w: r.width, h: r.height}, "", maxAbs);
   }
-  previewCtx.fillStyle = "#eaf2ff";
+  previewCtx.fillStyle = TH.c("text");
   previewCtx.font = "800 11px Inter, sans-serif";
   previewCtx.fillText(`Frame ${frame.frame}`, state.compare ? Math.max(88, r.width / 2 - 36) : 10, 16);
-  previewCtx.fillStyle = "#91a4bf";
+  previewCtx.fillStyle = TH.c("muted");
   previewCtx.font = "700 10px Inter, sans-serif";
   previewCtx.fillText(state.compare ? `A vs B compare · ${compareLensLabel()}` : "GT green · TP cyan · FP red · FN amber", 10, 31);
   const aCount = boxes.filter(b => b.run === "A").length;

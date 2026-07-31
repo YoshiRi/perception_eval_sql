@@ -112,9 +112,9 @@ function renderLabelBreakdown(frame) {
       return `<div class="label-row">
         <strong>${escapeHtml(r.label)}</strong>
         <div class="label-stack">
-          <i style="width:${Math.abs(dTp) / total * 100}%;background:${dTp >= 0 ? "#38bdf8" : "#34d399"}"></i>
-          <i style="width:${Math.abs(dFp) / total * 100}%;background:${dFp >= 0 ? "#ff6666" : "#34d399"}"></i>
-          <i style="width:${Math.abs(dFn) / total * 100}%;background:${dFn >= 0 ? "#ff9933" : "#34d399"}"></i>
+          <i style="width:${Math.abs(dTp) / total * 100}%;background:${dTp >= 0 ? TH.c("accent") : TH.c("good")}"></i>
+          <i style="width:${Math.abs(dFp) / total * 100}%;background:${dFp >= 0 ? TH.c("estFp") : TH.c("good")}"></i>
+          <i style="width:${Math.abs(dFn) / total * 100}%;background:${dFn >= 0 ? TH.c("gtFn") : TH.c("good")}"></i>
         </div>
         <span>FP ${fmtDelta(dFp)} FN ${fmtDelta(dFn)}</span>
       </div>`;
@@ -123,9 +123,9 @@ function renderLabelBreakdown(frame) {
     return `<div class="label-row">
       <strong>${escapeHtml(r.label)}</strong>
       <div class="label-stack">
-        <i style="width:${r.tp / total * 100}%;background:#66b3ff"></i>
-        <i style="width:${r.fp / total * 100}%;background:#ff6666"></i>
-        <i style="width:${r.fn / total * 100}%;background:#ff9933"></i>
+        <i style="width:${r.tp / total * 100}%;background:${TH.c("estTp")}"></i>
+        <i style="width:${r.fp / total * 100}%;background:${TH.c("estFp")}"></i>
+        <i style="width:${r.fn / total * 100}%;background:${TH.c("gtFn")}"></i>
       </div>
       <span>TP ${r.tp} FP ${r.fp} FN ${r.fn}</span>
     </div>`;

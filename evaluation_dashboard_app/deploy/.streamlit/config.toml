@@ -16,3 +16,57 @@ enableWebsocketCompression = false
 
 # cookieSecret: MUST be identical on every Streamlit replica behind a load balancer.
 # Set via environment in Docker: STREAMLIT_SERVER_COOKIE_SECRET (see deploy/docker-compose.yml).
+
+# Streamlit theme for the perception evaluation dashboard.
+#
+# Light is the default AND is deliberately left as Streamlit's stock light theme —
+# there is no [theme.light] section on purpose, so the app looks exactly as it did
+# before the dark theme was added. Every styling key below therefore lives under
+# [theme.dark] rather than [theme], so nothing leaks into light.
+#
+# Dark is a designed theme; its values are mirrored in lib/ui/theme.py as CSS custom
+# properties for injected HTML/CSS and as Plotly layout defaults. Keep the two in sync.
+#
+# Chart palettes (chartCategoricalColors / chartSequentialColors / chartDivergingColors)
+# are intentionally NOT set: Streamlit applies them to both themes at once, which would
+# change light-mode charts. Page code picks its own colors via lib/ui/theme.pick().
+#
+# Requires Streamlit >= 1.50 for the [theme.dark] section.
+
+[theme]
+base = "light"
+
+[theme.dark]
+primaryColor = "#60a5fa"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1b2230"
+textColor = "#e8edf5"
+borderColor = "#2a3341"
+dataframeBorderColor = "#2a3341"
+dataframeHeaderBackgroundColor = "#1b2230"
+linkColor = "#7dd3fc"
+codeBackgroundColor = "#11161f"
+codeTextColor = "#e8edf5"
+font = "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif"
+codeFont = "ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+baseRadius = "0.65rem"
+buttonRadius = "0.6rem"
+showWidgetBorder = true
+# Alert / colored-text semantics. These must be opaque (Streamlit composites them
+# directly), so they are the token rgba tints pre-flattened over #0e1117 — Streamlit's
+# stock dark yellow reads as olive against this canvas.
+greenBackgroundColor = "#112c22"
+greenTextColor = "#4ade80"
+yellowBackgroundColor = "#342615"
+yellowTextColor = "#fbbf24"
+orangeBackgroundColor = "#342615"
+orangeTextColor = "#fbbf24"
+redBackgroundColor = "#301822"
+redTextColor = "#fb7185"
+blueBackgroundColor = "#142937"
+blueTextColor = "#7dd3fc"
+
+[theme.dark.sidebar]
+backgroundColor = "#11161f"
+secondaryBackgroundColor = "#1b2230"
+borderColor = "#2a3341"

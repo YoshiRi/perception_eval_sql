@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="bbox_viewer.css">
+  <link rel="stylesheet" href="bbox_viewer.css?v=theme-blueprint-20260731a">
+  <!-- Loads before body paint so the saved/inherited theme applies without a flash. -->
+  <script>/*__BBOX_THEME_JS__*/</script>
 </head>
 <body>
   <div class="app">
@@ -74,14 +76,15 @@
           <button id="fitCamera" title="Fit scene">□</button>
           <button id="toggleTrails" title="Show all frame centers">⋯</button>
           <button id="fullscreenBtn" title="Fullscreen">⛶</button>
+          <button id="themeToggleBtn" title="Switch theme">☀</button>
         </div>
       </div>
       <div class="viewer-controls">
         <div class="viewer-controls-row" id="layerChips">
-          <span class="chip layer active" style="--sw:#00cc66" data-layer="gt_tp">GT·TP <span class="layer-count" id="cntGtTp">0</span></span>
-          <span class="chip layer active" style="--sw:#ff9933" data-layer="gt_fn">GT·FN <span class="layer-count" id="cntGtFn">0</span></span>
-          <span class="chip layer active" style="--sw:#66b3ff" data-layer="est_tp">EST·TP <span class="layer-count" id="cntEstTp">0</span></span>
-          <span class="chip layer active" style="--sw:#ff6666" data-layer="est_fp">EST·FP <span class="layer-count" id="cntEstFp">0</span></span>
+          <span class="chip layer active sw-gt-tp" data-layer="gt_tp">GT·TP <span class="layer-count" id="cntGtTp">0</span></span>
+          <span class="chip layer active sw-gt-fn" data-layer="gt_fn">GT·FN <span class="layer-count" id="cntGtFn">0</span></span>
+          <span class="chip layer active sw-est-tp" data-layer="est_tp">EST·TP <span class="layer-count" id="cntEstTp">0</span></span>
+          <span class="chip layer active sw-est-fp" data-layer="est_fp">EST·FP <span class="layer-count" id="cntEstFp">0</span></span>
           <button id="colorCycleBtn" class="cycle-btn" title="Cycle bbox coloring">Color: Eval</button>
           <button id="labelCycleBtn" class="cycle-btn" title="Cycle label display">Label: Class</button>
           <button id="compareLensBtn" class="cycle-btn" title="Cycle comparison lens">Lens: All</button>
@@ -140,10 +143,10 @@
         <div class="chips" id="labelChips"></div>
       </div>
       <div class="legend">
-        <div><i style="background:#00cc66"></i>GT·TP filled</div>
-        <div><i style="background:#ff9933"></i>GT·FN filled</div>
-        <div><i style="background:#66b3ff"></i>EST·TP wire</div>
-        <div><i style="background:#ff6666"></i>EST·FP wire</div>
+        <div><i class="sw-gt-tp"></i>GT·TP filled</div>
+        <div><i class="sw-gt-fn"></i>GT·FN filled</div>
+        <div><i class="sw-est-tp"></i>EST·TP wire</div>
+        <div><i class="sw-est-fp"></i>EST·FP wire</div>
       </div>
       <div class="compare-banner" id="compareBanner">
         <strong>Compare</strong>
@@ -163,8 +166,8 @@
           <div class="mini-kpi"><b id="analysisEst">0</b><span>EST</span></div>
         </div>
         <div class="compare-summary" id="compareSummary">
-          <div class="compare-card"><strong style="color:#60a5fa">Run A</strong><code id="compareAStats">TP 0 · FP 0 · FN 0</code></div>
-          <div class="compare-card"><strong style="color:#a78bfa">Run B</strong><code id="compareBStats">TP 0 · FP 0 · FN 0</code></div>
+          <div class="compare-card"><strong class="run-a-label">Run A</strong><code id="compareAStats">TP 0 · FP 0 · FN 0</code></div>
+          <div class="compare-card"><strong class="run-b-label">Run B</strong><code id="compareBStats">TP 0 · FP 0 · FN 0</code></div>
           <div class="compare-card delta"><strong>Delta B - A</strong><code id="compareDeltaStats">ΔTP 0 · ΔFP 0 · ΔFN 0</code></div>
         </div>
         <div class="compare-note" id="compareFrameNote"></div>
@@ -222,13 +225,13 @@
     </main>
   </div>
   <script>window.BBOX_VIEWER_API_BASE = "__API_BASE__";</script>
-  <script src="bbox_viewer_api.js"></script>
-  <script src="bbox_viewer_state.js"></script>
-  <script src="bbox_viewer_filters.js"></script>
-  <script src="bbox_viewer_analysis.js"></script>
-  <script src="bbox_viewer_geometry.js"></script>
-  <script src="bbox_viewer_renderer.js"></script>
-  <script src="bbox_viewer_timeline.js"></script>
-  <script src="bbox_viewer_events.js"></script>
+  <script src="bbox_viewer_api.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_state.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_filters.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_analysis.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_geometry.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_renderer.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_timeline.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_viewer_events.js?v=theme-blueprint-20260731a"></script>
 </body>
 </html>

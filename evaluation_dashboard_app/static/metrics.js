@@ -279,6 +279,16 @@ function devopsPurposeText(s) {
   if (!ctx.is_devops) return "";
   return [ctx.intent_type, ctx.target_label, ctx.behavior, ctx.pc_mode].filter(Boolean).join(" · ");
 }
+function isFpValidationContext(ctx) {
+  return String(ctx && ctx.evaluation_task || "").toLowerCase() === "fp_validation";
+}
+function devopsFpEvidenceLabel(ctx) {
+  return isFpValidationContext(ctx) ? "validation FP" : "EST FP rows";
+}
+function devopsMetricLine(s) {
+  const ctx = devopsContext(s);
+  return `TP ${fmt(targetMetric(s, "tp"))} · ${devopsFpEvidenceLabel(ctx)} ${fmt(targetMetric(s, "fp"))} · FN ${fmt(targetMetric(s, "fn"))}`;
+}
 function devopsQuickRead(s) {
   const ctx = devopsContext(s);
   if (!ctx.is_devops) return "No devops intent metadata was inferred for this scenario.";
@@ -288,7 +298,8 @@ function devopsQuickRead(s) {
   const fn = targetMetric(s, "fn");
   if (ctx.focus_metric === "fn") return `${target}: ${fmt(fn)} FN, ${fmt(tp)} TP. Misses are the first thing to inspect.`;
   if (ctx.focus_metric === "error") return `${target}: max TP error ${Number(s.max_tp_error || 0).toFixed(2)} m. Inspect pose/yaw alignment.`;
-  return `${target}: ${fmt(fp)} FP, ${fmt(tp)} TP. Extra detections / false stop evidence are the first thing to inspect.`;
+  if (isFpValidationContext(ctx)) return `${target}: ${fmt(fp)} validation FP, ${fmt(tp)} TP. Validation markers should stay undetected; matched EST boxes explain failures.`;
+  return `${target}: ${fmt(fp)} EST FP rows, ${fmt(tp)} TP. This is tracking/planning FP evidence, not GT false_positive target markers.`;
 }
 function scenarioJudgement(s) {
   const ctx = devopsContext(s);
@@ -315,9 +326,14 @@ function scenarioJudgement(s) {
       : {status: "pass", label: "PASS", reason: `${fmt(tp)} ${target} TP, no target FN`};
   }
   if (ctx.focus_metric === "fp") {
+    if (!isFpValidationContext(ctx)) {
+      return fp > 0
+        ? {status: "review", label: "CHECK", reason: `${fmt(fp)} ${target} EST FP rows; exact criteria/planning gate needed`}
+        : {status: "pass", label: "PASS", reason: `no ${target} EST FP rows`};
+    }
     return fp > 0
-      ? {status: "fail", label: "FAIL", reason: `${fmt(fp)} ${target} FP`}
-      : {status: "pass", label: "PASS", reason: `no ${target} FP`};
+      ? {status: "fail", label: "FAIL", reason: `${fmt(fp)} ${target} validation FP`}
+      : {status: "pass", label: "PASS", reason: `no ${target} validation FP`};
   }
   if (ctx.focus_metric === "error") {
     return (s.max_tp_error || 0) > 0

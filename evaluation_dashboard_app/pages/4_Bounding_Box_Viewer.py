@@ -14,7 +14,9 @@ from typing import Any, List, Optional, Tuple
 from lib.path_utils import path_display
 from lib.parquet_schema import schema_flags
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
+from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.ui.bounding_box_viewer_ui import bev_overlay_line_and_status_legend_markup, bev_status_legend_markup
+from lib.ui.theme import apply_plotly_theme, is_dark, pick, tokens
 from lib.t4_dataset_embed import t4_share_query_params
 from lib.t4_three_layers import resolve_t4_dataset_id, resolve_t4_scenario
 from lib.t4_visualizer_client import (
@@ -37,9 +39,34 @@ st.set_page_config(
 )
 inject_app_page_styles()
 
+# Pre-dark-theme light palette: the exact colors this page's charts used before the dark
+# theme existed. Light mode must keep rendering these; dark uses the token-derived values.
+_LEGACY_BOX_FALLBACK = "#999999"
+_LEGACY_IFRAME_BG = "#e2e8f0"
+_LEGACY_VELOCITY_LINE = "rgba(100,100,100,0.7)"
+_LEGACY_EGO_LINE = "black"
+_LEGACY_EGO_FILL = "gray"
+_LEGACY_RUN_PROXY_LINE = "#555555"
+_LEGACY_MARKER_OUTLINE_WHITE = "white"
+_LEGACY_VLINE = "black"
+_LEGACY_TRAJ_LINE = "gray"
+_LEGACY_TRAJ_CURRENT = "red"
+_LEGACY_TRAJ_FN = "orange"
+_LEGACY_TRAJ_TP = "green"
+_LEGACY_TRAJ_POINT_OUTLINE = "black"
+
+
+def _theme_chart(fig):
+    """Token Plotly theme on dark; on light leave the figure with its pre-dark-theme defaults."""
+    if is_dark():
+        apply_plotly_theme(fig)
+    return fig
+
+
 # =============================
 # Session state from Overview (run path)
 # =============================
+try_hydrate_session_from_overview_query_params()
 if "runA" not in st.session_state:
     st.warning("Please load data from the **Overview** page first (select mode and run(s)).")
     st.stop()
@@ -453,13 +480,15 @@ df_stats = df
 # ----------------------------
 # Color map
 # ----------------------------
+# Box hues stay fixed in both themes: they mirror the 3D/BEV viewers (static/bbox_viewer.css --sw-*)
+# and the status legend chips in lib/ui/bounding_box_viewer_ui.py. Everything else on the page uses tokens.
 color_map = {
     ("GT", "TP"): "#00cc66",   # 緑
     ("GT", "FN"): "#ff9933",   # オレンジ
     ("EST", "TP"): "#66b3ff",  # 青
     ("EST", "FP"): "#ff6666",  # 赤
 }
-def get_color(source, status): return color_map.get((source, status), "#999999")
+def get_color(source, status): return color_map.get((source, status), pick(_LEGACY_BOX_FALLBACK, tokens()["muted"]))
 
 # ----------------------------
 # Currently showing & comparison hint
@@ -649,11 +678,12 @@ else:
         _render_html_url = f"{browser_url_t4.rstrip('/')}/render/html?{_q}"
         st.markdown(f"[Open in new tab]({_render_html_url})")
         _iframe_h = 900
-        # Iframe shell: neutral gray while the document loads (avoid #141418 — reads as a black box for ~2s until
-        # the large /render/html response paints; inner page still sets its own dark background).
+        # Iframe shell: neutral surface while the document loads (avoid a hard dark fill — it reads as a black
+        # box for ~2s until the large /render/html response paints; inner page still sets its own background).
+        # The iframe is its own document, so the token value is inlined instead of using var(--t4-*).
         components.html(
             f'<iframe src="{html.escape(_render_html_url, quote=True)}" '
-            f'width="100%" height="{_iframe_h}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'width="100%" height="{_iframe_h}" style="border:none;border-radius:8px;background:{pick(_LEGACY_IFRAME_BG, tokens()["surface_3"])}" '
             f'loading="lazy" title="T4 camera render" referrerpolicy="no-referrer-when-downgrade"></iframe>',
             height=_iframe_h + 24,
             scrolling=True,
@@ -928,14 +958,15 @@ def _build_one_bev_figure(
                 ys.extend([y0, y0 + v_scale * vy, np.nan])
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode="lines",
-                line=dict(color="rgba(100,100,100,0.7)", width=2, dash="dot"),
+                line=dict(color=pick(_LEGACY_VELOCITY_LINE, tokens()["muted"]), width=2, dash="dot"),
                 name="Velocity (2 s)",
                 showlegend=True,
             ))
     fig.add_trace(go.Scatter(
         x=[0, -1.5, -1.5, 0], y=[0, -1, 1, 0],
         mode="lines", fill="toself",
-        line=dict(color="black", width=2), fillcolor="gray", name="Ego Vehicle", showlegend=True
+        line=dict(color=pick(_LEGACY_EGO_LINE, tokens()["text"]), width=2),
+        fillcolor=pick(_LEGACY_EGO_FILL, tokens()["neutral"]), name="Ego Vehicle", showlegend=True
     ))
     layout_kw: dict = {
         "title": plot_title,
@@ -949,6 +980,7 @@ def _build_one_bev_figure(
     if y_range is not None:
         layout_kw["yaxis"]["range"] = list(y_range)
     fig.update_layout(**layout_kw)
+    _theme_chart(fig)
     return fig
 
 
@@ -1000,7 +1032,7 @@ def _build_overlay_bev_figure(
         dash = dash_styles[run_idx % len(dash_styles)]
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="lines",
-            line=dict(color="#555555", width=4, dash=dash),
+            line=dict(color=pick(_LEGACY_RUN_PROXY_LINE, tokens()["muted"]), width=4, dash=dash),
             name=f"Run {run_lbl}",
             legendgroup=run_lbl,
             showlegend=True,
@@ -1027,7 +1059,7 @@ def _build_overlay_bev_figure(
                 marker=dict(
                     symbol="x", size=8,
                     color=d.apply(lambda row: get_color(row.source, row.status), axis=1),
-                    line=dict(width=2, color="white"),
+                    line=dict(width=2, color=pick(_LEGACY_MARKER_OUTLINE_WHITE, tokens()["bg"])),
                 ),
                 opacity=0.9, legendgroup=run_lbl, showlegend=False,
                 hovertemplate=hovertemplate,
@@ -1050,7 +1082,7 @@ def _build_overlay_bev_figure(
                     marker=dict(
                         symbol="circle", size=group[["length", "width"]].max(axis=1),
                         color=group.apply(lambda row: get_color(row.source, row.status), axis=1),
-                        line=dict(width=2, color="white"),
+                        line=dict(width=2, color=pick(_LEGACY_MARKER_OUTLINE_WHITE, tokens()["bg"])),
                     ),
                     opacity=0.7, legendgroup=run_lbl, showlegend=False,
                     hovertemplate=hovertemplate,
@@ -1085,14 +1117,15 @@ def _build_overlay_bev_figure(
                 ys.extend([y0, y0 + v_scale * vy, np.nan])
             fig.add_trace(go.Scatter(
                 x=xs, y=ys, mode="lines",
-                line=dict(color="rgba(100,100,100,0.7)", width=2, dash="dot"),
+                line=dict(color=pick(_LEGACY_VELOCITY_LINE, tokens()["muted"]), width=2, dash="dot"),
                 name="Velocity (2 s)",
                 showlegend=True,
             ))
     fig.add_trace(go.Scatter(
         x=[0, -1.5, -1.5, 0], y=[0, -1, 1, 0],
         mode="lines", fill="toself",
-        line=dict(color="black", width=2), fillcolor="gray", name="Ego Vehicle", showlegend=True
+        line=dict(color=pick(_LEGACY_EGO_LINE, tokens()["text"]), width=2),
+        fillcolor=pick(_LEGACY_EGO_FILL, tokens()["neutral"]), name="Ego Vehicle", showlegend=True
     ))
     fig.update_layout(
         title=plot_title,
@@ -1101,6 +1134,7 @@ def _build_overlay_bev_figure(
         legend=dict(groupclick="togglegroup", title="Run (click to show/hide)"),
         height=900,
     )
+    _theme_chart(fig)
     return fig
 
 
@@ -1211,11 +1245,12 @@ fig_tpr.update_layout(height=400, legend_title="Run / Status" if "run" in frame_
 # --- 現在Frameに縦破線を追加 ---
 fig_tpr.add_vline(
     x=frame,
-    line=dict(color="black", dash="dash", width=2),
+    line=dict(color=pick(_LEGACY_VLINE, tokens()["text"]), dash="dash", width=2),
     annotation_text=f"Frame {frame}",
     annotation_position="top left"
 )
 
+_theme_chart(fig_tpr)
 st.plotly_chart(fig_tpr, width="stretch")
 
 # TPR比率の推移を別グラフで (side by side when both runs)
@@ -1239,10 +1274,11 @@ else:
 fig_ratio.update_yaxes(range=[0, 1])
 fig_ratio.add_vline(
     x=frame,
-    line=dict(color="black", dash="dash", width=2),
+    line=dict(color=pick(_LEGACY_VLINE, tokens()["text"]), dash="dash", width=2),
     annotation_text=f"Frame {frame}",
     annotation_position="top left"
 )
+_theme_chart(fig_ratio)
 st.plotly_chart(fig_ratio, width="stretch")
 
 # === Worst-performing objects by FN rate ===
@@ -1369,7 +1405,7 @@ def _draw_trajectory_figure(traj: pd.DataFrame, title: str) -> go.Figure:
     fig_traj.add_trace(go.Scatter(
         x=traj["x"], y=traj["y"],
         mode="lines",
-        line=dict(color="gray", width=1),
+        line=dict(color=pick(_LEGACY_TRAJ_LINE, tokens()["muted"]), width=1),
         name=f"Trajectory ({traj['label'].iloc[0]})"
     ))
     for status, group in traj.groupby("status"):
@@ -1379,8 +1415,13 @@ def _draw_trajectory_figure(traj: pd.DataFrame, title: str) -> go.Figure:
             marker=dict(
                 symbol=symbol_map.get(status, "circle"),
                 size=[10 if f == frame else 6 for f in group["frame_index"]],
-                color=["red" if f == frame else ("orange" if status == "FN" else "green") for f in group["frame_index"]],
-                line=dict(width=1, color="black")
+                color=[
+                    pick(_LEGACY_TRAJ_CURRENT, tokens()["bad"])
+                    if f == frame
+                    else (pick(_LEGACY_TRAJ_FN, tokens()["warn"]) if status == "FN" else pick(_LEGACY_TRAJ_TP, tokens()["ok"]))
+                    for f in group["frame_index"]
+                ],
+                line=dict(width=1, color=pick(_LEGACY_TRAJ_POINT_OUTLINE, tokens()["bg"]))
             ),
             name=f"{status} points"
         ))
@@ -1391,6 +1432,7 @@ def _draw_trajectory_figure(traj: pd.DataFrame, title: str) -> go.Figure:
         height=600,
         legend=dict(title="Status")
     )
+    _theme_chart(fig_traj)
     return fig_traj
 
 if not uuid_traj.empty:

@@ -12,10 +12,10 @@ def inject_detection_stats_styles() -> None:
     st.markdown(
         """
 <style>
-.section-header { border-left: 4px solid #0d9488; padding-left: 12px; font-weight: 700; font-size: 1.02rem; color: #0f172a; margin: 1.35rem 0 0.65rem 0; letter-spacing: -0.02em; }
+.section-header { border-left: 4px solid var(--t4-accent-2); padding-left: 12px; font-weight: 700; font-size: 1.02rem; color: var(--t4-text); margin: 1.35rem 0 0.65rem 0; letter-spacing: -0.02em; }
 .section-block { margin-bottom: 1.5rem; }
-.run-chip { display: inline-block; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 999px; padding: 0.35rem 0.85rem; font-size: 0.875rem; margin: 0.25rem 0.25rem 0.25rem 0; }
-.run-chip strong { color: #334155; }
+.run-chip { display: inline-block; background: var(--t4-chip-bg); border: 1px solid var(--t4-border); border-radius: 999px; padding: 0.35rem 0.85rem; font-size: 0.875rem; margin: 0.25rem 0.25rem 0.25rem 0; color: var(--t4-text-2); }
+.run-chip strong { color: var(--t4-text); }
 @keyframes ds-load-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
@@ -24,23 +24,25 @@ def inject_detection_stats_styles() -> None:
   0%, 100% { opacity: 1; }
   50% { opacity: 0.78; }
 }
+/* Glow/beacon tints ride on the teal accent tokens (translucent in dark) so the
+   pulse tints the canvas instead of flashing a bright block on #0e1117. */
 @keyframes ds-banner-glow {
   0%, 100% {
     box-shadow:
-      0 0 0 1px rgba(13, 148, 136, 0.35),
-      0 4px 14px rgba(13, 148, 136, 0.18),
-      0 0 28px rgba(45, 212, 191, 0.12);
+      0 0 0 1px var(--t4-accent-2-border),
+      0 4px 14px var(--t4-accent-2-soft),
+      0 0 28px var(--t4-accent-2-soft);
   }
   50% {
     box-shadow:
-      0 0 0 2px rgba(13, 148, 136, 0.55),
-      0 6px 22px rgba(13, 148, 136, 0.28),
-      0 0 40px rgba(45, 212, 191, 0.22);
+      0 0 0 2px var(--t4-accent-2-border),
+      0 6px 22px var(--t4-accent-2-border),
+      0 0 40px var(--t4-accent-2-soft);
   }
 }
 @keyframes ds-dot-beacon {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.55); }
-  55% { transform: scale(1.12); box-shadow: 0 0 0 14px rgba(20, 184, 166, 0); }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--t4-accent-2-border); }
+  55% { transform: scale(1.12); box-shadow: 0 0 0 14px transparent; }
 }
 @keyframes ds-banner-bg-shift {
   0% { background-position: 0% 40%; }
@@ -50,8 +52,8 @@ def inject_detection_stats_styles() -> None:
   display: flex; align-items: flex-start; gap: 1rem;
   padding: 1rem 1.2rem; margin: 0 0 1.15rem 0;
   border-radius: 14px;
-  border: 2px solid #2dd4bf;
-  background: linear-gradient(125deg, #99f6e4 0%, #5eead4 22%, #a5f3fc 48%, #e0f2fe 72%, #ecfeff 100%);
+  border: 2px solid var(--t4-accent-2);
+  background: linear-gradient(125deg, var(--t4-accent-2-soft) 0%, var(--t4-accent-2-border) 22%, var(--t4-accent-soft) 48%, var(--t4-surface-2) 72%, var(--t4-surface) 100%);
   background-size: 240% 240%;
   animation: ds-banner-glow 2.2s ease-in-out infinite, ds-banner-bg-shift 6s ease-in-out infinite alternate;
 }
@@ -61,45 +63,45 @@ def inject_detection_stats_styles() -> None:
 .ds-page-loading-banner .ds-plb-badge {
   flex-shrink: 0;
   font-size: 0.62rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
-  color: #f0fdfa;
-  background: linear-gradient(135deg, #0f766e 0%, #0e7490 100%);
+  color: var(--t4-accent-on);
+  background: linear-gradient(135deg, var(--t4-accent-2) 0%, var(--t4-accent) 100%);
   padding: 0.28rem 0.55rem; border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.35);
+  box-shadow: var(--t4-shadow-sm);
   animation: ds-load-pulse 1.4s ease-in-out infinite;
 }
 .ds-page-loading-banner .ds-plb-text {
   flex: 1; min-width: 0;
-  font-size: 1.08rem; font-weight: 800; color: #0f172a; letter-spacing: -0.02em;
+  font-size: 1.08rem; font-weight: 800; color: var(--t4-text); letter-spacing: -0.02em;
   line-height: 1.25;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  text-shadow: 0 1px 0 var(--t4-overlay);
 }
 .ds-page-loading-banner .ds-plb-sub {
-  display: block; font-size: 0.82rem; font-weight: 600; color: #334155; margin-top: 0.35rem;
+  display: block; font-size: 0.82rem; font-weight: 600; color: var(--t4-text-2); margin-top: 0.35rem;
   line-height: 1.4;
 }
 .ds-plb-shimmer-wrap {
   height: 7px; border-radius: 999px; overflow: hidden;
-  background: rgba(15, 118, 110, 0.15); margin-top: 0.65rem;
-  border: 1px solid rgba(13, 148, 136, 0.2);
+  background: var(--t4-accent-2-soft); margin-top: 0.65rem;
+  border: 1px solid var(--t4-accent-2-border);
 }
 .ds-plb-shimmer {
   height: 100%; width: 100%;
   background: linear-gradient(
     90deg,
-    rgba(13, 148, 136, 0) 0%,
-    rgba(13, 148, 136, 0.2) 38%,
-    rgba(6, 182, 212, 0.95) 50%,
-    rgba(13, 148, 136, 0.2) 62%,
-    rgba(13, 148, 136, 0) 100%
+    transparent 0%,
+    var(--t4-accent-2-soft) 38%,
+    var(--t4-accent-2) 50%,
+    var(--t4-accent-2-soft) 62%,
+    transparent 100%
   );
   background-size: 200% 100%;
   animation: ds-load-shimmer 1.35s ease-in-out infinite;
 }
 .ds-plb-dot {
   width: 14px; height: 14px; border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #5eead4, #0d9488);
+  background: radial-gradient(circle at 30% 30%, var(--t4-accent-2), var(--t4-accent));
   flex-shrink: 0; margin-top: 0.15rem;
-  border: 2px solid rgba(255, 255, 255, 0.85);
+  border: 2px solid var(--t4-surface);
   animation: ds-dot-beacon 1.5s ease-out infinite;
 }
 @keyframes ds-spot-bar-slide {
@@ -114,15 +116,15 @@ def inject_detection_stats_styles() -> None:
   margin: 0.2rem 0 0.7rem 0;
   padding: 0.5rem 0.75rem;
   border-radius: 10px;
-  border: 1px solid rgba(13, 148, 136, 0.55);
-  background: linear-gradient(100deg, rgba(167, 243, 208, 0.55) 0%, rgba(240, 253, 250, 0.98) 55%, rgba(224, 242, 254, 0.5) 100%);
-  box-shadow: 0 2px 12px rgba(13, 148, 136, 0.14);
+  border: 1px solid var(--t4-accent-2-border);
+  background: linear-gradient(100deg, var(--t4-accent-2-soft) 0%, var(--t4-surface-2) 55%, var(--t4-accent-soft) 100%);
+  box-shadow: var(--t4-shadow-sm);
 }
 .ds-spot-loader .ds-spot-ping {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #0d9488;
+  background: var(--t4-accent-2);
   flex-shrink: 0;
   animation: ds-dot-beacon 1.35s ease-out infinite;
 }
@@ -131,8 +133,8 @@ def inject_detection_stats_styles() -> None:
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #fff;
-  background: linear-gradient(135deg, #0f766e, #0e7490);
+  color: var(--t4-accent-on);
+  background: linear-gradient(135deg, var(--t4-accent-2), var(--t4-accent));
   padding: 0.2rem 0.45rem;
   border-radius: 4px;
   flex-shrink: 0;
@@ -140,7 +142,7 @@ def inject_detection_stats_styles() -> None:
 .ds-spot-loader .ds-spot-label {
   font-size: 0.8rem;
   font-weight: 700;
-  color: #134e4a;
+  color: var(--t4-text);
   letter-spacing: -0.015em;
   flex: 1 1 120px;
   min-width: 0;
@@ -151,14 +153,14 @@ def inject_detection_stats_styles() -> None:
   height: 5px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(13, 148, 136, 0.14);
+  background: var(--t4-accent-2-soft);
 }
 .ds-spot-loader .ds-spot-bar-inner {
   display: block;
   height: 100%;
   width: 34%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #0d9488, #06b6d4);
+  background: linear-gradient(90deg, var(--t4-accent-2), var(--t4-accent));
   animation: ds-spot-bar-slide 1s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -183,26 +185,26 @@ def inject_detection_stats_kpi_styles() -> None:
 <style>
 .kpi-wrap { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: stretch; margin-bottom: 1.5rem; }
 .kpi-card {
-    background: linear-gradient(180deg, #f8f9fa 0%, #f0f2f5 100%);
-    border: 1px solid #dee2e6;
+    background: var(--t4-card-bg);
+    border: 1px solid var(--t4-border);
     border-radius: 12px;
     padding: 1.5rem 2rem;
     min-width: 360px;
     min-height: 200px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    box-shadow: var(--t4-shadow-sm);
     display: flex;
     flex-direction: column;
 }
-.kpi-title { font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #495057; margin-bottom: 1rem; }
+.kpi-title { font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--t4-text-3); margin-bottom: 1rem; }
 .kpi-row { display: flex; gap: 2rem; margin-bottom: 0.85rem; }
 .kpi-row:last-child { margin-bottom: 0; }
 .kpi-cell { display: flex; flex-direction: column; align-items: flex-start; min-width: 4.5rem; min-height: 2.6rem; }
-.kpi-label { font-size: 0.8rem; color: #6c757d; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25rem; }
-.kpi-value { font-size: 1.5rem; font-weight: 700; color: #212529; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.kpi-label { font-size: 0.8rem; color: var(--t4-muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.25rem; }
+.kpi-value { font-size: 1.5rem; font-weight: 700; color: var(--t4-text); font-variant-numeric: tabular-nums; line-height: 1.2; }
 .kpi-delta-inline { display: block; font-size: 0.8rem; font-weight: 600; margin-top: 0.2rem; font-variant-numeric: tabular-nums; min-height: 1.1rem; }
-.kpi-delta-inline.delta-pos { color: #0d6b0d; }
-.kpi-delta-inline.delta-neg { color: #b02a37; }
-.kpi-empty { font-size: 1rem; color: #6c757d; font-style: italic; }
+.kpi-delta-inline.delta-pos { color: var(--t4-ok); }
+.kpi-delta-inline.delta-neg { color: var(--t4-bad); }
+.kpi-empty { font-size: 1rem; color: var(--t4-muted); font-style: italic; }
 
 /* KPI Comparison Analysis */
 .kpi-analysis {
@@ -211,37 +213,37 @@ def inject_detection_stats_kpi_styles() -> None:
     margin: 0.5rem 0 1.5rem 0;
     font-size: 0.92rem;
     line-height: 1.6;
-    color: #212529;
-    border-left: 4px solid #adb5bd;
+    color: var(--t4-text);
+    border-left: 4px solid var(--t4-neutral-border);
 }
 .kpi-analysis-good {
-    background: linear-gradient(135deg, #f0faf0 0%, #e8f5e9 100%);
-    border-left-color: #2d8f47;
+    background: var(--t4-ok-bg);
+    border-left-color: var(--t4-ok);
 }
 .kpi-analysis-bad {
-    background: linear-gradient(135deg, #fff5f5 0%, #ffe8e8 100%);
-    border-left-color: #d73027;
+    background: var(--t4-bad-bg);
+    border-left-color: var(--t4-bad);
 }
 .kpi-analysis-warn {
-    background: linear-gradient(135deg, #fffdf0 0%, #fff8e1 100%);
-    border-left-color: #e6a817;
+    background: var(--t4-warn-bg);
+    border-left-color: var(--t4-warn);
 }
 .kpi-analysis-neutral {
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    border-left-color: #6c757d;
+    background: var(--t4-neutral-bg);
+    border-left-color: var(--t4-neutral);
 }
 .kpi-analysis-verdict { font-size: 0.98rem; }
-.kpi-analysis-verdict.kpi-analysis-good { color: #1a6b2a; }
-.kpi-analysis-verdict.kpi-analysis-bad { color: #a82030; }
-.kpi-analysis-verdict.kpi-analysis-warn { color: #8a6d14; }
-.kpi-analysis-verdict.kpi-analysis-neutral { color: #495057; }
+.kpi-analysis-verdict.kpi-analysis-good { color: var(--t4-ok); }
+.kpi-analysis-verdict.kpi-analysis-bad { color: var(--t4-bad); }
+.kpi-analysis-verdict.kpi-analysis-warn { color: var(--t4-warn); }
+.kpi-analysis-verdict.kpi-analysis-neutral { color: var(--t4-neutral); }
 .kpi-analysis-recommendation {
     margin: 0.45rem 0 0.15rem 0;
-    color: #374151;
+    color: var(--t4-text-2);
 }
 .kpi-analysis-note {
     font-size: 0.84rem;
-    color: #6b7280;
+    color: var(--t4-muted);
     font-style: italic;
 }
 </style>
@@ -308,7 +310,7 @@ def render_kpi_card(title: str, kpi: dict, css_id: str = "", deltas: dict | None
 def section_header_html(title: str, caption: str = "") -> str:
     """HTML for a styled section header with optional caption."""
     if caption:
-        return f'<div class="section-header">{title}</div><p style="margin-top: 0.25rem; margin-bottom: 0.75rem; font-size: 0.9rem; color: #6b7280;">{caption}</p>'
+        return f'<div class="section-header">{title}</div><p style="margin-top: 0.25rem; margin-bottom: 0.75rem; font-size: 0.9rem; color: var(--t4-muted);">{caption}</p>'
     return f'<div class="section-header">{title}</div>'
 
 

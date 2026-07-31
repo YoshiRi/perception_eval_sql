@@ -32,6 +32,45 @@ from lib.specsheet_report import (
     load_trend_summary_file,
     parse_trend_metadata_text,
 )
+from lib.ui.theme import (
+    CATEGORICAL,
+    DIVERGING_SCALE,
+    SEQUENTIAL_SCALE,
+    active_theme,
+    apply_plotly_theme,
+    css_variables,
+    is_dark,
+    pick,
+    tokens,
+)
+
+# --- Pre-dark-theme light chart palette -----------------------------------------------
+# Exactly the colors this page drew before the dark theme landed. Light mode must keep
+# them; dark mode uses the token-derived palettes. Paired through pick() at each site.
+_LEGACY_CHART_BG = "#ffffff"
+_LEGACY_GRIDCOLOR = "rgba(148, 163, 184, 0.18)"
+_LEGACY_SCENARIO_BAR = "#bfdbfe"
+_LEGACY_PASS_LINE = "#1d4ed8"
+_LEGACY_DATA_COUNT_BAR = "#f4a7a7"
+_LEGACY_PREDICTION_COUNT_BAR = "#fbbf24"
+_LEGACY_METRIC_STYLES = {"mAP": "#0f766e", "precision": "#1d4ed8", "recall": "#be123c"}
+_LEGACY_PREDICTION_SHADES = {
+    "minADE@1s": "#0f766e",
+    "minADE@3s": "#14b8a6",
+    "minADE@5s": "#99f6e4",
+    "minFDE@1s": "#1d4ed8",
+    "minFDE@3s": "#60a5fa",
+    "minFDE@5s": "#bfdbfe",
+}
+_LEGACY_USECASE_RECALL = "#be123c"
+_LEGACY_USECASE_FNR = "#7c3aed"
+_LEGACY_USECASE_FALLBACK = "#334155"
+_LEGACY_DELTA_SCALE = ["#7f1d1d", "#f8fafc", "#14532d"]
+_LEGACY_LEVEL_SCALE = ["#f8fafc", "#8dd3c7", "#0f766e"]
+_LEGACY_DEFECT_SCALE = ["#7f1d1d", "#fef3c7", "#166534"]
+# In-cell metric bars in the generated performance table.
+_LEGACY_BAR_TEAL_RGB = (45, 212, 191)
+_LEGACY_BAR_ROSE_RGB = (251, 113, 133)
 
 # §7: distance bands for UseCase/DevOps recall. Column names on the release frame are
 # f"recall_band_{band}"; populated only when a release's summary carries banded recall so
@@ -47,6 +86,50 @@ except Exception:  # pragma: no cover - library optional
 
 def _recall_band_column(band: str) -> str:
     return f"recall_band_{band}"
+
+
+def _token_rgb(name: str) -> tuple[int, int, int]:
+    """RGB triple for a design token, so CSS/Plotly gradients can be mixed in Python."""
+    value = str(tokens().get(name, "")).strip()
+    if value.startswith("#"):
+        digits = value[1:]
+        if len(digits) == 3:
+            digits = "".join(ch * 2 for ch in digits)
+        if len(digits) >= 6:
+            return (int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16))
+    match = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", value)
+    if match:
+        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    return (148, 163, 184)
+
+
+def _shade(color: str, alpha: float) -> str:
+    """A translucent variant of a palette color, used to shade one family's horizons."""
+    value = str(color).strip()
+    if value.startswith("#"):
+        digits = value[1:]
+        if len(digits) == 3:
+            digits = "".join(ch * 2 for ch in digits)
+        red, green, blue = (int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16))
+        return f"rgba({red}, {green}, {blue}, {alpha:g})"
+    return value
+
+
+def _theme_figure(fig, **overrides):
+    """Dark: token layout. Light: leave the figure exactly as it was before the dark theme."""
+    if is_dark():
+        apply_plotly_theme(fig, **overrides)
+    return fig
+
+
+def _theme_white_canvas_figure(fig):
+    """Same split for the four figures that used to hardcode a white canvas + faint grid."""
+    if is_dark():
+        apply_plotly_theme(fig)
+    else:
+        fig.update_layout(plot_bgcolor=_LEGACY_CHART_BG, paper_bgcolor=_LEGACY_CHART_BG)
+        fig.update_yaxes(gridcolor=_LEGACY_GRIDCOLOR)
+    return fig
 
 st.set_page_config(page_title="Release Trends", layout="wide", initial_sidebar_state="expanded")
 inject_app_page_styles()
@@ -712,6 +795,10 @@ def _render_release_library_table(
 <head>
 <meta charset="utf-8">
 <style>
+:root {{
+{css_variables()}
+  color-scheme: {active_theme()};
+}}
 * {{
   box-sizing: border-box;
 }}
@@ -719,7 +806,7 @@ body {{
   margin: 0;
   padding: 0 0 26px 0;
   background: transparent;
-  color: #0f172a;
+  color: var(--t4-text);
   font-family: "Source Sans Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }}
 .release-library-shell {{
@@ -729,7 +816,7 @@ body {{
   overflow-x: auto;
   overflow-y: visible;
   width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid var(--t4-border);
   border-radius: 10px;
   padding-bottom: 2px;
   scrollbar-gutter: stable;
@@ -744,7 +831,7 @@ body {{
 }}
 .release-library-table th,
 .release-library-table td {{
-  border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+  border-bottom: 1px solid var(--t4-border);
   padding: 0.34rem 0.5rem;
   text-align: left;
   vertical-align: middle;
@@ -753,8 +840,8 @@ body {{
   overflow: hidden;
 }}
 .release-library-table th {{
-  background: #f8fafc;
-  color: #334155;
+  background: var(--t4-surface-2);
+  color: var(--t4-text-2);
   font-weight: 700;
   white-space: nowrap;
 }}
@@ -762,19 +849,19 @@ body {{
   position: sticky;
   top: 0;
   z-index: 3;
-  background: #eef2ff;
-  color: #3730a3;
+  background: var(--t4-surface-3);
+  color: var(--t4-accent);
   text-align: center;
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  border-right: 1px solid rgba(129, 140, 248, 0.22);
+  border-right: 1px solid var(--t4-accent-border);
 }}
 .release-library-table .column-header th {{
   position: sticky;
   top: 29px;
   z-index: 3;
-  background: #f8fafc;
+  background: var(--t4-surface-2);
   font-size: 0.82rem;
   text-align: center;
   padding: 0;
@@ -795,11 +882,11 @@ body {{
   top: 8px;
   bottom: 8px;
   left: 3px;
-  border-left: 1px solid rgba(100, 116, 139, 0.28);
+  border-left: 1px solid var(--t4-border-strong);
 }}
 .resize-handle:hover::after,
 .resize-handle.is-resizing::after {{
-  border-left-color: #2563eb;
+  border-left-color: var(--t4-accent);
 }}
 .sort-button {{
   appearance: none;
@@ -811,14 +898,14 @@ body {{
   padding: 0.26rem 0.38rem;
   border: 0;
   background: transparent;
-  color: #334155;
+  color: var(--t4-text-2);
   font: inherit;
   font-weight: 750;
   cursor: pointer;
 }}
 .sort-button:hover {{
-  background: rgba(248, 250, 252, 0.92);
-  color: #334155;
+  background: var(--t4-surface-3);
+  color: var(--t4-text);
 }}
 .plain-header {{
   display: flex;
@@ -829,11 +916,11 @@ body {{
   font-weight: 750;
 }}
 .release-library-table tbody tr:hover td {{
-  background: rgba(248, 250, 252, 0.82);
+  background: var(--t4-overlay);
 }}
 .release-library-table td:nth-child(1) {{
   font-weight: 650;
-  color: #0f172a;
+  color: var(--t4-text);
   white-space: normal;
   overflow: visible;
 }}
@@ -846,18 +933,18 @@ body {{
   max-width: 100%;
 }}
 .release-library-table td:nth-child({description_col}) {{
-  color: #475569;
+  color: var(--t4-text-3);
   text-overflow: ellipsis;
 }}
 .release-library-table td:nth-child({muted_cols[0]}),
 .release-library-table td:nth-child({muted_cols[1]}) {{
-  color: #475569;
+  color: var(--t4-text-3);
 }}
 .release-library-table td:nth-child(n+{centered_from}):not(:last-child) {{
   text-align: center;
 }}
 .release-library-table td:last-child {{
-  color: #64748b;
+  color: var(--t4-muted);
   font-size: 0.8rem;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -891,26 +978,26 @@ body {{
   flex-wrap: nowrap;
 }}
 .link-chip-overview {{
-  color: #1d4ed8;
-  background: #eff6ff;
-  border-color: #bfdbfe;
+  color: var(--t4-accent);
+  background: var(--t4-accent-soft);
+  border-color: var(--t4-accent-border);
 }}
 .link-chip-pdf {{
-  color: #9f1239;
-  background: #fff1f2;
-  border-color: #fecdd3;
+  color: var(--t4-bad);
+  background: var(--t4-bad-bg);
+  border-color: var(--t4-bad-border);
 }}
 .link-chip-job {{
-  color: #166534;
-  background: #f0fdf4;
-  border-color: #bbf7d0;
+  color: var(--t4-ok);
+  background: var(--t4-ok-bg);
+  border-color: var(--t4-ok-border);
 }}
 .link-chip:hover {{
   text-decoration: underline;
   filter: brightness(0.98);
 }}
 .muted-cell {{
-  color: #94a3b8;
+  color: var(--t4-muted);
 }}
 .type-pill {{
   appearance: none;
@@ -924,20 +1011,20 @@ body {{
   font-size: 0.78rem;
   font-weight: 750;
   font-family: inherit;
-  color: #334155;
-  background: #f1f5f9;
-  border: 1px solid #cbd5e1;
+  color: var(--t4-neutral);
+  background: var(--t4-neutral-bg);
+  border: 1px solid var(--t4-neutral-border);
   text-decoration: none;
 }}
 .type-release {{
-  color: #075985;
-  background: #e0f2fe;
-  border-color: #bae6fd;
+  color: var(--t4-info);
+  background: var(--t4-info-bg);
+  border-color: var(--t4-info-border);
 }}
 .type-periodic_evaluation {{
-  color: #854d0e;
-  background: #fef3c7;
-  border-color: #fde68a;
+  color: var(--t4-warn);
+  background: var(--t4-warn-bg);
+  border-color: var(--t4-warn-border);
 }}
 .type-toggle {{
   cursor: pointer;
@@ -1145,8 +1232,10 @@ def _release_performance_cell_html(value: Any, column: str, ranges: dict[str, tu
         label = f"{float(numeric):.3f}"
 
     # Calm app-aligned palette: soft rose for weak/concerning values, soft teal for strong/healthy values.
-    teal = (45, 212, 191)
-    rose = (251, 113, 133)
+    # Dark endpoints come from the semantic tokens so the fills stay legible on the deep
+    # canvas; light keeps the original soft teal/rose pair.
+    teal = pick(_LEGACY_BAR_TEAL_RGB, _token_rgb("ok"))
+    rose = pick(_LEGACY_BAR_ROSE_RGB, _token_rgb("bad"))
     if column in {"mAP", "precision", "recall", "overall_pass_rate"}:
         color_ratio = normalized
     else:
@@ -1223,6 +1312,10 @@ def _render_release_performance_html_table(frame: pd.DataFrame) -> None:
 <head>
 <meta charset="utf-8">
 <style>
+:root {{
+{css_variables()}
+  color-scheme: {active_theme()};
+}}
 * {{
   box-sizing: border-box;
 }}
@@ -1230,13 +1323,13 @@ body {{
   margin: 0;
   padding: 0;
   background: transparent;
-  color: #0f172a;
+  color: var(--t4-text);
   font-family: "Source Sans Pro", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }}
 .release-perf-table-wrap {{
   overflow-x: auto;
   overflow-y: visible;
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  border: 1px solid var(--t4-border);
   border-radius: 10px;
 }}
 .release-perf-table {{
@@ -1249,7 +1342,7 @@ body {{
 }}
 .release-perf-table th,
 .release-perf-table td {{
-  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+  border-bottom: 1px solid var(--t4-border);
   padding: 0.34rem 0.48rem;
   text-align: left;
   vertical-align: middle;
@@ -1258,8 +1351,8 @@ body {{
 .release-perf-table th {{
   position: sticky;
   z-index: 2;
-  background: #f8fafc;
-  color: #334155;
+  background: var(--t4-surface-2);
+  color: var(--t4-text-2);
   font-weight: 750;
   padding: 0;
 }}
@@ -1268,12 +1361,12 @@ body {{
   z-index: 3;
   padding: 0.3rem 0.48rem;
   text-align: center;
-  background: #eef2ff;
-  color: #3730a3;
+  background: var(--t4-surface-3);
+  color: var(--t4-accent);
   font-size: 0.76rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  border-right: 1px solid rgba(129, 140, 248, 0.20);
+  border-right: 1px solid var(--t4-accent-border);
 }}
 .release-perf-table .perf-column-header th {{
   top: 30px;
@@ -1288,39 +1381,39 @@ body {{
   padding: 0.34rem 0.48rem;
   border: 0;
   background: transparent;
-  color: #334155;
+  color: var(--t4-text-2);
   font: inherit;
   font-weight: 750;
   cursor: pointer;
 }}
 .perf-sort-button:hover {{
-  background: rgba(219, 234, 254, 0.62);
+  background: var(--t4-accent-soft);
 }}
 .perf-sort-button[data-dir="asc"]::after {{
   content: "▲";
   margin-left: 0.35rem;
-  color: #2563eb;
+  color: var(--t4-accent);
   font-size: 0.64rem;
 }}
 .perf-sort-button[data-dir="desc"]::after {{
   content: "▼";
   margin-left: 0.35rem;
-  color: #2563eb;
+  color: var(--t4-accent);
   font-size: 0.64rem;
 }}
 .release-perf-table tbody tr:hover td {{
-  background: rgba(248, 250, 252, 0.82);
+  background: var(--t4-overlay);
 }}
 .release-perf-table td.perf-selected-cell {{
-  outline: 1.5px solid #2563eb;
+  outline: 1.5px solid var(--t4-accent);
   outline-offset: -2px;
-  background: rgba(219, 234, 254, 0.58) !important;
+  background: var(--t4-accent-soft) !important;
 }}
 .release-perf-table td.perf-selected-cell .perf-bar-cell {{
-  box-shadow: inset 0 0 0 999px rgba(219, 234, 254, 0.34);
+  box-shadow: inset 0 0 0 999px var(--t4-accent-soft);
 }}
 .release-perf-table td.perf-selection-anchor {{
-  outline: 2px solid #1d4ed8;
+  outline: 2px solid var(--t4-accent-hover);
   outline-offset: -2px;
 }}
 .release-perf-table .perf-metric-td {{
@@ -1338,7 +1431,7 @@ body {{
   padding: 0 0.5rem;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--t4-text);
   overflow: hidden;
 }}
 .perf-bar-cell::before {{
@@ -1358,7 +1451,7 @@ body {{
   z-index: 1;
 }}
 .perf-muted {{
-  color: #94a3b8;
+  color: var(--t4-muted);
   display: block;
   padding: 0.34rem 0.5rem;
 }}
@@ -1557,6 +1650,7 @@ def _build_pass_combo_chart(
     hover_cols: list[str] | None = None,
 ) -> go.Figure:
     fig = go.Figure()
+    categorical = CATEGORICAL()
     show_legend = series_col is not None
     scenario_totals = (
         frame.groupby("version", dropna=False)[scenario_count_col]
@@ -1568,7 +1662,7 @@ def _build_pass_combo_chart(
         x=versions,
         y=scenario_totals.tolist(),
         name="Scenario Count",
-        marker_color="#bfdbfe",
+        marker_color=pick(_LEGACY_SCENARIO_BAR, categorical[0]),
         opacity=0.32,
         yaxis="y2",
         hovertemplate="<b>%{x}</b><br>Scenario Count: %{y:.0f}<extra></extra>",
@@ -1579,6 +1673,7 @@ def _build_pass_combo_chart(
     version_order = {version: idx for idx, version in enumerate(versions)}
     plot_df["__version_order"] = plot_df["version"].map(version_order).fillna(len(version_order))
     plot_df = plot_df.sort_values(["__version_order", "version", "date", "release_name"])
+    _pass_line_color = pick(_LEGACY_PASS_LINE, categorical[0])
     if series_col is None:
         fig.add_trace(
             go.Scatter(
@@ -1586,14 +1681,17 @@ def _build_pass_combo_chart(
                 y=plot_df[line_y_col],
                 name=title,
                 mode="lines+markers",
-                line=dict(color="#1d4ed8", width=3),
-                marker=dict(size=8, color="#1d4ed8"),
+                line=dict(color=_pass_line_color, width=3),
+                marker=dict(size=8, color=_pass_line_color),
                 customdata=plot_df[hover_cols].to_numpy() if hover_cols else None,
                 hovertemplate="<b>%{x}</b><br>Pass Rate: %{y:.1f}%<br>Date: %{customdata[0]}<br>Release: %{customdata[1]}<extra></extra>",
             )
         )
     else:
-        palette = px.colors.qualitative.Bold + px.colors.qualitative.Safe + px.colors.qualitative.Set2
+        palette = pick(
+            px.colors.qualitative.Bold + px.colors.qualitative.Safe + px.colors.qualitative.Set2,
+            categorical + px.colors.qualitative.Bold + px.colors.qualitative.Safe,
+        )
         for idx, series_name in enumerate(plot_df[series_col].dropna().astype(str).unique().tolist()):
             series_df = plot_df[plot_df[series_col].astype(str) == series_name].sort_values(
                 ["__version_order", "version", "date", "release_name"]
@@ -1629,11 +1727,10 @@ def _build_pass_combo_chart(
         showlegend=show_legend,
         legend=dict(orientation="h", yanchor="top", y=-0.22, x=0, xanchor="left"),
         margin=dict(l=20, r=20, t=80, b=90),
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#ffffff",
     )
+    _theme_white_canvas_figure(fig)
     fig.update_xaxes(showgrid=False, categoryorder="array", categoryarray=versions)
-    fig.update_yaxes(range=[0, 100], gridcolor="rgba(148, 163, 184, 0.18)")
+    fig.update_yaxes(range=[0, 100])
     return fig
 
 
@@ -1659,6 +1756,7 @@ def _build_defect_hierarchy_bars(
         y="pass_rate",
         color=color_col,
         color_discrete_map=color_map,
+        color_discrete_sequence=pick(None, CATEGORICAL()),
         hover_data={"label": False, "full_label": True, "passed": True, "total": True},
         text=bars["pass_rate"].map(lambda value: f"{value:.1f}%" if pd.notna(value) else "n/a"),
         title=title,
@@ -1670,6 +1768,7 @@ def _build_defect_hierarchy_bars(
         yaxis_title="Pass Rate (%)",
         legend_title_text=color_col.replace("_", " ").title(),
     )
+    _theme_figure(fig)
     fig.update_traces(textposition="outside", cliponaxis=False)
     fig.update_xaxes(tickangle=-35, automargin=True)
     fig.update_yaxes(range=[0, 100], automargin=True)
@@ -1694,6 +1793,7 @@ def _build_defect_case_bars(
         x="minor_category",
         y="pass_rate",
         color="mid_category",
+        color_discrete_sequence=pick(None, CATEGORICAL()),
         hover_data=["major_category", "mid_category", "passed", "total"],
         text=case_bars["pass_rate"].map(lambda value: f"{value:.1f}%" if pd.notna(value) else "n/a"),
         title="Case Pass Rates",
@@ -1705,6 +1805,7 @@ def _build_defect_case_bars(
         yaxis_title="Pass Rate (%)",
         legend_title_text="Mid Category",
     )
+    _theme_figure(fig)
     fig.update_traces(textposition="outside", cliponaxis=False)
     fig.update_xaxes(tickangle=-35, automargin=True, categoryorder="array", categoryarray=case_bars["minor_category"].tolist())
     fig.update_yaxes(range=[0, 100], automargin=True)
@@ -1727,7 +1828,11 @@ def _build_metric_timeline_heatmap(
     fig = px.imshow(
         matrix,
         aspect="auto",
-        color_continuous_scale=["#7f1d1d", "#f8fafc", "#14532d"] if "delta" in value_col else ["#f8fafc", "#8dd3c7", "#0f766e"],
+        color_continuous_scale=(
+            pick(_LEGACY_DELTA_SCALE, DIVERGING_SCALE())
+            if "delta" in value_col
+            else pick(_LEGACY_LEVEL_SCALE, SEQUENTIAL_SCALE())
+        ),
         color_continuous_midpoint=0 if "delta" in value_col else None,
         text_auto=".3f",
     )
@@ -1736,6 +1841,7 @@ def _build_metric_timeline_heatmap(
         margin=dict(l=20, r=20, t=70, b=20),
         coloraxis_colorbar=dict(title=color_title),
     )
+    _theme_figure(fig)
     fig.update_xaxes(tickangle=-30, automargin=True)
     fig.update_yaxes(automargin=True)
     return fig
@@ -1756,11 +1862,13 @@ def _build_metric_label_lines(
         x="release_axis",
         y="value",
         color="label_name",
+        color_discrete_sequence=pick(None, CATEGORICAL()),
         markers=True,
         hover_data=["version", "date", "release_name"],
         title=title,
     )
     fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Label")
+    _theme_figure(fig)
     fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes, tickangle=-30, automargin=True)
     fig.update_traces(connectgaps=True)
     return fig
@@ -1811,11 +1919,13 @@ def _build_prediction_label_profile(
         x="release_axis",
         y="value",
         color="metric_name",
+        color_discrete_sequence=pick(None, CATEGORICAL()),
         markers=True,
         hover_data=["version", "date", "release_name"],
         title=f"{selected_label} {metric_family} Horizon Profile",
     )
     fig.update_layout(margin=dict(l=20, r=20, t=70, b=20), legend_title_text="Horizon")
+    _theme_figure(fig)
     fig.update_xaxes(categoryorder="array", categoryarray=ordered_axes, tickangle=-30, automargin=True)
     fig.update_traces(connectgaps=True)
     return fig
@@ -1845,6 +1955,7 @@ def _build_prediction_release_label_profile(
         x="horizon",
         y="value",
         color="label_name",
+        color_discrete_sequence=pick(None, CATEGORICAL()),
         markers=True,
         category_orders={"horizon": [_horizon_metric_label(metric_name) for metric_name in metric_names]},
         hover_data=["version", "date", "release_name"],
@@ -1856,11 +1967,9 @@ def _build_prediction_release_label_profile(
         legend_title_text="Label",
         xaxis_title="Prediction Horizon",
         yaxis_title=f"{metric_family} (m)",
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#ffffff",
     )
+    _theme_white_canvas_figure(fig)
     fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
     return fig
 
 
@@ -2169,16 +2278,19 @@ if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any(
         x=scenario_totals.index.tolist(),
         y=scenario_totals.tolist(),
         name="Data Count",
-        marker_color="#f4a7a7",
+        marker_color=pick(_LEGACY_DATA_COUNT_BAR, CATEGORICAL()[4]),
         opacity=0.28,
         yaxis="y2",
         hovertemplate="<b>%{x}</b><br>Data Count: %{y:,}<extra></extra>",
     )
-    metric_styles = {
-        "mAP": "#0f766e",
-        "precision": "#1d4ed8",
-        "recall": "#be123c",
-    }
+    metric_styles = pick(
+        _LEGACY_METRIC_STYLES,
+        {
+            "mAP": CATEGORICAL()[1],
+            "precision": CATEGORICAL()[0],
+            "recall": CATEGORICAL()[4],
+        },
+    )
     family_dashes = {
         "Perception Performance": "solid",
         "ML Model Performance": "dot",
@@ -2225,6 +2337,7 @@ if not perf_entries.empty and perf_entries[major_metric_cols].notna().any().any(
         legend_tracegroupgap=18,
         margin=dict(l=20, r=20, t=80, b=125),
     )
+    _theme_figure(fig)
     fig.update_xaxes(categoryorder="array", categoryarray=major_versions)
     st.plotly_chart(fig, use_container_width=True)
 else:
@@ -2264,18 +2377,25 @@ if not prediction_entries.empty and prediction_entries[prediction_cols].notna().
         x=pred_story["version"],
         y=pred_story["data_count_num"],
         name="Data Count",
-        marker_color="#fbbf24",
+        marker_color=pick(_LEGACY_PREDICTION_COUNT_BAR, CATEGORICAL()[2]),
         opacity=0.20,
         yaxis="y2",
         hovertemplate="<b>%{x}</b><br>Data Count: %{y:,}<extra></extra>",
     )
+    # One palette hue per metric family (dash also distinguishes them); horizons are
+    # shaded within the family so 1s/3s/5s stay readable without a second hue.
+    _pred_ade = CATEGORICAL()[1]
+    _pred_fde = CATEGORICAL()[0]
     series_specs = [
-        ("minADE@1s", "#0f766e", "solid"),
-        ("minADE@3s", "#14b8a6", "solid"),
-        ("minADE@5s", "#99f6e4", "solid"),
-        ("minFDE@1s", "#1d4ed8", "dot"),
-        ("minFDE@3s", "#60a5fa", "dot"),
-        ("minFDE@5s", "#bfdbfe", "dot"),
+        (name, pick(_LEGACY_PREDICTION_SHADES[name], shade), dash)
+        for name, shade, dash in (
+            ("minADE@1s", _shade(_pred_ade, 1.0), "solid"),
+            ("minADE@3s", _shade(_pred_ade, 0.7), "solid"),
+            ("minADE@5s", _shade(_pred_ade, 0.42), "solid"),
+            ("minFDE@1s", _shade(_pred_fde, 1.0), "dot"),
+            ("minFDE@3s", _shade(_pred_fde, 0.7), "dot"),
+            ("minFDE@5s", _shade(_pred_fde, 0.42), "dot"),
+        )
     ]
     for metric_name, color, dash in series_specs:
         metric_story = pred_story.dropna(subset=[metric_name])
@@ -2305,11 +2425,9 @@ if not prediction_entries.empty and prediction_entries[prediction_cols].notna().
         height=480,
         legend=dict(orientation="h", yanchor="top", y=-0.18, x=0, xanchor="left"),
         margin=dict(l=20, r=20, t=80, b=105),
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#ffffff",
     )
+    _theme_white_canvas_figure(pred_fig)
     pred_fig.update_xaxes(showgrid=False, categoryorder="array", categoryarray=pred_versions)
-    pred_fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
     st.plotly_chart(pred_fig, use_container_width=True)
 else:
     st.info("No usable grouped prediction trend values are available yet.")
@@ -2347,11 +2465,18 @@ if (
     usecase_versions = usecase_entries["version"].drop_duplicates().tolist()
     usecase_fig = go.Figure()
     usecase_styles = {
-        "usecase_recall": ("Recall", "#be123c", "solid"),
-        "usecase_FNR": ("FNR", "#7c3aed", "dot"),
+        "usecase_recall": ("Recall", pick(_LEGACY_USECASE_RECALL, CATEGORICAL()[4]), "solid"),
+        "usecase_FNR": ("FNR", pick(_LEGACY_USECASE_FNR, CATEGORICAL()[3]), "dot"),
     }
     for col in available_usecase_score_cols:
-        label, color, dash = usecase_styles.get(col, (col.replace("usecase_", ""), "#334155", "solid"))
+        label, color, dash = usecase_styles.get(
+            col,
+            (
+                col.replace("usecase_", ""),
+                pick(_LEGACY_USECASE_FALLBACK, tokens()["text_2"]),
+                "solid",
+            ),
+        )
         metric_df_for_line = usecase_entries.dropna(subset=[col])
         if metric_df_for_line.empty:
             continue
@@ -2379,11 +2504,9 @@ if (
         height=420,
         legend=dict(orientation="h", yanchor="top", y=-0.18, x=0, xanchor="left"),
         margin=dict(l=20, r=20, t=80, b=100),
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#ffffff",
     )
+    _theme_white_canvas_figure(usecase_fig)
     usecase_fig.update_xaxes(showgrid=False, categoryorder="array", categoryarray=usecase_versions)
-    usecase_fig.update_yaxes(gridcolor="rgba(148, 163, 184, 0.18)")
     st.plotly_chart(usecase_fig, use_container_width=True)
 
     visible_usecase_cols = [
@@ -2493,6 +2616,7 @@ if not pass_entries.empty and _recall_band_cols:
             yaxis=dict(range=[0, 100]),
             legend_title="Distance band",
         )
+        _theme_figure(_recall_fig, colorway=CATEGORICAL())
         _recall_fig.update_xaxes(categoryorder="array", categoryarray=ordered_versions)
         st.plotly_chart(_recall_fig, use_container_width=True)
         st.caption(
@@ -2582,10 +2706,11 @@ if not case_df.empty and not pass_entries.empty:
                 path=defect_category_cols,
                 values="total",
                 color="pass_rate",
-                color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
+                color_continuous_scale=pick(_LEGACY_DEFECT_SCALE, DIVERGING_SCALE()),
                 range_color=(0, 100),
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+            _theme_figure(latest_fig)
             st.plotly_chart(latest_fig, use_container_width=True)
         elif latest_view_mode == "Icicle":
             latest_fig = px.icicle(
@@ -2593,10 +2718,11 @@ if not case_df.empty and not pass_entries.empty:
                 path=defect_category_cols,
                 values="total",
                 color="pass_rate",
-                color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
+                color_continuous_scale=pick(_LEGACY_DEFECT_SCALE, DIVERGING_SCALE()),
                 range_color=(0, 100),
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+            _theme_figure(latest_fig)
             st.plotly_chart(latest_fig, use_container_width=True)
         else:
             latest_fig = px.sunburst(
@@ -2604,10 +2730,11 @@ if not case_df.empty and not pass_entries.empty:
                 path=defect_category_cols,
                 values="total",
                 color="pass_rate",
-                color_continuous_scale=["#7f1d1d", "#fef3c7", "#166534"],
+                color_continuous_scale=pick(_LEGACY_DEFECT_SCALE, DIVERGING_SCALE()),
                 range_color=(0, 100),
             )
             latest_fig.update_layout(margin=dict(l=20, r=20, t=70, b=20))
+            _theme_figure(latest_fig)
             st.plotly_chart(latest_fig, use_container_width=True)
 
         case_pass_rate = selected_defect_case_df.copy()
@@ -2669,7 +2796,7 @@ if not atlas_df.empty:
         latest_atlas_fig = px.imshow(
             latest_norm,
             aspect="auto",
-            color_continuous_scale=["#f8fafc", "#8dd3c7", "#0f766e"],
+            color_continuous_scale=pick(_LEGACY_LEVEL_SCALE, SEQUENTIAL_SCALE()),
             text_auto=".2f",
         )
         latest_atlas_fig.update_traces(
@@ -2681,6 +2808,7 @@ if not atlas_df.empty:
             margin=dict(l=20, r=20, t=70, b=20),
             coloraxis_colorbar=dict(title="Relative"),
         )
+        _theme_figure(latest_atlas_fig)
         latest_atlas_fig.update_xaxes(automargin=True)
         latest_atlas_fig.update_yaxes(automargin=True)
         st.plotly_chart(latest_atlas_fig, use_container_width=True)

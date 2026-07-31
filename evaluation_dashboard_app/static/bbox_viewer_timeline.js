@@ -108,8 +108,7 @@ function renderHeatStrip() {
   const maxScore = Math.max(1, ...state.frames.map(f => hotspotScore(f)));
   state.frames.forEach((f, i) => {
     const score = Math.min(1, hotspotScore(f) / maxScore);
-    const hue = 145 - score * 120;
-    hctx.fillStyle = `hsl(${hue}, 85%, ${42 + score * 18}%)`;
+    hctx.fillStyle = TH.heat(score);
     hctx.fillRect(i * r.width / n, 0, Math.ceil(r.width / n) + 1, r.height);
   });
 }
@@ -124,10 +123,10 @@ function resizeAuxCanvas(c, context) {
 function renderFrameCurve() {
   const r = resizeAuxCanvas(els.frameCurve, frameCurveCtx);
   frameCurveCtx.clearRect(0, 0, r.width, r.height);
-  frameCurveCtx.fillStyle = "rgba(2,6,23,.62)";
+  frameCurveCtx.fillStyle = TH.a("deep", .62);
   frameCurveCtx.fillRect(0, 0, r.width, r.height);
   if (!state.frames.length) {
-    frameCurveCtx.fillStyle = "#94a3b8";
+    frameCurveCtx.fillStyle = TH.c("neutralEst");
     frameCurveCtx.font = "11px Inter, sans-serif";
     frameCurveCtx.fillText("load a scene to inspect FP/FN/error over time", 12, 32);
     return;
@@ -142,7 +141,7 @@ function renderFrameCurve() {
   });
   const max = Math.max(1, ...values.map(v => Math.max(Math.abs(v.fp), Math.abs(v.fn), Math.abs(v.tp), Math.abs(v.err))));
   const plot = {x: 8, y: 17, w: Math.max(1, r.width - 16), h: Math.max(1, r.height - 24)};
-  frameCurveCtx.strokeStyle = "rgba(148,163,184,.16)";
+  frameCurveCtx.strokeStyle = TH.a("neutralEst", .16);
   frameCurveCtx.lineWidth = 1;
   for (let i = 0; i < 3; i++) {
     const y = plot.y + i * plot.h / 2;
@@ -151,16 +150,16 @@ function renderFrameCurve() {
   const xAt = i => plot.x + i * plot.w / Math.max(1, values.length - 1);
   if (state.compare) {
     const mid = plot.y + plot.h / 2;
-    frameCurveCtx.strokeStyle = "rgba(226,232,240,.32)";
+    frameCurveCtx.strokeStyle = TH.a("lineStrong", .32);
     frameCurveCtx.beginPath(); frameCurveCtx.moveTo(plot.x, mid); frameCurveCtx.lineTo(plot.x + plot.w, mid); frameCurveCtx.stroke();
     values.forEach((v, i) => {
       const x = xAt(i);
       const barW = Math.max(1, plot.w / Math.max(1, values.length) * .35);
-      for (const [key, color] of [["fp", "#ff6666"], ["fn", "#ff9933"], ["tp", "#66b3ff"]]) {
+      for (const [key, color] of [["fp", TH.c("estFp")], ["fn", TH.c("gtFn")], ["tp", TH.c("estTp")]]) {
         const offset = key === "fp" ? -barW : key === "fn" ? 0 : barW;
         const val = Number(v[key]) || 0;
         const h = Math.abs(val) / max * (plot.h / 2);
-        frameCurveCtx.fillStyle = val >= 0 ? color : "rgba(52,211,153,.7)";
+        frameCurveCtx.fillStyle = val >= 0 ? color : TH.a("good", .7);
         frameCurveCtx.fillRect(x + offset - barW / 2, val >= 0 ? mid - h : mid, barW, h);
       }
     });
@@ -176,16 +175,16 @@ function renderFrameCurve() {
       });
       frameCurveCtx.stroke();
     };
-    drawLine("tp", "#66b3ff", 1.5);
-    drawLine("fp", "#ff6666", 2);
-    drawLine("fn", "#ff9933", 2);
-    drawLine("err", "#facc15", 1.2);
+    drawLine("tp", TH.c("estTp"), 1.5);
+    drawLine("fp", TH.c("estFp"), 2);
+    drawLine("fn", TH.c("gtFn"), 2);
+    drawLine("err", TH.c("errLow"), 1.2);
   }
   const currentX = xAt(state.framePos);
-  frameCurveCtx.strokeStyle = "#ffffff";
+  frameCurveCtx.strokeStyle = TH.c("marker");
   frameCurveCtx.lineWidth = 1.4;
   frameCurveCtx.beginPath(); frameCurveCtx.moveTo(currentX, 4); frameCurveCtx.lineTo(currentX, r.height - 4); frameCurveCtx.stroke();
-  frameCurveCtx.fillStyle = "#e5edf7";
+  frameCurveCtx.fillStyle = TH.c("text");
   frameCurveCtx.font = "800 10px Inter, sans-serif";
   frameCurveCtx.fillText(state.compare ? "ΔFP red · ΔFN amber · ΔTP blue · green improves" : "FP red · FN amber · TP blue · error yellow", 10, 12);
   frameCurveCtx.textAlign = currentX > r.width - 70 ? "right" : "left";
@@ -195,13 +194,13 @@ function renderFrameCurve() {
 function renderOverviewMap() {
   const r = resizeAuxCanvas(els.overview, overviewCtx);
   overviewCtx.clearRect(0, 0, r.width, r.height);
-  overviewCtx.fillStyle = "rgba(2,6,23,.72)";
+  overviewCtx.fillStyle = TH.a("deep", .72);
   overviewCtx.fillRect(0, 0, r.width, r.height);
   const maxAbs = Math.max(20, state.bounds.maxAbs || 80);
   const pad = 10;
   const scale = Math.min((r.width - pad * 2), (r.height - pad * 2)) / (maxAbs * 2);
   const mapPoint = (x, y) => [r.width / 2 - y * scale, r.height / 2 - x * scale];
-  overviewCtx.strokeStyle = "rgba(148,163,184,.16)";
+  overviewCtx.strokeStyle = TH.a("neutralEst", .16);
   overviewCtx.lineWidth = 1;
   for (let d = 20; d <= maxAbs; d += 20) {
     const c = mapPoint(0, 0);
@@ -210,7 +209,7 @@ function renderOverviewMap() {
   const totalBoxes = state.frames.reduce((n, f) => n + ((f.boxes || []).length), 0);
   const sampleEvery = Math.max(1, Math.ceil(totalBoxes / 25000));
   let seen = 0;
-  overviewCtx.fillStyle = "rgba(148,163,184,.24)";
+  overviewCtx.fillStyle = TH.a("neutralEst", .24);
   for (const f of state.frames) {
     for (const b of f.boxes || []) {
       seen += 1;
@@ -226,14 +225,14 @@ function renderOverviewMap() {
     overviewCtx.beginPath(); overviewCtx.arc(p[0], p[1], 2.2, 0, Math.PI * 2); overviewCtx.fill();
   }
   const ego = mapPoint(0, 0);
-  overviewCtx.fillStyle = "#e5edf7";
+  overviewCtx.fillStyle = TH.c("text");
   overviewCtx.beginPath(); overviewCtx.arc(ego[0], ego[1], 3, 0, Math.PI * 2); overviewCtx.fill();
   const center = mapPoint(state.panX, state.panY);
   const viewMeters = Math.max(12, state.distance * 1.05);
-  overviewCtx.strokeStyle = "#38bdf8";
+  overviewCtx.strokeStyle = TH.c("accent");
   overviewCtx.lineWidth = 1.4;
   overviewCtx.strokeRect(center[0] - viewMeters * scale / 2, center[1] - viewMeters * scale / 2, viewMeters * scale, viewMeters * scale);
-  overviewCtx.fillStyle = "#94a3b8";
+  overviewCtx.fillStyle = TH.c("neutralEst");
   overviewCtx.font = "800 10px Inter, sans-serif";
   overviewCtx.fillText("overview", 9, 14);
 }

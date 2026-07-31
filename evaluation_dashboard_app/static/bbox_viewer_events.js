@@ -118,7 +118,7 @@ els.advancedBtn.addEventListener("click", () => {
 });
 els.resetCamera.addEventListener("click", () => { state.selected = null; updateInspect(); setCameraPreset("3d"); });
 els.fitCamera.addEventListener("click", () => { fitBounds(); render(); });
-els.toggleTrails.addEventListener("click", () => { state.trails = !state.trails; els.toggleTrails.style.background = state.trails ? "rgba(56,189,248,.36)" : ""; render(); });
+els.toggleTrails.addEventListener("click", () => { state.trails = !state.trails; els.toggleTrails.style.background = state.trails ? TH.a("accent", .36) : ""; render(); });
 els.toggleSidebar.addEventListener("click", () => {
   document.querySelector(".app").classList.toggle("sidebar-collapsed");
   setTimeout(render, 50);
@@ -268,6 +268,14 @@ els.canvas.addEventListener("wheel", e => {
   render();
 }, {passive: false});
 window.addEventListener("resize", () => { renderHeatStrip(); render(); });
+// Guarded: if bbox_theme.js is missing this must not abort the rest of the script,
+// which is what scans and loads scenes.
+if (window.TH) {
+  TH.bindToggle(els.themeToggle);
+  // The scene, heat strip and label bars are canvas/inline-styled, so they need an
+  // explicit repaint when the palette changes.
+  TH.onChange(() => { renderHeatStrip(); render(); });
+}
 window.addEventListener("keydown", (ev) => {
   if (ev.target && ["INPUT", "SELECT", "TEXTAREA"].includes(ev.target.tagName)) return;
   if (ev.key === " ") {

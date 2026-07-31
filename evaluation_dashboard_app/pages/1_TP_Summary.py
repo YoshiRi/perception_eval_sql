@@ -5,6 +5,16 @@ from lib.path_utils import path_display
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero, section_header
 from lib.summary_compare import build_summary_delta
+from lib.ui.theme import DIVERGING_SCALE, SEQUENTIAL_SCALE, apply_plotly_theme, is_dark, pick, tokens
+
+# ========== Chart colors ==========
+# Pre-dark-theme light values: light mode must keep rendering exactly these, while
+# dark mode uses the token-derived palettes.
+_LEGACY_SEQ_SCALE = "Viridis"
+_LEGACY_SEQ_SCALE_ALT = "Plasma"
+_LEGACY_DIVERGING_SCALE = "RdYlGn"
+_LEGACY_HIST_COLOR = "#0d9488"
+_LEGACY_VIOLIN_COLOR = "#312e81"
 
 st.set_page_config(layout="wide", page_title="TP Summary", page_icon="📈", initial_sidebar_state="expanded")
 try_hydrate_session_from_overview_query_params()
@@ -79,14 +89,23 @@ render_page_hero(
 
 def _apply_compact_chart_layout(fig, *, height: int = 300) -> None:
     """Keep TP Summary charts visually lighter and more compact."""
-    fig.update_layout(
-        template="plotly_white",
-        height=height,
-        margin=dict(t=48, b=40, l=48, r=18),
-        paper_bgcolor="rgba(248,250,252,0.9)",
-        plot_bgcolor="rgba(255,255,255,0.95)",
-        font=dict(family="system-ui, sans-serif", size=12, color="#334155"),
-    )
+    if is_dark():
+        apply_plotly_theme(
+            fig,
+            height=height,
+            margin=dict(t=48, b=40, l=48, r=18),
+            font=dict(family="system-ui, sans-serif", size=12, color=tokens()["chart_text"]),
+        )
+    else:
+        # Pre-dark-theme light layout, kept byte-for-byte.
+        fig.update_layout(
+            template="plotly_white",
+            height=height,
+            margin=dict(t=48, b=40, l=48, r=18),
+            paper_bgcolor="rgba(248,250,252,0.9)",
+            plot_bgcolor="rgba(255,255,255,0.95)",
+            font=dict(family="system-ui, sans-serif", size=12, color="#334155"),
+        )
 
 # ========== View Selector ==========
 st.sidebar.markdown("##### Scope")
@@ -239,7 +258,7 @@ with col1:
                 "yrms_delta": "Δ Y RMS",
             },
             title=f"X RMS · {cand} vs A",
-            color_continuous_scale="Viridis",
+            color_continuous_scale=pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE()),
         )
         fig_rms_x_compare.update_traces(marker=dict(size=7, opacity=0.58))
         _apply_compact_chart_layout(fig_rms_x_compare, height=290)
@@ -260,7 +279,7 @@ with col1:
                 "yrms_delta": "Δ Y RMS",
             },
             title=f"Y RMS · {cand} vs A",
-            color_continuous_scale="Viridis",
+            color_continuous_scale=pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE()),
         )
         fig_rms_y_compare.update_traces(marker=dict(size=7, opacity=0.58))
         _apply_compact_chart_layout(fig_rms_y_compare, height=290)
@@ -279,7 +298,7 @@ with col1:
                 "yrms": "Y RMS",
                 tp_col: "TP",
             },
-            color_continuous_scale="Viridis",
+            color_continuous_scale=pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE()),
         )
         fig_rms.update_traces(marker=dict(size=8, opacity=0.68))
         _apply_compact_chart_layout(fig_rms, height=320)
@@ -300,7 +319,7 @@ with col2:
                 vy: vy_label,
                 tp_col: "TP",
             },
-            color_continuous_scale="Plasma",
+            color_continuous_scale=pick(_LEGACY_SEQ_SCALE_ALT, SEQUENTIAL_SCALE()),
             title=title,
         )
         fig.update_traces(marker=dict(size=7, opacity=0.58))
@@ -343,7 +362,7 @@ fig_hist = px.histogram(
     df_f,
     x=metric,
     nbins=36,
-    color_discrete_sequence=["#0d9488"],
+    color_discrete_sequence=[pick(_LEGACY_HIST_COLOR, tokens()["accent_2"])],
     marginal="box",
     opacity=0.88,
     title=f"{metric} distribution",
@@ -363,7 +382,7 @@ fig_density = px.violin(
     y=metric,
     box=True,
     points="outliers",
-    color_discrete_sequence=["#312e81"],
+    color_discrete_sequence=[pick(_LEGACY_VIOLIN_COLOR, tokens()["accent"])],
     title=f"{metric} density",
 )
 fig_density.update_layout(
@@ -434,7 +453,7 @@ if mode == "Compare Mode" and use_delta and df_cmp is not None and "id" in df_cm
             text_auto=".2f",
             title=f"Mean ΔTP per Scenario ({cand} − A)",
             color="mean_TP_delta",
-            color_continuous_scale="RdYlGn",
+            color_continuous_scale=pick(_LEGACY_DIVERGING_SCALE, DIVERGING_SCALE()),
             labels={"mean_TP_delta": "Mean ΔTP"},
         ),
         width="stretch",

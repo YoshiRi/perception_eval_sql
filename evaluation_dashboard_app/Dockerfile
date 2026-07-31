@@ -94,6 +94,10 @@ COPY configs/ configs/
 COPY docs/ docs/
 COPY docker-entrypoint.sh .
 
+# Baked-in Streamlit config (server + light/dark theme). docker-compose bind-mounts
+# deploy/.streamlit/config.toml over this; the copy keeps `docker run` on-theme too.
+COPY deploy/.streamlit/config.toml .streamlit/config.toml
+
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Create runtime folders used by bind mounts / config

@@ -1,10 +1,10 @@
 function chartPanel(rect, title) {
-  ctx.fillStyle = "rgba(2,6,23,.42)";
-  ctx.strokeStyle = "rgba(148,163,184,.2)";
+  ctx.fillStyle = TH.a("deep", .42);
+  ctx.strokeStyle = TH.a("line", .2);
   ctx.lineWidth = 1;
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-  ctx.fillStyle = "#eaf2ff";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "800 12px Inter, sans-serif";
   ctx.fillText(title, rect.x + 12, rect.y + 18);
   return {x: rect.x + 12, y: rect.y + 32, w: rect.w - 24, h: rect.h - 44};
@@ -188,36 +188,36 @@ function drawStackedLabelStats(rect, rows) {
   const rowH = Math.max(18, Math.min(30, plot.h / Math.max(1, labels.length)));
   labels.forEach((r, i) => {
     const y = plot.y + i * rowH + 3;
-    ctx.fillStyle = r.label === state.label ? "#ffffff" : "#cbd5e1";
+    ctx.fillStyle = r.label === state.label ? TH.c("marker") : TH.c("mutedBright");
     ctx.font = `${r.label === state.label ? "800" : "700"} 11px Inter, sans-serif`;
     ctx.fillText(r.label || "unknown", plot.x, y + 10);
     const bx = plot.x + 88, bw = Math.max(20, plot.w - 152), bh = Math.max(8, rowH - 9);
     if (state.compare) {
       const mid = bx + bw / 2;
-      ctx.fillStyle = "rgba(148,163,184,.18)";
+      ctx.fillStyle = TH.a("line", .18);
       ctx.fillRect(bx, y + 2, bw, bh);
-      ctx.fillStyle = "rgba(226,232,240,.52)";
+      ctx.fillStyle = TH.a("lineStrong", .52);
       ctx.fillRect(mid, y + 1, 1, bh + 2);
       const drawDelta = (v, dy, colorPos, colorNeg) => {
         const w = Math.min(bw / 2, Math.abs(v || 0) / max * bw / 2);
         ctx.fillStyle = v >= 0 ? colorPos : colorNeg;
         ctx.fillRect(v >= 0 ? mid : mid - w, y + 2 + dy, w, Math.max(3, bh / 2 - 1));
       };
-      drawDelta(r.delta_fp || 0, 0, "rgba(251,113,133,.82)", "rgba(52,211,153,.72)");
-      drawDelta(r.delta_fn || 0, bh / 2, "rgba(251,191,36,.82)", "rgba(52,211,153,.58)");
-      ctx.fillStyle = "#91a4bf";
+      drawDelta(r.delta_fp || 0, 0, TH.a("bad", .82), TH.a("good", .72));
+      drawDelta(r.delta_fn || 0, bh / 2, TH.a("warn", .82), TH.a("good", .58));
+      ctx.fillStyle = TH.c("muted");
       ctx.fillText(`FP ${fmtDelta(r.delta_fp || 0)}  FN ${fmtDelta(r.delta_fn || 0)}`, bx + bw + 8, y + 10);
     } else {
       const total = Math.max(1, (r.tp || 0) + (r.fp || 0) + (r.fn || 0));
       const tpW = bw * (r.tp || 0) / total;
       const fpW = bw * (r.fp || 0) / total;
       const fnW = bw * (r.fn || 0) / total;
-      ctx.fillStyle = "rgba(15,23,42,.8)";
+      ctx.fillStyle = TH.a("surface", .8);
       ctx.fillRect(bx, y + 2, bw, bh);
-      ctx.fillStyle = "#38bdf8"; ctx.fillRect(bx, y + 2, tpW, bh);
-      ctx.fillStyle = "#fb7185"; ctx.fillRect(bx + tpW, y + 2, fpW, bh);
-      ctx.fillStyle = "#fbbf24"; ctx.fillRect(bx + tpW + fpW, y + 2, fnW, bh);
-      ctx.fillStyle = "#91a4bf";
+      ctx.fillStyle = TH.c("accent"); ctx.fillRect(bx, y + 2, tpW, bh);
+      ctx.fillStyle = TH.c("bad"); ctx.fillRect(bx + tpW, y + 2, fpW, bh);
+      ctx.fillStyle = TH.c("warn"); ctx.fillRect(bx + tpW + fpW, y + 2, fnW, bh);
+      ctx.fillStyle = TH.c("muted");
       ctx.fillText(`${fmt(r.tp)} / ${fmt(r.fp)} / ${fmt(r.fn)}`, bx + bw + 8, y + 10);
     }
   });
@@ -227,8 +227,8 @@ function drawRateRadar(rect, rows) {
   const labels = rows.filter(r => r.rows || r.tp || r.fp || r.fn).slice(0, 10);
   const cx = plot.x + plot.w / 2, cy = plot.y + plot.h / 2 + 4;
   const radius = Math.max(40, Math.min(plot.w, plot.h) * .38);
-  ctx.strokeStyle = "rgba(148,163,184,.18)";
-  ctx.fillStyle = "rgba(145,164,191,.66)";
+  ctx.strokeStyle = TH.a("line", .18);
+  ctx.fillStyle = TH.a("muted", .66);
   ctx.font = "700 10px Inter, sans-serif";
   for (let ring = 1; ring <= 4; ring++) {
     ctx.beginPath(); ctx.arc(cx, cy, radius * ring / 4, 0, Math.PI * 2); ctx.stroke();
@@ -237,9 +237,9 @@ function drawRateRadar(rect, rows) {
     const a = -Math.PI / 2 + i * Math.PI * 2 / Math.max(1, labels.length);
     const x = cx + Math.cos(a) * radius;
     const y = cy + Math.sin(a) * radius;
-    ctx.strokeStyle = "rgba(148,163,184,.14)";
+    ctx.strokeStyle = TH.a("line", .14);
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
-    ctx.fillStyle = r.label === state.label ? "#ffffff" : "#91a4bf";
+    ctx.fillStyle = r.label === state.label ? TH.c("marker") : TH.c("muted");
     ctx.textAlign = x < cx - 6 ? "right" : (x > cx + 6 ? "left" : "center");
     ctx.fillText((r.label || "unknown").slice(0, 12), x, y + (y < cy ? -5 : 12));
   });
@@ -261,19 +261,19 @@ function drawRateRadar(rect, rows) {
     ctx.closePath(); ctx.stroke(); ctx.fill();
   };
   if (labels.length) {
-    drawPoly("precision", "rgb(56,189,248)");
-    drawPoly("recall", "rgb(52,211,153)");
+    drawPoly("precision", TH.c("accent"));
+    drawPoly("recall", TH.c("good"));
   }
   ctx.textAlign = "left";
-  ctx.fillStyle = "#38bdf8"; ctx.fillText("precision", plot.x, plot.y + 10);
-  ctx.fillStyle = "#34d399"; ctx.fillText("recall", plot.x + 70, plot.y + 10);
+  ctx.fillStyle = TH.c("accent"); ctx.fillText("precision", plot.x, plot.y + 10);
+  ctx.fillStyle = TH.c("good"); ctx.fillText("recall", plot.x + 70, plot.y + 10);
 }
 function drawScenarioScatter(rect, arr) {
   const plot = chartPanel(rect, state.compare ? "Scenario Delta Field" : "Scenario FP / FN Field");
   state.statNodes = [];
   const maxX = Math.max(1, ...arr.map(s => Math.abs(state.compare ? s.delta_fp || 0 : s.fp || 0)));
   const maxY = Math.max(1, ...arr.map(s => Math.abs(state.compare ? s.delta_fn || 0 : s.fn || 0)));
-  ctx.strokeStyle = "rgba(148,163,184,.16)";
+  ctx.strokeStyle = TH.a("line", .16);
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const x = plot.x + i * plot.w / 4;
@@ -282,7 +282,7 @@ function drawScenarioScatter(rect, arr) {
     ctx.beginPath(); ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.w, y); ctx.stroke();
   }
   if (state.compare) {
-    ctx.strokeStyle = "rgba(226,232,240,.34)";
+    ctx.strokeStyle = TH.a("lineStrong", .34);
     ctx.beginPath(); ctx.moveTo(plot.x + plot.w / 2, plot.y); ctx.lineTo(plot.x + plot.w / 2, plot.y + plot.h); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(plot.x, plot.y + plot.h / 2); ctx.lineTo(plot.x + plot.w, plot.y + plot.h / 2); ctx.stroke();
   }
@@ -293,7 +293,7 @@ function drawScenarioScatter(rect, arr) {
     const y = state.compare ? plot.y + plot.h / 2 - (vy / maxY) * plot.h * .46 : plot.y + plot.h - (vy / maxY) * plot.h;
     const size = Math.max(3.2, Math.min(11, 3 + Math.sqrt(Math.max(0, s.frames || s.rows || 0)) * .18));
     const selected = state.selected && scenarioKey(state.selected) === scenarioKey(s);
-    ctx.fillStyle = selected ? "#ffffff" : colorFor(vx + vy, Math.max(maxX, maxY));
+    ctx.fillStyle = selected ? TH.c("marker") : colorFor(vx + vy, Math.max(maxX, maxY));
     ctx.globalAlpha = selected ? 1 : .72;
     ctx.beginPath(); ctx.arc(x, y, selected ? size + 3 : size, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
@@ -311,7 +311,7 @@ function drawScenarioScatter(rect, arr) {
       rows: statsRowsForScenario(s)
     });
   });
-  ctx.fillStyle = "#91a4bf";
+  ctx.fillStyle = TH.c("muted");
   ctx.font = "700 10px Inter, sans-serif";
   ctx.fillText(state.compare ? "left/down improves, right/up worsens" : "x FP, y FN, size frames", plot.x, plot.y + plot.h - 4);
 }
@@ -323,29 +323,29 @@ function drawScenarioRanking(rect, arr) {
   top.forEach((s, i) => {
     const y = plot.y + i * rowH + 2;
     const v = scenarioMetric(s);
-    ctx.fillStyle = state.selected && scenarioKey(state.selected) === scenarioKey(s) ? "#ffffff" : "#cbd5e1";
+    ctx.fillStyle = state.selected && scenarioKey(state.selected) === scenarioKey(s) ? TH.c("marker") : TH.c("mutedBright");
     ctx.font = "800 10px Inter, sans-serif";
     ctx.fillText(scenarioName(s).slice(0, 28), plot.x, y + 10);
     const bx = plot.x + Math.min(210, plot.w * .46);
     const bw = Math.max(70, plot.w - (bx - plot.x) - 46);
-    ctx.fillStyle = "rgba(15,23,42,.78)";
+    ctx.fillStyle = TH.a("surface", .78);
     ctx.fillRect(bx, y + 2, bw, Math.max(8, rowH - 8));
     ctx.fillStyle = colorFor(v, max);
     ctx.fillRect(bx, y + 2, bw * Math.abs(v) / max, Math.max(8, rowH - 8));
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.fillText(state.lens.endsWith("r") ? rate(v) : (state.compare ? fmtDelta(Math.round(v)) : fmt(Math.round(v))), bx + bw + 8, y + 10);
   });
 }
 function drawStatsCurve(rect) {
   const plot = chartPanel(rect, "Selected Scenario Frames");
   if (!state.curve.length) {
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.font = "12px Inter, sans-serif";
     ctx.fillText("Select a scenario to load frame data.", plot.x, plot.y + 30);
     return;
   }
   const max = Math.max(1, ...state.curve.map(f => Math.max(Math.abs(f.tp || 0), Math.abs(f.fp || 0), Math.abs(f.fn || 0))));
-  ctx.strokeStyle = "rgba(148,163,184,.16)";
+  ctx.strokeStyle = TH.a("line", .16);
   for (let i = 0; i <= 3; i++) {
     const y = plot.y + i * plot.h / 3;
     ctx.beginPath(); ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.w, y); ctx.stroke();
@@ -361,11 +361,11 @@ function drawStatsCurve(rect) {
     });
     ctx.stroke();
   };
-  drawLine("tp", "#38bdf8"); drawLine("fp", "#fb7185"); drawLine("fn", "#fbbf24");
+  drawLine("tp", TH.c("accent")); drawLine("fp", TH.c("bad")); drawLine("fn", TH.c("warn"));
   const frame = currentPreviewFrameNumber();
   const x = curveXForFrame(frame, {x: plot.x, y: plot.y, w: plot.w, h: plot.h});
   if (x != null) {
-    ctx.strokeStyle = "#ffffff";
+    ctx.strokeStyle = TH.c("marker");
     ctx.beginPath(); ctx.moveTo(x, plot.y); ctx.lineTo(x, plot.y + plot.h); ctx.stroke();
   }
 }
@@ -376,17 +376,17 @@ function niceMax(v) {
   return (x <= 2 ? 2 : x <= 5 ? 5 : 10) * pow;
 }
 function drawPlotFrame(plot, xTitle, yTitle, yMax, yFmt = v => fmt(Math.round(v))) {
-  ctx.strokeStyle = "rgba(148,163,184,.28)";
-  ctx.fillStyle = "#91a4bf";
+  ctx.strokeStyle = TH.a("line", .28);
+  ctx.fillStyle = TH.c("muted");
   ctx.lineWidth = 1;
   ctx.font = "700 10px Inter, sans-serif";
   ctx.beginPath(); ctx.moveTo(plot.x, plot.y); ctx.lineTo(plot.x, plot.y + plot.h); ctx.lineTo(plot.x + plot.w, plot.y + plot.h); ctx.stroke();
   for (let i = 0; i <= 4; i++) {
     const y = plot.y + plot.h - i * plot.h / 4;
     const v = yMax * i / 4;
-    ctx.strokeStyle = "rgba(148,163,184,.12)";
+    ctx.strokeStyle = TH.a("line", .12);
     ctx.beginPath(); ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.w, y); ctx.stroke();
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.textAlign = "right";
     ctx.fillText(yFmt(v), plot.x - 7, y + 3);
   }
@@ -403,21 +403,21 @@ function drawDistanceRates(rect, stats) {
   const plot = chartPanel(rect, state.compare ? "Distance Rates: Run B - Run A" : "Distance Rates");
   const rows = (stats?.distance || []).filter(r => r.bin_label);
   if (!rows.length) {
-    ctx.fillStyle = "#91a4bf"; ctx.fillText(stats?.error || "No distance-bin data.", plot.x, plot.y + 28); return;
+    ctx.fillStyle = TH.c("muted"); ctx.fillText(stats?.error || "No distance-bin data.", plot.x, plot.y + 28); return;
   }
   const inner = {x: plot.x + 48, y: plot.y + 8, w: plot.w - 58, h: plot.h - 48};
   const keys = state.compare ? [
-    ["delta_tpr", "ΔTP rate", "#34d399"],
-    ["delta_fpr", "ΔFP rate", "#fb7185"],
+    ["delta_tpr", "ΔTP rate", TH.c("good")],
+    ["delta_fpr", "ΔFP rate", TH.c("bad")],
   ] : [
-    ["tpr", "TP rate", "#38bdf8"],
-    ["fpr", "FP rate", "#fb7185"],
+    ["tpr", "TP rate", TH.c("accent")],
+    ["fpr", "FP rate", TH.c("bad")],
   ];
   const yMax = state.compare ? Math.max(.05, ...rows.flatMap(r => keys.map(k => Math.abs(Number(r[k[0]]) || 0)))) : 1;
   drawPlotFrame(inner, "Distance bin", state.compare ? "Rate delta" : "Rate", yMax, v => state.compare ? `${Math.round(v * 100)}pp` : `${Math.round(v * 100)}%`);
   if (state.compare) {
     const midY = inner.y + inner.h / 2;
-    ctx.strokeStyle = "rgba(255,255,255,.36)";
+    ctx.strokeStyle = TH.a("marker", .36);
     ctx.beginPath(); ctx.moveTo(inner.x, midY); ctx.lineTo(inner.x + inner.w, midY); ctx.stroke();
   }
   keys.forEach(([key, name, color], ki) => {
@@ -472,14 +472,14 @@ function drawDistanceRates(rect, stats) {
         });
       }
       if (i % 3 === ki) {
-        ctx.fillStyle = "#cbd5e1"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
+        ctx.fillStyle = TH.c("mutedBright"); ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
         ctx.fillText(state.compare ? `${Math.round(raw * 100)}pp` : `${Math.round(raw * 100)}%`, x, y - 7);
       }
     });
     ctx.fillStyle = color; ctx.font = "800 11px Inter, sans-serif"; ctx.textAlign = "left";
     ctx.fillText(name, inner.x + 8 + ki * 82, inner.y + 13);
   });
-  ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
+  ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
   rows.forEach((r, i) => {
     if (i % 2 && rows.length > 9) return;
     const x = state.statsDistanceStyle === "bar" ? inner.x + (i + .5) * inner.w / Math.max(1, rows.length) : inner.x + i * inner.w / Math.max(1, rows.length - 1);
@@ -490,7 +490,7 @@ function drawDistanceRates(rect, stats) {
 function drawObjectCountByDistance(rect, stats) {
   const plot = chartPanel(rect, "Object Count By Distance / Label");
   const rows = (stats?.label_distance || []).filter(r => r.bin_label && r.label);
-  if (!rows.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No object count by distance.", plot.x, plot.y + 28); return; }
+  if (!rows.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No object count by distance.", plot.x, plot.y + 28); return; }
   const labels = allLabelNames().filter(l => rows.some(r => r.label === l && Number(r.rows)));
   const bins = [...new Map(rows.map(r => [r.bin_label, r])).values()].sort((a, b) => (a.bin_idx || 0) - (b.bin_idx || 0));
   const totals = bins.map(b => rows.filter(r => r.bin_label === b.bin_label).reduce((n, r) => n + (Number(state.compare ? r.delta_rows : r.rows) || 0), 0));
@@ -505,7 +505,7 @@ function drawObjectCountByDistance(rect, stats) {
       const row = rows.find(r => r.bin_label === b.bin_label && r.label === lab);
       const v = Number(row?.[state.compare ? "delta_rows" : "rows"]) || 0;
       const h = Math.abs(v) / yMax * inner.h;
-      ctx.fillStyle = ["#38bdf8", "#fb7185", "#fbbf24", "#34d399", "#a78bfa", "#f97316", "#e879f9", "#94a3b8"][li % 8];
+      ctx.fillStyle = TH.cats()[li % 8];
       if (state.compare && v < 0) { ctx.fillRect(x - barW / 2, negY, barW, h); negY += h; }
       else { posY -= h; ctx.fillRect(x - barW / 2, posY, barW, h); }
     });
@@ -520,22 +520,22 @@ function drawObjectCountByDistance(rect, stats) {
       rows: statsRowsForDistance(b.bin_label)
     });
     if (i % 2 === 0 || bins.length <= 9) {
-      ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
+      ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
       ctx.save(); ctx.translate(x, inner.y + inner.h + 10); ctx.rotate(-Math.PI / 5); ctx.fillText(b.bin_label, 0, 0); ctx.restore();
     }
   });
   ctx.textAlign = "left";
   labels.slice(0, 6).forEach((lab, i) => {
-    ctx.fillStyle = ["#38bdf8", "#fb7185", "#fbbf24", "#34d399", "#a78bfa", "#f97316"][i % 6];
+    ctx.fillStyle = TH.cats(6)[i % 6];
     ctx.fillRect(inner.x + 8 + i * 78, inner.y + 8, 8, 8);
-    ctx.fillStyle = "#cbd5e1"; ctx.font = "700 10px Inter, sans-serif"; ctx.fillText(lab, inner.x + 20 + i * 78, inner.y + 16);
+    ctx.fillStyle = TH.c("mutedBright"); ctx.font = "700 10px Inter, sans-serif"; ctx.fillText(lab, inner.x + 20 + i * 78, inner.y + 16);
   });
 }
 function drawLabelDistanceHeatmap(rect, stats, metric) {
   const title = state.compare ? `${metric.toUpperCase()} Delta By Label / Distance` : `${metric.toUpperCase()} By Label / Distance`;
   const plot = chartPanel(rect, title);
   const rows = (stats?.label_distance || []).filter(r => r.bin_label && r.label);
-  if (!rows.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No label-distance data.", plot.x, plot.y + 28); return; }
+  if (!rows.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No label-distance data.", plot.x, plot.y + 28); return; }
   const bins = [...new Map(rows.map(r => [r.bin_label, r])).values()].sort((a, b) => (a.bin_idx || 0) - (b.bin_idx || 0));
   const labels = allLabelNames().filter(l => rows.some(r => r.label === l && (Number(r.rows) || Number(r.delta_rows)))).slice(0, 12);
   const inner = {x: plot.x + 76, y: plot.y + 8, w: plot.w - 90, h: plot.h - 58};
@@ -544,23 +544,23 @@ function drawLabelDistanceHeatmap(rect, stats, metric) {
   const key = state.compare ? `delta_${metric}` : metric;
   const maxAbs = state.compare ? Math.max(.01, ...rows.map(r => Math.abs(Number(r[key]) || 0))) : 1;
   labels.forEach((lab, yi) => {
-    ctx.fillStyle = lab === state.label ? "#ffffff" : "#cbd5e1";
+    ctx.fillStyle = lab === state.label ? TH.c("marker") : TH.c("mutedBright");
     ctx.font = "800 10px Inter, sans-serif"; ctx.textAlign = "right";
     ctx.fillText(lab.slice(0, 12), inner.x - 7, inner.y + yi * cellH + cellH * .62);
     bins.forEach((bin, xi) => {
       const row = rows.find(r => r.label === lab && r.bin_label === bin.bin_label);
       const v = row ? Number(row[key]) : null;
       const x = inner.x + xi * cellW, y = inner.y + yi * cellH;
-      if (v == null || !Number.isFinite(v)) ctx.fillStyle = "rgba(15,23,42,.8)";
+      if (v == null || !Number.isFinite(v)) ctx.fillStyle = TH.a("surface", .8);
       else if (state.compare) ctx.fillStyle = v < 0
-        ? `rgba(52,211,153,${.18 + Math.abs(v) / maxAbs * .72})`
-        : `rgba(251,113,133,${.18 + Math.abs(v) / maxAbs * .72})`;
+        ? TH.a("good", .18 + Math.abs(v) / maxAbs * .72)
+        : TH.a("bad", .18 + Math.abs(v) / maxAbs * .72);
       else ctx.fillStyle = metric === "tpr"
-        ? `rgba(56,189,248,${.12 + Math.max(0, v) * .76})`
-        : `rgba(251,113,133,${.12 + Math.max(0, v) * .76})`;
+        ? TH.a("accent", .12 + Math.max(0, v) * .76)
+        : TH.a("bad", .12 + Math.max(0, v) * .76);
       ctx.fillRect(x + 1, y + 1, Math.max(1, cellW - 2), Math.max(1, cellH - 2));
       if (cellW > 34 && cellH > 16 && v != null && Number.isFinite(v)) {
-        ctx.fillStyle = Math.abs(v) > .55 && !state.compare ? "#07111f" : "#eaf2ff";
+        ctx.fillStyle = Math.abs(v) > .55 && !state.compare ? TH.c("onAccent") : TH.c("text");
         ctx.font = "800 9px Inter, sans-serif"; ctx.textAlign = "center";
         ctx.fillText(state.compare ? `${Math.round(v * 100)}pp` : `${Math.round(v * 100)}%`, x + cellW / 2, y + cellH / 2 + 3);
       }
@@ -576,24 +576,24 @@ function drawLabelDistanceHeatmap(rect, stats, metric) {
       });
     });
   });
-  ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
+  ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
   bins.forEach((bin, i) => {
     if (i % 2 && bins.length > 9) return;
     const x = inner.x + i * cellW + cellW / 2;
     ctx.save(); ctx.translate(x, inner.y + inner.h + 11); ctx.rotate(-Math.PI / 5); ctx.fillText(bin.bin_label, 0, 0); ctx.restore();
   });
   ctx.textAlign = "left";
-  ctx.fillStyle = "#91a4bf"; ctx.fillText("Label", plot.x, inner.y + inner.h / 2);
+  ctx.fillStyle = TH.c("muted"); ctx.fillText("Label", plot.x, inner.y + inner.h / 2);
   ctx.fillText("Distance bin", inner.x + inner.w / 2 - 26, plot.y + plot.h - 4);
 }
 function drawErrorBars(rect, stats) {
   const plot = chartPanel(rect, state.compare ? "TP Localization Error Delta" : "TP Localization Error By Label");
   const rows = (stats?.errors || []).filter(r => r.label && (r.mean_abs_x_error != null || r.mean_abs_y_error != null || r.mean_abs_yaw_error != null || r.delta_mean_abs_x_error != null));
-  if (!rows.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No TP error columns found.", plot.x, plot.y + 28); return; }
+  if (!rows.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No TP error columns found.", plot.x, plot.y + 28); return; }
   const labels = rows.map(r => r.label).slice(0, 10);
   const keys = state.compare
-    ? [["delta_mean_abs_x_error", "Δ|x|", "#38bdf8"], ["delta_mean_abs_y_error", "Δ|y|", "#34d399"], ["delta_mean_abs_yaw_error", "Δ|yaw|", "#fbbf24"]]
-    : [["mean_abs_x_error", "|x|", "#38bdf8"], ["mean_abs_y_error", "|y|", "#34d399"], ["mean_abs_yaw_error", "|yaw|", "#fbbf24"]];
+    ? [["delta_mean_abs_x_error", "Δ|x|", TH.c("accent")], ["delta_mean_abs_y_error", "Δ|y|", TH.c("good")], ["delta_mean_abs_yaw_error", "Δ|yaw|", TH.c("warn")]]
+    : [["mean_abs_x_error", "|x|", TH.c("accent")], ["mean_abs_y_error", "|y|", TH.c("good")], ["mean_abs_yaw_error", "|yaw|", TH.c("warn")]];
   const max = Math.max(.01, ...rows.flatMap(r => keys.map(k => Math.abs(Number(r[k[0]]) || 0))));
   const inner = {x: plot.x + 50, y: plot.y + 8, w: plot.w - 60, h: plot.h - 52};
   drawPlotFrame(inner, "Label", state.compare ? "Error delta" : "Mean absolute error", state.compare ? max : niceMax(max), v => v.toFixed(2));
@@ -617,13 +617,13 @@ function drawErrorBars(rect, stats) {
         rows: rows.filter(item => item.label === lab).map(item => ({section: "error", ...item}))
       });
     });
-    ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
+    ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
     ctx.save(); ctx.translate(inner.x + i * groupW + groupW / 2, inner.y + inner.h + 11); ctx.rotate(-Math.PI / 5); ctx.fillText(lab.slice(0, 10), 0, 0); ctx.restore();
   });
   ctx.textAlign = "left";
   keys.forEach(([_, name, color], i) => {
     ctx.fillStyle = color; ctx.fillRect(inner.x + 8 + i * 62, inner.y + 8, 8, 8);
-    ctx.fillStyle = "#cbd5e1"; ctx.font = "700 10px Inter, sans-serif"; ctx.fillText(name, inner.x + 20 + i * 62, inner.y + 16);
+    ctx.fillStyle = TH.c("mutedBright"); ctx.font = "700 10px Inter, sans-serif"; ctx.fillText(name, inner.x + 20 + i * 62, inner.y + 16);
   });
 }
 function drawDatasetKpis(rect, stats, arr) {
@@ -639,12 +639,12 @@ function drawDatasetKpis(rect, stats, arr) {
   const precision = totals.tp / Math.max(1, totals.tp + totals.fp);
   const recall = totals.tp / Math.max(1, totals.tp + totals.fn);
   const cards = [
-    ["Scenarios", fmt(arr.length), "#eaf2ff", state.stats?.scenarios || []],
-    [state.compare ? "ΔTP" : "TP", state.compare ? fmtDelta(tp) : fmt(tp), "#38bdf8", state.stats?.label_frames || state.stats?.frames || []],
-    [state.compare ? "ΔFP" : "FP", state.compare ? fmtDelta(fp) : fmt(fp), "#fb7185", state.stats?.label_frames || state.stats?.frames || []],
-    [state.compare ? "ΔFN" : "FN", state.compare ? fmtDelta(fn) : fmt(fn), "#fbbf24", state.stats?.label_frames || state.stats?.frames || []],
-    ["Precision", rate(precision), "#34d399", state.stats?.labels || []],
-    ["Recall", rate(recall), "#a78bfa", state.stats?.labels || []],
+    ["Scenarios", fmt(arr.length), TH.c("text"), state.stats?.scenarios || []],
+    [state.compare ? "ΔTP" : "TP", state.compare ? fmtDelta(tp) : fmt(tp), TH.c("accent"), state.stats?.label_frames || state.stats?.frames || []],
+    [state.compare ? "ΔFP" : "FP", state.compare ? fmtDelta(fp) : fmt(fp), TH.c("bad"), state.stats?.label_frames || state.stats?.frames || []],
+    [state.compare ? "ΔFN" : "FN", state.compare ? fmtDelta(fn) : fmt(fn), TH.c("warn"), state.stats?.label_frames || state.stats?.frames || []],
+    ["Precision", rate(precision), TH.c("good"), state.stats?.labels || []],
+    ["Recall", rate(recall), TH.c("runB"), state.stats?.labels || []],
   ];
   const cols = 3;
   const gap = 10;
@@ -653,14 +653,14 @@ function drawDatasetKpis(rect, stats, arr) {
   cards.forEach(([name, value, color, rows], i) => {
     const x = plot.x + (i % cols) * (w + gap);
     const y = plot.y + Math.floor(i / cols) * (h + gap);
-    ctx.fillStyle = "rgba(15,23,42,.7)";
-    ctx.strokeStyle = "rgba(148,163,184,.18)";
+    ctx.fillStyle = TH.a("surface", .7);
+    ctx.strokeStyle = TH.a("line", .18);
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
     ctx.fillStyle = color;
     ctx.font = "900 22px Inter, sans-serif";
     ctx.fillText(value, x + 12, y + 34);
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.font = "800 10px Inter, sans-serif";
     ctx.fillText(name, x + 12, y + h - 12);
     addStatsRectHit(x, y, w, h, {
@@ -674,41 +674,41 @@ function drawDatasetKpis(rect, stats, arr) {
 function drawLabelRateBars(rect, stats) {
   const plot = chartPanel(rect, state.compare ? "Label Rate Delta" : "Precision / Recall By Label");
   const rows = (stats?.labels || []).filter(r => r.label).slice().sort((a, b) => (b.rows || 0) - (a.rows || 0));
-  if (!rows.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No label rates.", plot.x, plot.y + 28); return; }
+  if (!rows.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No label rates.", plot.x, plot.y + 28); return; }
   const inner = {x: plot.x + 72, y: plot.y + 8, w: plot.w - 88, h: plot.h - 42};
   const labels = rows.slice(0, 12);
   const rowH = inner.h / Math.max(1, labels.length);
   const max = state.compare ? Math.max(.01, ...labels.flatMap(r => [Math.abs(r.delta_precision || 0), Math.abs(r.delta_recall || 0)])) : 1;
   labels.forEach((r, i) => {
     const y = inner.y + i * rowH;
-    ctx.fillStyle = "#cbd5e1";
+    ctx.fillStyle = TH.c("mutedBright");
     ctx.font = "800 10px Inter, sans-serif";
     ctx.textAlign = "right";
     ctx.fillText(r.label.slice(0, 12), inner.x - 8, y + rowH * .62);
     ctx.textAlign = "left";
     if (state.compare) {
       const mid = inner.x + inner.w / 2;
-      ctx.fillStyle = "rgba(148,163,184,.14)";
+      ctx.fillStyle = TH.a("line", .14);
       ctx.fillRect(inner.x, y + 3, inner.w, rowH - 7);
-      ctx.fillStyle = "rgba(226,232,240,.42)";
+      ctx.fillStyle = TH.a("lineStrong", .42);
       ctx.fillRect(mid, y + 2, 1, rowH - 5);
-      [["delta_precision", "#38bdf8", -3], ["delta_recall", "#34d399", 4]].forEach(([key, color, dy]) => {
+      [["delta_precision", TH.c("accent"), -3], ["delta_recall", TH.c("good"), 4]].forEach(([key, color, dy]) => {
         const v = Number(r[key]) || 0;
         const w = Math.abs(v) / max * inner.w * .48;
-        ctx.fillStyle = v >= 0 ? color : "#fb7185";
+        ctx.fillStyle = v >= 0 ? color : TH.c("bad");
         ctx.fillRect(v >= 0 ? mid : mid - w, y + rowH / 2 + dy, w, 4);
       });
     } else {
       const precision = Number(r.precision) || 0;
       const recall = Number(r.recall) || 0;
-      ctx.fillStyle = "rgba(15,23,42,.76)";
+      ctx.fillStyle = TH.a("surface", .76);
       ctx.fillRect(inner.x, y + 3, inner.w, rowH - 7);
-      ctx.fillStyle = "#38bdf8";
+      ctx.fillStyle = TH.c("accent");
       ctx.fillRect(inner.x, y + 4, inner.w * precision, Math.max(4, rowH * .28));
-      ctx.fillStyle = "#34d399";
+      ctx.fillStyle = TH.c("good");
       ctx.fillRect(inner.x, y + rowH * .52, inner.w * recall, Math.max(4, rowH * .28));
       if (inner.w > 260) {
-        ctx.fillStyle = "#eaf2ff"; ctx.font = "800 9px Inter, sans-serif";
+        ctx.fillStyle = TH.c("text"); ctx.font = "800 9px Inter, sans-serif";
         ctx.fillText(`${Math.round(precision * 100)}% / ${Math.round(recall * 100)}%`, inner.x + inner.w + 6, y + rowH * .62);
       }
     }
@@ -721,10 +721,10 @@ function drawLabelRateBars(rect, stats) {
       rows: statsRowsForLabel(r.label)
     });
   });
-  ctx.fillStyle = "#38bdf8"; ctx.fillRect(inner.x, plot.y + 4, 8, 8);
-  ctx.fillStyle = "#cbd5e1"; ctx.font = "700 10px Inter, sans-serif"; ctx.fillText(state.compare ? "precision delta" : "precision", inner.x + 12, plot.y + 12);
-  ctx.fillStyle = "#34d399"; ctx.fillRect(inner.x + 112, plot.y + 4, 8, 8);
-  ctx.fillStyle = "#cbd5e1"; ctx.fillText(state.compare ? "recall delta" : "recall", inner.x + 124, plot.y + 12);
+  ctx.fillStyle = TH.c("accent"); ctx.fillRect(inner.x, plot.y + 4, 8, 8);
+  ctx.fillStyle = TH.c("mutedBright"); ctx.font = "700 10px Inter, sans-serif"; ctx.fillText(state.compare ? "precision delta" : "precision", inner.x + 12, plot.y + 12);
+  ctx.fillStyle = TH.c("good"); ctx.fillRect(inner.x + 112, plot.y + 4, 8, 8);
+  ctx.fillStyle = TH.c("mutedBright"); ctx.fillText(state.compare ? "recall delta" : "recall", inner.x + 124, plot.y + 12);
   ctx.textAlign = "left";
 }
 function drawLabelIssueBars(rect, stats) {
@@ -734,30 +734,30 @@ function drawLabelIssueBars(rect, stats) {
     const am = Math.abs(Number(state.compare ? a.delta_fp : a.fp) || 0) + Math.abs(Number(state.compare ? a.delta_fn : a.fn) || 0);
     return bm - am;
   }).slice(0, 12);
-  if (!rows.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No label issue data.", plot.x, plot.y + 28); return; }
+  if (!rows.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No label issue data.", plot.x, plot.y + 28); return; }
   const inner = {x: plot.x + 72, y: plot.y + 8, w: plot.w - 92, h: plot.h - 38};
   const max = Math.max(1, ...rows.flatMap(r => [Math.abs(Number(state.compare ? r.delta_fp : r.fp) || 0), Math.abs(Number(state.compare ? r.delta_fn : r.fn) || 0)]));
   const rowH = inner.h / rows.length;
   rows.forEach((r, i) => {
     const y = inner.y + i * rowH + 2;
-    ctx.fillStyle = "#cbd5e1"; ctx.font = "800 10px Inter, sans-serif"; ctx.textAlign = "right";
+    ctx.fillStyle = TH.c("mutedBright"); ctx.font = "800 10px Inter, sans-serif"; ctx.textAlign = "right";
     ctx.fillText(r.label.slice(0, 12), inner.x - 8, y + rowH * .55);
     ctx.textAlign = "left";
     const fp = Number(state.compare ? r.delta_fp : r.fp) || 0;
     const fn = Number(state.compare ? r.delta_fn : r.fn) || 0;
     const mid = state.compare ? inner.x + inner.w / 2 : inner.x;
-    ctx.fillStyle = "rgba(15,23,42,.76)";
+    ctx.fillStyle = TH.a("surface", .76);
     ctx.fillRect(inner.x, y, inner.w, rowH - 5);
     if (state.compare) {
-      ctx.fillStyle = "rgba(226,232,240,.42)";
+      ctx.fillStyle = TH.a("lineStrong", .42);
       ctx.fillRect(mid, y, 1, rowH - 5);
     }
-    [[fp, "#fb7185", 2], [fn, "#fbbf24", Math.max(7, rowH / 2)]].forEach(([v, color, dy]) => {
+    [[fp, TH.c("bad"), 2], [fn, TH.c("warn"), Math.max(7, rowH / 2)]].forEach(([v, color, dy]) => {
       const w = Math.abs(v) / max * (state.compare ? inner.w * .48 : inner.w);
-      ctx.fillStyle = state.compare && v < 0 ? "#34d399" : color;
+      ctx.fillStyle = state.compare && v < 0 ? TH.c("good") : color;
       ctx.fillRect(state.compare ? (v >= 0 ? mid : mid - w) : inner.x, y + dy, w, Math.max(3, rowH * .22));
     });
-    ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif";
+    ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif";
     ctx.fillText(`FP ${state.compare ? fmtDelta(fp) : fmt(fp)}  FN ${state.compare ? fmtDelta(fn) : fmt(fn)}`, inner.x + inner.w + 6, y + rowH * .55);
     addStatsRectHit(inner.x, y, inner.w, rowH, {
       title: `Issues · ${r.label}`,
@@ -775,7 +775,7 @@ function drawLabelIssueBars(rect, stats) {
 function drawScenarioDistribution(rect, arr) {
   const plot = chartPanel(rect, state.compare ? "Scenario Change Distribution" : "Scenario Issue Distribution");
   const values = arr.map(s => Math.max(0, scenarioMetric(s))).filter(Number.isFinite);
-  if (!values.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No scenario distribution.", plot.x, plot.y + 28); return; }
+  if (!values.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No scenario distribution.", plot.x, plot.y + 28); return; }
   const max = niceMax(Math.max(...values));
   const buckets = new Array(12).fill(0);
   values.forEach(v => buckets[Math.min(buckets.length - 1, Math.floor(v / max * buckets.length))] += 1);
@@ -804,7 +804,7 @@ function drawScenarioDistribution(rect, arr) {
         })
         .map(s => statsRowsForScenario(s)[0])
     });
-    ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
+    ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif"; ctx.textAlign = "center";
     if (i % 2 === 0) ctx.fillText(fmt(Math.round(i * max / buckets.length)), x, inner.y + inner.h + 12);
   });
   ctx.textAlign = "left";
@@ -812,21 +812,21 @@ function drawScenarioDistribution(rect, arr) {
 function drawScenarioRankingWide(rect, arr) {
   const plot = chartPanel(rect, state.compare ? "Scenario Drivers: Largest Changes" : "Scenario Drivers: Most Issues");
   const top = arr.slice(0, 18);
-  if (!top.length) { ctx.fillStyle = "#91a4bf"; ctx.fillText("No scenarios.", plot.x, plot.y + 28); return; }
+  if (!top.length) { ctx.fillStyle = TH.c("muted"); ctx.fillText("No scenarios.", plot.x, plot.y + 28); return; }
   const max = Math.max(1, ...top.map(s => Math.abs(scenarioMetric(s))));
   const rowH = plot.h / top.length;
   top.forEach((s, i) => {
     const y = plot.y + i * rowH + 2;
     const v = scenarioMetric(s);
-    ctx.fillStyle = "#cbd5e1"; ctx.font = "800 10px Inter, sans-serif";
+    ctx.fillStyle = TH.c("mutedBright"); ctx.font = "800 10px Inter, sans-serif";
     ctx.fillText(scenarioName(s).slice(0, 44), plot.x, y + rowH * .58);
     const bx = plot.x + Math.min(310, plot.w * .46);
     const bw = plot.w - (bx - plot.x) - 74;
-    ctx.fillStyle = "rgba(15,23,42,.78)";
+    ctx.fillStyle = TH.a("surface", .78);
     ctx.fillRect(bx, y, bw, Math.max(6, rowH - 5));
     ctx.fillStyle = colorFor(v, max);
     ctx.fillRect(bx, y, bw * Math.abs(v) / max, Math.max(6, rowH - 5));
-    ctx.fillStyle = "#91a4bf"; ctx.font = "700 9px Inter, sans-serif";
+    ctx.fillStyle = TH.c("muted"); ctx.font = "700 9px Inter, sans-serif";
     ctx.fillText(state.compare ? fmtDelta(Math.round(v)) : fmt(Math.round(v)), bx + bw + 8, y + rowH * .58);
     addStatsRectHit(plot.x, y, plot.w, rowH, {
       kind: "scenario",
@@ -851,7 +851,7 @@ function drawFrameFocusRanking(rect) {
   const plot = chartPanel(rect, label);
   const rows = focusedFrameRows(22);
   if (!rows.length) {
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.fillText("No frame-level stats available.", plot.x, plot.y + 28);
     return;
   }
@@ -871,16 +871,16 @@ function drawFrameFocusRanking(rect) {
     const y = plot.y + i * rowH + 2;
     const v = valueFor(row);
     const name = `${scenarioName(row)} · f${row.frame ?? "-"}`;
-    ctx.fillStyle = "#cbd5e1";
+    ctx.fillStyle = TH.c("mutedBright");
     ctx.font = "800 10px Inter, sans-serif";
     ctx.fillText(name.slice(0, 46), plot.x, y + rowH * .58);
     const bx = plot.x + Math.min(330, plot.w * .48);
     const bw = plot.w - (bx - plot.x) - 92;
-    ctx.fillStyle = "rgba(15,23,42,.78)";
+    ctx.fillStyle = TH.a("surface", .78);
     ctx.fillRect(bx, y, bw, Math.max(6, rowH - 5));
-    ctx.fillStyle = state.compare && state.statsFrameFocus === "improved" ? "#34d399" : colorFor(v, max);
+    ctx.fillStyle = state.compare && state.statsFrameFocus === "improved" ? TH.c("good") : colorFor(v, max);
     ctx.fillRect(bx, y, bw * v / max, Math.max(6, rowH - 5));
-    ctx.fillStyle = "#91a4bf";
+    ctx.fillStyle = TH.c("muted");
     ctx.font = "700 9px Inter, sans-serif";
     ctx.fillText(state.compare
       ? `ΔFP ${fmtDelta(row.delta_fp || 0)} · ΔFN ${fmtDelta(row.delta_fn || 0)}`
@@ -927,14 +927,14 @@ function renderStatsDashboard(rect) {
   const arr = filteredScenarios();
   state.labelNodes = [];
   state.statNodes = [];
-  ctx.fillStyle = "#eaf2ff";
+  ctx.fillStyle = TH.c("text");
   ctx.font = "900 18px Inter, sans-serif";
   ctx.fillText("Dataset Statistics", 18, 86);
-  ctx.fillStyle = "#91a4bf";
+  ctx.fillStyle = TH.c("muted");
   ctx.font = "700 11px Inter, sans-serif";
   ctx.fillText(`${fmt(arr.length)} scenarios · ${state.compare ? "Run B - Run A" : compareLensLabel()} · ${state.label || "all labels"} · ${state.rangeMax ? `<${state.rangeMax}m` : "all ranges"}`, 18, 105);
   statsInsightLines(state.stats).forEach((line, i) => {
-    ctx.fillStyle = i === 0 ? "#fbbf24" : "#cbd5e1";
+    ctx.fillStyle = i === 0 ? TH.c("warn") : TH.c("mutedBright");
     ctx.font = "800 11px Inter, sans-serif";
     ctx.fillText(line, 18 + i * Math.max(260, rect.width / 3.15), 128);
   });

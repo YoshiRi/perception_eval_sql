@@ -329,7 +329,7 @@ def render_identity_badge() -> Dict[str, Any]:
         return ctx
     st.markdown(
         f"<div style='text-align:right; margin:-0.5rem 0 0.25rem; "
-        f"font-size:0.8rem; color:#64748b;'>👤 {label}</div>",
+        f"font-size:0.8rem; color:var(--t4-muted);'>👤 {label}</div>",
         unsafe_allow_html=True,
     )
     return ctx

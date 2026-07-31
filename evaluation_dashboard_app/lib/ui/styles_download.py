@@ -21,20 +21,20 @@ def inject_download_page_styles() -> None:
           100% { transform: translateX(220%) skewX(-12deg); opacity: 0; }
         }
         @keyframes dl-pulse-dot {
-          0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5); }
-          50% { opacity: 0.85; transform: scale(1.05); box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+          0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 var(--t4-ok-border); }
+          50% { opacity: 0.85; transform: scale(1.05); box-shadow: 0 0 0 6px transparent; }
         }
         @keyframes dl-step-glow {
-          0%, 100% { border-color: rgba(125, 211, 252, 0.45); }
-          50% { border-color: rgba(167, 139, 250, 0.65); }
+          0%, 100% { border-color: var(--t4-info-border); }
+          50% { border-color: var(--t4-accent-border); }
         }
         .dl-hero-wrap {
           position: relative;
           border-radius: 22px;
           overflow: hidden;
           margin-bottom: 1rem;
-          border: 1px solid #cbd5e1;
-          box-shadow: 0 10px 40px -12px rgba(15, 23, 42, 0.12);
+          border: 1px solid var(--t4-border-strong);
+          box-shadow: var(--t4-shadow-lg);
         }
         .dl-hero-bg {
           position: absolute;
@@ -43,7 +43,7 @@ def inject_download_page_styles() -> None:
             radial-gradient(ellipse 90% 70% at 12% 8%, rgba(56, 189, 248, 0.2) 0%, transparent 58%),
             radial-gradient(ellipse 75% 55% at 92% 22%, rgba(167, 139, 250, 0.18) 0%, transparent 52%),
             radial-gradient(ellipse 55% 70% at 48% 100%, rgba(45, 212, 191, 0.12) 0%, transparent 50%),
-            linear-gradient(135deg, #f8fafc 0%, #ecfeff 42%, #e0f2fe 100%);
+            var(--t4-hero-bg);
           background-size: 220% 220%;
           animation: dl-gradient-shift 22s ease-in-out infinite;
         }
@@ -73,7 +73,7 @@ def inject_download_page_styles() -> None:
           background: linear-gradient(
             105deg,
             transparent 0%,
-            rgba(255, 255, 255, 0.55) 45%,
+            rgba(255, 255, 255, 0.28) 45%,
             transparent 70%
           );
           animation: dl-shimmer-slide 7s ease-in-out infinite;
@@ -96,7 +96,7 @@ def inject_download_page_styles() -> None:
           letter-spacing: 0.16em;
           text-transform: uppercase;
           font-weight: 700;
-          color: #64748b;
+          color: var(--t4-muted);
         }
         .dl-hero-title {
           margin: 0.4rem 0 0 0;
@@ -104,14 +104,14 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: -0.035em;
           line-height: 1.12;
-          color: #0f172a;
+          color: var(--t4-text);
         }
         .dl-hero-desc {
           margin: 0.65rem 0 0 0;
           max-width: 38rem;
           font-size: 0.95rem;
           line-height: 1.55;
-          color: #475569;
+          color: var(--t4-text-3);
         }
         .dl-hero-pills {
           display: flex;
@@ -128,31 +128,31 @@ def inject_download_page_styles() -> None:
           font-size: 0.76rem;
           font-weight: 700;
           letter-spacing: 0.03em;
-          color: #334155;
-          background: rgba(255, 255, 255, 0.85);
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          color: var(--t4-text-2);
+          background: var(--t4-surface);
+          border: 1px solid var(--t4-border);
+          box-shadow: var(--t4-shadow-sm);
         }
         .dl-pill-live {
-          border-color: #6ee7b7;
-          background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
-          color: #065f46;
+          border-color: var(--t4-ok-border);
+          background: linear-gradient(135deg, var(--t4-ok-bg) 0%, var(--t4-surface) 100%);
+          color: var(--t4-ok);
         }
         .dl-pulse-dot {
           display: inline-block;
           width: 7px;
           height: 7px;
           border-radius: 50%;
-          background: #34d399;
+          background: var(--t4-ok);
           animation: dl-pulse-dot 2s ease-in-out infinite;
         }
         .dl-pipeline {
           margin: 0 0 1.25rem 0;
           padding: 0.85rem 1rem;
           border-radius: 16px;
-          background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 8px 30px -12px rgba(15, 23, 42, 0.12);
+          background: var(--t4-panel-bg);
+          border: 1px solid var(--t4-border);
+          box-shadow: var(--t4-shadow-md);
         }
         .dl-pipeline-kicker {
           margin: 0 0 0.65rem 0;
@@ -160,7 +160,7 @@ def inject_download_page_styles() -> None:
           font-weight: 700;
           letter-spacing: 0.14em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--t4-muted);
         }
         .dl-pipeline-inner {
           display: flex;
@@ -175,9 +175,9 @@ def inject_download_page_styles() -> None:
           gap: 0.5rem;
           padding: 0.35rem 0.65rem;
           border-radius: 12px;
-          background: #fff;
-          border: 1px solid #e2e8f0;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          background: var(--t4-surface);
+          border: 1px solid var(--t4-border);
+          box-shadow: var(--t4-shadow-sm);
         }
         .dl-step-n {
           display: flex;
@@ -188,22 +188,22 @@ def inject_download_page_styles() -> None:
           border-radius: 10px;
           font-size: 0.78rem;
           font-weight: 800;
-          color: #0f172a;
-          background: linear-gradient(145deg, #e0f2fe 0%, #fae8ff 100%);
-          border: 1px solid rgba(125, 211, 252, 0.5);
+          color: var(--t4-text);
+          background: linear-gradient(145deg, var(--t4-info-bg) 0%, var(--t4-accent-soft) 100%);
+          border: 1px solid var(--t4-info-border);
           animation: dl-step-glow 5s ease-in-out infinite;
         }
         .dl-step-t {
           font-size: 0.82rem;
           font-weight: 600;
-          color: #334155;
+          color: var(--t4-text-2);
         }
         .dl-step-line {
           flex: 1;
           min-width: 1rem;
           height: 2px;
           border-radius: 2px;
-          background: linear-gradient(90deg, #cbd5e1, #94a3b8, #cbd5e1);
+          background: linear-gradient(90deg, var(--t4-border), var(--t4-border-strong), var(--t4-border));
           opacity: 0.85;
         }
         @media (max-width: 640px) {
@@ -216,20 +216,20 @@ def inject_download_page_styles() -> None:
           font-weight: 700;
           letter-spacing: 0.14em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--t4-muted);
         }
 
-        /* —— Transfer / progress HUD (light theme, matches app chrome) —— */
+        /* —— Transfer / progress HUD (tokenized, matches app chrome in both themes) —— */
         @keyframes dl-xfer-border {
           0%, 100% {
             box-shadow:
-              0 0 0 1px rgba(14, 165, 233, 0.22),
-              0 12px 36px -14px rgba(14, 165, 233, 0.18);
+              0 0 0 1px var(--t4-accent-border),
+              var(--t4-shadow-md);
           }
           50% {
             box-shadow:
-              0 0 0 1px rgba(139, 92, 246, 0.22),
-              0 14px 40px -12px rgba(139, 92, 246, 0.16);
+              0 0 0 1px var(--t4-accent-2-border),
+              var(--t4-shadow-md);
           }
         }
         @keyframes dl-xfer-scanline {
@@ -262,8 +262,8 @@ def inject_download_page_styles() -> None:
           background:
             radial-gradient(ellipse 100% 85% at 8% 0%, rgba(56, 189, 248, 0.14) 0%, transparent 55%),
             radial-gradient(ellipse 80% 70% at 96% 100%, rgba(167, 139, 250, 0.12) 0%, transparent 52%),
-            linear-gradient(180deg, #ffffff 0%, #f8fafc 45%, #f1f5f9 100%);
-          border: 1px solid #e2e8f0;
+            var(--t4-panel-bg);
+          border: 1px solid var(--t4-border);
           animation: dl-xfer-border 4.5s ease-in-out infinite;
         }
         .dl-xfer-hud::before {
@@ -271,7 +271,7 @@ def inject_download_page_styles() -> None:
           position: absolute;
           left: 0; right: 0; top: 0;
           height: 42%;
-          background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, transparent 100%);
+          background: linear-gradient(180deg, var(--t4-surface) 0%, transparent 100%);
           pointer-events: none;
         }
         .dl-xfer-scan {
@@ -279,7 +279,7 @@ def inject_download_page_styles() -> None:
           left: 0; right: 0;
           top: 0;
           height: 30%;
-          background: linear-gradient(180deg, transparent, rgba(14, 165, 233, 0.06), transparent);
+          background: linear-gradient(180deg, transparent, var(--t4-overlay), transparent);
           animation: dl-xfer-scanline 3.2s ease-in-out infinite;
           pointer-events: none;
         }
@@ -296,7 +296,7 @@ def inject_download_page_styles() -> None:
           font-size: 0.65rem;
           font-weight: 800;
           letter-spacing: 0.2em;
-          color: #64748b;
+          color: var(--t4-muted);
         }
         .dl-xfer-dots {
           display: flex;
@@ -306,11 +306,11 @@ def inject_download_page_styles() -> None:
           width: 6px;
           height: 6px;
           border-radius: 50%;
-          background: #22d3ee;
+          background: var(--t4-accent-2);
           animation: dl-xfer-dot 1.2s ease-in-out infinite;
         }
-        .dl-xfer-dots span:nth-child(2) { animation-delay: 0.15s; background: #a78bfa; }
-        .dl-xfer-dots span:nth-child(3) { animation-delay: 0.3s; background: #34d399; }
+        .dl-xfer-dots span:nth-child(2) { animation-delay: 0.15s; background: var(--t4-accent); }
+        .dl-xfer-dots span:nth-child(3) { animation-delay: 0.3s; background: var(--t4-ok); }
         .dl-xfer-pct-row {
           position: relative;
           z-index: 1;
@@ -325,7 +325,13 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: -0.04em;
           line-height: 1;
-          background: linear-gradient(120deg, #0369a1 0%, #0d9488 30%, #4f46e5 65%, #7c3aed 100%);
+          background: linear-gradient(
+            120deg,
+            var(--t4-accent) 0%,
+            var(--t4-accent-2) 30%,
+            var(--t4-accent-hover) 65%,
+            var(--t4-accent) 100%
+          );
           background-size: 200% auto;
           -webkit-background-clip: text;
           background-clip: text;
@@ -335,22 +341,27 @@ def inject_download_page_styles() -> None:
         .dl-xfer-pct-suffix {
           font-size: 1.15rem;
           font-weight: 700;
-          color: #94a3b8;
+          color: var(--t4-muted);
         }
         .dl-xfer-track {
           position: relative;
           z-index: 1;
           height: 11px;
           border-radius: 999px;
-          background: #e2e8f0;
-          border: 1px solid #cbd5e1;
+          background: var(--t4-surface-sunken);
+          border: 1px solid var(--t4-border);
           overflow: hidden;
           margin-bottom: 0.65rem;
         }
         .dl-xfer-fill {
           height: 100%;
           border-radius: 999px;
-          background: linear-gradient(90deg, #0e7490 0%, #0ea5e9 30%, #6366f1 65%, #8b5cf6 100%);
+          background: linear-gradient(
+            90deg,
+            var(--t4-accent-2) 0%,
+            var(--t4-accent) 45%,
+            var(--t4-accent-hover) 100%
+          );
           background-size: 200% 100%;
           animation: dl-xfer-shimmer 2.8s ease-in-out infinite;
           box-shadow:
@@ -386,9 +397,9 @@ def inject_download_page_styles() -> None:
           width: 2.7rem;
           height: 2.7rem;
           border-radius: 50%;
-          border: 2px solid #e2e8f0;
-          border-top-color: #0ea5e9;
-          border-right-color: #8b5cf6;
+          border: 2px solid var(--t4-border);
+          border-top-color: var(--t4-accent);
+          border-right-color: var(--t4-accent-2);
           opacity: 0.95;
           animation: dl-xfer-ring 2.2s linear infinite;
           pointer-events: none;
@@ -398,7 +409,7 @@ def inject_download_page_styles() -> None:
           z-index: 1;
           font-size: 0.95rem;
           font-weight: 700;
-          color: #0f172a;
+          color: var(--t4-text);
           letter-spacing: -0.02em;
           line-height: 1.35;
           max-width: 100%;
@@ -411,7 +422,7 @@ def inject_download_page_styles() -> None:
           z-index: 1;
           margin-top: 0.3rem;
           font-size: 0.82rem;
-          color: #475569;
+          color: var(--t4-text-3);
           line-height: 1.4;
           max-width: 100%;
           overflow: hidden;
@@ -427,15 +438,15 @@ def inject_download_page_styles() -> None:
           margin-top: 0.45rem;
           font-size: 0.72rem;
           font-weight: 600;
-          color: #64748b;
+          color: var(--t4-muted);
           font-variant-numeric: tabular-nums;
           letter-spacing: 0.02em;
         }
 
-        /* Post-download: status headers, summary metrics (matches xfer light HUD) */
+        /* Post-download: status headers, summary metrics (matches tokenized xfer HUD) */
         @keyframes dl-result-glow {
-          0%, 100% { box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.12), 0 14px 40px -18px rgba(14, 165, 233, 0.14); }
-          50% { box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.14), 0 16px 44px -16px rgba(139, 92, 246, 0.12); }
+          0%, 100% { box-shadow: 0 0 0 1px var(--t4-accent-border), var(--t4-shadow-md); }
+          50% { box-shadow: 0 0 0 1px var(--t4-accent-2-border), var(--t4-shadow-md); }
         }
         .dl-result-shell {
           margin: 0.65rem 0 0.5rem 0;
@@ -444,11 +455,11 @@ def inject_download_page_styles() -> None:
           position: relative;
           border-radius: 16px;
           padding: 1rem 1.15rem 1.05rem 1.15rem;
-          border: 1px solid #e2e8f0;
+          border: 1px solid var(--t4-border);
           background:
             radial-gradient(ellipse 90% 70% at 0% 0%, rgba(56, 189, 248, 0.1) 0%, transparent 55%),
             radial-gradient(ellipse 70% 60% at 100% 100%, rgba(167, 139, 250, 0.08) 0%, transparent 50%),
-            linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            linear-gradient(180deg, var(--t4-surface) 0%, var(--t4-surface-2) 100%);
           animation: dl-result-glow 5s ease-in-out infinite;
         }
         .dl-result-panel--table {
@@ -459,21 +470,21 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: 0.16em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--t4-muted);
           margin: 0 0 0.35rem 0;
         }
         .dl-result-title {
           font-size: 1.12rem;
           font-weight: 800;
           letter-spacing: -0.025em;
-          color: #0f172a;
+          color: var(--t4-text);
           margin: 0;
           line-height: 1.2;
         }
         .dl-result-sub {
           margin: 0.4rem 0 0 0;
           font-size: 0.84rem;
-          color: #475569;
+          color: var(--t4-text-3);
           line-height: 1.45;
           max-width: 42rem;
         }
@@ -489,26 +500,26 @@ def inject_download_page_styles() -> None:
           max-width: 10rem;
           padding: 0.65rem 0.75rem;
           border-radius: 12px;
-          border: 1px solid #e2e8f0;
-          background: #fff;
+          border: 1px solid var(--t4-border);
+          background: var(--t4-surface);
           text-align: center;
-          box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.06);
+          box-shadow: var(--t4-shadow-sm);
         }
         .dl-stat-tile--ok {
-          border-color: rgba(52, 211, 153, 0.45);
-          background: linear-gradient(165deg, #ecfdf5 0%, #fff 100%);
+          border-color: var(--t4-ok-border);
+          background: linear-gradient(165deg, var(--t4-ok-bg) 0%, var(--t4-surface) 100%);
         }
         .dl-stat-tile--skip {
-          border-color: rgba(251, 191, 36, 0.5);
-          background: linear-gradient(165deg, #fffbeb 0%, #fff 100%);
+          border-color: var(--t4-warn-border);
+          background: linear-gradient(165deg, var(--t4-warn-bg) 0%, var(--t4-surface) 100%);
         }
         .dl-stat-tile--fail {
-          border-color: rgba(251, 113, 133, 0.5);
-          background: linear-gradient(165deg, #fff1f2 0%, #fff 100%);
+          border-color: var(--t4-bad-border);
+          background: linear-gradient(165deg, var(--t4-bad-bg) 0%, var(--t4-surface) 100%);
         }
         .dl-stat-tile--neutral {
-          border-color: rgba(14, 165, 233, 0.35);
-          background: linear-gradient(165deg, #f0f9ff 0%, #fff 100%);
+          border-color: var(--t4-info-border);
+          background: linear-gradient(165deg, var(--t4-info-bg) 0%, var(--t4-surface) 100%);
         }
         .dl-stat-n {
           display: block;
@@ -517,7 +528,7 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: -0.03em;
           line-height: 1.1;
-          color: #0f172a;
+          color: var(--t4-text);
           font-variant-numeric: tabular-nums;
         }
         .dl-stat-l {
@@ -527,28 +538,28 @@ def inject_download_page_styles() -> None:
           font-weight: 700;
           letter-spacing: 0.06em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--t4-muted);
         }
         .dl-path-row {
           margin-top: 0.85rem;
           padding: 0.55rem 0.75rem;
           border-radius: 10px;
-          background: rgba(241, 245, 249, 0.9);
-          border: 1px solid #e2e8f0;
+          background: var(--t4-code-bg);
+          border: 1px solid var(--t4-border);
           font-size: 0.8rem;
-          color: #475569;
+          color: var(--t4-text-3);
         }
         .dl-path-row code {
           font-family: ui-monospace, monospace;
           font-size: 0.78rem;
-          color: #0f172a;
+          color: var(--t4-text);
           word-break: break-all;
         }
         .dl-mini-list {
           margin: 0.65rem 0 0 0;
           padding: 0 0 0 1rem;
           font-size: 0.82rem;
-          color: #334155;
+          color: var(--t4-text-2);
           line-height: 1.55;
         }
         .dl-mini-list li { margin: 0.2rem 0; }
@@ -556,12 +567,12 @@ def inject_download_page_styles() -> None:
         /* —— Task queue list (cards + compact progress) —— */
         @keyframes dl-task-card-glow {
           0%, 100% {
-            box-shadow: 0 4px 22px -12px rgba(14, 165, 233, 0.18);
-            border-color: rgba(14, 165, 233, 0.22);
+            box-shadow: var(--t4-shadow-sm);
+            border-color: var(--t4-accent-border);
           }
           50% {
-            box-shadow: 0 8px 28px -10px rgba(139, 92, 246, 0.16);
-            border-color: rgba(139, 92, 246, 0.2);
+            box-shadow: var(--t4-shadow-md);
+            border-color: var(--t4-accent-2-border);
           }
         }
         @keyframes dl-task-shimmer {
@@ -581,8 +592,8 @@ def inject_download_page_styles() -> None:
           background: linear-gradient(
             90deg,
             transparent 0%,
-            #e2e8f0 12%,
-            #e2e8f0 88%,
+            var(--t4-border) 12%,
+            var(--t4-border) 88%,
             transparent 100%
           );
         }
@@ -609,7 +620,7 @@ def inject_download_page_styles() -> None:
           margin-left: auto;
           font-size: 0.7rem;
           font-weight: 600;
-          color: #64748b;
+          color: var(--t4-muted);
           font-variant-numeric: tabular-nums;
           white-space: nowrap;
         }
@@ -639,21 +650,21 @@ def inject_download_page_styles() -> None:
           font-family: ui-monospace, "Cascadia Code", monospace;
           font-size: 0.82rem;
           font-weight: 800;
-          color: #0369a1;
+          color: var(--t4-accent);
           min-width: 2.35rem;
           text-align: right;
           flex-shrink: 0;
           font-variant-numeric: tabular-nums;
         }
         .dl-task-prog-inline-pct--muted {
-          color: #94a3b8;
+          color: var(--t4-muted);
         }
         .dl-task-prog-inline-label {
           font-size: 0.58rem;
           font-weight: 800;
           letter-spacing: 0.12em;
           text-transform: uppercase;
-          color: #b45309;
+          color: var(--t4-neutral);
           flex-shrink: 0;
         }
         .dl-task-prog-msg--one {
@@ -688,12 +699,12 @@ def inject_download_page_styles() -> None:
           border-radius: 16px;
           padding: 0.85rem 1.05rem 0.95rem 1.05rem;
           margin-bottom: 0.35rem;
-          border: 1px solid #e2e8f0;
+          border: 1px solid var(--t4-border);
           background:
             radial-gradient(ellipse 85% 70% at 0% 0%, rgba(56, 189, 248, 0.08) 0%, transparent 55%),
             radial-gradient(ellipse 70% 55% at 100% 100%, rgba(167, 139, 250, 0.06) 0%, transparent 50%),
-            linear-gradient(165deg, #ffffff 0%, #f8fafc 55%, #f1f5f9 100%);
-          box-shadow: 0 4px 18px -10px rgba(15, 23, 42, 0.14);
+            linear-gradient(165deg, var(--t4-surface) 0%, var(--t4-surface-2) 55%, var(--t4-surface-3) 100%);
+          box-shadow: var(--t4-shadow-md);
           overflow: hidden;
         }
         .dl-task-card--active {
@@ -707,30 +718,30 @@ def inject_download_page_styles() -> None:
           bottom: 0;
           width: 4px;
           border-radius: 16px 0 0 16px;
-          background: linear-gradient(180deg, #38bdf8 0%, #a78bfa 50%, #34d399 100%);
+          background: linear-gradient(180deg, var(--t4-info) 0%, var(--t4-accent) 50%, var(--t4-ok) 100%);
           opacity: 0.55;
         }
         .dl-task-card--pending::before {
-          background: linear-gradient(180deg, #fbbf24 0%, #f97316 100%);
+          background: linear-gradient(180deg, var(--t4-neutral) 0%, var(--t4-neutral) 100%);
           opacity: 0.75;
         }
         .dl-task-card--running::before {
-          background: linear-gradient(180deg, #0ea5e9 0%, #6366f1 100%);
+          background: linear-gradient(180deg, var(--t4-warn) 0%, var(--t4-warn) 100%);
           opacity: 0.85;
         }
         .dl-task-card--completed::before {
-          background: linear-gradient(180deg, #22c55e 0%, #14b8a6 100%);
+          background: linear-gradient(180deg, var(--t4-ok) 0%, var(--t4-accent-2) 100%);
           opacity: 0.65;
         }
         .dl-task-card--failed::before {
-          background: linear-gradient(180deg, #fb7185 0%, #f43f5e 100%);
+          background: linear-gradient(180deg, var(--t4-bad) 0%, var(--t4-bad) 100%);
           opacity: 0.8;
         }
         .dl-task-card.dl-task-card--compact {
           border-radius: 11px;
           padding: 0.45rem 0.65rem 0.5rem 0.65rem;
           margin-bottom: 0.2rem;
-          box-shadow: 0 2px 12px -8px rgba(15, 23, 42, 0.12);
+          box-shadow: var(--t4-shadow-sm);
         }
         .dl-task-card.dl-task-card--compact::before {
           width: 3px;
@@ -755,13 +766,13 @@ def inject_download_page_styles() -> None:
           font-size: 0.95rem;
           font-weight: 800;
           letter-spacing: -0.02em;
-          color: #0f172a;
+          color: var(--t4-text);
         }
         .dl-task-id {
           font-family: ui-monospace, "Cascadia Code", monospace;
           font-size: 0.72rem;
           font-weight: 600;
-          color: #94a3b8;
+          color: var(--t4-muted);
           letter-spacing: 0.04em;
         }
         .dl-task-pill {
@@ -773,40 +784,40 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: 0.06em;
           text-transform: uppercase;
-          border: 1px solid #e2e8f0;
-          background: #fff;
-          color: #475569;
+          border: 1px solid var(--t4-border);
+          background: var(--t4-surface);
+          color: var(--t4-text-3);
         }
         .dl-task-pill--pending {
-          border-color: rgba(251, 191, 36, 0.55);
-          background: linear-gradient(135deg, #fffbeb 0%, #fff 100%);
-          color: #b45309;
+          border-color: var(--t4-neutral-border);
+          background: linear-gradient(135deg, var(--t4-neutral-bg) 0%, var(--t4-surface) 100%);
+          color: var(--t4-neutral);
         }
         .dl-task-pill--running {
-          border-color: rgba(14, 165, 233, 0.45);
-          background: linear-gradient(135deg, #e0f2fe 0%, #fff 100%);
-          color: #0369a1;
+          border-color: var(--t4-warn-border);
+          background: linear-gradient(135deg, var(--t4-warn-bg) 0%, var(--t4-surface) 100%);
+          color: var(--t4-warn);
         }
         .dl-task-pill--done {
-          border-color: rgba(52, 211, 153, 0.5);
-          background: linear-gradient(135deg, #ecfdf5 0%, #fff 100%);
-          color: #047857;
+          border-color: var(--t4-ok-border);
+          background: linear-gradient(135deg, var(--t4-ok-bg) 0%, var(--t4-surface) 100%);
+          color: var(--t4-ok);
         }
         .dl-task-pill--fail {
-          border-color: rgba(251, 113, 133, 0.55);
-          background: linear-gradient(135deg, #fff1f2 0%, #fff 100%);
-          color: #be123c;
+          border-color: var(--t4-bad-border);
+          background: linear-gradient(135deg, var(--t4-bad-bg) 0%, var(--t4-surface) 100%);
+          color: var(--t4-bad);
         }
         .dl-task-meta {
           font-size: 0.78rem;
           font-weight: 600;
-          color: #64748b;
+          color: var(--t4-muted);
           font-variant-numeric: tabular-nums;
         }
         .dl-task-sum {
           font-size: 0.84rem;
           line-height: 1.45;
-          color: #334155;
+          color: var(--t4-text-2);
           margin: 0.15rem 0 0.5rem 0;
           max-width: 100%;
           overflow: hidden;
@@ -818,7 +829,7 @@ def inject_download_page_styles() -> None:
         .dl-task-prog {
           margin-top: 0.45rem;
           padding-top: 0.55rem;
-          border-top: 1px solid rgba(226, 232, 240, 0.95);
+          border-top: 1px solid var(--t4-border);
         }
         .dl-task-prog-head {
           display: flex;
@@ -832,7 +843,7 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: 0.18em;
           text-transform: uppercase;
-          color: #64748b;
+          color: var(--t4-muted);
         }
         .dl-task-prog-pct {
           font-family: ui-monospace, "Cascadia Code", monospace;
@@ -840,7 +851,12 @@ def inject_download_page_styles() -> None:
           font-weight: 800;
           letter-spacing: -0.03em;
           line-height: 1;
-          background: linear-gradient(120deg, #0369a1 0%, #0d9488 40%, #4f46e5 100%);
+          background: linear-gradient(
+            120deg,
+            var(--t4-accent) 0%,
+            var(--t4-accent-2) 40%,
+            var(--t4-accent-hover) 100%
+          );
           background-size: 200% auto;
           -webkit-background-clip: text;
           background-clip: text;
@@ -851,27 +867,32 @@ def inject_download_page_styles() -> None:
           background: none;
           -webkit-background-clip: unset;
           background-clip: unset;
-          color: #94a3b8;
+          color: var(--t4-muted);
           animation: none;
         }
         .dl-task-prog-suf {
           font-size: 0.85rem;
           font-weight: 700;
-          color: #94a3b8;
+          color: var(--t4-muted);
           margin-left: 0.05rem;
         }
         .dl-task-track {
           position: relative;
           height: 9px;
           border-radius: 999px;
-          background: #e2e8f0;
-          border: 1px solid #cbd5e1;
+          background: var(--t4-surface-sunken);
+          border: 1px solid var(--t4-border);
           overflow: hidden;
         }
         .dl-task-fill {
           height: 100%;
           border-radius: 999px;
-          background: linear-gradient(90deg, #0e7490 0%, #0ea5e9 35%, #6366f1 70%, #8b5cf6 100%);
+          background: linear-gradient(
+            90deg,
+            var(--t4-accent-2) 0%,
+            var(--t4-accent) 45%,
+            var(--t4-accent-hover) 100%
+          );
           background-size: 200% 100%;
           animation: dl-task-shimmer 2.6s ease-in-out infinite;
           box-shadow:
@@ -902,7 +923,7 @@ def inject_download_page_styles() -> None:
           margin-top: 0.35rem;
           font-size: 0.78rem;
           font-weight: 600;
-          color: #475569;
+          color: var(--t4-text-3);
           line-height: 1.4;
           max-width: 100%;
           overflow: hidden;
@@ -916,9 +937,9 @@ def inject_download_page_styles() -> None:
           padding: 1.35rem 1.25rem;
           border-radius: 16px;
           text-align: center;
-          border: 2px dashed #cbd5e1;
-          background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
-          color: #64748b;
+          border: 2px dashed var(--t4-border-strong);
+          background: linear-gradient(180deg, var(--t4-surface-2) 0%, var(--t4-surface) 100%);
+          color: var(--t4-muted);
           font-size: 0.9rem;
           font-weight: 600;
         }

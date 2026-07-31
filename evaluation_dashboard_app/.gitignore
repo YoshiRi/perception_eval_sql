@@ -1,5 +1,10 @@
 .cache/
 
+# PyInstaller output for the local desktop client (client/build_app.sh).
+# The spec and sources are tracked; the ~190 MB executable is not.
+/build/
+/dist/
+
 # Real deployment env (secrets / infra values). Create from deploy/.env.example
 # via deploy/01_SETUP_ENV.sh. The template deploy/.env.example stays tracked.
 deploy/.env

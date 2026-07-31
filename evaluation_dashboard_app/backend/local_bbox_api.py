@@ -24,6 +24,13 @@ from urllib.parse import parse_qs, urlparse
 import duckdb
 
 try:
+    from backend import app_paths, export_api, prebake
+except ImportError:  # pragma: no cover - running the module as a bare script.
+    import app_paths  # type: ignore[no-redef]
+    import export_api  # type: ignore[no-redef]
+    import prebake  # type: ignore[no-redef]
+
+try:
     import yaml
 except Exception:  # pragma: no cover - PyYAML is optional for the bbox API.
     yaml = None
@@ -118,15 +125,11 @@ _KNOWN_DEVOPS_TARGETS = {
 
 
 def _data_root() -> Path:
-    raw = os.environ.get("EVAL_DASHBOARD_DATA_ROOT", "data")
-    path = Path(raw)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path.resolve()
+    return app_paths.data_root()
 
 
 def _allowed_roots() -> list[Path]:
-    roots = [_data_root(), (Path.cwd() / "data").resolve()]
+    roots = [_data_root(), (app_paths.app_root() / "data").resolve(), (Path.cwd() / "data").resolve()]
     extra = os.environ.get("LOCAL_BBOX_ALLOWED_ROOTS", "")
     for chunk in extra.split(os.pathsep):
         text = chunk.strip()
@@ -220,6 +223,7 @@ def _html_response(handler: BaseHTTPRequestHandler, status: int, html_text: str)
 
 
 _EXPLORER_ASSET_TYPES = {
+    "bbox_theme.js": "text/javascript; charset=utf-8",
     "bbox_explorer.css": "text/css; charset=utf-8",
     "bbox_api.js": "text/javascript; charset=utf-8",
     "bbox_state.js": "text/javascript; charset=utf-8",
@@ -240,15 +244,31 @@ _EXPLORER_ASSET_TYPES = {
 }
 
 
+_ASSET_SUFFIX_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+}
+# The explorer/viewer HTML is re-read from disk per request, but this list lives in
+# the running process. Adding a new asset therefore used to 404 until the server was
+# restarted, which breaks the page rather than just its styling, so any plain .js/.css
+# basename under static/ is served even when it predates the process.
+_SAFE_ASSET_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _asset_content_type(asset_name: str) -> str:
+    explicit = _EXPLORER_ASSET_TYPES.get(asset_name)
+    if explicit:
+        return explicit
+    if ".." in asset_name or not _SAFE_ASSET_NAME.match(asset_name):
+        return ""
+    return _ASSET_SUFFIX_TYPES.get(Path(asset_name).suffix, "")
+
+
 def _static_asset_response(handler: BaseHTTPRequestHandler, asset_name: str, *, head_only: bool = False) -> bool:
-    content_type = _EXPLORER_ASSET_TYPES.get(asset_name)
+    content_type = _asset_content_type(asset_name)
     if not content_type:
         return False
-    candidates = [
-        Path.cwd() / "static" / asset_name,
-        Path("/app/static") / asset_name,
-    ]
-    for path in candidates:
+    for path in (directory / asset_name for directory in app_paths.static_dirs()):
         if not path.exists():
             continue
         body = b"" if head_only else path.read_bytes()
@@ -263,28 +283,33 @@ def _static_asset_response(handler: BaseHTTPRequestHandler, asset_name: str, *, 
     return False
 
 
+def _static_file_text(name: str) -> str:
+    path = app_paths.find_static_file(name)
+    return path.read_text(encoding="utf-8") if path else ""
+
+
+def _render_page_html(name: str, api_base: str) -> str:
+    """Read a page from static/ and fill in its server-side placeholders.
+
+    The theme module is inlined rather than linked: it defines the palette every
+    renderer needs, so a page that loads without it throws on first paint. Inlining
+    ties it to the same disk read as the HTML, instead of a separate asset request
+    that an older server process may not know how to serve.
+    """
+    path = app_paths.find_static_file(name)
+    if path is None:
+        raise FileNotFoundError(f"static/{name} not found")
+    source = path.read_text(encoding="utf-8")
+    source = source.replace("__API_BASE__", api_base.rstrip("/"))
+    return source.replace("/*__BBOX_THEME_JS__*/", _static_file_text("bbox_theme.js"))
+
+
 def _viewer_html(api_base: str = "") -> str:
-    candidates = [
-        Path.cwd() / "static" / "local_bbox_viewer.html",
-        Path("/app/static/local_bbox_viewer.html"),
-    ]
-    for path in candidates:
-        if path.exists():
-            source = path.read_text(encoding="utf-8")
-            return source.replace("__API_BASE__", api_base.rstrip("/"))
-    raise FileNotFoundError("static/local_bbox_viewer.html not found")
+    return _render_page_html("local_bbox_viewer.html", api_base)
 
 
 def _explorer_html(api_base: str = "") -> str:
-    candidates = [
-        Path.cwd() / "static" / "local_bbox_explorer.html",
-        Path("/app/static/local_bbox_explorer.html"),
-    ]
-    for path in candidates:
-        if path.exists():
-            source = path.read_text(encoding="utf-8")
-            return source.replace("__API_BASE__", api_base.rstrip("/"))
-    raise FileNotFoundError("static/local_bbox_explorer.html not found")
+    return _render_page_html("local_bbox_explorer.html", api_base)
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -746,12 +771,10 @@ def _scenario_pickle_path(parquet_path: Path, suite_name: str, scenario_name: st
 
 
 def _ensure_eval_lib_paths() -> None:
-    for lib_path in (
-        "/home/leigu/driving_log_replayer_v2/driving_log_replayer_v2",
-        "/home/leigu/autoware_perception_evaluation/perception_eval",
-    ):
-        if Path(lib_path).exists() and lib_path not in sys.path:
-            sys.path.append(lib_path)
+    for lib_path in app_paths.eval_lib_paths():
+        text = str(lib_path)
+        if lib_path.exists() and text not in sys.path:
+            sys.path.append(text)
 
 
 def _load_scene_result_pickle(pickle_path: Path) -> Any:
@@ -1211,7 +1234,7 @@ def _load_scenario_context_light(parquet_path: Path, suite_name: str, scenario_n
 
 
 def _parquet_list_cache_dir() -> Path:
-    return Path.cwd() / ".cache" / "local_bbox_api" / "parquets"
+    return app_paths.cache_root() / "local_bbox_api" / "parquets"
 
 
 def _directory_signature(root: Path) -> dict[str, Any]:
@@ -1379,7 +1402,7 @@ def scenarios(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _dataset_summary_cache_dir() -> Path:
-    return Path.cwd() / ".cache" / "local_bbox_api" / "dataset_summary"
+    return app_paths.cache_root() / "local_bbox_api" / "dataset_summary"
 
 
 def _path_signature(path: Path) -> dict[str, Any]:
@@ -1856,8 +1879,26 @@ def _batch_devops_criteria_results(
     return out
 
 
+def _prebaked(route: str, path: Path, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Stored answer for a pickle-backed route, or ``None`` to compute it normally.
+
+    A miss -- including a malformed cache -- must never fail the request, so the
+    caller always falls through to the live pickle path.
+    """
+    if not prebake.enabled():
+        return None
+    try:
+        return prebake.read(route, path, payload)
+    except Exception as exc:  # pragma: no cover - defensive; cache is never required.
+        logging.getLogger(__name__).warning("prebake lookup failed for %s: %s", route, exc)
+        return None
+
+
 def scenario_devops_result(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
+    cached = _prebaked(prebake.ROUTE_DEVOPS_RESULT, path, payload)
+    if cached is not None:
+        return cached
     cols = _columns(path)
     _require_columns(cols, ("frame_index", "source", "status", "x", "y"))
     filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
@@ -2141,6 +2182,9 @@ def scenario_devops_result(payload: dict[str, Any]) -> dict[str, Any]:
 
 def scenario_devops_frame_results(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
+    cached = _prebaked(prebake.ROUTE_FRAME_RESULTS, path, payload)
+    if cached is not None:
+        return cached
     filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
     suite_name = _as_text(filters.get("suite_name"))
     scenario_name = _as_text(filters.get("scenario_name"))
@@ -2663,6 +2707,9 @@ def _dynamic_object_box(dynamic_object: Any, transforms: Any = None, run_label: 
 
 def scenario_devops_tn_objects(payload: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_local_path(payload.get("path"))
+    cached = _prebaked(prebake.ROUTE_TN_OBJECTS, path, payload)
+    if cached is not None:
+        return cached
     run_label = _as_text(payload.get("run")) or "A"
     filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
     suite_name = _as_text(filters.get("suite_name"))
@@ -2898,6 +2945,15 @@ def compare_frames(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _export_status(exc: Exception) -> int:
+    """HTTP status for an export failure, so clients can tell apart the causes."""
+    if isinstance(exc, export_api.ExportDisabledError):
+        return 503
+    if isinstance(exc, export_api.ExportAuthError):
+        return 401
+    return 400
+
+
 class LocalBBoxHandler(BaseHTTPRequestHandler):
     routes = {
         "/api/parquets": list_parquets,
@@ -2913,6 +2969,10 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         "/api/frames": frames,
         "/api/compare_frames": compare_frames,
     }
+    # Routes that need the request itself (for the bearer token), not just a payload.
+    auth_routes = export_api.JSON_ROUTES
+    # Routes that write their own response body instead of returning JSON.
+    stream_routes = export_api.STREAM_ROUTES
 
     def log_message(self, format: str, *args: Any) -> None:
         if os.environ.get("LOCAL_BBOX_API_DEBUG") == "1":
@@ -2925,6 +2985,10 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         asset_name = parsed.path.rsplit("/", 1)[-1]
         if _static_asset_response(self, asset_name, head_only=True):
+            return
+        if parsed.path in self.stream_routes:
+            query = parse_qs(parsed.query)
+            self._dispatch(parsed.path, {k: v[-1] for k, v in query.items()}, head_only=True)
             return
         if parsed.path in ("/", "/viewer", "/viewer/", "/explorer", "/explorer/", "/health", "/api/health"):
             self.send_response(200)
@@ -2958,7 +3022,24 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         self._dispatch(parsed.path, _read_json(self))
 
-    def _dispatch(self, path: str, payload: dict[str, Any]) -> None:
+    def _dispatch(self, path: str, payload: dict[str, Any], *, head_only: bool = False) -> None:
+        stream_route = self.stream_routes.get(path)
+        if stream_route is not None:
+            try:
+                stream_route(self, payload, head_only=head_only)
+            except Exception as exc:
+                # Once the stream's headers are on the wire there is no valid way left
+                # to report an error, so only answer if nothing was sent yet.
+                if not getattr(self, "_export_stream_started", False):
+                    _json_response(self, _export_status(exc), {"error": str(exc)})
+            return
+        auth_route = self.auth_routes.get(path)
+        if auth_route is not None:
+            try:
+                _json_response(self, 200, auth_route(self, payload))
+            except Exception as exc:
+                _json_response(self, _export_status(exc), {"error": str(exc)})
+            return
         route = self.routes.get(path)
         if route is None:
             _json_response(self, 404, {"error": f"Unknown route: {path}"})

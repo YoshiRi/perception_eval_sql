@@ -50,7 +50,7 @@ var els = {
   prevFrame: $("prevFrameBtn"), nextFrame: $("nextFrameBtn"), playSpeed: $("playSpeed"),
   readout: $("frameReadout"), boxCount: $("boxCount"), frameCount: $("frameCount"), gtCount: $("gtCount"), estCount: $("estCount"),
   toast: $("toast"), spinner: $("spinner"), camTop: $("camTop"), cam3d: $("cam3d"), camFollow: $("camFollow"), compareSideBtn: $("compareSideBtn"), compareCurtainBtn: $("compareCurtainBtn"), resetCamera: $("resetCamera"), fitCamera: $("fitCamera"), toggleTrails: $("toggleTrails"),
-  toggleSidebar: $("toggleSidebar"), fullscreenBtn: $("fullscreenBtn"), loadStatus: $("loadStatus"),
+  toggleSidebar: $("toggleSidebar"), fullscreenBtn: $("fullscreenBtn"), loadStatus: $("loadStatus"), themeToggle: $("themeToggleBtn"),
   inspect: $("inspectPanel"), inspectTitle: $("inspectTitle"), inspectStatus: $("inspectStatus"), inspectPos: $("inspectPos"),
   inspectSize: $("inspectSize"), inspectConf: $("inspectConf"), inspectDist: $("inspectDist"), inspectErr: $("inspectErr"),
   inspectPeer: $("inspectPeer"), inspectUuid: $("inspectUuid"), hoverCard: $("hoverCard"), heatCanvas: $("heatCanvas"), frameCurve: $("frameCurveCanvas"), overview: $("overviewCanvas"),

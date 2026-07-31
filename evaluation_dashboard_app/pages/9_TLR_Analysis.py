@@ -28,6 +28,7 @@ from lib.page_chrome import (
     render_share_link_callout,
     section_header,
 )
+from lib.ui.theme import apply_plotly_theme, is_dark, pick, tokens
 
 st.set_page_config(
     page_title="TLR Analysis",
@@ -36,6 +37,38 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 inject_app_page_styles()
+
+
+# Pre-dark-theme light palette: the exact colors this page used before the dark theme.
+# Light mode must keep rendering these; dark uses the token-derived values.
+_LEGACY_DELTA_SCALE = [[0, "#c0392b"], [0.25, "#e74c3c"], [0.5, "#f5f5f5"], [0.75, "#27ae60"], [1, "#1e8449"]]
+_LEGACY_IFRAME_BG = "#e2e8f0"
+_LEGACY_TIMELINE_COLORS = {"TP": "#2ca25f", "FN": "#de2d26", "Not evaluated": "#9aa4b2"}
+_LEGACY_TIMELINE_FALLBACK = "#9aa4b2"
+_LEGACY_ROLLING_LINE = "#2563eb"
+_LEGACY_CUMULATIVE_LINE = "#111827"
+_LEGACY_DELTA_BAR_UP = "#2ecc71"
+_LEGACY_DELTA_BAR_DOWN = "#e74c3c"
+_LEGACY_ZERO_LINE = "gray"
+_LEGACY_DIFF_HIGHLIGHT = "#ffe6e6"
+
+
+def _delta_colorscale() -> list:
+    """Red (A better) → neutral → green (B better), from the semantic tokens."""
+    t = tokens()
+    return pick(_LEGACY_DELTA_SCALE, [[0.0, t["bad"]], [0.5, t["surface_3"]], [1.0, t["ok"]]])
+
+
+def _diff_highlight_css() -> str:
+    """Styler background for changed cells."""
+    return f"background-color: {pick(_LEGACY_DIFF_HIGHLIGHT, tokens()['bad_bg'])}"
+
+
+def _theme_chart(fig):
+    """Token Plotly theme on dark; on light leave the figure with its pre-dark-theme defaults."""
+    if is_dark():
+        apply_plotly_theme(fig)
+    return fig
 
 # ====== URL QUERY PARAMS (for shareable links) ======
 params = st.query_params
@@ -157,7 +190,7 @@ def _render_tlr_viewer_embed(viewer_url: str, payload: dict, *, iframe_id: str, 
     components.html(
         (
             f'<iframe id="{iframe_id}" src="{iframe_src}" '
-            f'width="100%" height="{height}" style="border:none;border-radius:8px;background:#e2e8f0" '
+            f'width="100%" height="{height}" style="border:none;border-radius:8px;background:{pick(_LEGACY_IFRAME_BG, tokens()["surface_3"])}" '
             f'allowfullscreen allow="fullscreen *" '
             f'loading="lazy" title="Traffic light viewer" referrerpolicy="no-referrer-when-downgrade"></iframe>'
             "<script>"
@@ -399,7 +432,11 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
     tm4.metric("TP rate", "N/A" if pd.isna(tp_rate) else f"{float(tp_rate):.2%}")
 
     x_title = timeline_df["timeline_label"].iloc[0]
-    result_colors = {"TP": "#2ca25f", "FN": "#de2d26", "Not evaluated": "#9aa4b2"}
+    _t = tokens()
+    result_colors = pick(
+        _LEGACY_TIMELINE_COLORS,
+        {"TP": _t["ok"], "FN": _t["bad"], "Not evaluated": _t["neutral"]},
+    )
     status_symbols = {"Driving": "circle", "Turning": "diamond", "No Move": "square"}
     type_order = sorted(timeline_df["traffic_light_type"].fillna("unknown").astype(str).unique().tolist())
     type_positions = {value: i for i, value in enumerate(type_order)}
@@ -418,7 +455,7 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
                     name=f"{result_name} · {status_name}",
                     mode="markers",
                     marker={
-                        "color": result_colors.get(result_name, "#9aa4b2"),
+                        "color": result_colors.get(result_name, pick(_LEGACY_TIMELINE_FALLBACK, _t["neutral"])),
                         "symbol": status_symbols.get(status_name, "circle-open"),
                         "size": 7,
                         "opacity": 0.78,
@@ -457,7 +494,7 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
                 y=rate_df["rolling_tp_rate"],
                 name="Rolling TP rate (50 frames)",
                 mode="lines",
-                line={"color": "#2563eb", "width": 3},
+                line={"color": pick(_LEGACY_ROLLING_LINE, _t["accent"]), "width": 3},
                 hovertemplate=f"{x_title}: %{{x:.3f}}<br>Rolling TP rate: %{{y:.1%}}<extra></extra>",
             ),
             secondary_y=True,
@@ -468,7 +505,7 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
                 y=rate_df["cumulative_tp_rate"],
                 name="Cumulative TP rate",
                 mode="lines",
-                line={"color": "#111827", "width": 2, "dash": "dash"},
+                line={"color": pick(_LEGACY_CUMULATIVE_LINE, _t["text"]), "width": 2, "dash": "dash"},
                 hovertemplate=f"{x_title}: %{{x:.3f}}<br>Cumulative TP rate: %{{y:.1%}}<extra></extra>",
             ),
             secondary_y=True,
@@ -494,6 +531,7 @@ def _render_scenario_timeline(details_df: pd.DataFrame, scenario_df: pd.DataFram
         secondary_y=True,
         showgrid=False,
     )
+    _theme_chart(fig_combined)
     st.plotly_chart(fig_combined, width="stretch")
 
     with st.expander("Timeline frame rows", expanded=False):
@@ -582,6 +620,7 @@ def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Cu
             title=f"{label}: frame volume and TP rate by suite",
         )
         fig_suite.update_layout(height=430, margin=dict(t=48, l=8, r=8, b=8))
+        _theme_chart(fig_suite)
         st.plotly_chart(fig_suite, width="stretch")
     with right:
         worst = filtered[filtered["evaluable_frames"] > 0].nsmallest(top_n, "tp_rate").sort_values("tp_rate")
@@ -602,6 +641,7 @@ def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Cu
             title=f"Lowest TP-rate scenarios ({min(top_n, len(worst))})",
         )
         fig_worst.update_layout(height=430, xaxis_tickformat=".0%", xaxis_range=[0, 1], yaxis_title="")
+        _theme_chart(fig_worst)
         st.plotly_chart(fig_worst, width="stretch")
 
     fig_scatter = px.scatter(
@@ -624,6 +664,7 @@ def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Cu
         title="Scenario performance map",
     )
     fig_scatter.update_layout(height=430, yaxis_tickformat=".0%", yaxis_range=[0, 1.05])
+    _theme_chart(fig_scatter)
     st.plotly_chart(fig_scatter, width="stretch")
 
     status_cols = [col for col in ["Driving", "Turning", "No Move"] if col in filtered.columns]
@@ -638,6 +679,7 @@ def _render_scenario_insights_tab(analyzer, *, key_prefix: str, label: str = "Cu
         title="Vehicle-status frame mix by suite",
     )
     fig_status.update_layout(height=360, xaxis_title="", yaxis_title="Frames")
+    _theme_chart(fig_status)
     st.plotly_chart(fig_status, width="stretch")
 
     _render_scenario_timeline(details_df, scenario_df, filtered, key_prefix=key_prefix)
@@ -670,9 +712,11 @@ def _render_single_tabs(analyzer, tab_criteria, tab_scenarios, tab_vehicle, tab_
         criteria_df["criteria_num"] = criteria_df["Criteria"].str.replace("criteria_", "").astype(int)
         fig1 = px.line(criteria_df, x="criteria_num", y="TP rate", title="TP rate by criteria", markers=True)
         fig1.update_layout(xaxis_title="Criteria number", yaxis_title="TP rate", yaxis_range=[0, 1.1])
+        _theme_chart(fig1)
         st.plotly_chart(fig1, width='stretch')
         fig2 = px.bar(criteria_df, x="criteria_num", y="Number of total frames", title="Total frames by criteria")
         fig2.update_layout(xaxis_title="Criteria number")
+        _theme_chart(fig2)
         st.plotly_chart(fig2, width='stretch')
 
     with tab_scenarios:
@@ -693,6 +737,7 @@ def _render_single_tabs(analyzer, tab_criteria, tab_scenarios, tab_vehicle, tab_
             )
         )
         fig.update_layout(title="TP rate: Vehicle status vs traffic light type", height=400, xaxis={"tickangle": -45})
+        _theme_chart(fig)
         st.plotly_chart(fig, width='stretch')
         st.subheader("Raw counts (TP / Total)")
         st.dataframe(analyzer.create_vehicle_status_counts_matrix(), width='stretch', hide_index=True)
@@ -713,6 +758,7 @@ def _render_single_tabs(analyzer, tab_criteria, tab_scenarios, tab_vehicle, tab_
             title="TP rate: Vehicle status vs traffic light type (critical & priority zones)",
             height=400, xaxis={"tickangle": -45},
         )
+        _theme_chart(fig_cp)
         st.plotly_chart(fig_cp, width='stretch')
         st.subheader("Raw counts (TP / Total)")
         st.dataframe(analyzer.create_vehicle_status_critical_priority_counts_matrix(), width='stretch', hide_index=True)
@@ -828,9 +874,13 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
         fig.add_trace(go.Scatter(x=compare_criteria["criteria_num"], y=compare_criteria["TP rate A"], name=label_a, mode="lines+markers"))
         fig.add_trace(go.Scatter(x=compare_criteria["criteria_num"], y=compare_criteria["TP rate B"], name=label_b, mode="lines+markers"))
         fig.update_layout(title="TP rate by criteria: A vs B", xaxis_title="Criteria number", yaxis_title="TP rate", yaxis_range=[0, 1.1])
+        _theme_chart(fig)
         st.plotly_chart(fig, width='stretch')
         delta_vals = compare_criteria["Δ (B − A)"].values
-        bar_colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in delta_vals]
+        _t = tokens()
+        _up = pick(_LEGACY_DELTA_BAR_UP, _t["ok"])
+        _down = pick(_LEGACY_DELTA_BAR_DOWN, _t["bad"])
+        bar_colors = [_up if v >= 0 else _down for v in delta_vals]
         fig_delta = go.Figure(
             data=go.Bar(
                 x=compare_criteria["criteria_num"],
@@ -846,7 +896,8 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
             yaxis_title="Δ (B − A)",
             showlegend=False,
         )
-        fig_delta.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_delta.add_hline(y=0, line_dash="dash", line_color=pick(_LEGACY_ZERO_LINE, _t["muted"]))
+        _theme_chart(fig_delta)
         st.plotly_chart(fig_delta, width='stretch')
 
     with tab_scenarios:
@@ -876,7 +927,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                 z=delta_df[tlr_cols].values,
                 x=tlr_cols,
                 y=delta_df["Vehicle Status"].tolist(),
-                colorscale=[[0, "#c0392b"], [0.25, "#e74c3c"], [0.5, "#f5f5f5"], [0.75, "#27ae60"], [1, "#1e8449"]],
+                colorscale=_delta_colorscale(),
                 zmin=-1,
                 zmax=1,
                 zmid=0,
@@ -888,6 +939,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
             title=f"TP rate delta (B − A): Vehicle status vs traffic light type",
             height=400, xaxis={"tickangle": -45},
         )
+        _theme_chart(fig)
         st.plotly_chart(fig, width='stretch')
         st.caption("Green = B better, Red = A better.")
         with st.expander("Raw A"):
@@ -906,7 +958,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
         fig_cp = go.Figure(
             data=go.Heatmap(
                 z=delta_cp[tlr_cols_cp].values, x=tlr_cols_cp, y=delta_cp["Vehicle Status"].tolist(),
-                colorscale=[[0, "#c0392b"], [0.25, "#e74c3c"], [0.5, "#f5f5f5"], [0.75, "#27ae60"], [1, "#1e8449"]],
+                colorscale=_delta_colorscale(),
                 zmin=-1,
                 zmax=1,
                 zmid=0,
@@ -918,6 +970,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
             title="TP rate delta (B − A): Critical & priority zones",
             height=400, xaxis={"tickangle": -45},
         )
+        _theme_chart(fig_cp)
         st.plotly_chart(fig_cp, width='stretch')
         with st.expander("Raw A"):
             st.dataframe(analyzer_a.create_vehicle_status_critical_priority_counts_matrix(), width='stretch', hide_index=True)
@@ -1065,7 +1118,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                     display_df = display_df.rename(columns={"status_a": f"status ({label_a})", "status_b": f"status ({label_b})"})
                     def _highlight_diff_columns(series):
                         if series.name in (tlr_col_a, tlr_col_b):
-                            return ["background-color: #ffe6e6"] * len(series)
+                            return [_diff_highlight_css()] * len(series)
                         return [""] * len(series)
                     styled = display_df.style.apply(_highlight_diff_columns, axis=0)
                     st.dataframe(styled, width='stretch', hide_index=True)
@@ -1097,7 +1150,7 @@ def _render_compare_tabs(analyzer_a, analyzer_b, label_a, label_b, tab_criteria,
                 def _highlight_diff_rows(df):
                     diff_mask = to_show_merged["_diff"].values
                     data = [
-                        ["background-color: #ffe6e6" if diff_mask[i] and col in (tlr_col_a, tlr_col_b) else "" for col in df.columns]
+                        [_diff_highlight_css() if diff_mask[i] and col in (tlr_col_a, tlr_col_b) else "" for col in df.columns]
                         for i in range(len(df))
                     ]
                     return pd.DataFrame(data, index=df.index, columns=df.columns)

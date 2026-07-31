@@ -15,6 +15,15 @@ from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_par
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero, section_header
 from lib.path_utils import get_run_display_name, list_run_directories, path_display
 from lib.prediction_eval import build_specsheet_aligned_prediction_artifacts
+from lib.ui.theme import (
+    CATEGORICAL,
+    DIVERGING_SCALE,
+    SEQUENTIAL_SCALE,
+    apply_plotly_theme,
+    is_dark,
+    pick,
+    tokens,
+)
 
 
 st.set_page_config(
@@ -34,40 +43,40 @@ st.markdown(
         margin:0.35rem 0 1.0rem 0;
     }
     .pred-chip {
-        border:1px solid #d6dee7;
+        border:1px solid var(--t4-border);
         border-radius:999px;
         padding:0.38rem 0.8rem;
-        background:linear-gradient(180deg, #ffffff 0%, #f8fbfc 100%);
-        color:#254051;
+        background:linear-gradient(180deg, var(--t4-surface) 0%, var(--t4-surface-2) 100%);
+        color:var(--t4-text-2);
         font-size:0.82rem;
         font-weight:600;
     }
     .pred-card {
-        border:1px solid #dce6ee;
+        border:1px solid var(--t4-border);
         border-radius:18px;
-        background:linear-gradient(145deg, #fcfefe 0%, #f6fafb 48%, #f7fbff 100%);
+        background:linear-gradient(145deg, var(--t4-surface) 0%, var(--t4-surface-2) 48%, var(--t4-surface-3) 100%);
         padding:1rem 1.1rem;
-        box-shadow:0 18px 45px -28px rgba(13, 45, 58, 0.28);
+        box-shadow:var(--t4-shadow-md);
         min-height:128px;
     }
     .pred-card-kicker {
         font-size:0.68rem;
         letter-spacing:0.14em;
         text-transform:uppercase;
-        color:#5b7283;
+        color:var(--t4-muted);
         font-weight:800;
     }
     .pred-card-value {
         font-size:1.8rem;
         line-height:1.05;
         letter-spacing:-0.04em;
-        color:#0f172a;
+        color:var(--t4-text);
         font-weight:850;
         margin-top:0.5rem;
     }
     .pred-card-note {
         margin-top:0.55rem;
-        color:#4a6577;
+        color:var(--t4-text-3);
         font-size:0.88rem;
         line-height:1.45;
     }
@@ -76,7 +85,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-PLOTLY_COLORS = {
+# Pre-dark-theme light palette. These are the exact colors / colorscales this page used
+# before the dark theme existed; light mode must keep rendering them, while dark uses the
+# token-derived palettes (see lib/ui/theme.py).
+_LEGACY_PLOTLY_COLORS = {
     "ink": "#12344d",
     "teal": "#0f766e",
     "blue": "#1d4ed8",
@@ -84,6 +96,26 @@ PLOTLY_COLORS = {
     "rose": "#be123c",
     "slate": "#475569",
 }
+_LEGACY_SEQ_SCALE = "YlOrRd"
+_LEGACY_DIV_SCALE = "RdBu"
+_LEGACY_LINE_SEQUENCE = [
+    _LEGACY_PLOTLY_COLORS["ink"],
+    _LEGACY_PLOTLY_COLORS["blue"],
+    _LEGACY_PLOTLY_COLORS["teal"],
+    _LEGACY_PLOTLY_COLORS["amber"],
+    _LEGACY_PLOTLY_COLORS["rose"],
+    _LEGACY_PLOTLY_COLORS["slate"],
+    "#8b5cf6",
+]
+
+
+def _theme_chart(fig):
+    """Token Plotly theme on dark; on light leave the figure with its pre-dark-theme defaults."""
+    if is_dark():
+        apply_plotly_theme(fig)
+    return fig
+
+
 DEFAULT_TOPIC = "perception.object_recognition.objects"
 CHECKPOINTS = (1.0, 3.0, 5.0)
 METRIC_ORDER = [
@@ -155,6 +187,7 @@ def build_distance_ring_figure(metric_df: pd.DataFrame, label_order: list[str], 
     if zmin == zmax:
         zmax = zmin + 1.0
 
+    t = tokens()
     fig = go.Figure()
     for ring_idx, ring_name in enumerate(ring_order):
         vals = pivot[ring_name].tolist()
@@ -166,10 +199,10 @@ def build_distance_ring_figure(metric_df: pd.DataFrame, label_order: list[str], 
                 width=[theta_width * 0.92] * len(label_order),
                 marker=dict(
                     color=vals,
-                    colorscale="YlOrRd",
+                    colorscale=pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE()),
                     cmin=zmin,
                     cmax=zmax,
-                    line=dict(color="rgba(255,255,255,0.35)", width=1),
+                    line=dict(color=pick("rgba(255,255,255,0.35)", t["bg"]), width=1),
                     colorbar=dict(title="m") if ring_idx == len(ring_order) - 1 else None,
                 ),
                 customdata=np.array([[label_order[i], ring_name, vals[i]] for i in range(len(label_order))], dtype=object),
@@ -188,7 +221,7 @@ def build_distance_ring_figure(metric_df: pd.DataFrame, label_order: list[str], 
                 tickvals=list(range(len(ring_order))),
                 ticktext=ring_order,
                 angle=90,
-                gridcolor="rgba(148,163,184,0.25)",
+                gridcolor=pick("rgba(148,163,184,0.25)", t["chart_grid"]),
             ),
             angularaxis=dict(
                 tickmode="array",
@@ -196,11 +229,12 @@ def build_distance_ring_figure(metric_df: pd.DataFrame, label_order: list[str], 
                 ticktext=label_order,
                 rotation=90,
                 direction="clockwise",
-                gridcolor="rgba(148,163,184,0.20)",
+                gridcolor=pick("rgba(148,163,184,0.20)", t["chart_grid"]),
             ),
-            bgcolor="rgba(248,250,252,0.75)",
+            bgcolor=pick("rgba(248,250,252,0.75)", t["chart_bg"]),
         ),
     )
+    _theme_chart(fig)
     return fig
 
 
@@ -227,6 +261,7 @@ def build_theta_ring_figure(label_polar: pd.DataFrame, metric_name: str, label_n
             if zmin == zmax:
                 zmax = zmin + 1.0
 
+    t = tokens()
     fig = go.Figure()
     for ring_idx, ring_name in enumerate(radial_order):
         vals = pivot.loc[ring_name].tolist()
@@ -238,10 +273,12 @@ def build_theta_ring_figure(label_polar: pd.DataFrame, metric_name: str, label_n
                 width=[theta_width * 0.92] * len(theta_order),
                 marker=dict(
                     color=vals,
-                    colorscale="RdBu" if delta_mode else "YlOrRd",
+                    colorscale=(
+                        pick(_LEGACY_DIV_SCALE, DIVERGING_SCALE()) if delta_mode else pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE())
+                    ),
                     cmin=zmin,
                     cmax=zmax,
-                    line=dict(color="rgba(255,255,255,0.32)", width=1),
+                    line=dict(color=pick("rgba(255,255,255,0.32)", t["bg"]), width=1),
                     colorbar=dict(title="m") if ring_idx == len(radial_order) - 1 else None,
                 ),
                 customdata=np.array([[theta_order[i], ring_name, vals[i]] for i in range(len(theta_order))], dtype=object),
@@ -260,7 +297,7 @@ def build_theta_ring_figure(label_polar: pd.DataFrame, metric_name: str, label_n
                 tickvals=list(range(len(radial_order))),
                 ticktext=radial_order,
                 angle=90,
-                gridcolor="rgba(148,163,184,0.22)",
+                gridcolor=pick("rgba(148,163,184,0.22)", t["chart_grid"]),
             ),
             angularaxis=dict(
                 tickmode="array",
@@ -268,11 +305,12 @@ def build_theta_ring_figure(label_polar: pd.DataFrame, metric_name: str, label_n
                 ticktext=theta_order,
                 rotation=90,
                 direction="clockwise",
-                gridcolor="rgba(148,163,184,0.18)",
+                gridcolor=pick("rgba(148,163,184,0.18)", t["chart_grid"]),
             ),
-            bgcolor="rgba(248,250,252,0.75)",
+            bgcolor=pick("rgba(248,250,252,0.75)", t["chart_bg"]),
         ),
     )
+    _theme_chart(fig)
     return fig
 
 
@@ -695,7 +733,7 @@ if compare_label is not None:
             z=heat.values,
             x=list(heat.columns),
             y=list(heat.index),
-            colorscale="RdBu",
+            colorscale=pick(_LEGACY_DIV_SCALE, DIVERGING_SCALE()),
             zmid=0,
             text=[[f"{v:+.2f}" if pd.notna(v) else "-" for v in row] for row in heat.values],
             texttemplate="%{text}",
@@ -709,6 +747,7 @@ if compare_label is not None:
         height=max(360, 70 * len(heat.index)),
         margin=dict(l=10, r=10, t=55, b=10),
     )
+    _theme_chart(fig)
     st.plotly_chart(fig, width="stretch")
 elif not label_view.empty:
     label_long = label_view.melt(
@@ -723,7 +762,7 @@ elif not label_view.empty:
             z=heat.values,
             x=list(heat.columns),
             y=list(heat.index),
-            colorscale="YlOrRd",
+            colorscale=pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE()),
             text=[[f"{v:.2f}" if pd.notna(v) else "-" for v in row] for row in heat.values],
             texttemplate="%{text}",
             hovertemplate="label=%{y}<br>metric=%{x}<br>value=%{z:.3f} m<extra></extra>",
@@ -736,6 +775,7 @@ elif not label_view.empty:
         height=max(360, 70 * len(heat.index)),
         margin=dict(l=10, r=10, t=55, b=10),
     )
+    _theme_chart(fig)
     st.plotly_chart(fig, width="stretch")
 
 section_header(
@@ -769,7 +809,7 @@ if distance_both is not None and not distance_view.empty:
                             z=pivot.values,
                             x=[str(v) for v in pivot.columns],
                             y=[str(v) for v in pivot.index],
-                            colorscale="RdBu",
+                            colorscale=pick(_LEGACY_DIV_SCALE, DIVERGING_SCALE()),
                             zmid=0,
                             text=[[f"{v:+.2f}" if pd.notna(v) else "-" for v in row] for row in pivot.values],
                             texttemplate="%{text}",
@@ -783,6 +823,7 @@ if distance_both is not None and not distance_view.empty:
                         height=max(320, 54 * len(available_labels)),
                         margin=dict(l=10, r=10, t=45, b=10),
                     )
+                    _theme_chart(fig)
                     st.plotly_chart(fig, width="stretch", key=f"distance_delta_{metric_name}")
     with compare_tabs[1]:
         metric_tabs = st.tabs(METRIC_ORDER)
@@ -813,9 +854,13 @@ if distance_both is not None and not distance_view.empty:
                                 markers=True,
                                 labels={"r": "Radius bin", "value": "Error (m)", "run": "Run"},
                                 title=label_name,
-                                color_discrete_map={"A": PLOTLY_COLORS["ink"], "B": PLOTLY_COLORS["amber"]},
+                                color_discrete_map={
+                                    "A": pick(_LEGACY_PLOTLY_COLORS["ink"], CATEGORICAL()[0]),
+                                    "B": pick(_LEGACY_PLOTLY_COLORS["amber"], CATEGORICAL()[2]),
+                                },
                             )
                             fig.update_layout(height=280, margin=dict(l=10, r=10, t=45, b=10), legend_title="Run")
+                            _theme_chart(fig)
                             st.plotly_chart(fig, width="stretch", key=f"distance_small_{metric_name}_{label_name}")
     with compare_tabs[2]:
         fig = px.line(
@@ -830,17 +875,10 @@ if distance_both is not None and not distance_view.empty:
             category_orders={"r": ordered_distance_bins(distance_view["r"].tolist())},
             labels={"r": "Radius bin (m)", "value": "Error (m)", "label": "Label", "run": "Run"},
             title="ADE/FDE by distance bin: A vs B",
-            color_discrete_sequence=[
-                PLOTLY_COLORS["ink"],
-                PLOTLY_COLORS["blue"],
-                PLOTLY_COLORS["teal"],
-                PLOTLY_COLORS["amber"],
-                PLOTLY_COLORS["rose"],
-                PLOTLY_COLORS["slate"],
-                "#8b5cf6",
-            ],
+            color_discrete_sequence=pick(_LEGACY_LINE_SEQUENCE, CATEGORICAL()),
         )
         fig.update_layout(height=760, margin=dict(l=10, r=10, t=55, b=10), legend_title="Label / Run")
+        _theme_chart(fig)
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
         st.plotly_chart(fig, width="stretch", key="distance_raw_compare")
 elif not distance_view.empty:
@@ -857,17 +895,10 @@ elif not distance_view.empty:
             category_orders={"r": ordered_distance_bins(distance_view["r"].tolist())},
             labels={"r": "Radius bin (m)", "value": "Error (m)", "label": "Label"},
             title="ADE/FDE by distance bin",
-            color_discrete_sequence=[
-                PLOTLY_COLORS["ink"],
-                PLOTLY_COLORS["blue"],
-                PLOTLY_COLORS["teal"],
-                PLOTLY_COLORS["amber"],
-                PLOTLY_COLORS["rose"],
-                PLOTLY_COLORS["slate"],
-                "#8b5cf6",
-            ],
+            color_discrete_sequence=pick(_LEGACY_LINE_SEQUENCE, CATEGORICAL()),
         )
         fig.update_layout(height=760, margin=dict(l=10, r=10, t=55, b=10), legend_title="Label")
+        _theme_chart(fig)
         fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
         st.plotly_chart(fig, width="stretch", key="distance_single_lines")
     with single_tabs[1]:
@@ -894,7 +925,7 @@ elif not distance_view.empty:
                             z=pivot.values,
                             x=[str(v) for v in pivot.columns],
                             y=[str(v) for v in pivot.index],
-                            colorscale="YlOrRd",
+                            colorscale=pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE()),
                             text=[[f"{v:.2f}" if pd.notna(v) else "-" for v in row] for row in pivot.values],
                             texttemplate="%{text}",
                             hovertemplate="label=%{y}<br>r=%{x}<br>value=%{z:.3f} m<extra></extra>",
@@ -907,6 +938,7 @@ elif not distance_view.empty:
                         height=max(320, 54 * len(available_labels)),
                         margin=dict(l=10, r=10, t=45, b=10),
                     )
+                    _theme_chart(fig)
                     st.plotly_chart(fig, width="stretch", key=f"distance_single_heat_{metric_name}")
     with single_tabs[2]:
         for start in range(0, len(METRIC_ORDER), 2):
@@ -951,9 +983,10 @@ elif not distance_view.empty:
                                 markers=True,
                                 title=label_name,
                                 labels={"r": "Radius bin", "value": "Error (m)"},
-                                color_discrete_sequence=[PLOTLY_COLORS["blue"]],
+                                color_discrete_sequence=[pick(_LEGACY_PLOTLY_COLORS["blue"], CATEGORICAL()[0])],
                             )
                             fig.update_layout(height=280, margin=dict(l=10, r=10, t=45, b=10), showlegend=False)
+                            _theme_chart(fig)
                             st.plotly_chart(fig, width="stretch", key=f"distance_single_small_{metric_name}_{label_name}")
 
 section_header(
@@ -990,7 +1023,11 @@ for view_name, outer_tab in zip(["heatmap", "circular"], polar_view_tabs):
                                         z=pivot.values,
                                         x=[str(v) for v in pivot.columns],
                                         y=[str(v) for v in pivot.index],
-                                        colorscale="RdBu" if polar_delta is not None else "YlOrRd",
+                                        colorscale=(
+                                            pick(_LEGACY_DIV_SCALE, DIVERGING_SCALE())
+                                            if polar_delta is not None
+                                            else pick(_LEGACY_SEQ_SCALE, SEQUENTIAL_SCALE())
+                                        ),
                                         zmid=0 if polar_delta is not None else None,
                                         hovertemplate=("theta=%{x}<br>r=%{y}<br>Δ=%{z:+.3f} m<extra></extra>" if polar_delta is not None else "theta=%{x}<br>r=%{y}<br>value=%{z:.3f} m<extra></extra>"),
                                     )
@@ -1002,6 +1039,7 @@ for view_name, outer_tab in zip(["heatmap", "circular"], polar_view_tabs):
                                     height=320,
                                     margin=dict(l=10, r=10, t=45, b=10),
                                 )
+                                _theme_chart(fig)
                                 st.plotly_chart(fig, width="stretch", key=f"polar_{view_name}_{metric_name}_{label_name}")
                             else:
                                 fig = build_theta_ring_figure(

@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dataset BBox Summary</title>
-  <link rel="stylesheet" href="bbox_explorer.css?v=devops-review-20260730h">
+  <link rel="stylesheet" href="bbox_explorer.css?v=theme-blueprint-20260731a">
+  <!-- Loads before body paint so the saved theme applies without a flash. -->
+  <script>/*__BBOX_THEME_JS__*/</script>
 </head>
 <body>
   <div class="app">
@@ -108,6 +110,7 @@
             <option value="abs">Largest net change</option>
           </select>
           <button id="resetView">Reset</button>
+          <button id="themeToggleBtn" class="icon" title="Switch theme">☀</button>
         </div>
       </div>
       <div class="compare-banner" id="compareBanner">
@@ -115,11 +118,11 @@
         <span id="compareBannerText">Run A vs Run B</span>
       </div>
       <div class="legend" id="mapLegend">
-        <div><i style="background:#38bdf8"></i>cell = one scenario, grouped by city/suite</div>
-        <div><i style="background:#fb7185"></i>red strip = FP pressure</div>
-        <div><i style="background:#fbbf24"></i>amber strip = FN pressure</div>
-        <div><i style="background:#34d399"></i>green fill in compare = B improved</div>
-        <div>cell fill = selected issue lens · cyan line = TP volume</div>
+        <div><i class="sw-accent"></i>cell = one scenario, grouped by city/suite</div>
+        <div><i class="sw-bad"></i>red strip = FP pressure</div>
+        <div><i class="sw-warn"></i>amber strip = FN pressure</div>
+        <div><i class="sw-good"></i>green fill in compare = B improved</div>
+        <div>cell fill = selected issue lens · accent line = TP volume</div>
         <div>drag = pan · wheel = zoom · click = inspect</div>
       </div>
       <div class="preview-window" id="previewWindow">
@@ -220,12 +223,12 @@
     <iframe id="viewerFrame" title="BBox Viewer"></iframe>
   </div>
   <script>window.BBOX_EXPLORER_API_BASE = "__API_BASE__";</script>
-  <script src="bbox_api.js?v=devops-review-20260730h"></script>
-  <script src="bbox_state.js?v=devops-review-20260730h"></script>
-  <script src="metrics.js?v=devops-review-20260730h"></script>
-  <script src="preview_renderer.js?v=devops-review-20260730h"></script>
-  <script src="map_renderer.js?v=devops-review-20260730h"></script>
-  <script src="stats_renderer.js?v=devops-review-20260730h"></script>
-  <script src="events.js?v=devops-review-20260730h"></script>
+  <script src="bbox_api.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_state.js?v=theme-blueprint-20260731a"></script>
+  <script src="metrics.js?v=theme-blueprint-20260731a"></script>
+  <script src="preview_renderer.js?v=theme-blueprint-20260731a"></script>
+  <script src="map_renderer.js?v=theme-blueprint-20260731a"></script>
+  <script src="stats_renderer.js?v=theme-blueprint-20260731a"></script>
+  <script src="events.js?v=theme-blueprint-20260731a"></script>
 </body>
 </html>

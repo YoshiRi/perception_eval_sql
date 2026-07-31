@@ -259,7 +259,7 @@ def render_task_list_empty_state() -> None:
         <div class="dl-task-empty">
           <div class="dl-task-empty-icon" aria-hidden="true">📭</div>
           <div>No recent background tasks yet.</div>
-          <div style="font-size:0.82rem;font-weight:500;margin-top:0.35rem;color:#94a3b8;">
+          <div style="font-size:0.82rem;font-weight:500;margin-top:0.35rem;color:var(--t4-muted);">
             Start a download or eval job with the task queue enabled — it will show up here with live progress.
           </div>
         </div>
@@ -391,7 +391,7 @@ def render_detailed_scenario_download_panel(
     ]
     if success_rows:
         lis = "".join(
-            f"<li>{html.escape(name)} <span style=\"color:#64748b\">(ID: {html.escape(sid)})</span></li>"
+            f"<li>{html.escape(name)} <span style=\"color:var(--t4-muted)\">(ID: {html.escape(sid)})</span></li>"
             for name, sid in success_rows
         )
         parts.append(
