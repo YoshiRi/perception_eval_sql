@@ -2002,7 +2002,13 @@ def _render_office_active_controls(rows: List[Dict[str, object]], current_user: 
             info_col, view_col, stop_col = st.columns([4.4, 0.8, 0.8])
             with info_col:
                 icon = "🟦" if status == "running" else "⬜"
-                st.caption(f"{icon} {task_row_caption(t)}")
+                caption = task_row_caption(t)
+                params = t.get("parameters") or {}
+                requester = params.get("_requester") if isinstance(params, dict) else None
+                by = str(requester.get("name") or "").strip() if isinstance(requester, dict) else ""
+                if by:
+                    caption += f" · by {by}"
+                st.caption(f"{icon} {caption}")
             with view_col:
                 st.button(
                     "View",
@@ -2039,7 +2045,7 @@ def _render_current_tasks_section() -> None:
     if "workflow_task_history_page" not in st.session_state:
         st.session_state["workflow_task_history_page"] = 1
 
-    control_cols = st.columns([1.3, 1.0, 1.0, 2.7])
+    control_cols = st.columns([1.3, 1.0, 1.0, 1.2, 1.7])
     with control_cols[0]:
         selected_range = st.selectbox(
             "History range",
@@ -2054,8 +2060,22 @@ def _render_current_tasks_section() -> None:
                 key="workflow_task_history_page_size",
             )
         )
+    with control_cols[3]:
+        # Behind Cloudflare Access every viewer has an identity; the team still wants
+        # the shared picture by default, with "mine" as an opt-in filter.
+        if current_user:
+            task_scope = st.selectbox(
+                "Tasks",
+                options=["Everyone's", "Only mine"],
+                key="workflow_task_scope",
+                help=f"Only mine = tasks started by {current_user}.",
+            )
+        else:
+            task_scope = "Everyone's"
+            st.selectbox("Tasks", options=["Everyone's"], key="workflow_task_scope_all", disabled=True)
+    scope_user = current_user if task_scope == "Only mine" else None
     since_days = _TASK_HISTORY_RANGE_OPTIONS.get(selected_range, _TASK_LIST_SINCE_DAYS)
-    total_tasks = count_recent_tasks(session_id=current_user, since_days=since_days)
+    total_tasks = count_recent_tasks(session_id=scope_user, since_days=since_days)
     page_count = max(1, (total_tasks + page_size - 1) // page_size) if total_tasks else 1
     current_page = min(max(1, int(st.session_state.get("workflow_task_history_page", 1))), page_count)
     st.session_state["workflow_task_history_page"] = current_page
@@ -2069,9 +2089,10 @@ def _render_current_tasks_section() -> None:
         if int(selected_page) != current_page:
             current_page = int(selected_page)
             st.session_state["workflow_task_history_page"] = current_page
-    with control_cols[3]:
+    with control_cols[4]:
         label = selected_range if since_days is not None else "all time"
-        st.caption(f"Showing **{total_tasks}** tasks across **{page_count}** page(s) for **{label}**.")
+        whose = "your" if scope_user else "all"
+        st.caption(f"Showing **{total_tasks}** of {whose} tasks across **{page_count}** page(s) for **{label}**.")
 
     offset = (current_page - 1) * page_size
     st.toggle(
@@ -2089,28 +2110,28 @@ def _render_current_tasks_section() -> None:
     def _render_tasks_section():
         if st.session_state.get("workflow_pixel_office_view"):
             # The office draws every active task, not just the current history page.
-            office_rows = list_recent_tasks(limit=50, session_id=current_user)
+            office_rows = list_recent_tasks(limit=50, session_id=scope_user)
             render_pixel_office(office_rows)
-            _render_office_active_controls(office_rows, current_user)
+            _render_office_active_controls(office_rows, scope_user)
             history_tasks = [
                 t
                 for t in list_recent_tasks(
-                    limit=page_size, offset=offset, session_id=current_user, since_days=since_days
+                    limit=page_size, offset=offset, session_id=scope_user, since_days=since_days
                 )
                 if str(t.get("status")) not in ("pending", "running")
             ]
             if history_tasks:
-                render_task_list(history_tasks, current_user, on_delete=_close_workflow_dialogs)
+                render_task_list(history_tasks, scope_user, on_delete=_close_workflow_dialogs)
             else:
                 st.caption("No finished tasks in this range.")
             return True  # office always reflects live state
         current_tasks = list_recent_tasks(
             limit=page_size,
             offset=offset,
-            session_id=current_user,
+            session_id=scope_user,
             since_days=since_days,
         )
-        return render_task_list(current_tasks, current_user, on_delete=_close_workflow_dialogs)
+        return render_task_list(current_tasks, scope_user, on_delete=_close_workflow_dialogs)
 
     use_fragment = getattr(st, "fragment", None) is not None
     if use_fragment:
