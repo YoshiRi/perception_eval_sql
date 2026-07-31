@@ -183,6 +183,15 @@ button, input, select { font: inherit; }
   line-height: 1.2;
 }
 .brand small { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+/* The native window has no browser chrome, so this is the only way back to home. */
+.home-link {
+  display: inline-block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  text-decoration: none;
+}
+.home-link:hover { color: var(--text); }
 .pulse {
   width: 10px;
   height: 10px;

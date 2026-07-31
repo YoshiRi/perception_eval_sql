@@ -151,6 +151,15 @@ h1, h2, p { margin: 0; }
 h1 { font-size: 16px; letter-spacing: 0; }
 h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 .sub { color: var(--muted); font-size: 11px; line-height: 1.35; }
+/* The native window has no browser chrome, so this is the only way back to home. */
+.home-link {
+  display: inline-block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  text-decoration: none;
+}
+.home-link:hover { color: var(--text); }
 .field { display: grid; gap: 6px; }
 .field label { color: var(--muted); font-size: 11px; }
 .toggle { display: flex; align-items: center; gap: 7px; }
