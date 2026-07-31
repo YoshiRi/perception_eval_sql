@@ -1,0 +1,644 @@
+<!--
+  Workflow page for the local desktop client (evaldash-local).
+
+  Served only by client.webapi.ClientHandler at "/workflow". Every action here is a thin
+  call to the server's /api/workflow_* routes via /api/client/workflow_*: this page picks
+  parameters, the server owns validation and the queue. Styling mirrors client_home.html
+  so the two pages read as one app.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evaluation Dashboard — Workflow</title>
+
+<!-- Loads before body paint so the saved theme applies without a flash. -->
+<script>/*__BBOX_THEME_JS__*/</script>
+
+<style>
+  :root[data-theme="dark"] {
+    --bg: #050812; --panel: #080d1c; --panel2: #0d1426; --surface: #0f172a;
+    --line: rgba(148,163,184,.22); --line-strong: rgba(148,163,184,.4);
+    --text: #eaf2ff; --muted: #91a4bf;
+    --accent: #38bdf8; --accent-fg: #bae6fd; --on-accent: #07111f;
+    --good: #34d399; --bad: #fb7185; --warn: #fbbf24;
+    --good-bg: rgba(6,78,59,.5); --bad-bg: rgba(127,29,29,.45); --warn-bg: rgba(120,53,15,.45);
+  }
+  :root[data-theme="light"] {
+    --bg: #f1f5f9; --panel: #ffffff; --panel2: #f8fafc; --surface: #ffffff;
+    --line: rgba(71,85,105,.2); --line-strong: rgba(71,85,105,.38);
+    --text: #0f172a; --muted: #52627a;
+    --accent: #0891b2; --accent-fg: #075985; --on-accent: #ffffff;
+    --good: #047857; --bad: #be123c; --warn: #b45309;
+    --good-bg: rgba(16,185,129,.14); --bad-bg: rgba(244,63,94,.12); --warn-bg: rgba(245,158,11,.15);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 48px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 22px;
+  }
+  header .wrap { display: flex; align-items: center; gap: 14px; padding: 14px 20px; }
+  h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .spacer { flex: 1; }
+
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 200px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+
+  button, .btn {
+    font: inherit; font-weight: 550; cursor: pointer;
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    padding: 7px 13px; text-decoration: none; display: inline-block;
+    transition: border-color .12s, background .12s;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button.icon { padding: 6px 9px; }
+  button.small, .btn.small { padding: 4px 9px; font-size: 12px; }
+
+  input, select, textarea {
+    font: inherit; color: var(--text); background: var(--surface); width: 100%;
+    border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  textarea { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+  label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+  label.check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); }
+  label.check input { width: auto; }
+
+  .kinds { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .kind {
+    cursor: pointer; border: 1px solid var(--line-strong); border-radius: 999px;
+    padding: 5px 13px; font-size: 13px; font-weight: 550; background: var(--panel2);
+  }
+  .kind[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  tbody tr:hover { background: var(--panel2); }
+  .scroll { overflow-x: auto; }
+  .name { font-weight: 550; word-break: break-all; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.ok { background: var(--good-bg); color: var(--good); }
+  .pill.no { background: var(--warn-bg); color: var(--warn); }
+  .pill.err { background: var(--bad-bg); color: var(--bad); }
+
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .empty { color: var(--muted); padding: 18px 4px; text-align: center; }
+
+  .banner { border-radius: 9px; padding: 10px 13px; margin-bottom: 14px; font-size: 13px; }
+  .banner.err { background: var(--bad-bg); color: var(--bad); }
+  .banner.ok { background: var(--good-bg); color: var(--good); }
+  .banner.info { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+
+  pre.log {
+    margin: 0; max-height: 380px; overflow: auto;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px 13px; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="wrap">
+    <h1>Evaluation Dashboard <span>· Workflow</span></h1>
+    <div class="spacer"></div>
+    <a class="btn" href="/">Home</a>
+    <a class="btn" href="/explorer">Explorer</a>
+    <button class="icon" id="themeBtn" title="Toggle theme">☀</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="banner" hidden></div>
+
+  <!-- Launcher -->
+  <div class="card" id="startCard">
+    <h2>Start a workflow</h2>
+    <div class="kinds" id="kinds">
+      <button class="kind" data-kind="perception" aria-pressed="true">Perception</button>
+      <button class="kind" data-kind="tlr" aria-pressed="false">TLR</button>
+      <button class="kind" data-kind="release" aria-pressed="false">Release spec-sheet</button>
+    </div>
+    <p class="hint" id="kindHint" style="margin-top:-6px;margin-bottom:14px"></p>
+
+    <div class="grid">
+      <label class="field">Project ID
+        <input id="project" value="x2_dev" spellcheck="false">
+      </label>
+      <label class="field">Branch or tag
+        <input id="target" placeholder="beta/v4.3.2" spellcheck="false">
+      </label>
+      <label class="field">Environment
+        <select id="environment">
+          <option value="">default</option><option value="dev">dev</option>
+          <option value="stg">stg</option><option value="prd">prd</option>
+        </select>
+      </label>
+      <label class="field only-eval">Catalog
+        <select id="catalog"></select>
+      </label>
+    </div>
+
+    <div class="grid only-eval" style="margin-top:12px">
+      <label class="field">Catalog ID
+        <input id="catalogId" spellcheck="false" placeholder="uuid">
+      </label>
+      <label class="field">Integration ID
+        <input id="integrationId" spellcheck="false" placeholder="resolved from the catalog">
+      </label>
+      <label class="field" style="justify-content:flex-end">
+        <button id="resolveBtn" class="small">Resolve integration ID</button>
+      </label>
+    </div>
+
+    <div class="grid" style="margin-top:12px">
+      <label class="field">Output folder <span class="muted">(server-side)</span>
+        <input id="output" spellcheck="false" placeholder="eval_<target>_<timestamp>"
+               title="Relative to the server's data root">
+      </label>
+      <label class="field">Description
+        <input id="description" placeholder="shown in the dashboard task list">
+      </label>
+    </div>
+
+    <div class="only-release" style="margin-top:14px">
+      <label class="field">Trend metadata <span class="muted">(YAML; required for a release run)</span>
+        <textarea id="metadataText" rows="9" spellcheck="false"></textarea>
+      </label>
+      <div class="grid" style="margin-top:12px">
+        <label class="field">Performance job ID <span class="muted">(optional)</span>
+          <input id="perfJobId" spellcheck="false" placeholder="reuse an existing job">
+        </label>
+        <label class="field">DevOps job ID <span class="muted">(optional)</span>
+          <input id="devopsJobId" spellcheck="false" placeholder="reuse an existing job">
+        </label>
+        <label class="field">Optional-catalog job ID
+          <input id="optJobId" spellcheck="false" placeholder="only with the optional catalog">
+        </label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="optCatalog"> Include the optional catalog</label>
+        <label class="check"><input type="checkbox" id="excludePolygons"> Exclude polygons (spec-sheet)</label>
+        <label class="check"><input type="checkbox" id="releaseRunEval"> Also generate Summary/Score CSVs</label>
+      </div>
+    </div>
+
+    <details style="margin-top:14px">
+      <summary class="muted small" style="cursor:pointer">Advanced options</summary>
+      <div class="grid" style="margin-top:12px">
+        <label class="field only-eval">Analysis phase
+          <input id="phase" spellcheck="false">
+        </label>
+        <label class="field">Poll interval (s)
+          <input id="pollInterval" type="number" min="10" max="300" step="10" value="60">
+        </label>
+        <label class="field">Max wait (h, 0 = no timeout)
+          <input id="maxWait" type="number" min="0" max="720" step="1" value="48">
+        </label>
+      </div>
+      <div class="row only-eval" style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="runEval" checked> Run evaluation (Summary/Score CSVs)</label>
+        <label class="check"><input type="checkbox" id="genParquet" checked> Generate parquet</label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label class="check"><input type="checkbox" id="isTag"> The target is a tag, not a branch</label>
+      </div>
+    </details>
+
+    <div class="row" style="margin-top:16px">
+      <button class="primary" id="startBtn">Start workflow</button>
+      <button id="checkBtn" title="Show the parameters the worker would get, without queueing">Check parameters</button>
+      <div class="spacer"></div>
+      <span class="hint" id="startStatus"></span>
+    </div>
+    <pre class="log" id="dryRun" hidden style="margin-top:14px"></pre>
+  </div>
+
+  <!-- Tasks -->
+  <div class="card">
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0">Workflows on the server</h2>
+      <div class="spacer"></div>
+      <label class="check small"><input type="checkbox" id="autoRefresh" checked> auto-refresh</label>
+      <select id="window" style="width:auto">
+        <option value="7">last 7 days</option>
+        <option value="30">last 30 days</option>
+        <option value="0">all</option>
+      </select>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr>
+        <th>Task</th><th>Status</th><th>Kind</th><th>Target</th>
+        <th>Run folder</th><th>Started</th><th></th>
+      </tr></thead>
+      <tbody id="taskBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <!-- Log -->
+  <div class="card" id="logCard" hidden>
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0">Log</h2>
+      <span class="mono muted" id="logTaskId"></span>
+      <span class="pill" id="logStatus"></span>
+      <div class="spacer"></div>
+      <button class="small" id="logCloseBtn">Close</button>
+    </div>
+    <p class="hint" id="logProgress" style="margin:0 0 10px"></p>
+    <pre class="log" id="logBody"></pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  if (window.TH) TH.bindToggle($("themeBtn"));
+
+  const KIND_HINTS = {
+    perception: "Downloads evaluator archives, runs the evaluation and builds parquet for the explorer.",
+    tlr: "Traffic Light Recognition: downloads simulation result JSON for the TLR analysis page. "
+       + "Evaluation and parquet are not part of this pipeline.",
+    release: "Runs the performance and DevOps catalogs together and assembles the release spec sheet."
+  };
+  let kind = "perception";
+  let presets = [];
+  let tasks = [];
+  let openTaskId = "";
+  let timer = null;
+  let defaults = {};
+
+  function esc(s) {
+    return String(s === null || s === undefined ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function banner(kindName, text) {
+    const el = $("banner");
+    if (!text) { el.hidden = true; return; }
+    el.hidden = false;
+    el.className = "banner " + kindName;
+    el.textContent = text;
+  }
+  async function api(route, body) {
+    const res = await fetch(route, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify(body || {})
+    });
+    let data;
+    try { data = await res.json(); }
+    catch (e) { throw new Error(`${route}: HTTP ${res.status}`); }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+  function statusPill(status) {
+    if (status === "completed") return "ok";
+    if (status === "failed") return "err";
+    return "no";  // pending / running
+  }
+
+  // ------------------------------------------------------------------ launcher
+
+  function applyKind() {
+    document.querySelectorAll(".kind").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.kind === kind)));
+    $("kindHint").textContent = KIND_HINTS[kind] || "";
+    document.querySelectorAll(".only-eval").forEach(el => { el.hidden = kind === "release"; });
+    document.querySelectorAll(".only-release").forEach(el => { el.hidden = kind !== "release"; });
+    // TLR forces its own download/eval settings server-side; showing them as editable
+    // here would promise control the pipeline does not offer.
+    $("runEval").disabled = kind === "tlr";
+    $("genParquet").disabled = kind === "tlr";
+    if (kind === "release" && !$("metadataText").value) {
+      $("metadataText").value = defaults.metadata_text || "";
+    }
+  }
+
+  function renderPresets() {
+    const sel = $("catalog");
+    sel.innerHTML = "";
+    const custom = document.createElement("option");
+    custom.value = ""; custom.textContent = presets.length ? "— custom (enter IDs below) —" : "none configured";
+    sel.appendChild(custom);
+    presets.forEach((p, i) => {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = p.display_name + (p.catalog_id ? "" : "  (no catalog id)");
+      sel.appendChild(o);
+    });
+  }
+
+  function applyPreset() {
+    const idx = $("catalog").value;
+    if (idx === "") return;
+    const preset = presets[Number(idx)];
+    if (!preset) return;
+    $("catalogId").value = preset.catalog_id || "";
+    $("integrationId").value = preset.integration_id || "";
+    if (preset.phase) $("phase").value = preset.phase;
+  }
+
+  function startPayload() {
+    const payload = {
+      kind: kind,
+      project_id: $("project").value.trim(),
+      target_name: $("target").value.trim(),
+      environment: $("environment").value,
+      is_tag: $("isTag").checked,
+      poll_interval: Number($("pollInterval").value || 60),
+      max_wait_hours: Number($("maxWait").value || 0),
+      output_path: $("output").value.trim(),
+      description: $("description").value.trim()
+    };
+    if (kind === "release") {
+      Object.assign(payload, {
+        metadata_text: $("metadataText").value,
+        performance_job_id: $("perfJobId").value.trim(),
+        devops_job_id: $("devopsJobId").value.trim(),
+        optional_catalog_enabled: $("optCatalog").checked,
+        optional_job_id: $("optJobId").value.trim(),
+        is_exclude_polygons: $("excludePolygons").checked,
+        run_eval: $("releaseRunEval").checked
+      });
+    } else {
+      const idx = $("catalog").value;
+      Object.assign(payload, {
+        catalog_id: $("catalogId").value.trim(),
+        integration_id: $("integrationId").value.trim(),
+        catalog_preset_name: idx === "" ? "" : (presets[Number(idx)] || {}).display_name || "",
+        phase: $("phase").value.trim(),
+        run_eval: $("runEval").checked,
+        generate_parquet: $("genParquet").checked
+      });
+    }
+    return payload;
+  }
+
+  async function resolveIntegration() {
+    const catalogId = $("catalogId").value.trim();
+    if (!catalogId) { banner("err", "Enter a catalog ID first, or pick a preset."); return; }
+    const btn = $("resolveBtn");
+    btn.disabled = true; btn.textContent = "Resolving…";
+    try {
+      const data = await api("/api/client/workflow_catalogs", {
+        project_id: $("project").value.trim(),
+        environment: $("environment").value,
+        resolve_catalog_id: catalogId
+      });
+      if (data.integration_id) {
+        $("integrationId").value = data.integration_id;
+        banner("ok", `Integration ID resolved: ${data.integration_id}`);
+      } else {
+        banner("err", data.integration_error || "No active integration was found for that catalog.");
+      }
+    } catch (e) {
+      banner("err", String(e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = "Resolve integration ID";
+    }
+  }
+
+  async function submit(dryRun) {
+    const btn = dryRun ? $("checkBtn") : $("startBtn");
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = dryRun ? "Checking…" : "Starting…";
+    banner("");
+    $("dryRun").hidden = true;
+    try {
+      const data = await api("/api/client/workflow_start",
+        Object.assign(startPayload(), {dry_run: dryRun}));
+      if (dryRun) {
+        $("dryRun").hidden = false;
+        $("dryRun").textContent = JSON.stringify(data.parameters || {}, null, 2);
+        $("startStatus").textContent = `${data.kind} → ${data.task_type}; nothing queued.`;
+      } else {
+        banner("ok", `Queued ${data.kind} workflow as ${data.task_id}. Output folder: ${data.run_name}.`);
+        $("startStatus").textContent = "";
+        openTaskId = data.task_id;
+        await loadTasks();
+        await loadLog();
+      }
+    } catch (e) {
+      banner("err", String(e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  }
+
+  // --------------------------------------------------------------------- tasks
+
+  function renderTasks() {
+    const body = $("taskBody");
+    body.innerHTML = "";
+    if (!tasks.length) {
+      body.innerHTML = `<tr><td colspan="7" class="empty">No workflows in this window.</td></tr>`;
+      return;
+    }
+    tasks.forEach(task => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${esc((task.id || "").slice(0, 8))}</td>
+        <td><span class="pill ${statusPill(task.status)}">${esc(task.status)}</span></td>
+        <td class="small muted">${esc(task.workflow_kind || (task.type === "run_release_specsheet_workflow" ? "Release" : "-"))}</td>
+        <td class="small">${esc(task.target_name || "-")}</td>
+        <td class="name small">${esc(task.run_name || "-")}</td>
+        <td class="small muted">${esc((task.created_at || "").slice(0, 16).replace("T", " "))}</td>
+        <td style="text-align:right"></td>`;
+      const cell = tr.lastElementChild;
+      const logBtn = document.createElement("button");
+      logBtn.className = "small"; logBtn.textContent = "Log";
+      logBtn.onclick = () => { openTaskId = task.id; loadLog(); };
+      cell.appendChild(logBtn);
+      if (task.active) {
+        const cancel = document.createElement("button");
+        cancel.className = "small danger"; cancel.textContent = "Cancel";
+        cancel.style.marginLeft = "6px";
+        cancel.onclick = () => cancelTask(task);
+        cell.appendChild(cancel);
+      } else if (task.status === "completed" && task.run_name) {
+        const pull = document.createElement("button");
+        pull.className = "small primary"; pull.textContent = "Download";
+        pull.style.marginLeft = "6px";
+        pull.title = "Pull this run into the local workspace at the criteria tier";
+        pull.onclick = () => pullRun(task.run_name);
+        cell.appendChild(pull);
+      }
+      if (task.progress_message && task.active) {
+        const p = document.createElement("div");
+        p.className = "hint"; p.textContent = task.progress_message;
+        tr.children[4].appendChild(p);
+      }
+      body.appendChild(tr);
+    });
+  }
+
+  async function loadTasks() {
+    try {
+      const data = await api("/api/client/workflow_tasks", {
+        limit: 40, since_days: Number($("window").value)
+      });
+      tasks = data.items || [];
+      renderTasks();
+      syncPolling();
+    } catch (e) {
+      $("taskBody").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message || e)}</td></tr>`;
+    }
+  }
+
+  async function cancelTask(task) {
+    if (!confirm(`Cancel ${task.workflow_kind || "workflow"} task ${task.id.slice(0, 8)}`
+                 + `${task.target_name ? " for " + task.target_name : ""}?\n\n`
+                 + "The worker is stopped and the task is marked failed. "
+                 + "Anything already downloaded on the server is left in place.")) return;
+    try {
+      const data = await api("/api/client/workflow_cancel", {task_id: task.id});
+      banner(data.ok ? "ok" : "info", data.message || "");
+      await loadTasks();
+      if (openTaskId === task.id) await loadLog();
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  }
+
+  async function pullRun(run) {
+    try {
+      await api("/api/client/pull", {run: run, role: "all", tier: "criteria"});
+      // The home page owns the progress UI, so hand over rather than duplicating it.
+      window.location.href = "/";
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  }
+
+  async function loadLog() {
+    if (!openTaskId) { $("logCard").hidden = true; return; }
+    try {
+      const task = (await api("/api/client/workflow_task", {task_id: openTaskId})).task || {};
+      $("logCard").hidden = false;
+      $("logTaskId").textContent = task.id || "";
+      const pill = $("logStatus");
+      pill.textContent = task.status || "";
+      pill.className = "pill " + statusPill(task.status);
+      const bits = [];
+      if (task.progress_message) bits.push(task.progress_message);
+      if (task.progress_pct !== null && task.progress_pct !== undefined) bits.push(`${task.progress_pct}%`);
+      if (task.error_message) bits.push(task.error_message);
+      if (task.output_path) bits.push(task.output_path);
+      $("logProgress").textContent = bits.join("  ·  ");
+      const el = $("logBody");
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      el.textContent = task.log || "(no log output yet)";
+      if (atBottom) el.scrollTop = el.scrollHeight;
+      syncPolling();
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  }
+
+  // Poll only while something is actually moving, so an idle page is silent.
+  function syncPolling() {
+    const wanted = $("autoRefresh").checked
+      && (tasks.some(t => t.active) || (openTaskId && tasks.some(t => t.id === openTaskId && t.active)));
+    if (wanted && !timer) {
+      timer = setInterval(() => { loadTasks(); if (openTaskId) loadLog(); }, 5000);
+    } else if (!wanted && timer) {
+      clearInterval(timer); timer = null;
+    }
+  }
+
+  // -------------------------------------------------------------------- wiring
+
+  document.querySelectorAll(".kind").forEach(btn => {
+    btn.onclick = () => { kind = btn.dataset.kind; applyKind(); };
+  });
+  $("catalog").onchange = applyPreset;
+  $("resolveBtn").onclick = resolveIntegration;
+  $("startBtn").onclick = () => submit(false);
+  $("checkBtn").onclick = () => submit(true);
+  $("refreshBtn").onclick = loadTasks;
+  $("window").onchange = loadTasks;
+  $("autoRefresh").onchange = syncPolling;
+  $("logCloseBtn").onclick = () => { openTaskId = ""; $("logCard").hidden = true; syncPolling(); };
+
+  function disableLauncher(reason) {
+    $("startBtn").disabled = true;
+    $("checkBtn").disabled = true;
+    $("startStatus").textContent = reason;
+  }
+
+  (async function init() {
+    // ?kind=release lets the app (and a bookmark) open straight into one pipeline.
+    const wanted = new URLSearchParams(window.location.search).get("kind");
+    if (wanted && KIND_HINTS[wanted]) kind = wanted;
+    applyKind();
+    try {
+      const state = await api("/api/client/workflow_state", {});
+      if (!state.health) {
+        disableLauncher("");
+        banner("err", state.server
+          ? `Cannot reach the workflow API on ${state.server}: ${state.reason}`
+          : "No server configured yet. Set one on the Home page first.");
+        $("taskBody").innerHTML = `<tr><td colspan="7" class="empty">Not connected.</td></tr>`;
+        return;
+      }
+      defaults = state.health.defaults || {};
+      $("phase").value = defaults.phase || "";
+      $("project").value = defaults.project_id || "x2_dev";
+      if (defaults.poll_interval) $("pollInterval").value = defaults.poll_interval;
+      if (defaults.max_wait_hours !== undefined) $("maxWait").value = defaults.max_wait_hours;
+      presets = state.presets || [];
+      renderPresets();
+      applyKind();
+
+      if (!state.health.authorized) {
+        disableLauncher("");
+        banner("err", `The server did not authorize this client: ${state.health.auth_reason
+          || "a token may be required"}. Connect on the Home page.`);
+        $("taskBody").innerHTML = `<tr><td colspan="7" class="empty">Not authorized.</td></tr>`;
+        return;
+      }
+      if (!state.health.queue_enabled) {
+        // Reads still work: existing tasks are in Postgres either way.
+        disableLauncher("starting is disabled on this server");
+        banner("info", state.health.queue_reason
+          || "This server cannot queue new workflows, so only existing tasks are shown.");
+      }
+      if (state.presets_error) banner("info", `Catalog presets unavailable: ${state.presets_error}`);
+      await loadTasks();
+    } catch (e) {
+      banner("err", String(e.message || e));
+    }
+  })();
+})();
+</script>

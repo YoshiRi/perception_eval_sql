@@ -288,6 +288,74 @@ def client_parquets(payload: dict[str, Any]) -> dict[str, Any]:
     return api.list_parquets({"bbox_only": True, "limit": 500})
 
 
+def _forward(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Call one of the server's workflow routes with the stored credentials.
+
+    Thin on purpose: the page is a client of the server's API, and duplicating
+    validation here would only produce a second set of rules to keep in sync. Errors
+    come back as the message the server chose.
+    """
+    remote = connect(config.Config.load())
+    return getattr(remote, method)(**payload)
+
+
+def client_workflow_state(payload: dict[str, Any]) -> dict[str, Any]:
+    """Everything the workflow page needs for a first paint."""
+    cfg = config.Config.load()
+    if not cfg.effective_server():
+        return {"server": "", "health": None, "reason": "No server configured yet."}
+    try:
+        remote = connect(cfg)
+        health = remote.workflow_health(target_name=str(payload.get("target_name") or ""))
+    except Exception as exc:
+        return {"server": cfg.effective_server(), "health": None, "reason": str(exc)[:300]}
+    result: dict[str, Any] = {"server": remote.base_url, "health": health, "reason": ""}
+    if health.get("authorized"):
+        try:
+            result["presets"] = (remote.workflow_catalogs()).get("presets") or []
+        except Exception as exc:
+            result["presets"] = []
+            result["presets_error"] = str(exc)[:300]
+    return result
+
+
+def client_workflow_catalogs(payload: dict[str, Any]) -> dict[str, Any]:
+    return _forward("workflow_catalogs", {
+        "project_id": str(payload.get("project_id") or ""),
+        "environment": str(payload.get("environment") or ""),
+        "refresh": payload.get("refresh") is True,
+        "resolve_catalog_id": str(payload.get("resolve_catalog_id") or ""),
+    })
+
+
+def client_workflow_start(payload: dict[str, Any]) -> dict[str, Any]:
+    params = {k: v for k, v in payload.items() if not str(k).startswith("_")}
+    return _forward("workflow_start", {"params": params})
+
+
+def client_workflow_tasks(payload: dict[str, Any]) -> dict[str, Any]:
+    since = payload.get("since_days", 7)
+    return _forward("workflow_tasks", {
+        "limit": int(payload.get("limit") or 25),
+        "since_days": None if since in (None, "", 0, "0") else int(since),
+        "mine": str(payload.get("mine") or ""),
+    })
+
+
+def client_workflow_task(payload: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(payload.get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError("A task_id is required.")
+    return _forward("workflow_task", {"task_id": task_id})
+
+
+def client_workflow_cancel(payload: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(payload.get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError("A task_id is required.")
+    return _forward("workflow_cancel", {"task_id": task_id})
+
+
 CLIENT_ROUTES = {
     "/api/client/state": client_state,
     "/api/client/login": client_login,
@@ -298,6 +366,12 @@ CLIENT_ROUTES = {
     "/api/client/pull_cancel": client_pull_cancel,
     "/api/client/delete_run": client_delete_run,
     "/api/client/parquets": client_parquets,
+    "/api/client/workflow_state": client_workflow_state,
+    "/api/client/workflow_catalogs": client_workflow_catalogs,
+    "/api/client/workflow_start": client_workflow_start,
+    "/api/client/workflow_tasks": client_workflow_tasks,
+    "/api/client/workflow_task": client_workflow_task,
+    "/api/client/workflow_cancel": client_workflow_cancel,
 }
 
 
@@ -315,11 +389,10 @@ def build_handler() -> type:
         _render_page_html,
     )
 
-    def home_html() -> str:
-        page = app_paths.find_static_file("client_home.html")
-        if page is None:
-            raise FileNotFoundError("client_home.html is missing from this build")
-        return _render_page_html("client_home.html", "")
+    def page_html(name: str) -> str:
+        if app_paths.find_static_file(name) is None:
+            raise FileNotFoundError(f"{name} is missing from this build")
+        return _render_page_html(name, "")
 
     class ClientHandler(LocalBBoxHandler):
         # Base viewer/explorer routes plus the client-only ones.
@@ -331,9 +404,13 @@ def build_handler() -> type:
 
         def do_GET(self) -> None:  # noqa: N802 - stdlib naming
             parsed = urlparse(self.path)
-            if parsed.path in ("/", "/home", "/home/"):
+            page = {
+                "/": "client_home.html", "/home": "client_home.html", "/home/": "client_home.html",
+                "/workflow": "client_workflow.html", "/workflow/": "client_workflow.html",
+            }.get(parsed.path)
+            if page:
                 try:
-                    _html_response(self, 200, home_html())
+                    _html_response(self, 200, page_html(page))
                 except Exception as exc:
                     _json_response(self, 500, {"error": str(exc)})
                 return

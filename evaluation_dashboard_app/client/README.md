@@ -127,6 +127,13 @@ getting JSON rather than a Cloudflare sign-in page.
 A wrong token is rejected outright (`401`) rather than falling back to the identity
 rules — presenting a bad credential is an error, not something to paper over.
 
+The workflow routes (`/api/workflow_*`, `backend/workflow_api.py`) are mounted next to the
+export routes and authorize through exactly the same table, so nothing extra is needed to
+let a client start runs. They additionally need the task queue the dashboard already uses
+(`USE_TASK_QUEUE`, `DATABASE_URL`, `REDIS_URL`, a worker); where that is absent, starting
+is refused with that reason and only the read routes answer. Whoever can download runs can
+start them, so if that is not the intent, `EVAL_EXPORT_REQUIRE_TOKEN=1` gates both.
+
 ### Pre-baking
 
 To let clients skip the pickles, pre-compute the DevOps answers on the server, where the
@@ -226,6 +233,42 @@ evaldash-local t4 ls
 `doctor` exits 0 on a healthy build even when nothing is configured yet; it exits 1 only
 for real defects (missing duckdb or viewer assets, a configured server that will not
 answer).
+
+### Starting workflows
+
+Downloading covers runs that already exist. The **Workflow** page (`/workflow`, linked
+from the home page) and the `workflow` subcommands start new ones: the request goes to the
+dashboard, which queues the same worker job the dashboard's own Workflow page would.
+
+```bash
+# which catalogs are available (--refresh also asks the evaluator API)
+evaldash-local workflow catalogs
+
+# start a perception run; the preset name resolves the catalog and integration ids
+evaldash-local workflow start --target beta/v4.3.2 --catalog "Performance Test"
+
+# see the exact parameters the worker would get, without queueing anything
+evaldash-local workflow start --target beta/v4.3.2 --catalog "Performance Test" --dry-run
+
+# traffic-light recognition, and the release spec sheet
+evaldash-local workflow start --kind tlr --target beta/v4.3.2 --catalog "J6Gen2_TLR_Regression"
+evaldash-local workflow start --kind release --target beta/v4.3.2 --metadata-file trend.yaml
+
+# watch and control
+evaldash-local workflow list
+evaldash-local workflow status <task-id>       # exits 1 if the task failed
+evaldash-local workflow logs <task-id> -n 50
+evaldash-local workflow cancel <task-id>
+```
+
+`status` and `logs` accept the short id printed by `list`. Task ids and run folders line
+up with `pull`, so a finished workflow is fetched with
+`evaldash-local pull $(evaldash-local workflow status <id> --json | jq -r .run_name)`.
+
+The server needs `USE_TASK_QUEUE=true`, `DATABASE_URL`, `REDIS_URL` and a running worker
+for any of this; without them `workflow list` still works and `start` says so plainly.
+Authorization is the same as for downloads — no separate token — and the run is attributed
+to the Cloudflare identity that started it, so it shows up as yours in the dashboard.
 
 ### Which server it talks to
 

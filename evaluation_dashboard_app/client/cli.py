@@ -16,6 +16,12 @@ typical use:
   evaldash-local pull eval_2.4a_0710_streampetr_ptv3_off --role devops --tier criteria
   evaldash-local open
 
+starting a run on the server:
+  evaldash-local workflow catalogs
+  evaldash-local workflow start --target beta/v4.3.2 --catalog "Performance Test"
+  evaldash-local workflow list
+  evaldash-local workflow status <task-id>
+
 The server needs EVAL_EXPORT_TOKEN set for the export routes to answer at all.
 """
 
@@ -487,6 +493,244 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if all(ok is not False for _, ok, _ in checks) else 1
 
 
+# ---------------------------------------------------------------------- workflow
+
+
+def _workflow_catalog_lookup(remote: Remote, args: argparse.Namespace) -> tuple[str, str]:
+    """Resolve ``--catalog``/``--catalog-id`` into ``(catalog_id, integration_id)``.
+
+    A preset name is the ergonomic way to name a catalog from a script, and an
+    integration id is something no human remembers, so both are resolved server-side
+    before the start request rather than being demanded up front.
+    """
+    catalog_id = (args.catalog_id or "").strip()
+    integration_id = (args.integration_id or "").strip()
+    name = (args.catalog or "").strip()
+
+    if name:
+        data = remote.workflow_catalogs(project_id=args.project, environment=args.environment or "")
+        presets = data.get("presets") or []
+        matches = [p for p in presets if p.get("display_name", "").lower() == name.lower()]
+        if not matches:
+            matches = [p for p in presets if name.lower() in p.get("display_name", "").lower()]
+        if not matches:
+            available = ", ".join(p.get("display_name", "?") for p in presets) or "none configured"
+            raise RemoteError(f"No catalog preset matches {name!r}. Available: {available}")
+        if len(matches) > 1:
+            raise RemoteError(
+                f"{name!r} matches {len(matches)} presets: "
+                + ", ".join(p.get("display_name", "?") for p in matches)
+            )
+        catalog_id = catalog_id or matches[0].get("catalog_id", "")
+        integration_id = integration_id or matches[0].get("integration_id", "")
+
+    if catalog_id and not integration_id:
+        data = remote.workflow_catalogs(
+            project_id=args.project,
+            environment=args.environment or "",
+            resolve_catalog_id=catalog_id,
+        )
+        integration_id = data.get("integration_id") or ""
+        if not integration_id:
+            raise RemoteError(
+                "Could not resolve an integration id for that catalog"
+                + (f": {data['integration_error']}" if data.get("integration_error") else "")
+                + ". Pass --integration-id explicitly."
+            )
+    return catalog_id, integration_id
+
+
+def cmd_workflow_catalogs(args: argparse.Namespace) -> int:
+    remote = _remote(args)
+    data = remote.workflow_catalogs(
+        project_id=args.project or "",
+        environment=args.environment or "",
+        refresh=args.refresh,
+    )
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    presets = data.get("presets") or []
+    if presets:
+        _print_table(
+            [[p.get("display_name", ""), p.get("catalog_id", ""), p.get("integration_id", "") or "-"]
+             for p in presets],
+            ["PRESET", "CATALOG ID", "INTEGRATION ID"],
+        )
+    else:
+        print("No catalog presets are configured on the server (catalogs.json).")
+    if data.get("server_catalog_error"):
+        print(f"\nlive catalog lookup failed: {data['server_catalog_error']}", file=sys.stderr)
+    live = data.get("server_catalogs") or []
+    if live:
+        print()
+        _print_table([[c.get("display_name", ""), c.get("catalog_id", "")] for c in live],
+                     ["PROJECT CATALOG", "CATALOG ID"])
+    return 0
+
+
+def cmd_workflow_start(args: argparse.Namespace) -> int:
+    remote = _remote(args)
+    params: dict = {
+        "kind": args.kind,
+        "project_id": args.project,
+        "target_name": args.target,
+        "environment": args.environment or "",
+        "is_tag": args.tag,
+        "poll_interval": args.poll_interval,
+        "max_wait_hours": args.max_wait_hours,
+        "dry_run": args.dry_run,
+    }
+    if args.output:
+        params["output_path"] = args.output
+    if args.description:
+        params["description"] = args.description
+
+    if args.kind == "release":
+        if args.metadata_file:
+            try:
+                params["metadata_text"] = open(args.metadata_file, encoding="utf-8").read()
+            except OSError as exc:
+                print(f"error: cannot read {args.metadata_file}: {exc}", file=sys.stderr)
+                return 2
+        params.update({
+            "performance_job_id": args.performance_job_id or "",
+            "devops_job_id": args.devops_job_id or "",
+            "optional_catalog_enabled": args.optional_catalog,
+            "optional_job_id": args.optional_job_id or "",
+            "is_exclude_polygons": args.exclude_polygons,
+            "run_eval": args.run_eval,
+        })
+    else:
+        catalog_id, integration_id = _workflow_catalog_lookup(remote, args)
+        params.update({
+            "catalog_id": catalog_id,
+            "integration_id": integration_id,
+            "catalog_preset_name": (args.catalog or "").strip(),
+            "phase": args.phase or "",
+            "run_eval": not args.no_eval,
+            "generate_parquet": not args.no_parquet,
+        })
+
+    data = remote.workflow_start(params)
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    if data.get("dry_run"):
+        print(f"kind      {data.get('kind')}  ->  {data.get('task_type')}")
+        print("nothing was queued (--dry-run). Parameters the worker would receive:")
+        print(json.dumps(data.get("parameters") or {}, indent=2, ensure_ascii=False))
+        return 0
+    print(f"task      {data.get('task_id')}")
+    print(f"kind      {data.get('kind')}  ->  {data.get('task_type')}")
+    print(f"run       {data.get('run_name')}")
+    print(f"output    {data.get('output_path')}")
+    print(f"queued by {data.get('queued_by') or 'anonymous'}")
+    print(f"\nWatch it with:  evaldash-local workflow status {data.get('task_id')}")
+    print(f"When it finishes:  evaldash-local pull {data.get('run_name')}")
+    return 0
+
+
+def cmd_workflow_list(args: argparse.Namespace) -> int:
+    remote = _remote(args)
+    data = remote.workflow_tasks(
+        limit=args.limit,
+        since_days=None if args.all else args.since_days,
+        mine=args.mine or "",
+    )
+    items = data.get("items") or []
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    if not items:
+        print("No workflow tasks in that window.")
+        return 0
+    _print_table(
+        [
+            [
+                item.get("id", "")[:8],
+                item.get("status", ""),
+                item.get("workflow_kind", "") or "-",
+                item.get("target_name", "") or "-",
+                item.get("run_name", "") or "-",
+                (item.get("created_at") or "")[:16].replace("T", " "),
+            ]
+            for item in items
+        ],
+        ["TASK", "STATUS", "KIND", "TARGET", "RUN", "CREATED"],
+    )
+    print(f"\n{len(items)} task(s). Full ids: evaldash-local workflow list --json")
+    return 0
+
+
+def _resolve_task_id(remote: Remote, prefix: str) -> str:
+    """Accept the short id printed by ``workflow list`` as well as the full one."""
+    if len(prefix) >= 32:
+        return prefix
+    items = (remote.workflow_tasks(limit=200, since_days=None).get("items") or [])
+    matches = [item["id"] for item in items if item.get("id", "").startswith(prefix)]
+    if not matches:
+        raise RemoteError(f"No workflow task id starts with {prefix!r}.")
+    if len(matches) > 1:
+        raise RemoteError(f"{prefix!r} matches {len(matches)} tasks; use a longer id.")
+    return matches[0]
+
+
+def cmd_workflow_status(args: argparse.Namespace) -> int:
+    remote = _remote(args)
+    task = remote.workflow_task(_resolve_task_id(remote, args.task_id)).get("task") or {}
+    if args.json:
+        print(json.dumps(task, indent=2))
+        return 0
+    print(f"task      {task.get('id')}")
+    print(f"status    {task.get('status')}")
+    print(f"type      {task.get('type')}  ({task.get('workflow_kind') or '-'})")
+    print(f"target    {task.get('target_name') or '-'}")
+    print(f"run       {task.get('run_name') or '-'}")
+    print(f"requested {task.get('requested_by') or '-'}")
+    print(f"created   {(task.get('created_at') or '')[:19].replace('T', ' ')}")
+    print(f"updated   {(task.get('updated_at') or '')[:19].replace('T', ' ')}")
+    if task.get("progress_message"):
+        pct = task.get("progress_pct")
+        print(f"progress  {task['progress_message']}" + (f"  ({pct}%)" if pct is not None else ""))
+    if task.get("error_message"):
+        print(f"error     {task['error_message']}")
+    tail = [line for line in (task.get("log") or "").splitlines() if line.strip()][-5:]
+    if tail:
+        print("\nlast log lines:")
+        for line in tail:
+            print(f"  {line}")
+        print(f"\nFull log: evaldash-local workflow logs {task.get('id')}")
+    # Non-zero for a failed run so a script can branch on it without parsing output.
+    return 1 if task.get("status") == "failed" else 0
+
+
+def cmd_workflow_logs(args: argparse.Namespace) -> int:
+    remote = _remote(args)
+    task = remote.workflow_task(_resolve_task_id(remote, args.task_id)).get("task") or {}
+    lines = (task.get("log") or "").splitlines()
+    if task.get("log_truncated"):
+        print("(log truncated by the server; showing the most recent part)", file=sys.stderr)
+    for line in lines[-args.tail:] if args.tail else lines:
+        print(line)
+    if not lines:
+        print(f"No log yet (status: {task.get('status')}).", file=sys.stderr)
+    return 0
+
+
+def cmd_workflow_cancel(args: argparse.Namespace) -> int:
+    remote = _remote(args)
+    task_id = _resolve_task_id(remote, args.task_id)
+    if not args.yes:
+        reply = input(f"Cancel workflow task {task_id}? [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            print("kept")
+            return 1
+    data = remote.workflow_cancel(task_id)
+    print(data.get("message") or ("cancelled" if data.get("ok") else "not cancelled"))
+    return 0 if data.get("ok") else 1
+
+
 def cmd_where(args: argparse.Namespace) -> int:
     cfg = config.Config.load()
     print(json.dumps(
@@ -565,13 +809,75 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
     p.set_defaults(func=cmd_rm)
 
+    p = sub.add_parser("workflow", help="start and watch server-side evaluator workflows")
+    wsub = p.add_subparsers(dest="workflow_command", required=True)
+
+    q = wsub.add_parser("start", help="queue a workflow on the server")
+    q.add_argument("--kind", default="perception", choices=["perception", "tlr", "release"],
+                   help="which pipeline to run (default: perception)")
+    q.add_argument("--project", default="x2_dev", help="evaluator project id (default: x2_dev)")
+    q.add_argument("--target", required=True, help="branch or tag to evaluate, e.g. beta/v4.3.2")
+    q.add_argument("--tag", action="store_true", help="--target names a tag, not a branch")
+    q.add_argument("--catalog", help="catalog preset name, e.g. 'Performance Test'")
+    q.add_argument("--catalog-id", help="catalog uuid, instead of a preset name")
+    q.add_argument("--integration-id", help="skip the integration lookup and use this id")
+    q.add_argument("--phase", help="analysis phase (default: perception.object_recognition.objects)")
+    q.add_argument("--environment", choices=["dev", "stg", "prd"], help="auth profile (default: server default)")
+    q.add_argument("--output", help="output folder under the data root (default: eval_<target>_<timestamp>)")
+    q.add_argument("--description", help="label shown in the dashboard task list")
+    q.add_argument("--no-eval", action="store_true", help="skip Summary.csv / Score.csv generation")
+    q.add_argument("--no-parquet", action="store_true", help="skip parquet generation")
+    q.add_argument("--poll-interval", type=int, default=60, help="evaluator poll seconds (10-300)")
+    q.add_argument("--max-wait-hours", type=int, default=48, help="0 means wait indefinitely")
+    q.add_argument("--metadata-file", help="release kind: YAML file of trend metadata")
+    q.add_argument("--performance-job-id", help="release kind: reuse an existing performance job")
+    q.add_argument("--devops-job-id", help="release kind: reuse an existing devops job")
+    q.add_argument("--optional-catalog", action="store_true", help="release kind: include the optional catalog")
+    q.add_argument("--optional-job-id", help="release kind: reuse an existing optional-catalog job")
+    q.add_argument("--exclude-polygons", action="store_true",
+                   help="release kind: drop estimated polygon objects from spec-sheet metrics")
+    q.add_argument("--run-eval", action="store_true", help="release kind: also generate Summary/Score CSVs")
+    q.add_argument("--dry-run", action="store_true", help="print the parameters without queueing")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_workflow_start)
+
+    q = wsub.add_parser("list", help="recent workflow tasks on the server")
+    q.add_argument("--limit", type=int, default=25)
+    q.add_argument("--since-days", type=int, default=7)
+    q.add_argument("--all", action="store_true", help="no time window")
+    q.add_argument("--mine", help="only tasks owned by this identity (an email)")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_workflow_list)
+
+    q = wsub.add_parser("status", help="one task's state, with the last few log lines")
+    q.add_argument("task_id", help="full id, or the short prefix shown by 'workflow list'")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_workflow_status)
+
+    q = wsub.add_parser("logs", help="print a task's log")
+    q.add_argument("task_id")
+    q.add_argument("-n", "--tail", type=int, default=0, help="only the last N lines")
+    q.set_defaults(func=cmd_workflow_logs)
+
+    q = wsub.add_parser("cancel", help="stop a queued or running workflow")
+    q.add_argument("task_id")
+    q.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
+    q.set_defaults(func=cmd_workflow_cancel)
+
+    q = wsub.add_parser("catalogs", help="list catalog presets (and optionally the project's catalogs)")
+    q.add_argument("--project", help="evaluator project id, needed with --refresh")
+    q.add_argument("--environment", choices=["dev", "stg", "prd"])
+    q.add_argument("--refresh", action="store_true", help="also ask the evaluator API for live catalogs")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_workflow_catalogs)
+
     p = sub.add_parser("serve", help="serve the viewer locally without opening a window")
     p.add_argument("--port", type=int, help="port to bind (default: first free from 8765)")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("open", help="open the desktop app window")
     p.add_argument("--port", type=int)
-    p.add_argument("--page", default="home", choices=["home", "explorer", "viewer"],
+    p.add_argument("--page", default="home", choices=["home", "workflow", "explorer", "viewer"],
                    help="which page to open (default: home, where you download runs)")
     p.add_argument("--browser", action="store_true", help="use the system browser instead of a window")
     p.set_defaults(func=cmd_open)

@@ -38,3 +38,4 @@ evaluation_dashboard_app/static/*
 !evaluation_dashboard_app/static/bbox_viewer_events.js
 !evaluation_dashboard_app/static/bbox_theme.js
 !evaluation_dashboard_app/static/client_home.html
+!evaluation_dashboard_app/static/client_workflow.html

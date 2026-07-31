@@ -24,11 +24,12 @@ from urllib.parse import parse_qs, urlparse
 import duckdb
 
 try:
-    from backend import app_paths, export_api, prebake
+    from backend import app_paths, export_api, prebake, workflow_api
 except ImportError:  # pragma: no cover - running the module as a bare script.
     import app_paths  # type: ignore[no-redef]
     import export_api  # type: ignore[no-redef]
     import prebake  # type: ignore[no-redef]
+    import workflow_api  # type: ignore[no-redef]
 
 try:
     import yaml
@@ -2970,7 +2971,8 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         "/api/compare_frames": compare_frames,
     }
     # Routes that need the request itself (for the bearer token), not just a payload.
-    auth_routes = export_api.JSON_ROUTES
+    # Workflow routes authorize through export_api, so both sets share one policy.
+    auth_routes = {**export_api.JSON_ROUTES, **workflow_api.JSON_ROUTES}
     # Routes that write their own response body instead of returning JSON.
     stream_routes = export_api.STREAM_ROUTES
 

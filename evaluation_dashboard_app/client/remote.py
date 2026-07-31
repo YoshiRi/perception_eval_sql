@@ -140,6 +140,49 @@ class Remote:
             payload["routes"] = routes
         return self.post_json("/api/export_prebake", payload, timeout=timeout)
 
+    # ---------------------------------------------------------------- workflow routes
+
+    def workflow_health(self, *, target_name: str = "") -> dict[str, Any]:
+        return self.post_json("/api/workflow_health", {"target_name": target_name})
+
+    def workflow_catalogs(
+        self,
+        *,
+        project_id: str = "",
+        environment: str = "",
+        refresh: bool = False,
+        resolve_catalog_id: str = "",
+    ) -> dict[str, Any]:
+        return self.post_json(
+            "/api/workflow_catalogs",
+            {
+                "project_id": project_id,
+                "environment": environment,
+                "refresh": refresh,
+                "resolve_catalog_id": resolve_catalog_id,
+            },
+            # Both optional lookups call the evaluator API from the server side.
+            timeout=180.0,
+        )
+
+    def workflow_start(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self.post_json("/api/workflow_start", params, timeout=180.0)
+
+    def workflow_tasks(
+        self, *, limit: int = 25, since_days: int | None = 7, mine: str = ""
+    ) -> dict[str, Any]:
+        return self.post_json(
+            "/api/workflow_tasks",
+            {"limit": limit, "since_days": since_days, "mine": mine},
+            timeout=120.0,
+        )
+
+    def workflow_task(self, task_id: str) -> dict[str, Any]:
+        return self.post_json("/api/workflow_task", {"task_id": task_id}, timeout=120.0)
+
+    def workflow_cancel(self, task_id: str) -> dict[str, Any]:
+        return self.post_json("/api/workflow_cancel", {"task_id": task_id}, timeout=120.0)
+
     def open_file(self, run: str, rel_path: str, *, offset: int = 0):
         """Open a byte stream for one exported file, optionally resuming at ``offset``."""
         query = urllib.parse.urlencode({"run": run, "rel_path": rel_path})

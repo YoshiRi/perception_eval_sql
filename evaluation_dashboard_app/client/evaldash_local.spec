@@ -48,6 +48,7 @@ hiddenimports = [
     "backend.local_bbox_api",
     "backend.prebake",
     "backend.prebake_cli",
+    "backend.workflow_api",
     "client.app",
     "client.cli",
     "client.config",

@@ -35,7 +35,7 @@ def _has_pywebview() -> bool:
     return True
 
 
-PAGES = {"home": "", "explorer": "explorer", "viewer": "viewer"}
+PAGES = {"home": "", "workflow": "workflow", "explorer": "explorer", "viewer": "viewer"}
 
 
 def _page_url(base_url: str, page: str) -> str:

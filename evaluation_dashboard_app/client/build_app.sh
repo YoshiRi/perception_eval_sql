@@ -89,7 +89,7 @@ fail() { echo "error: smoke test failed: $1" >&2; sed 's/^/    /' "$SMOKE_HOME/s
 curl -sf -m 5 "http://127.0.0.1:$SMOKE_PORT/api/health" >/dev/null || fail "server did not start"
 # Proves the bundled static/ tree is reachable via app_paths, from any cwd.
 # "" is the client home page, which lives in the bundle like the other assets.
-for ASSET in "" explorer viewer bbox_theme.js bbox_explorer.css events.js; do
+for ASSET in "" workflow explorer viewer bbox_theme.js bbox_explorer.css events.js; do
   curl -sf -m 5 "http://127.0.0.1:$SMOKE_PORT/$ASSET" -o /dev/null || fail "asset missing: /$ASSET"
 done
 # The home page drives the in-app download UI; a 200 with no markup means a broken build.
@@ -97,12 +97,15 @@ curl -sf -m 5 "http://127.0.0.1:$SMOKE_PORT/" | grep -q 'api/client/state' \
   || fail "home page did not render the client UI"
 curl -sf -m 10 -X POST "http://127.0.0.1:$SMOKE_PORT/api/client/state" -d '{}' \
   | grep -q '"tiers"' || fail "client state route did not answer"
+# The workflow page is useless without its bridge routes, which live in a different module.
+curl -sf -m 5 "http://127.0.0.1:$SMOKE_PORT/workflow" | grep -q 'api/client/workflow_state' \
+  || fail "workflow page did not render the launcher UI"
 # Proves duckdb loaded and can answer a query route (empty workspace is fine).
 curl -sf -m 15 -X POST "http://127.0.0.1:$SMOKE_PORT/api/parquets" -d '{}' \
   | grep -q '"items"' || fail "duckdb-backed /api/parquets did not answer"
 
 [[ -n "$SMOKE_PID" ]] && kill "$SMOKE_PID" 2>/dev/null
-echo "    ok (health, 5 assets, duckdb route)"
+echo "    ok (health, 6 assets, duckdb route)"
 
 if [[ "$INSTALL_DESKTOP" == "1" ]]; then
   DESKTOP_DIR="$HOME/.local/share/applications"
