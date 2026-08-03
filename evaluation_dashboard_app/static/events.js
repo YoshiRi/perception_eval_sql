@@ -1286,9 +1286,7 @@ els.previewSlider.addEventListener("input", () => {
   renderCurve();
 });
 els.previewFit.addEventListener("click", () => {
-  state.previewPanX = 0;
-  state.previewPanY = 0;
-  state.previewScale = 1;
+  resetPreviewView();
   renderPreview();
 });
 els.previewRings.addEventListener("click", () => {
@@ -1498,6 +1496,7 @@ els.statsDetailTable.addEventListener("click", e => {
 els.viewerClose.addEventListener("click", closeViewer);
 els.viewerNewTab.addEventListener("click", openViewerNewTab);
 window.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === "Escape" && els.viewerShell.classList.contains("show")) closeViewer();
 });
 window.addEventListener("resize", () => { clampPreviewWindow(); render(); renderCurve(); renderPreview(); });

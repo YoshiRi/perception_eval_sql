@@ -125,6 +125,12 @@
             <option value="curtain">Curtain wipe</option>
           </select>
         </div>
+        <div class="viewer-controls-row labels-head">
+          <span class="control-caption">Object labels</span>
+          <button id="labelsAllBtn" class="cycle-btn" title="Show all object labels">All</button>
+          <button id="labelsNoneBtn" class="cycle-btn" title="Hide all object labels">None</button>
+        </div>
+        <div class="viewer-controls-row labels chips" id="labelChips"></div>
         <div class="advanced-panel" id="advancedPanel">
           <label>Min conf <input id="confMin" type="number" min="0" max="1" step="0.05" placeholder="off"></label>
           <label>Opacity <input id="boxOpacity" type="range" min="0.2" max="1" step="0.05" value="0.9"></label>
@@ -133,16 +139,6 @@
           <label class="toggle"><input id="showErrors" type="checkbox" checked> Error glyphs</label>
           <label class="toggle"><input id="dedupeRows" type="checkbox" checked> Dedupe</label>
         </div>
-      </div>
-      <div class="label-dock">
-        <div class="label-dock-head">
-          <span class="label-dock-title">Object Labels</span>
-          <span>
-            <button id="labelsAllBtn" class="cycle-btn" title="Show all object labels">All</button>
-            <button id="labelsNoneBtn" class="cycle-btn" title="Hide all object labels">None</button>
-          </span>
-        </div>
-        <div class="chips" id="labelChips"></div>
       </div>
       <div class="legend">
         <div><i class="sw-gt-tp"></i>GT·TP filled</div>

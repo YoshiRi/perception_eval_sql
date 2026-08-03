@@ -47,37 +47,52 @@ function drawRangeRings(maxRange) {
   ctx.restore();
 }
 function drawEgoGlyph() {
-  const car = [[2.35, .98, .05], [1.55, 1.08, .05], [-2.25, .92, .05], [-2.45, -.92, .05], [1.55, -1.08, .05], [2.35, -.98, .05]].map(project);
-  const cabin = [[.8, .64, .18], [-.85, .58, .18], [-.85, -.58, .18], [.8, -.64, .18]].map(project);
-  ctx.fillStyle = TH.a("surface", .88);
-  ctx.strokeStyle = TH.a("lineStrong", .78);
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(car[0][0], car[0][1]);
-  for (let i = 1; i < car.length; i++) ctx.lineTo(car[i][0], car[i][1]);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = TH.a("accent", .22);
-  ctx.strokeStyle = TH.a("accent", .75);
-  ctx.beginPath();
-  ctx.moveTo(cabin[0][0], cabin[0][1]);
-  for (let i = 1; i < cabin.length; i++) ctx.lineTo(cabin[i][0], cabin[i][1]);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  const p = project([0, 0, .25]);
-  const forward = project([7.5, 0, .25]);
-  const left = project([0, 4.5, .25]);
+  const poly = pts => pts.map(project);
+  const drawPoly = (pts, fill, stroke, width = 1.4) => {
+    const p = poly(pts);
+    ctx.beginPath();
+    ctx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = width;
+    ctx.fill();
+    ctx.stroke();
+    return p;
+  };
+  const z = els.viewMode.value === "bev" ? 0.08 : 0.16;
+  const body = [[2.45, .92, z], [1.8, 1.08, z], [-1.85, 1.02, z], [-2.35, .72, z], [-2.5, -.72, z], [-1.85, -1.02, z], [1.8, -1.08, z], [2.45, -.92, z]];
+  const hood = [[2.45, .62, z + .03], [1.65, .82, z + .03], [1.18, .36, z + .03], [1.18, -.36, z + .03], [1.65, -.82, z + .03], [2.45, -.62, z + .03]];
+  const cabin = [[.82, .62, z + .08], [-.72, .58, z + .08], [-1.05, .28, z + .08], [-1.05, -.28, z + .08], [-.72, -.58, z + .08], [.82, -.62, z + .08], [1.06, -.34, z + .08], [1.06, .34, z + .08]];
+  const windshield = [[.88, .42, z + .1], [.24, .44, z + .1], [.24, -.44, z + .1], [.88, -.42, z + .1]];
+  const rearGlass = [[-.64, .42, z + .1], [-.98, .24, z + .1], [-.98, -.24, z + .1], [-.64, -.42, z + .1]];
+  ctx.save();
+  drawPoly(body, TH.a("surface", .9), TH.a("lineStrong", .82), 1.5);
+  drawPoly(hood, TH.a("accent", .12), TH.a("accent", .54), 1.1);
+  drawPoly(cabin, TH.a("deep", .76), TH.a("accent", .72), 1.35);
+  drawPoly(windshield, TH.a("accentBright", .18), TH.a("accentBright", .52), 1);
+  drawPoly(rearGlass, TH.a("accentBright", .12), TH.a("accentBright", .42), 1);
+  const wheelFill = TH.a("lineStrong", .8);
+  const wheelStroke = TH.a("surface", .9);
+  for (const x of [1.32, -1.42]) {
+    for (const y of [1.08, -1.08]) {
+      drawPoly([[x + .34, y, z + .02], [x + .34, y + Math.sign(y) * .18, z + .02], [x - .34, y + Math.sign(y) * .18, z + .02], [x - .34, y, z + .02]], wheelFill, wheelStroke, 1);
+    }
+  }
+  const origin = project([0, 0, z + .18]);
+  const forward = project([6.2, 0, z + .18]);
+  const left = project([0, 3.8, z + .18]);
   ctx.lineWidth = 2;
   ctx.strokeStyle = TH.a("accent", .95);
   ctx.fillStyle = TH.a("accent", .95);
-  ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(forward[0], forward[1]); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(left[0], left[1]); ctx.stroke();
-  ctx.beginPath(); ctx.arc(p[0], p[1], 4, 0, Math.PI * 2); ctx.fill();
-  ctx.font = "700 11px Inter, sans-serif";
+  ctx.beginPath(); ctx.moveTo(origin[0], origin[1]); ctx.lineTo(forward[0], forward[1]); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(origin[0], origin[1]); ctx.lineTo(left[0], left[1]); ctx.stroke();
+  ctx.beginPath(); ctx.arc(origin[0], origin[1], 3.6, 0, Math.PI * 2); ctx.fill();
+  ctx.font = "800 11px Inter, sans-serif";
   ctx.fillText("+X", forward[0] + 5, forward[1]);
   ctx.fillText("+Y", left[0] + 5, left[1]);
+  ctx.restore();
 }
 function boxColor(b) {
   if (els.colorMode.value === "run") {

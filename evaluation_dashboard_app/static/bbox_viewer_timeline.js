@@ -275,22 +275,10 @@ function compareDeltaText(box, peer) {
 function nearestBox(screenX, screenY) {
   const f = state.frames[state.framePos] || {boxes: []};
   let best = null, bestD = 18;
-  let vp = {x: 0, y: 0, w: els.canvas.clientWidth, h: els.canvas.clientHeight};
+  const hitView = canvasViewportForPoint(screenX, screenY);
+  let vp = hitView.viewport;
   let boxes = displayedBoxes(f);
-  if (compareSideBySideActive()) {
-    const gap = 3;
-    const half = (els.canvas.clientWidth - gap) / 2;
-    if (screenX <= half) {
-      vp = {x: 0, y: 0, w: half, h: els.canvas.clientHeight};
-      boxes = boxes.filter(b => b.run === "A");
-    } else {
-      vp = {x: half + gap, y: 0, w: half, h: els.canvas.clientHeight};
-      boxes = boxes.filter(b => b.run === "B");
-    }
-  } else if (compareCurtainActive()) {
-    const splitX = state.curtainX * els.canvas.clientWidth;
-    boxes = boxes.filter(b => screenX <= splitX ? b.run === "A" : b.run === "B");
-  }
+  if (hitView.run) boxes = boxes.filter(b => b.run === hitView.run);
   activeViewport = vp;
   for (const b of boxes) {
     const p = project([b.x || 0, b.y || 0, (b.z || 0) + (b.height || 1.5) * .5]);

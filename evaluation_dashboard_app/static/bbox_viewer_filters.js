@@ -23,8 +23,9 @@ function chipGroup(root, values, defaults = []) {
     root.innerHTML = `<span class="control-caption">No label values</span>`;
     return;
   }
-  root.innerHTML = values.slice(0, 36).map(v => `<span class="chip ${useAll || selected.has(v) ? "active" : ""}" data-v="${escapeHtml(v)}">${escapeHtml(v)}</span>`).join("");
+  root.innerHTML = values.map(v => `<span class="chip ${useAll || selected.has(v) ? "active" : ""}" data-v="${escapeHtml(v)}">${escapeHtml(v)}</span>`).join("");
   root.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
+    if (root === els.labels) state.labelChipsTouched = true;
     chip.classList.toggle("active");
     state.selected = null;
     updateInspect();
@@ -32,6 +33,7 @@ function chipGroup(root, values, defaults = []) {
   }));
 }
 function activeLabelDefaults(nextLabels) {
+  if (!state.labelChipsTouched) return true;
   const chips = [...els.labels.querySelectorAll(".chip")];
   if (!chips.length) return true;
   const active = new Set(chips.filter(chip => chip.classList.contains("active")).map(chip => chip.dataset.v));
@@ -40,6 +42,11 @@ function activeLabelDefaults(nextLabels) {
 }
 function ensureLabelChips(values) {
   const labels = [...new Set((values || []).map(v => String(v || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const signature = labels.join("\u0001");
+  if (signature !== state.labelSignature) {
+    state.labelSignature = signature;
+    state.labelChipsTouched = false;
+  }
   chipGroup(els.labels, labels, activeLabelDefaults(labels));
 }
 function labelsFromFrames(frames) {
@@ -54,6 +61,9 @@ function clearSceneWindow() {
   els.frameMax.value = "";
   state.selectedScenario = null;
   state.selected = null;
+  state.labelChipsTouched = false;
+  state.labelSignature = "";
+  state.labelSceneKey = "";
   state.frames = [];
   state.framePos = 0;
   updateInspect();
@@ -263,6 +273,19 @@ async function loadScene(options = {}) {
       max_rows: state.compare ? 90000 : 180000,
       dedupe: els.dedupeRows.checked
     };
+    const labelSceneKey = JSON.stringify({
+      path: state.path,
+      pathB: state.compare ? els.parquetB.value : "",
+      compare: state.compare,
+      suite: filters.suite_name || "",
+      scenario: filters.scenario_name || "",
+      topic: filters.topic_name || ""
+    });
+    if (labelSceneKey !== state.labelSceneKey) {
+      state.labelSceneKey = labelSceneKey;
+      state.labelChipsTouched = false;
+      state.labelSignature = "";
+    }
     let data = state.compare
       ? await api("/api/compare_frames", {
           ...request,

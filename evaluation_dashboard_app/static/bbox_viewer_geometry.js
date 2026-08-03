@@ -1,5 +1,5 @@
-var BBOX_VIEWER_MIN_DISTANCE = 3;
-var BBOX_VIEWER_MIN_PROJECTION_DISTANCE = 4;
+var BBOX_VIEWER_MIN_DISTANCE = 0.75;
+var BBOX_VIEWER_MIN_PROJECTION_DISTANCE = 0.75;
 
 function fitBounds() {
   let maxAbs = 30;
@@ -23,17 +23,20 @@ function cameraFromOriginalPosition(x, y, z, distance = null) {
   state.pitch = Math.max(.18, Math.min(1.18, Math.asin(Math.max(.01, z) / Math.max(1, r))));
   state.distance = distance == null ? Math.max(32, state.bounds.maxAbs * 1.18) : distance;
 }
-function setCameraPreset(kind, keepTarget = false) {
-  if (!keepTarget) { state.panX = 0; state.panY = 0; }
+function setCameraPreset(kind, options = {}) {
+  const reset = options === true ? false : Boolean(options.reset);
+  const hasDistance = Number.isFinite(Number(state.distance)) && Number(state.distance) > 0;
+  const currentDistance = hasDistance ? Number(state.distance) : null;
+  if (reset) { state.panX = 0; state.panY = 0; }
   if (kind === "top") {
     els.viewMode.value = "bev";
-    state.distance = Math.max(45, state.bounds.maxAbs * 1.45);
+    if (reset || currentDistance == null) state.distance = Math.max(45, state.bounds.maxAbs * 1.45);
   } else if (kind === "follow") {
     els.viewMode.value = "perspective";
-    cameraFromOriginalPosition(-10, -2, 3.8);
+    cameraFromOriginalPosition(-10, -2, 3.8, reset ? null : currentDistance);
   } else {
     els.viewMode.value = "perspective";
-    cameraFromOriginalPosition(-12, -8, 4.5);
+    cameraFromOriginalPosition(-12, -8, 4.5, reset ? null : currentDistance);
   }
   render();
 }
@@ -60,9 +63,10 @@ function perspectiveCameraBasis() {
   const up = normalize3(cross3(right, forward));
   return {target, cam, forward, right, up};
 }
-function panPerspectiveByScreenDelta(dx, dy) {
+function panPerspectiveByScreenDelta(dx, dy, viewport = null) {
   const basis = perspectiveCameraBasis();
-  const scale = Math.min(els.canvas.clientWidth, els.canvas.clientHeight) / Math.max(18, state.distance);
+  const vp = viewport || {w: els.canvas.clientWidth, h: els.canvas.clientHeight};
+  const scale = Math.min(vp.w, vp.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance);
   const sx = Math.max(0.001, scale);
   const move = [
     (-basis.right[0] * dx + basis.up[0] * dy) / sx,
@@ -121,6 +125,21 @@ function cross3(a, b) {
 function normalize3(v) {
   const n = Math.hypot(v[0], v[1], v[2]);
   return n > 1e-6 ? [v[0] / n, v[1] / n, v[2] / n] : [NaN, NaN, NaN];
+}
+
+function canvasViewportForPoint(screenX, screenY) {
+  const full = {x: 0, y: 0, w: els.canvas.clientWidth, h: els.canvas.clientHeight};
+  if (compareSideBySideActive()) {
+    const gap = 3;
+    const half = (els.canvas.clientWidth - gap) / 2;
+    if (screenX <= half) return {viewport: {x: 0, y: 0, w: half, h: els.canvas.clientHeight}, run: "A"};
+    return {viewport: {x: half + gap, y: 0, w: half, h: els.canvas.clientHeight}, run: "B"};
+  }
+  if (compareCurtainActive()) {
+    const splitX = state.curtainX * els.canvas.clientWidth;
+    return {viewport: full, run: screenX <= splitX ? "A" : "B"};
+  }
+  return {viewport: full, run: ""};
 }
 
 function compareLayoutMode() {

@@ -116,7 +116,7 @@ els.advancedBtn.addEventListener("click", () => {
   els.advancedPanel.classList.toggle("show");
   syncCycleButtons();
 });
-els.resetCamera.addEventListener("click", () => { state.selected = null; updateInspect(); setCameraPreset("3d"); });
+els.resetCamera.addEventListener("click", () => { state.selected = null; updateInspect(); setCameraPreset("3d", {reset: true}); });
 els.fitCamera.addEventListener("click", () => { fitBounds(); render(); });
 els.toggleTrails.addEventListener("click", () => { state.trails = !state.trails; els.toggleTrails.style.background = state.trails ? TH.a("accent", .36) : ""; render(); });
 els.toggleSidebar.addEventListener("click", () => {
@@ -143,6 +143,7 @@ els.layerChips.querySelectorAll(".chip").forEach(chip => chip.addEventListener("
   render();
 }));
 function setAllLabelChips(active) {
+  state.labelChipsTouched = true;
   els.labels.querySelectorAll(".chip").forEach(chip => chip.classList.toggle("active", active));
   state.selected = null;
   updateInspect();
@@ -170,11 +171,12 @@ function updateCurtainFromEvent(e) {
   state.curtainX = Math.max(0.08, Math.min(0.92, (e.clientX - rect.left) / Math.max(1, rect.width)));
   render();
 }
-function bevScreenToWorld(screenX, screenY, distance = state.distance) {
-  const scale = Math.min(els.canvas.clientWidth, els.canvas.clientHeight) / Math.max(20, distance * 2.15);
+function bevScreenToWorld(screenX, screenY, distance = state.distance, viewport = null) {
+  const vp = viewport || {x: 0, y: 0, w: els.canvas.clientWidth, h: els.canvas.clientHeight};
+  const scale = Math.min(vp.w, vp.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, distance * 2.15);
   return {
-    x: state.panX - (screenY - els.canvas.clientHeight / 2) / Math.max(0.001, scale),
-    y: state.panY - (screenX - els.canvas.clientWidth / 2) / Math.max(0.001, scale),
+    x: state.panX - (screenY - (vp.y + vp.h / 2)) / Math.max(0.001, scale),
+    y: state.panY - (screenX - (vp.x + vp.w / 2)) / Math.max(0.001, scale),
     scale
   };
 }
@@ -206,7 +208,11 @@ els.canvas.addEventListener("pointerdown", e => {
       return;
     }
   }
-  state.dragging = true; state.dragButton = e.button || 0; state.lastX = e.clientX; state.lastY = e.clientY; state.downX = e.clientX; state.downY = e.clientY; els.canvas.setPointerCapture(e.pointerId);
+  const rect = els.canvas.getBoundingClientRect();
+  state.dragging = true;
+  state.dragButton = e.button || 0;
+  state.dragViewport = canvasViewportForPoint(e.clientX - rect.left, e.clientY - rect.top).viewport;
+  state.lastX = e.clientX; state.lastY = e.clientY; state.downX = e.clientX; state.downY = e.clientY; els.canvas.setPointerCapture(e.pointerId);
 });
 els.canvas.addEventListener("pointerup", e => {
   if (state.draggingCurtain) {
@@ -216,6 +222,7 @@ els.canvas.addEventListener("pointerup", e => {
   }
   const moved = Math.hypot(e.clientX - state.downX, e.clientY - state.downY);
   state.dragging = false;
+  state.dragViewport = null;
   if (moved < 5) {
     const rect = els.canvas.getBoundingClientRect();
     state.selected = nearestBox(e.clientX - rect.left, e.clientY - rect.top);
@@ -230,15 +237,19 @@ els.canvas.addEventListener("pointermove", e => {
   }
   updateHoverCard(e);
   if (!state.dragging) return;
+  const rect = els.canvas.getBoundingClientRect();
+  const localX = e.clientX - rect.left;
+  const localY = e.clientY - rect.top;
+  const hitView = state.dragViewport || canvasViewportForPoint(localX, localY).viewport;
   if (els.viewMode.value === "perspective") {
     if (e.shiftKey || state.dragButton === 1 || state.dragButton === 2) {
-      panPerspectiveByScreenDelta(e.clientX - state.lastX, e.clientY - state.lastY);
+      panPerspectiveByScreenDelta(e.clientX - state.lastX, e.clientY - state.lastY, hitView);
     } else {
       state.yaw -= (e.clientX - state.lastX) * .008;
       state.pitch = Math.max(.18, Math.min(1.18, state.pitch + (e.clientY - state.lastY) * .006));
     }
   } else if (els.viewMode.value === "bev") {
-    const vp = activeViewport || {w: els.canvas.clientWidth, h: els.canvas.clientHeight};
+    const vp = hitView || activeViewport || {w: els.canvas.clientWidth, h: els.canvas.clientHeight};
     const scale = Math.min(vp.w, vp.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
     state.panY += (e.clientX - state.lastX) / Math.max(0.001, scale);
     state.panX += (e.clientY - state.lastY) / Math.max(0.001, scale);
@@ -258,12 +269,13 @@ els.canvas.addEventListener("wheel", e => {
   const rect = els.canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
-  const before = els.viewMode.value === "bev" ? bevScreenToWorld(sx, sy) : null;
+  const hitView = canvasViewportForPoint(sx, sy).viewport;
+  const before = els.viewMode.value === "bev" ? bevScreenToWorld(sx, sy, state.distance, hitView) : null;
   state.distance = Math.max(BBOX_VIEWER_MIN_DISTANCE, Math.min(420, state.distance + e.deltaY * .08));
   if (before && els.viewMode.value === "bev") {
-    const afterScale = Math.min(els.canvas.clientWidth, els.canvas.clientHeight) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
-    state.panX = before.x + (sy - els.canvas.clientHeight / 2) / Math.max(0.001, afterScale);
-    state.panY = before.y + (sx - els.canvas.clientWidth / 2) / Math.max(0.001, afterScale);
+    const afterScale = Math.min(hitView.w, hitView.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
+    state.panX = before.x + (sy - (hitView.y + hitView.h / 2)) / Math.max(0.001, afterScale);
+    state.panY = before.y + (sx - (hitView.x + hitView.w / 2)) / Math.max(0.001, afterScale);
   }
   render();
 }, {passive: false});
@@ -278,6 +290,7 @@ if (window.TH) {
 }
 window.addEventListener("keydown", (ev) => {
   if (ev.target && ["INPUT", "SELECT", "TEXTAREA"].includes(ev.target.tagName)) return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   if (ev.key === " ") {
     ev.preventDefault();
     state.playing = !state.playing;

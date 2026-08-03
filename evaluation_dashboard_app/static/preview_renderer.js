@@ -30,6 +30,7 @@ function mergePreviewFrames(aFrames, bFrames) {
 function setPreviewFrames(frames, message = "") {
   state.previewFrames = normalizePreviewFrames(frames);
   state.previewIndex = 0;
+  resetPreviewView();
   els.previewSlider.max = String(Math.max(0, state.previewFrames.length - 1));
   els.previewSlider.value = "0";
   renderPreview(message);
@@ -215,6 +216,36 @@ function focusPreviewOnCurvePeak() {
   state.previewIndex = best;
   els.previewSlider.value = String(best);
 }
+function previewContentBounds() {
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  const add = (x, y) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    xMin = Math.min(xMin, x); xMax = Math.max(xMax, x);
+    yMin = Math.min(yMin, y); yMax = Math.max(yMax, y);
+  };
+  for (const f of state.previewFrames) {
+    for (const b of f.boxes || []) {
+      add(Number(b.x), Number(b.y));
+      if (Array.isArray(b.footprint)) {
+        for (const pt of b.footprint) add(Number(pt[0]), Number(pt[1]));
+      }
+    }
+  }
+  if (!Number.isFinite(xMin)) return null;
+  return {xMin, xMax, yMin, yMax};
+}
+function resetPreviewView() {
+  const bounds = previewContentBounds();
+  if (!bounds) {
+    state.previewPanX = 0;
+    state.previewPanY = 0;
+    state.previewScale = 1;
+    return;
+  }
+  state.previewPanX = (bounds.xMin + bounds.xMax) / 2;
+  state.previewPanY = (bounds.yMin + bounds.yMax) / 2;
+  state.previewScale = 0.9;
+}
 function previewBoundsMaxAbs() {
   let maxAbs = 35;
   for (const f of state.previewFrames) {
@@ -236,10 +267,27 @@ function previewBoundsMaxAbs() {
   }
   return Math.min(PREVIEW_MAX_VIEW_EXTENT, maxAbs);
 }
+function previewViewExtent() {
+  let extent = 4;
+  for (const f of state.previewFrames) {
+    for (const b of f.boxes || []) {
+      const add = (x, y, pad = 8) => {
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          extent = Math.max(extent, Math.abs(x - state.previewPanX) + pad, Math.abs(y - state.previewPanY) + pad);
+        }
+      };
+      add(Number(b.x), Number(b.y));
+      if (Array.isArray(b.footprint)) {
+        for (const pt of b.footprint) add(Number(pt[0]), Number(pt[1]), 4);
+      }
+    }
+  }
+  return Math.min(PREVIEW_MAX_VIEW_EXTENT, extent);
+}
 function previewScaleForRect(r) {
   const width = Number(r.width ?? r.w) || 1;
   const height = Number(r.height ?? r.h) || 1;
-  return Math.min(width, height) / Math.max(8, previewBoundsMaxAbs() * 2.25) * state.previewScale;
+  return Math.min(width, height) / Math.max(8, previewViewExtent() * 2.15) * state.previewScale;
 }
 function previewInteractionViewport(rect, clientX = null) {
   if (!state.compare) return {x: 0, y: 0, width: rect.width, height: rect.height};

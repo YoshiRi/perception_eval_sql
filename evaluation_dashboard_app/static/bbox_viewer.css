@@ -281,7 +281,7 @@ button.icon { width: 36px; padding: 0; flex: 0 0 auto; }
   position: absolute;
   left: 16px;
   top: 86px;
-  width: min(660px, calc(100% - 390px));
+  width: min(760px, calc(100% - 390px));
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -300,25 +300,18 @@ button.icon { width: 36px; padding: 0; flex: 0 0 auto; }
   align-items: center;
 }
 .viewer-controls-row.labels {
-  max-height: 68px;
+  max-height: 86px;
   overflow: auto;
   padding-right: 2px;
 }
+.viewer-controls-row.labels-head {
+  gap: 6px;
+  align-items: center;
+  padding-top: 2px;
+  border-top: 1px solid rgb(var(--c-line) / .24);
+}
 .label-dock {
-  position: absolute;
-  left: 16px;
-  top: 208px;
-  width: min(520px, calc(100% - 390px));
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid rgb(var(--c-accent) / .42);
-  background: rgb(var(--c-deep) / .82);
-  backdrop-filter: blur(16px);
-  border-radius: 8px;
-  box-shadow: var(--shadow-float);
-  pointer-events: auto;
-  z-index: 4;
+  display: none;
 }
 .label-dock-head {
   display: flex;
@@ -519,11 +512,11 @@ canvas:active { cursor: grabbing; }
 .compare-banner {
   position: absolute;
   left: 16px;
-  top: 208px;
+  top: 260px;
   display: none;
   align-items: center;
   gap: 8px;
-  max-width: min(660px, calc(100% - 390px));
+  max-width: min(760px, calc(100% - 390px));
   padding: 7px 10px;
   border: 1px solid rgb(var(--c-accent) / .34);
   border-radius: 7px;
