@@ -47,7 +47,7 @@ function drawRangeRings(maxRange) {
   ctx.restore();
 }
 function drawEgoGlyph() {
-  // Simple non-asset ego model derived from vehicle_info.param.yaml dimensions.
+  // Pure-canvas ego model derived from vehicle_info.param.yaml dimensions.
   const ego = {
     wheelBase: 2.79,
     frontOverhang: 1.0,
@@ -66,12 +66,16 @@ function drawEgoGlyph() {
   ego.halfTread = ego.wheelTread / 2;
 
   const poly = pts => pts.map(project);
-  const drawPoly = (pts, fill, stroke, width = 1.4) => {
+  const drawPath = (pts, close = true) => {
     const p = poly(pts);
     ctx.beginPath();
     ctx.moveTo(p[0][0], p[0][1]);
     for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
-    ctx.closePath();
+    if (close) ctx.closePath();
+    return p;
+  };
+  const drawPoly = (pts, fill, stroke, width = 1.4) => {
+    const p = drawPath(pts);
     ctx.fillStyle = fill;
     ctx.strokeStyle = stroke;
     ctx.lineWidth = width;
@@ -79,69 +83,158 @@ function drawEgoGlyph() {
     ctx.stroke();
     return p;
   };
-  const cuboid = (x0, x1, y0, y1, z0, z1, fills) => {
-    const p000 = [x0, y0, z0], p100 = [x1, y0, z0], p110 = [x1, y1, z0], p010 = [x0, y1, z0];
-    const p001 = [x0, y0, z1], p101 = [x1, y0, z1], p111 = [x1, y1, z1], p011 = [x0, y1, z1];
-    drawPoly([p000, p100, p110, p010], fills.base, fills.stroke, fills.width || 1.1);
-    drawPoly([p000, p001, p101, p100], fills.side, fills.stroke, fills.width || 1.1);
-    drawPoly([p010, p110, p111, p011], fills.side, fills.stroke, fills.width || 1.1);
-    drawPoly([p100, p101, p111, p110], fills.front, fills.stroke, fills.width || 1.1);
-    drawPoly([p000, p010, p011, p001], fills.rear, fills.stroke, fills.width || 1.1);
-    drawPoly([p001, p011, p111, p101], fills.top, fills.stroke, fills.width || 1.3);
-  };
   const drawLine3d = (pts, color, width = 1.2) => {
-    const p = poly(pts);
-    ctx.beginPath();
-    ctx.moveTo(p[0][0], p[0][1]);
-    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
+    drawPath(pts, false);
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.stroke();
   };
+  const drawRidge = (a, b, color = TH.a("lineStrong", .34), width = .9) => {
+    drawLine3d([a, b], color, width);
+  };
+
   const z = 0.02;
+  const deckZ = z + .78;
+  const beltZ = z + 1.08;
+  const roofZ = z + 1.72;
+  const roofPodZ = z + 2.08;
+  const rear = ego.rearX;
+  const front = ego.frontX;
+  const hw = ego.halfWidth;
+  const shoulder = hw - .12;
+  const cabinRear = -.78;
+  const cabinFront = .92;
+  const glassRear = -.58;
+  const glassFront = .66;
+  const hoodRear = .92;
+  const deckRear = -.92;
+
   ctx.save();
-  cuboid(ego.rearX, ego.frontX, -ego.halfWidth, ego.halfWidth, z, z + ego.bodyHeight, {
-    base: TH.a("deep", .34),
-    side: TH.a("surface", .72),
-    front: TH.a("accent", .2),
-    rear: TH.a("lineStrong", .2),
-    top: TH.a("surface", .9),
-    stroke: TH.a("lineStrong", .84),
-    width: 1.25
-  });
-  cuboid(-.72, .92, -.58, .58, z + ego.bodyHeight, z + ego.cabinHeight, {
-    base: TH.a("deep", .52),
-    side: TH.a("deep", .7),
-    front: TH.a("accentBright", .2),
-    rear: TH.a("accentBright", .12),
-    top: TH.a("accent", .16),
-    stroke: TH.a("accent", .72),
-    width: 1.05
-  });
-  drawPoly([[.98, -.62, z + ego.bodyHeight + .04], [ego.frontX - .22, -.72, z + ego.bodyHeight + .04], [ego.frontX - .22, .72, z + ego.bodyHeight + .04], [.98, .62, z + ego.bodyHeight + .04]], TH.a("accent", .1), TH.a("accent", .48), 1);
-  drawPoly([[ego.rearX + .24, -.72, z + ego.bodyHeight + .03], [-.9, -.62, z + ego.bodyHeight + .03], [-.9, .62, z + ego.bodyHeight + .03], [ego.rearX + .24, .72, z + ego.bodyHeight + .03]], TH.a("lineStrong", .08), TH.a("lineStrong", .4), 1);
-  cuboid(-.2, .28, -.24, .24, z + ego.cabinHeight, z + ego.roofMarkerHeight, {
-    base: TH.a("deep", .34),
-    side: TH.a("accent", .1),
-    front: TH.a("accent", .14),
-    rear: TH.a("accent", .08),
-    top: TH.a("surface", .82),
-    stroke: TH.a("lineStrong", .56),
-    width: .9
-  });
-  drawLine3d([[ego.rearX, -ego.halfWidth, z + .12], [ego.rearX, ego.halfWidth, z + .12]], TH.a("lineStrong", .92), 1.6);
-  drawLine3d([[ego.frontX, -.56, z + ego.bodyHeight + .08], [ego.frontX + .26, 0, z + ego.bodyHeight + .08], [ego.frontX, .56, z + ego.bodyHeight + .08]], TH.a("accentBright", .82), 1.5);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  drawPoly(
+    [[rear, -hw, z], [front, -hw, z], [front, hw, z], [rear, hw, z]],
+    TH.a("deep", .28),
+    TH.a("lineStrong", .32),
+    .8
+  );
+  drawPoly(
+    [[rear, -hw, z], [front, -hw, z], [front, -shoulder, deckZ], [rear, -shoulder, deckZ]],
+    TH.a("surface", .5),
+    TH.a("lineStrong", .62),
+    1
+  );
+  drawPoly(
+    [[rear, hw, z], [front, hw, z], [front, shoulder, deckZ], [rear, shoulder, deckZ]],
+    TH.a("surface", .68),
+    TH.a("lineStrong", .7),
+    1
+  );
+  drawPoly(
+    [[front, -hw, z], [front, hw, z], [front, shoulder, deckZ], [front, -shoulder, deckZ]],
+    TH.a("accent", .18),
+    TH.a("accentBright", .72),
+    1.25
+  );
+  drawPoly(
+    [[rear, -hw, z], [rear, hw, z], [rear, shoulder, deckZ], [rear, -shoulder, deckZ]],
+    TH.a("lineStrong", .16),
+    TH.a("lineStrong", .86),
+    1.4
+  );
+  drawPoly(
+    [[rear, -shoulder, deckZ], [front, -shoulder, deckZ], [front, shoulder, deckZ], [rear, shoulder, deckZ]],
+    TH.a("surface", .92),
+    TH.a("lineStrong", .82),
+    1.2
+  );
+
+  drawPoly(
+    [[hoodRear, -.58, deckZ + .08], [front - .28, -.66, deckZ + .04], [front - .12, 0, deckZ + .16], [front - .28, .66, deckZ + .04], [hoodRear, .58, deckZ + .08]],
+    TH.a("surface", .74),
+    TH.a("accent", .38),
+    1
+  );
+  drawPoly(
+    [[rear + .22, -.66, deckZ + .04], [deckRear, -.58, deckZ + .1], [deckRear, .58, deckZ + .1], [rear + .22, .66, deckZ + .04]],
+    TH.a("lineStrong", .08),
+    TH.a("lineStrong", .42),
+    1
+  );
+
+  drawPoly(
+    [[cabinRear, -.66, beltZ], [cabinFront, -.62, beltZ], [glassFront, -.44, roofZ], [glassRear, -.46, roofZ]],
+    TH.a("deep", .7),
+    TH.a("accent", .64),
+    1
+  );
+  drawPoly(
+    [[cabinRear, .66, beltZ], [cabinFront, .62, beltZ], [glassFront, .44, roofZ], [glassRear, .46, roofZ]],
+    TH.a("deep", .78),
+    TH.a("accent", .68),
+    1
+  );
+  drawPoly(
+    [[cabinFront, -.62, beltZ], [cabinFront, .62, beltZ], [glassFront, .44, roofZ], [glassFront, -.44, roofZ]],
+    TH.a("accentBright", .18),
+    TH.a("accentBright", .62),
+    1
+  );
+  drawPoly(
+    [[cabinRear, -.66, beltZ], [cabinRear, .66, beltZ], [glassRear, .46, roofZ], [glassRear, -.46, roofZ]],
+    TH.a("accent", .1),
+    TH.a("lineStrong", .46),
+    1
+  );
+  drawPoly(
+    [[glassRear, -.46, roofZ], [glassFront, -.44, roofZ], [glassFront, .44, roofZ], [glassRear, .46, roofZ]],
+    TH.a("surface", .88),
+    TH.a("lineStrong", .7),
+    1.1
+  );
+
+  drawPoly(
+    [[-.22, -.22, roofZ], [.26, -.22, roofZ], [.26, .22, roofZ], [-.22, .22, roofZ]],
+    TH.a("surface", .72),
+    TH.a("lineStrong", .5),
+    .8
+  );
+  drawPoly(
+    [[-.18, -.18, roofZ], [.22, -.18, roofZ], [.22, .18, roofPodZ], [-.18, .18, roofPodZ]],
+    TH.a("accent", .12),
+    TH.a("lineStrong", .48),
+    .8
+  );
+
+  for (const y of [-1, 1]) {
+    const sideY = y * hw;
+    const skirtY = y * (hw + .04);
+    drawLine3d([[rear + .36, sideY, z + .28], [front - .36, sideY, z + .28]], TH.a("lineStrong", .52), 1);
+    drawLine3d([[ego.rearWheelX - .5, skirtY, z + .38], [ego.rearWheelX + .5, skirtY, z + .38]], TH.a("lineStrong", .76), 1.4);
+    drawLine3d([[ego.frontWheelX - .5, skirtY, z + .38], [ego.frontWheelX + .5, skirtY, z + .38]], TH.a("lineStrong", .76), 1.4);
+  }
+  drawRidge([rear, -shoulder, deckZ], [rear, shoulder, deckZ], TH.a("lineStrong", .92), 1.7);
+  drawRidge([front, -shoulder, deckZ], [front, shoulder, deckZ], TH.a("accentBright", .74), 1.4);
+  drawRidge([0, -.5, roofZ + .01], [0, .5, roofZ + .01], TH.a("lineStrong", .32), .8);
+
   const wheelFill = TH.a("lineStrong", .8);
   const wheelStroke = TH.a("surface", .9);
   for (const x of [ego.frontWheelX, ego.rearWheelX]) {
     for (const y of [ego.halfTread, -ego.halfTread]) {
       const outerY = y + Math.sign(y) * .18;
-      drawPoly([[x + .38, y, z + .2], [x + .38, outerY, z + .2], [x - .38, outerY, z + .2], [x - .38, y, z + .2]], wheelFill, wheelStroke, 1);
+      drawPoly(
+        [[x + .42, y, z + .22], [x + .42, outerY, z + .22], [x - .42, outerY, z + .22], [x - .42, y, z + .22]],
+        wheelFill,
+        wheelStroke,
+        1
+      );
+      drawLine3d([[x, y, z + .24], [x, outerY, z + .24]], TH.a("surface", .68), .8);
     }
   }
-  const origin = project([0, 0, z + ego.bodyHeight + .2]);
-  const forward = project([ego.frontX + 2.0, 0, z + ego.bodyHeight + .2]);
-  const left = project([0, ego.halfWidth + 2.8, z + ego.bodyHeight + .2]);
+  const origin = project([0, 0, z + .98]);
+  const forward = project([ego.frontX + 2.0, 0, z + .98]);
+  const left = project([0, ego.halfWidth + 2.8, z + .98]);
   ctx.lineWidth = 2;
   ctx.strokeStyle = TH.a("accent", .95);
   ctx.fillStyle = TH.a("accent", .95);
