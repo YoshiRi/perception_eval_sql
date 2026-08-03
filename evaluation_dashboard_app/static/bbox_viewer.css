@@ -304,12 +304,6 @@ button.icon { width: 36px; padding: 0; flex: 0 0 auto; }
   overflow: auto;
   padding-right: 2px;
 }
-.viewer-controls-row.labels-head {
-  gap: 6px;
-  align-items: center;
-  padding-top: 2px;
-  border-top: 1px solid rgb(var(--c-line) / .24);
-}
 .label-dock {
   display: none;
 }

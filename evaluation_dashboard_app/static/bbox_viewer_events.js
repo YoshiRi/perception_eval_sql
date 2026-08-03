@@ -149,8 +149,8 @@ function setAllLabelChips(active) {
   updateInspect();
   render();
 }
-els.labelsAllBtn.addEventListener("click", () => setAllLabelChips(true));
-els.labelsNoneBtn.addEventListener("click", () => setAllLabelChips(false));
+if (els.labelsAllBtn) els.labelsAllBtn.addEventListener("click", () => setAllLabelChips(true));
+if (els.labelsNoneBtn) els.labelsNoneBtn.addEventListener("click", () => setAllLabelChips(false));
 els.boxOpacity.addEventListener("input", render);
 els.confMin.addEventListener("input", () => { state.selected = null; updateInspect(); render(); });
 els.confMin.addEventListener("change", render);
