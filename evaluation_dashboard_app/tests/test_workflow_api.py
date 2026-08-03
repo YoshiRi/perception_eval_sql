@@ -5,10 +5,12 @@ Streamlit launcher builds (a mismatch means the worker misbehaves in ways only v
 hours later), and a bad request must be refused before anything reaches the queue.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from backend import workflow_api
 
@@ -292,6 +294,126 @@ def test_task_views_only_report_workflow_types(data_root, monkeypatch):
     result = workflow_api.workflow_tasks(_Handler(), {})
     assert [item["id"] for item in result["items"]] == ["a" * 32]
     assert result["items"][0]["run_name"] == "eval_beta_v1"
+
+
+# ---------------------------------------------------------------------- trend data
+
+
+_RELEASE_METADATA = {
+    "release_group": "2025Q1",
+    "topic_name": "obstacle",
+    "pilot_auto_version": "Pilot.Auto v1.2.3",
+    "data_count": "120",
+    "date": "2025.03.01",
+    "description": "spring release",
+}
+
+# One full-performance table: mAP averages to 0.5 across the two labels.
+_FULL_SUMMARY = {
+    "blocks": [
+        {
+            "header": "全数データセット評価",
+            "evaluation_type": "full",
+            "tables": [{"data": {"mAP": {"car": 0.4, "bus": 0.6}, "precision": {"car": 0.8}}}],
+        }
+    ]
+}
+
+# No "blocks" and non-empty classifies as devops; 8/10 cases pass.
+_DEVOPS_SUMMARY = {"cut_in": {"urban": {"passed": 8, "total": 10}}}
+
+
+def _write_trend_run(root: Path, name: str, metadata: dict, summary: dict) -> None:
+    resources = root / name / "resources"
+    resources.mkdir(parents=True)
+    (resources / "metadata.yaml").write_text(
+        yaml.safe_dump(metadata, allow_unicode=True), encoding="utf-8"
+    )
+    (resources / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
+@pytest.fixture()
+def trend_root(data_root: Path) -> Path:
+    # A release pair (full + devops sharing identical release metadata groups into one
+    # entry) plus an older standalone run, so ordering and grouping are both exercised.
+    _write_trend_run(data_root, "eval_full_v123", _RELEASE_METADATA, _FULL_SUMMARY)
+    _write_trend_run(data_root, "eval_devops_v123", _RELEASE_METADATA, _DEVOPS_SUMMARY)
+    _write_trend_run(
+        data_root,
+        "eval_full_v100",
+        {**_RELEASE_METADATA, "release_group": "2024Q4", "pilot_auto_version": "Pilot.Auto v1.0.0",
+         "date": "2024.11.01", "description": "autumn release"},
+        _FULL_SUMMARY,
+    )
+    return data_root
+
+
+def test_trends_report_release_groups_newest_first_with_page_metrics(trend_root):
+    result = workflow_api.workflow_trends(_Handler(), {})
+    assert result["total_groups"] == 2
+
+    newest, older = result["items"]
+    assert newest["date"] == "2025.03.01" and older["date"] == "2024.11.01"
+    assert newest["version"] == "Pilot.Auto v1.2.3"
+    assert newest["release_group"] == "2025Q1"
+    assert newest["topic"] == "obstacle"
+    # The full and devops runs share release metadata, so they are one release entry.
+    assert newest["roles"] == ["devops", "full"]
+
+    metrics = newest["metrics"]
+    assert metrics["mAP"] == pytest.approx(0.5)
+    assert metrics["precision"] == pytest.approx(0.8)
+    assert metrics["overall_pass_rate"] == pytest.approx(80.0)
+    assert metrics["scenario_count"] == 10
+
+    # Raw summaries are opt-in; the default listing stays light.
+    assert "summary" not in newest["jobs"]["full"]
+    assert "cases" not in newest
+
+
+def test_trends_honour_filters_and_optional_payloads(trend_root):
+    assert workflow_api.workflow_trends(_Handler(), {"topic": "lane_change"})["items"] == []
+
+    by_query = workflow_api.workflow_trends(_Handler(), {"q": "autumn"})["items"]
+    assert [item["date"] for item in by_query] == ["2024.11.01"]
+
+    limited = workflow_api.workflow_trends(_Handler(), {"limit": 1})["items"]
+    assert [item["date"] for item in limited] == ["2025.03.01"]
+
+    full = workflow_api.workflow_trends(
+        _Handler(), {"include_summary": True, "include_cases": True}
+    )["items"][0]
+    assert full["jobs"]["full"]["summary"] == _FULL_SUMMARY
+    assert full["cases"] == [
+        {"major_category": "cut_in", "mid_category": "urban", "minor_category": "urban",
+         "case_name": "urban", "passed": 8, "total": 10, "pass_rate": pytest.approx(80.0)},
+    ]
+
+
+def test_trends_survive_a_summary_the_extractors_reject(trend_root):
+    """One broken release on disk must not make the whole history unqueryable."""
+    _write_trend_run(
+        trend_root,
+        "eval_full_broken",
+        {**_RELEASE_METADATA, "release_group": "broken", "date": "2025.04.01"},
+        {"blocks": [{"header": "全数データセット評価", "tables": []}]},
+    )
+    result = workflow_api.workflow_trends(_Handler(), {})
+    assert result["total_groups"] == 3
+    broken = result["items"][0]
+    assert broken["date"] == "2025.04.01"
+    assert "full" in broken["metrics"]["errors"]
+    # The healthy releases still report numbers.
+    assert result["items"][1]["metrics"]["mAP"] == pytest.approx(0.5)
+
+
+def test_trends_require_authorization(trend_root, monkeypatch):
+    monkeypatch.setenv("EVAL_EXPORT_REQUIRE_TOKEN", "1")
+    monkeypatch.setenv("EVAL_EXPORT_TOKEN", "secret")
+    from backend import export_api
+
+    with pytest.raises(export_api.ExportAuthError):
+        workflow_api.workflow_trends(_Handler(), {})
 
 
 def test_a_datetime_survives_the_json_responder(data_root):

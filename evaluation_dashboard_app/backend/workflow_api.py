@@ -693,6 +693,174 @@ def workflow_cancel(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------------------------------------ trend data
+
+# The Trend Insights page reads metadata from roles in this order; the API must agree
+# so both report the same version/date for a group (pages/13_Trend_Insights.py).
+_TREND_PRIMARY_ROLES = ("full", "usecase", "devops", "performance_blocks", "unknown")
+
+
+def _trend_primary_metadata(jobs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    for role in _TREND_PRIMARY_ROLES:
+        job = jobs.get(role)
+        if job and isinstance(job.get("metadata"), dict):
+            return job["metadata"]
+    return {}
+
+
+def _trend_group_metrics(jobs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The per-release numbers the Trend Insights charts plot, from the same extractors.
+
+    A summary an extractor cannot digest (pre-0.2.0 layouts, hand-edited files) fails
+    per-role into ``errors`` instead of failing the whole listing: one broken release
+    on disk must not make history unqueryable.
+    """
+    from lib.specsheet_report import (
+        banded_recall_percent_from_summary,
+        extract_devops_case_rows,
+        extract_performance_metrics_from_summary,
+        extract_usecase_metrics_from_summary,
+    )
+
+    metrics: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+
+    if "full" in jobs:
+        try:
+            metrics.update(extract_performance_metrics_from_summary(jobs["full"]["summary"]))
+        except Exception as exc:
+            errors["full"] = str(exc)
+
+    if "usecase" in jobs:
+        try:
+            usecase = extract_usecase_metrics_from_summary(jobs["usecase"]["summary"])
+            metrics.update({f"usecase_{key}": value for key, value in usecase.items()})
+        except Exception as exc:
+            errors["usecase"] = str(exc)
+
+    if "devops" in jobs:
+        devops_job = jobs["devops"]
+        try:
+            case_rows = extract_devops_case_rows(
+                devops_job.get("devops_summary") or devops_job["summary"]
+            )
+            total_passed = sum(int(row["passed"]) for row in case_rows)
+            total_count = sum(int(row["total"]) for row in case_rows)
+            metrics["scenario_count"] = total_count or None
+            metrics["overall_pass_rate"] = (
+                total_passed / total_count * 100.0 if total_count > 0 else None
+            )
+        except Exception as exc:
+            errors["devops"] = str(exc)
+        try:
+            banded = banded_recall_percent_from_summary(devops_job.get("summary"))
+            if banded:
+                metrics["recall_bands"] = banded
+        except Exception as exc:
+            errors["devops_recall_bands"] = str(exc)
+
+    if errors:
+        metrics["errors"] = errors
+    return metrics
+
+
+def _trend_group_view(
+    group: Any,
+    *,
+    with_metrics: bool,
+    with_summary: bool,
+    with_cases: bool,
+) -> dict[str, Any]:
+    metadata = _trend_primary_metadata(group.jobs)
+    jobs: dict[str, dict[str, Any]] = {}
+    for role, job in group.jobs.items():
+        entry: dict[str, Any] = {
+            "job_id": _text(job.get("job_id")),
+            "metadata": job.get("metadata") if isinstance(job.get("metadata"), dict) else {},
+            "metadata_path": str(job.get("metadata_path") or ""),
+            "summary_path": str(job.get("summary_path") or ""),
+        }
+        if with_summary:
+            entry["summary"] = job.get("summary")
+        jobs[str(role)] = entry
+
+    view: dict[str, Any] = {
+        "group_key": group.group_key,
+        "release": group.display_name,
+        "topic": group.topic_name,
+        "group_kind": group.group_kind,
+        "release_group": _text(metadata.get("release_group")),
+        "version": _text(metadata.get("pilot_auto_version_abbr"))
+        or _text(metadata.get("version_abbr"))
+        or _text(metadata.get("pilot_auto_version")),
+        "date": _text(metadata.get("date")),
+        "description": _text(metadata.get("description")),
+        "data_count": _text(metadata.get("data_count")),
+        "roles": sorted(group.jobs),
+        "base_dir": str(group.base_dir),
+        "jobs": jobs,
+    }
+    if with_metrics:
+        view["metrics"] = _trend_group_metrics(group.jobs)
+    if with_cases and "devops" in group.jobs:
+        from lib.specsheet_report import extract_devops_case_rows
+
+        devops_job = group.jobs["devops"]
+        try:
+            view["cases"] = extract_devops_case_rows(
+                devops_job.get("devops_summary") or devops_job["summary"]
+            )
+        except Exception as exc:
+            view["cases"] = []
+            view["cases_error"] = str(exc)
+    return view
+
+
+def _trend_group_matches(view: dict[str, Any], query: str) -> bool:
+    haystack = " ".join(
+        str(view.get(field) or "")
+        for field in ("release", "release_group", "version", "date", "description", "topic")
+    ).lower()
+    return query in haystack
+
+
+def workflow_trends(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Past release/trend groups from the data root, newest first.
+
+    The same inventory the Trend Insights page charts -- trend metadata plus the
+    summary-derived metrics per release -- so a script can pull history with one call.
+    Raw summaries and per-case pass rates are opt-in (``include_summary``,
+    ``include_cases``): they dominate the payload and most callers only trend the
+    headline numbers.
+    """
+    export_api.require_auth(handler)
+    from lib.specsheet_report import discover_trend_release_groups
+
+    topic = _text(payload.get("topic")).lower()
+    query = _text(payload.get("q")).lower()
+    limit = int(_number(payload.get("limit", 100), 100, minimum=1, maximum=1000))
+    with_metrics = _flag(payload.get("metrics"), True)
+    with_summary = _flag(payload.get("include_summary"), False)
+    with_cases = _flag(payload.get("include_cases"), False)
+
+    groups = discover_trend_release_groups()
+    items: list[dict[str, Any]] = []
+    # discover() sorts oldest-first for the charts; a caller asking for "recent trend
+    # data" wants the newest releases before the limit cuts off.
+    for group in reversed(groups):
+        if topic and str(group.topic_name).lower() != topic:
+            continue
+        view = _trend_group_view(
+            group, with_metrics=with_metrics, with_summary=with_summary, with_cases=with_cases
+        )
+        if query and not _trend_group_matches(view, query):
+            continue
+        items.append(view)
+        if len(items) >= limit:
+            break
+    return {"items": items, "total_groups": len(groups)}
+
+
 JSON_ROUTES: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "/api/workflow_health": workflow_health,
     "/api/workflow_catalogs": workflow_catalogs,
@@ -700,4 +868,5 @@ JSON_ROUTES: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "/api/workflow_tasks": workflow_tasks,
     "/api/workflow_task": workflow_task,
     "/api/workflow_cancel": workflow_cancel,
+    "/api/workflow_trends": workflow_trends,
 }
