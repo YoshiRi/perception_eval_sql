@@ -47,6 +47,24 @@ function drawRangeRings(maxRange) {
   ctx.restore();
 }
 function drawEgoGlyph() {
+  // Simple non-asset ego model derived from vehicle_info.param.yaml dimensions.
+  const ego = {
+    wheelBase: 2.79,
+    frontOverhang: 1.0,
+    rearOverhang: 1.1,
+    wheelTread: 1.64,
+    width: 1.64 + 0.128 + 0.128,
+    bodyHeight: 1.05,
+    cabinHeight: 1.72,
+    roofMarkerHeight: 2.1
+  };
+  ego.frontX = ego.wheelBase / 2 + ego.frontOverhang;
+  ego.rearX = -(ego.wheelBase / 2 + ego.rearOverhang);
+  ego.halfWidth = ego.width / 2;
+  ego.frontWheelX = ego.wheelBase / 2;
+  ego.rearWheelX = -ego.wheelBase / 2;
+  ego.halfTread = ego.wheelTread / 2;
+
   const poly = pts => pts.map(project);
   const drawPoly = (pts, fill, stroke, width = 1.4) => {
     const p = poly(pts);
@@ -71,38 +89,59 @@ function drawEgoGlyph() {
     drawPoly([p000, p010, p011, p001], fills.rear, fills.stroke, fills.width || 1.1);
     drawPoly([p001, p011, p111, p101], fills.top, fills.stroke, fills.width || 1.3);
   };
+  const drawLine3d = (pts, color, width = 1.2) => {
+    const p = poly(pts);
+    ctx.beginPath();
+    ctx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  };
   const z = 0.02;
   ctx.save();
-  cuboid(-2.35, 2.35, -.95, .95, z, z + .72, {
-    base: TH.a("deep", .42),
-    side: TH.a("surface", .74),
-    front: TH.a("accent", .18),
-    rear: TH.a("lineStrong", .16),
-    top: TH.a("surface", .92),
+  cuboid(ego.rearX, ego.frontX, -ego.halfWidth, ego.halfWidth, z, z + ego.bodyHeight, {
+    base: TH.a("deep", .34),
+    side: TH.a("surface", .72),
+    front: TH.a("accent", .2),
+    rear: TH.a("lineStrong", .2),
+    top: TH.a("surface", .9),
     stroke: TH.a("lineStrong", .84),
     width: 1.25
   });
-  cuboid(-.78, .88, -.62, .62, z + .72, z + 1.42, {
-    base: TH.a("deep", .55),
-    side: TH.a("deep", .72),
-    front: TH.a("accentBright", .22),
+  cuboid(-.72, .92, -.58, .58, z + ego.bodyHeight, z + ego.cabinHeight, {
+    base: TH.a("deep", .52),
+    side: TH.a("deep", .7),
+    front: TH.a("accentBright", .2),
     rear: TH.a("accentBright", .12),
-    top: TH.a("accent", .18),
+    top: TH.a("accent", .16),
     stroke: TH.a("accent", .72),
     width: 1.05
   });
-  drawPoly([[.98, -.58, z + .76], [2.12, -.72, z + .76], [2.12, .72, z + .76], [.98, .58, z + .76]], TH.a("accent", .1), TH.a("accent", .48), 1);
-  drawPoly([[-2.1, -.72, z + .75], [-.95, -.58, z + .75], [-.95, .58, z + .75], [-2.1, .72, z + .75]], TH.a("lineStrong", .08), TH.a("lineStrong", .4), 1);
+  drawPoly([[.98, -.62, z + ego.bodyHeight + .04], [ego.frontX - .22, -.72, z + ego.bodyHeight + .04], [ego.frontX - .22, .72, z + ego.bodyHeight + .04], [.98, .62, z + ego.bodyHeight + .04]], TH.a("accent", .1), TH.a("accent", .48), 1);
+  drawPoly([[ego.rearX + .24, -.72, z + ego.bodyHeight + .03], [-.9, -.62, z + ego.bodyHeight + .03], [-.9, .62, z + ego.bodyHeight + .03], [ego.rearX + .24, .72, z + ego.bodyHeight + .03]], TH.a("lineStrong", .08), TH.a("lineStrong", .4), 1);
+  cuboid(-.2, .28, -.24, .24, z + ego.cabinHeight, z + ego.roofMarkerHeight, {
+    base: TH.a("deep", .34),
+    side: TH.a("accent", .1),
+    front: TH.a("accent", .14),
+    rear: TH.a("accent", .08),
+    top: TH.a("surface", .82),
+    stroke: TH.a("lineStrong", .56),
+    width: .9
+  });
+  drawLine3d([[ego.rearX, -ego.halfWidth, z + .12], [ego.rearX, ego.halfWidth, z + .12]], TH.a("lineStrong", .92), 1.6);
+  drawLine3d([[ego.frontX, -.56, z + ego.bodyHeight + .08], [ego.frontX + .26, 0, z + ego.bodyHeight + .08], [ego.frontX, .56, z + ego.bodyHeight + .08]], TH.a("accentBright", .82), 1.5);
   const wheelFill = TH.a("lineStrong", .8);
   const wheelStroke = TH.a("surface", .9);
-  for (const x of [1.32, -1.42]) {
-    for (const y of [1.08, -1.08]) {
-      drawPoly([[x + .34, y, z + .16], [x + .34, y + Math.sign(y) * .2, z + .16], [x - .34, y + Math.sign(y) * .2, z + .16], [x - .34, y, z + .16]], wheelFill, wheelStroke, 1);
+  for (const x of [ego.frontWheelX, ego.rearWheelX]) {
+    for (const y of [ego.halfTread, -ego.halfTread]) {
+      const outerY = y + Math.sign(y) * .18;
+      drawPoly([[x + .38, y, z + .2], [x + .38, outerY, z + .2], [x - .38, outerY, z + .2], [x - .38, y, z + .2]], wheelFill, wheelStroke, 1);
     }
   }
-  const origin = project([0, 0, z + .9]);
-  const forward = project([6.2, 0, z + .9]);
-  const left = project([0, 3.8, z + .9]);
+  const origin = project([0, 0, z + ego.bodyHeight + .2]);
+  const forward = project([ego.frontX + 2.0, 0, z + ego.bodyHeight + .2]);
+  const left = project([0, ego.halfWidth + 2.8, z + ego.bodyHeight + .2]);
   ctx.lineWidth = 2;
   ctx.strokeStyle = TH.a("accent", .95);
   ctx.fillStyle = TH.a("accent", .95);
