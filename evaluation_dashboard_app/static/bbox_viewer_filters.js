@@ -80,8 +80,7 @@ function updateCompareControls() {
   if (on) {
     if (els.compareLayout.value === "split") els.compareLayout.value = "side_by_side";
   }
-  if (!on && els.colorMode.value === "run") els.colorMode.value = "status";
-  if (on && els.colorMode.value === "status") els.colorMode.value = "run";
+  if (els.colorMode.value === "run") els.colorMode.value = "status";
   setCompareLayout(els.compareLayout.value === "curtain" ? "curtain" : "side_by_side", {skipRender: true});
   syncCycleButtons();
   updateCompareBanner();
@@ -264,7 +263,7 @@ async function loadScene(options = {}) {
     }
     if (state.compare) {
       if (!els.compareLayout.value || els.compareLayout.value === "split") els.compareLayout.value = "side_by_side";
-      if (els.colorMode.value === "status") els.colorMode.value = "run";
+      if (els.colorMode.value === "run") els.colorMode.value = "status";
     }
     syncCycleButtons();
     syncCompareIssueLabels();

@@ -23,8 +23,7 @@ var colorModes = [
   ["status", "Color: Eval"],
   ["error", "Color: Error"],
   ["confidence", "Color: Conf"],
-  ["source", "Color: Source"],
-  ["run", "Color: Run"]
+  ["source", "Color: Source"]
 ];
 var labelModes = [
   ["label_status", "Label: Class"],

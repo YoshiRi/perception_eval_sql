@@ -102,8 +102,7 @@ function drawEgoGlyph() {
 }
 function boxColor(b) {
   if (els.colorMode.value === "run") {
-    if (b.run === "A") return b.status === "FP" ? TH.c("warn") : TH.c("runA");
-    if (b.run === "B") return b.status === "FP" ? TH.c("errHigh") : TH.c("runB");
+    return evalLayerColor(b);
   }
   if (els.colorMode.value === "source") return b.source === "GT" ? TH.c("runA") : TH.c("bad");
   if (els.colorMode.value === "confidence") {
@@ -147,9 +146,9 @@ function labelText(b) {
   if (els.labelMode.value === "uuid") return (b.uuid || b.pair_uuid || "").slice(0, 8);
   if (els.labelMode.value === "label_conf") {
     const c = b.confidence == null ? "" : ` ${(Number(b.confidence) || 0).toFixed(2)}`;
-    return `${state.compare ? `${b.run}:` : ""}${b.label || "box"}${c}`;
+    return `${b.label || "box"}${c}`;
   }
-  return `${state.compare ? `${b.run}:` : ""}${b.label || "box"} · ${b.status || b.source || ""}`;
+  return `${b.label || "box"} · ${b.status || b.source || ""}`;
 }
 function drawLabel(b, pts, color, rank, total) {
   const text = labelText(b);
