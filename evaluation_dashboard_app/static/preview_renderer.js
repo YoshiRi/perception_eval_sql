@@ -1,5 +1,7 @@
 var PREVIEW_MAX_COORD_ABS = 10000;
 var PREVIEW_MAX_VIEW_EXTENT = 500;
+var PREVIEW_EGO_LENGTH_METERS = 4.89;
+var PREVIEW_EGO_MAX_VIEW_FRACTION = 0.78;
 
 function validPreviewBox(box) {
   const x = Number(box && box.x);
@@ -287,7 +289,10 @@ function previewViewExtent() {
 function previewScaleForRect(r) {
   const width = Number(r.width ?? r.w) || 1;
   const height = Number(r.height ?? r.h) || 1;
-  return Math.min(width, height) / Math.max(8, previewViewExtent() * 2.15) * state.previewScale;
+  const minSide = Math.min(width, height);
+  const scale = minSide / Math.max(8, previewViewExtent() * 2.15) * state.previewScale;
+  const egoReadableScale = minSide * PREVIEW_EGO_MAX_VIEW_FRACTION / PREVIEW_EGO_LENGTH_METERS;
+  return Math.min(scale, egoReadableScale);
 }
 function previewInteractionViewport(rect, clientX = null) {
   if (!state.compare) return {x: 0, y: 0, width: rect.width, height: rect.height};
