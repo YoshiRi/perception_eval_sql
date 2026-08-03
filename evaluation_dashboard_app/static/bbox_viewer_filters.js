@@ -324,6 +324,7 @@ async function loadScene(options = {}) {
     state.selected = null;
     els.slider.max = Math.max(0, state.frames.length - 1);
     fitBounds();
+    applyViewerPrefs({camera: true});
     updateStats(data);
     updateCompareBanner();
     await loadDevopsViewerResult(filters);

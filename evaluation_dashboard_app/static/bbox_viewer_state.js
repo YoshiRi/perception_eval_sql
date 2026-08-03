@@ -73,6 +73,104 @@ var overviewCtx = els.overview.getContext("2d");
 var edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
 var activeViewport = null;
 state.deepLink = readDeepLink();
+var BBOX_VIEWER_PREFS_KEY = "bbox.viewer.status.v1";
+var viewerPrefsSaveTimer = null;
+
+function readViewerPrefs() {
+  try {
+    const raw = window.localStorage.getItem(BBOX_VIEWER_PREFS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_err) {
+    return {};
+  }
+}
+state.viewerPrefs = readViewerPrefs();
+
+function selectHasValue(select, value) {
+  return Boolean(select && [...select.options].some(option => option.value === value));
+}
+function finiteNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+function applyViewerPrefs({camera = false, controls = false} = {}) {
+  const prefs = state.viewerPrefs || {};
+  if (controls) {
+    if (selectHasValue(els.viewMode, prefs.viewMode)) els.viewMode.value = prefs.viewMode;
+    if (selectHasValue(els.colorMode, prefs.colorMode)) els.colorMode.value = prefs.colorMode;
+    else if (prefs.colorMode === "run") els.colorMode.value = "status";
+    if (selectHasValue(els.labelMode, prefs.labelMode)) els.labelMode.value = prefs.labelMode;
+    if (selectHasValue(els.compareLens, prefs.compareLens)) els.compareLens.value = prefs.compareLens;
+    if (selectHasValue(els.compareLayout, prefs.compareLayout)) els.compareLayout.value = prefs.compareLayout;
+    for (const [el, key] of [[els.showVelocity, "showVelocity"], [els.showRings, "showRings"], [els.showErrors, "showErrors"], [els.dedupeRows, "dedupeRows"]]) {
+      if (el && typeof prefs[key] === "boolean") el.checked = prefs[key];
+    }
+    if (els.boxOpacity && prefs.boxOpacity != null) els.boxOpacity.value = String(prefs.boxOpacity);
+    if (els.confMin && prefs.confMin != null) els.confMin.value = String(prefs.confMin);
+    if (els.playSpeed && prefs.playSpeed != null) els.playSpeed.value = String(prefs.playSpeed);
+    if (els.advancedPanel && typeof prefs.advancedOpen === "boolean") els.advancedPanel.classList.toggle("show", prefs.advancedOpen);
+    if (typeof prefs.trails === "boolean") state.trails = prefs.trails;
+    if (typeof prefs.hotspotMode === "string") state.hotspotMode = prefs.hotspotMode || "all";
+    if (prefs.curtainX != null) state.curtainX = Math.max(0.08, Math.min(0.92, finiteNumber(prefs.curtainX, state.curtainX)));
+    if (Array.isArray(prefs.activeLayers)) {
+      const active = new Set(prefs.activeLayers);
+      els.layerChips.querySelectorAll(".chip").forEach(chip => chip.classList.toggle("active", active.has(chip.dataset.layer)));
+    }
+    els.hotspotModes.querySelectorAll("button").forEach(btn => btn.classList.toggle("active", btn.dataset.hotspot === state.hotspotMode));
+  }
+  if (camera && prefs.camera) {
+    const yaw = finiteNumber(prefs.camera.yaw);
+    const pitch = finiteNumber(prefs.camera.pitch);
+    const distance = finiteNumber(prefs.camera.distance);
+    const panX = finiteNumber(prefs.camera.panX);
+    const panY = finiteNumber(prefs.camera.panY);
+    if (yaw != null) state.yaw = yaw;
+    if (pitch != null) state.pitch = pitch;
+    if (distance != null) state.distance = Math.max(BBOX_VIEWER_MIN_DISTANCE || 0, distance);
+    if (panX != null) state.panX = panX;
+    if (panY != null) state.panY = panY;
+  }
+}
+function captureViewerPrefs() {
+  return {
+    viewMode: els.viewMode.value,
+    colorMode: els.colorMode.value === "run" ? "status" : els.colorMode.value,
+    labelMode: els.labelMode.value,
+    compareLens: els.compareLens.value,
+    compareLayout: els.compareLayout.value,
+    showVelocity: els.showVelocity.checked,
+    showRings: els.showRings.checked,
+    showErrors: els.showErrors.checked,
+    dedupeRows: els.dedupeRows.checked,
+    boxOpacity: els.boxOpacity.value,
+    confMin: els.confMin.value,
+    playSpeed: els.playSpeed.value,
+    advancedOpen: els.advancedPanel.classList.contains("show"),
+    trails: state.trails,
+    hotspotMode: state.hotspotMode,
+    curtainX: state.curtainX,
+    activeLayers: [...els.layerChips.querySelectorAll(".chip.active")].map(chip => chip.dataset.layer).filter(Boolean),
+    camera: {
+      yaw: state.yaw,
+      pitch: state.pitch,
+      distance: state.distance,
+      panX: state.panX,
+      panY: state.panY
+    }
+  };
+}
+function saveViewerPrefs() {
+  try {
+    state.viewerPrefs = captureViewerPrefs();
+    window.localStorage.setItem(BBOX_VIEWER_PREFS_KEY, JSON.stringify(state.viewerPrefs));
+  } catch (_err) {
+    /* private mode or storage quota: ignore */
+  }
+}
+function scheduleViewerPrefsSave() {
+  clearTimeout(viewerPrefsSaveTimer);
+  viewerPrefsSaveTimer = setTimeout(saveViewerPrefs, 120);
+}
 
 function shortPathName(path) {
   const raw = String(path || "").split(/[\\/]/).filter(Boolean).slice(-2).join("/");

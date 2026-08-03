@@ -314,6 +314,9 @@ window.addEventListener("keydown", (ev) => {
     if (state.compare) cycleSelect(els.compareLens, compareLensModes);
   }
 });
+applyViewerPrefs({controls: true, camera: true});
+if (state.trails) els.toggleTrails.style.background = TH.a("accent", .36);
+window.addEventListener("beforeunload", saveViewerPrefs);
 syncCycleButtons();
 updateCompareControls();
 scan().then(() => render());

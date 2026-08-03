@@ -445,4 +445,5 @@ function render() {
   renderFrameCurve();
   renderOverviewMap();
   els.readout.textContent = state.frames.length ? `frame ${f.frame} · ${state.framePos + 1}/${state.frames.length} · ${visible.length}/${f.boxes.length} visible · TP ${m.tp} FP ${m.fp} FN ${m.fn}` : "no scene loaded";
+  if (typeof scheduleViewerPrefsSave === "function") scheduleViewerPrefsSave();
 }
