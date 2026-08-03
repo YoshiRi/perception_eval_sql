@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Specsheet PDF生成パイプライン比較</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --ink: #17202c;
+      --muted: #667487;
+      --line: #d7dee8;
+      --app: #117a8b;
+      --lib: #6b4fa3;
+      --shared: #475b73;
+      --warn: #a66412;
+      --panel: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Noto Sans CJK JP", "Noto Sans JP", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    header {
+      padding: 28px 24px;
+      background: #17202c;
+      color: #fff;
+      border-bottom: 5px solid #46a5a5;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0;
+      line-height: 1.2;
+    }
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 14px 0 8px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    p { margin: 0 0 10px; }
+    code {
+      padding: 1px 5px;
+      border: 1px solid #dfe5ee;
+      border-radius: 4px;
+      background: #eef2f7;
+      font-family: Consolas, "Liberation Mono", monospace;
+      font-size: .94em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      margin: 10px 0 18px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #e9eff6; }
+    ul { margin: 6px 0 14px 22px; padding: 0; }
+    li { margin: 3px 0; }
+    .lead { max-width: 920px; color: #dce6f1; }
+    .grid { display: grid; gap: 14px; }
+    .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .app { background: var(--app); }
+    .lib { background: var(--lib); }
+    .shared { background: var(--shared); }
+    .warn {
+      background: #fff8e8;
+      border: 1px solid #e5c678;
+      border-left: 5px solid var(--warn);
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin: 12px 0 18px;
+    }
+    .diagram {
+      overflow-x: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      margin: 10px 0 20px;
+    }
+    .flow {
+      min-width: 900px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .step {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-top: 5px solid var(--shared);
+      border-radius: 7px;
+      padding: 10px;
+      min-height: 102px;
+    }
+    .step.appline { border-top-color: var(--app); }
+    .step.libline { border-top-color: var(--lib); }
+    .step strong { display: block; margin-bottom: 4px; }
+    .step span { color: var(--muted); font-size: 13px; }
+    .seq {
+      min-width: 960px;
+      display: grid;
+      grid-template-columns: 135px repeat(6, minmax(130px, 1fr));
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .seq div {
+      min-height: 62px;
+      padding: 8px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .head, .actor {
+      background: #e9eff6;
+      font-weight: 700;
+    }
+    .a { background: #eef8fa; }
+    .l { background: #f3effb; }
+    .s { background: #f8fafc; }
+    .sequence-svg {
+      min-width: 1040px;
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #fff;
+    }
+    .seq-title { font-size: 17px; font-weight: 700; fill: var(--ink); }
+    .seq-actor { fill: #eef3f8; stroke: #aebbd0; stroke-width: 1; }
+    .seq-actor.app { fill: #e6f6f8; stroke: var(--app); }
+    .seq-actor.lib { fill: #f1ecfa; stroke: var(--lib); }
+    .seq-label { font-size: 12px; font-weight: 700; fill: var(--ink); }
+    .seq-small { font-size: 11px; fill: var(--muted); }
+    .seq-line { stroke: #9facbd; stroke-width: 1.2; stroke-dasharray: 5 5; }
+    .seq-msg { stroke: #263142; stroke-width: 1.4; marker-end: url(#arrow); }
+    .seq-return { stroke: #667487; stroke-width: 1.2; stroke-dasharray: 5 4; marker-end: url(#arrow-muted); }
+    .seq-app { stroke: var(--app); }
+    .seq-lib { stroke: var(--lib); }
+    .seq-note { fill: #fff8e8; stroke: #e5c678; stroke-width: 1; }
+    .seq-activation { fill: #fdfefe; stroke: #738197; stroke-width: 1; }
+    .seq-text { font-size: 12px; fill: #17202c; }
+    .seq-text-muted { font-size: 11px; fill: #667487; }
+    .tree {
+      white-space: pre;
+      font-family: Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #263142;
+    }
+    .mini { color: var(--muted); font-size: 13px; }
+    @media (max-width: 850px) {
+      main { padding: 16px; }
+      .cols-2, .cols-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Specsheet PDF生成パイプライン比較</h1>
+    <p class="lead">
+      本アプリで生成する場合と、内部ライブラリ <code>perception_catalog_analyzer</code> / CLI名 <code>awspec</code> を直接使う場合の違い。
+      JIRA共有用に、要点と図を中心にまとめる。
+    </p>
+  </header>
+
+  <main>
+    <section>
+      <h2>結論</h2>
+      <div class="grid cols-3">
+        <div class="card">
+          <span class="badge app">本アプリ</span>
+          <h3>リリース生成ワークフロー</h3>
+          <p>Evaluator Jobの実行/再利用、成果物DL、trend用metadata/summary作成、topic補正、PDF生成までをまとめて管理する。</p>
+        </div>
+        <div class="card">
+          <span class="badge lib">awspec直接</span>
+          <h3>ライブラリ標準ワークフロー</h3>
+          <p>既存Job IDを入力し、<code>output/export</code> と <code>output/pdf</code> 配下に標準形式でPDFを生成する。</p>
+        </div>
+        <div class="card">
+          <span class="badge shared">差分の本質</span>
+          <h3>Appは前処理/管理層</h3>
+          <p>PDF本体の計算・描画は同じライブラリに依存するが、Appはその前後の運用処理を追加している。</p>
+        </div>
+      </div>
+      <div class="warn">
+        補足: この環境では <code>awspec</code> というPython moduleは存在しない。<code>perception_catalog_analyzer.cli</code> 内で定義されたCLI名が <code>awspec</code>。
+      </div>
+    </section>
+
+    <section>
+      <h2>全体フロー比較</h2>
+      <h3>本アプリを使う場合</h3>
+      <div class="diagram">
+        <div class="flow">
+          <div class="step appline">
+            <strong>1. Release Workflow開始</strong>
+            <span>project / target / version / topic / labels / trend metadata を受け取る</span>
+          </div>
+          <div class="step appline">
+            <strong>2. Evaluator Job準備</strong>
+            <span>Performance / DevOps をschedule、または既存Job/local artifactを再利用</span>
+          </div>
+          <div class="step appline">
+            <strong>3. App形式に保存</strong>
+            <span><code>data/release_spec_*/performance</code>, <code>devops</code> にparquet等を配置</span>
+          </div>
+          <div class="step appline">
+            <strong>4. Trend入力を作成</strong>
+            <span><code>metadata.yaml</code>, <code>summary.json</code> を保存/検証。DevOps summaryも作成</span>
+          </div>
+          <div class="step libline">
+            <strong>5. AnalyzerでPDF生成</strong>
+            <span><code>get_blocks</code>, plot生成, <code>update_template</code>, <code>specsheet</code></span>
+          </div>
+        </div>
+      </div>
+
+      <h3><code>awspec</code> を直接使う場合</h3>
+      <div class="diagram">
+        <div class="flow">
+          <div class="step libline">
+            <strong>1. Job IDを指定</strong>
+            <span><code>full</code>, <code>usecase</code>, <code>devops</code> job id とmetadata pathを指定</span>
+          </div>
+          <div class="step libline">
+            <strong>2. 標準path作成</strong>
+            <span><code>PathManager</code> が <code>output/export</code>, <code>output/pdf</code> を作る</span>
+          </div>
+          <div class="step libline">
+            <strong>3. Export</strong>
+            <span>Performanceは <code>current/future</code>、DevOpsは <code>devops.csv</code></span>
+          </div>
+          <div class="step libline">
+            <strong>4. Blocks/Trend生成</strong>
+            <span>metric block、DevOps plot、trend plotを作成</span>
+          </div>
+          <div class="step libline">
+            <strong>5. PDF出力</strong>
+            <span><code>specsheet.html</code> と <code>specsheet.pdf</code> を出力</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Sequence Diagram</h2>
+      <h3>本アプリ経由でSpecsheet PDFを生成する場合</h3>
+      <div class="diagram">
+        <svg class="sequence-svg" viewBox="0 0 1220 1160" role="img" aria-label="Detailed dashboard app sequence diagram">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#263142"></path>
+            </marker>
+            <marker id="arrow-muted" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#667487"></path>
+            </marker>
+          </defs>
+
+          <text x="20" y="28" class="seq-title">App Pipeline Detail: release orchestration + app wrapper + analyzer rendering</text>
+
+          <rect x="28" y="50" width="142" height="42" rx="6" class="seq-actor app"></rect>
+          <text x="99" y="75" text-anchor="middle" class="seq-label">Streamlit UI</text>
+          <rect x="218" y="50" width="154" height="42" rx="6" class="seq-actor app"></rect>
+          <text x="295" y="75" text-anchor="middle" class="seq-label">Task Queue</text>
+          <rect x="420" y="50" width="170" height="42" rx="6" class="seq-actor app"></rect>
+          <text x="505" y="75" text-anchor="middle" class="seq-label">worker/tasks.py</text>
+          <rect x="638" y="50" width="176" height="42" rx="6" class="seq-actor app"></rect>
+          <text x="726" y="75" text-anchor="middle" class="seq-label">Evaluator API / DL</text>
+          <rect x="862" y="50" width="180" height="42" rx="6" class="seq-actor app"></rect>
+          <text x="952" y="68" text-anchor="middle" class="seq-label">lib/specsheet_report.py</text>
+          <text x="952" y="84" text-anchor="middle" class="seq-small">App wrapper</text>
+          <rect x="1080" y="50" width="170" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="1165" y="68" text-anchor="middle" class="seq-label">perception_catalog_</text>
+          <text x="1165" y="83" text-anchor="middle" class="seq-label">analyzer</text>
+
+          <line x1="99" y1="92" x2="99" y2="1110" class="seq-line"></line>
+          <line x1="295" y1="92" x2="295" y2="1110" class="seq-line"></line>
+          <line x1="505" y1="92" x2="505" y2="1110" class="seq-line"></line>
+          <line x1="726" y1="92" x2="726" y2="1110" class="seq-line"></line>
+          <line x1="952" y1="92" x2="952" y2="1110" class="seq-line"></line>
+          <line x1="1165" y1="92" x2="1165" y2="1110" class="seq-line"></line>
+
+          <rect x="288" y="118" width="14" height="56" class="seq-activation"></rect>
+          <line x1="99" y1="132" x2="288" y2="132" class="seq-msg seq-app"></line>
+          <text x="116" y="125" class="seq-text">submit release workflow</text>
+          <text x="116" y="148" class="seq-text-muted">project, target, version, topic, labels, trend metadata</text>
+
+          <rect x="498" y="178" width="14" height="476" class="seq-activation"></rect>
+          <line x1="302" y1="188" x2="498" y2="188" class="seq-msg seq-app"></line>
+          <text x="318" y="181" class="seq-text">job_run_release_specsheet_workflow()</text>
+
+          <rect x="404" y="212" width="238" height="70" rx="6" class="seq-note"></rect>
+          <text x="418" y="233" class="seq-text">validate + prepare release root</text>
+          <text x="418" y="252" class="seq-text-muted">requires tags: [trend]</text>
+          <text x="418" y="270" class="seq-text-muted">write data/release_spec_*/metadata.yaml</text>
+
+          <line x1="512" y1="310" x2="720" y2="310" class="seq-msg seq-app"></line>
+          <text x="528" y="303" class="seq-text">schedule_job() or reuse job/local artifacts</text>
+          <text x="528" y="326" class="seq-text-muted">Performance, DevOps, optional Planning Test</text>
+          <line x1="720" y1="354" x2="512" y2="354" class="seq-return"></line>
+          <text x="528" y="348" class="seq-text-muted">job_id, report_url, status</text>
+
+          <line x1="512" y1="392" x2="720" y2="392" class="seq-msg seq-app"></line>
+          <text x="528" y="385" class="seq-text">wait_for_job_completion()</text>
+          <text x="528" y="408" class="seq-text-muted">poll and update task progress</text>
+          <line x1="720" y1="436" x2="512" y2="436" class="seq-return"></line>
+          <text x="528" y="430" class="seq-text-muted">final_report + suite_rows</text>
+
+          <line x1="512" y1="474" x2="720" y2="474" class="seq-msg seq-app"></line>
+          <text x="528" y="467" class="seq-text">_build_release_analysis_artifacts()</text>
+          <text x="528" y="490" class="seq-text-muted">download archives/results, generate parquet</text>
+          <line x1="720" y1="522" x2="512" y2="522" class="seq-return"></line>
+          <text x="528" y="516" class="seq-text-muted">performance/current.parquet, future.parquet, devops artifacts</text>
+
+          <path d="M512 568 C610 568,610 620,512 620" fill="none" class="seq-msg seq-app"></path>
+          <text x="532" y="562" class="seq-text">write release trend inputs</text>
+          <text x="532" y="581" class="seq-text-muted">write_trend_metadata(devops_path)</text>
+          <text x="532" y="599" class="seq-text-muted">_write_devops_trend_summary(resources/summary.json)</text>
+
+          <rect x="945" y="672" width="14" height="410" class="seq-activation"></rect>
+          <line x1="512" y1="682" x2="945" y2="682" class="seq-msg seq-app"></line>
+          <text x="532" y="675" class="seq-text">generate_specsheet_pdf(performance_path)</text>
+          <text x="532" y="698" class="seq-text-muted">force overwrite, include_trend=True</text>
+
+          <path d="M959 724 C1050 724,1050 780,959 780" fill="none" class="seq-msg seq-app"></path>
+          <text x="978" y="718" class="seq-text">ensure_specsheet_csvs()</text>
+          <text x="978" y="737" class="seq-text-muted">parquet → csv; fallback pkl/pkl.z → csv</text>
+          <text x="978" y="755" class="seq-text-muted">App-only tolerance for missing CSV</text>
+
+          <path d="M959 808 C1050 808,1050 850,959 850" fill="none" class="seq-msg seq-app"></path>
+          <text x="978" y="802" class="seq-text">resolve topic + metric list</text>
+          <text x="978" y="821" class="seq-text-muted">detect topic_name/topic columns; add future metrics if future exists</text>
+
+          <rect x="1158" y="868" width="14" height="74" class="seq-activation"></rect>
+          <line x1="959" y1="878" x2="1158" y2="878" class="seq-msg seq-lib"></line>
+          <text x="978" y="871" class="seq-text">_scene_dataframe_from_dir_compat()</text>
+          <text x="978" y="894" class="seq-text-muted">calls SceneDataFrame.from_dir(run_path, topic)</text>
+          <line x1="1158" y1="942" x2="959" y2="942" class="seq-return"></line>
+          <text x="978" y="936" class="seq-text-muted">filtered SceneDataFrame</text>
+
+          <rect x="1158" y="960" width="14" height="84" class="seq-activation"></rect>
+          <line x1="959" y1="972" x2="1158" y2="972" class="seq-msg seq-lib"></line>
+          <text x="978" y="965" class="seq-text">_get_blocks_compat() → get_blocks()</text>
+          <text x="978" y="988" class="seq-text-muted">bin_polar, add_blocks, resources/summary.json</text>
+          <line x1="1158" y1="1044" x2="959" y2="1044" class="seq-return"></line>
+          <text x="978" y="1038" class="seq-text-muted">abstract_html, detailed_html</text>
+
+          <path d="M959 1068 C1052 1068,1052 1122,959 1122" fill="none" class="seq-msg seq-app"></path>
+          <text x="978" y="1062" class="seq-text">trend context + final render</text>
+          <text x="978" y="1081" class="seq-text-muted">ensure_full_trend_summary, scan data root, normalize DevOps</text>
+          <text x="978" y="1099" class="seq-text-muted">generate_*_trend_plot, update_template, specsheet</text>
+
+          <line x1="945" y1="1136" x2="512" y2="1136" class="seq-return"></line>
+          <text x="532" y="1130" class="seq-text-muted">performance/specsheet/specsheet.pdf</text>
+        </svg>
+      </div>
+
+      <h3><code>awspec</code> を直接使ってSpecsheet PDFを生成する場合</h3>
+      <div class="diagram">
+        <svg class="sequence-svg" viewBox="0 0 1220 1080" role="img" aria-label="Detailed direct awspec sequence diagram">
+          <defs>
+            <marker id="arrow2" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#263142"></path>
+            </marker>
+            <marker id="arrow-muted2" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#667487"></path>
+            </marker>
+          </defs>
+          <style>
+            .direct-msg { marker-end: url(#arrow2); }
+            .direct-return { marker-end: url(#arrow-muted2); }
+          </style>
+
+          <text x="20" y="28" class="seq-title">Direct awspec Pipeline Detail: CLI controls export/pdf using library standard layout</text>
+
+          <rect x="28" y="50" width="146" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="101" y="75" text-anchor="middle" class="seq-label">Developer / CLI</text>
+          <rect x="218" y="50" width="150" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="293" y="75" text-anchor="middle" class="seq-label">cli.py</text>
+          <rect x="410" y="50" width="154" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="487" y="75" text-anchor="middle" class="seq-label">PathManager</text>
+          <rect x="606" y="50" width="170" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="691" y="75" text-anchor="middle" class="seq-label">data_build.py</text>
+          <rect x="818" y="50" width="170" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="903" y="68" text-anchor="middle" class="seq-label">SceneDataFrame</text>
+          <text x="903" y="84" text-anchor="middle" class="seq-small">get_blocks</text>
+          <rect x="1030" y="50" width="178" height="42" rx="6" class="seq-actor lib"></rect>
+          <text x="1119" y="68" text-anchor="middle" class="seq-label">template / specsheet</text>
+          <text x="1119" y="84" text-anchor="middle" class="seq-small">plot modules</text>
+
+          <line x1="101" y1="92" x2="101" y2="1030" class="seq-line"></line>
+          <line x1="293" y1="92" x2="293" y2="1030" class="seq-line"></line>
+          <line x1="487" y1="92" x2="487" y2="1030" class="seq-line"></line>
+          <line x1="691" y1="92" x2="691" y2="1030" class="seq-line"></line>
+          <line x1="903" y1="92" x2="903" y2="1030" class="seq-line"></line>
+          <line x1="1119" y1="92" x2="1119" y2="1030" class="seq-line"></line>
+
+          <rect x="286" y="120" width="14" height="812" class="seq-activation"></rect>
+          <line x1="101" y1="132" x2="286" y2="132" class="seq-msg seq-lib direct-msg"></line>
+          <text x="118" y="125" class="seq-text">awspec all(project_id, version, job ids, topic)</text>
+          <text x="118" y="148" class="seq-text-muted">direct mode expects caller to provide job IDs and metadata paths</text>
+
+          <rect x="480" y="176" width="14" height="86" class="seq-activation"></rect>
+          <line x1="300" y1="188" x2="480" y2="188" class="seq-msg seq-lib direct-msg"></line>
+          <text x="316" y="181" class="seq-text">PathManager(export_path, pdf_path, job ids, topic)</text>
+          <line x1="480" y1="252" x2="300" y2="252" class="seq-return direct-return"></line>
+          <text x="316" y="246" class="seq-text-muted">standard layout: output/export + output/pdf/{full}_{usecase}_{devops}/{topic}</text>
+
+          <rect x="684" y="286" width="14" height="332" class="seq-activation"></rect>
+          <line x1="300" y1="298" x2="684" y2="298" class="seq-msg seq-lib direct-msg"></line>
+          <text x="316" y="291" class="seq-text">_run_export()</text>
+          <text x="316" y="314" class="seq-text-muted">download_performance_data + download_devops_data</text>
+
+          <path d="M698 342 C804 342,804 396,698 396" fill="none" class="seq-msg seq-lib direct-msg"></path>
+          <text x="718" y="336" class="seq-text">for full/usecase job</text>
+          <text x="718" y="355" class="seq-text-muted">_store_metadata(metadata_path, export/{job_id})</text>
+          <text x="718" y="373" class="seq-text-muted">export_scene_results_to_pkl() or use archive if skip_download</text>
+
+          <line x1="698" y1="430" x2="896" y2="430" class="seq-msg seq-lib direct-msg"></line>
+          <text x="718" y="423" class="seq-text">scenarios_to_df() / scene2df()</text>
+          <line x1="896" y1="470" x2="698" y2="470" class="seq-return direct-return"></line>
+          <text x="718" y="464" class="seq-text-muted">SceneDataFrame</text>
+
+          <path d="M698 504 C806 504,806 558,698 558" fill="none" class="seq-msg seq-lib direct-msg"></path>
+          <text x="718" y="498" class="seq-text">save export data</text>
+          <text x="718" y="517" class="seq-text-muted">current/future parquet or csv</text>
+          <text x="718" y="535" class="seq-text-muted">devops job → devops.csv</text>
+
+          <line x1="684" y1="618" x2="300" y2="618" class="seq-return direct-return"></line>
+          <text x="316" y="612" class="seq-text-muted">export files ready</text>
+
+          <line x1="300" y1="658" x2="684" y2="658" class="seq-msg seq-lib direct-msg"></line>
+          <text x="316" y="651" class="seq-text">_run_pdf()</text>
+          <text x="316" y="674" class="seq-text-muted">build_performance_data + build_devops_data + build_trend_data</text>
+
+          <line x1="698" y1="704" x2="896" y2="704" class="seq-msg seq-lib direct-msg"></line>
+          <text x="718" y="697" class="seq-text">SceneDataFrame.from_dir(export/{job_id}, topic)</text>
+          <text x="718" y="720" class="seq-text-muted">direct mode uses passed topic; no app topic auto-correction</text>
+          <line x1="896" y1="748" x2="698" y2="748" class="seq-return direct-return"></line>
+
+          <line x1="698" y1="780" x2="896" y2="780" class="seq-msg seq-lib direct-msg"></line>
+          <text x="718" y="773" class="seq-text">get_blocks(df, labels, metrics, pdf_path, specsheet_path)</text>
+          <text x="718" y="796" class="seq-text-muted">full block; usecase block removes mAP/precision</text>
+          <line x1="896" y1="824" x2="698" y2="824" class="seq-return direct-return"></line>
+          <text x="718" y="818" class="seq-text-muted">abstract.json, detailed.json, summary.json</text>
+
+          <line x1="698" y1="858" x2="1112" y2="858" class="seq-msg seq-lib direct-msg"></line>
+          <text x="718" y="851" class="seq-text">build_devops_data()</text>
+          <text x="718" y="874" class="seq-text-muted">load devops.csv → devops summary + devops.png</text>
+
+          <line x1="698" y1="914" x2="1112" y2="914" class="seq-msg seq-lib direct-msg"></line>
+          <text x="718" y="907" class="seq-text">build_trend_data()</text>
+          <text x="718" y="930" class="seq-text-muted">scan pdf_path/**/metadata.yaml; generate map/prediction/devops trend plots</text>
+
+          <line x1="300" y1="970" x2="1112" y2="970" class="seq-msg seq-lib direct-msg"></line>
+          <text x="316" y="963" class="seq-text">update_template() + specsheet()</text>
+          <text x="316" y="986" class="seq-text-muted">Jinja template → numbered HTML/TOC → WeasyPrint PDF</text>
+          <line x1="1112" y1="1026" x2="300" y2="1026" class="seq-return direct-return"></line>
+          <text x="316" y="1020" class="seq-text-muted">output/pdf/.../specsheet/specsheet.pdf</text>
+
+          <rect x="28" y="1000" width="366" height="58" rx="6" class="seq-note"></rect>
+          <text x="42" y="1021" class="seq-text">Direct awspecの注意点</text>
+          <text x="42" y="1040" class="seq-text-muted">標準output構造・指定topic・現在のlibrary signatureに依存する</text>
+        </svg>
+      </div>
+    </section>
+
+    <section>
+      <h2>Trend Dataの流れ</h2>
+      <div class="diagram">
+        <div class="flow">
+          <div class="step appline">
+            <strong>metadata.yaml</strong>
+            <span>version / date / data_count / description / tags: [trend]</span>
+          </div>
+          <div class="step appline">
+            <strong>summary.json</strong>
+            <span>Full性能summary、またはDevOps pass-rate summary</span>
+          </div>
+          <div class="step appline">
+            <strong>Appで分類</strong>
+            <span>Full / Usecase / DevOps をJSON構造から判定</span>
+          </div>
+          <div class="step libline">
+            <strong>Plot生成</strong>
+            <span>mAP trend / prediction trend / DevOps trend PNG</span>
+          </div>
+          <div class="step libline">
+            <strong>PDFへ埋め込み</strong>
+            <span>template contextとして渡してHTML/PDF化</span>
+          </div>
+        </div>
+      </div>
+
+      <table>
+        <thead><tr><th>Trend種別</th><th>判定方法</th><th>PDFでの用途</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Full Performance</td>
+            <td><code>summary.blocks[].header == "全数データセット評価"</code></td>
+            <td>mAP / precision / recall / ADE-FDE trend</td>
+          </tr>
+          <tr>
+            <td>Usecase</td>
+            <td><code>summary.blocks[].header == "ユースケース評価"</code></td>
+            <td>Release groupingや一覧表示用。現在のApp生成PDF本文では主役ではない</td>
+          </tr>
+          <tr>
+            <td>DevOps</td>
+            <td><code>passed</code> / <code>total</code> を持つnested dict</td>
+            <td>Pass Rate trend / detail trend / current DevOps plot</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>出力構造の違い</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <span class="badge app">本アプリ</span>
+          <div class="tree">data/release_spec_&lt;release&gt;/
+  metadata.yaml
+  performance/
+    current.parquet / future.parquet
+    current.csv / future.csv
+    resources/
+      metadata.yaml
+      summary.json
+    specsheet/
+      resources/summary.json
+      trend_assets/*.png
+      specsheet.html
+      specsheet.pdf
+  devops/
+    resources/
+      metadata.yaml
+      summary.json</div>
+        </div>
+        <div class="card">
+          <span class="badge lib">awspec直接</span>
+          <div class="tree">output/export/
+  &lt;job_id&gt;/
+    archive/
+    current.parquet / future.parquet
+    metadata.yaml
+    devops.csv
+
+output/pdf/
+  &lt;full&gt;_&lt;usecase&gt;_&lt;devops&gt;/
+    &lt;topic&gt;/
+      &lt;job_id&gt;/summary.json
+      trend/*.png
+      specsheet/
+        specsheet.html
+        specsheet.pdf</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>開発者が注意すべき差分</h2>
+      <table>
+        <thead><tr><th>差分</th><th>影響</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>AppはJobをschedule/reuseする</td>
+            <td><code>awspec</code> 直接利用時は基本的にJob IDを用意する必要がある。</td>
+          </tr>
+          <tr>
+            <td>Appはtopicを自動検出する</td>
+            <td>指定topicがない場合、parquet/csv内のtopicへ補正されることがある。</td>
+          </tr>
+          <tr>
+            <td>AppはAnalyzer API互換wrapperを使う</td>
+            <td>Analyzerの関数signatureが変わっても壊れにくい。直接利用は現バージョンsignatureに依存。</td>
+          </tr>
+          <tr>
+            <td>Appのtrend履歴scan範囲が違う</td>
+            <td><code>release_spec_*</code> 配下は重複回避のためscan対象外。履歴はstandalone runや<code>trend_release_*</code>が主。</td>
+          </tr>
+          <tr>
+            <td>App生成PDFの本文はPerformance中心</td>
+            <td>現在のrelease workflowは <code>performance_path</code> に対して <code>evaluation_type="full"</code> で本文を作る。DevOpsはtrend/current plotとして入る。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>変更箇所別の注意点</h3>
+      <table>
+        <thead><tr><th>開発したい内容</th><th>まず見る場所</th><th>注意点</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Release workflowの入力項目を増やす</td>
+            <td><code>worker/tasks.py</code> の <code>job_run_release_specsheet_workflow</code></td>
+            <td>Task parameters、metadata保存、run status summaryの3つに同じ情報を通す必要がある。</td>
+          </tr>
+          <tr>
+            <td>PDFに出すmetricを変える</td>
+            <td><code>lib/specsheet_report.py</code> の <code>DEFAULT_SPECSHEET_METRICS</code> / <code>FUTURE_SPECSHEET_METRICS</code></td>
+            <td>Analyzer側が対応していないmetric名を渡すとblock生成で失敗する。future metricsは <code>future</code> dataframe有無も確認する。</td>
+          </tr>
+          <tr>
+            <td>Trend plotを増やす/変える</td>
+            <td><code>lib/specsheet_report.py</code> の <code>_build_trend_context</code></td>
+            <td>plot PNGを作るだけでなく、<code>_update_template_compat</code> 経由でtemplate contextに渡す必要がある。</td>
+          </tr>
+          <tr>
+            <td>Trend履歴の対象を変える</td>
+            <td><code>discover_trend_metadata_files</code></td>
+            <td><code>release_spec_*</code> をscan対象に戻すと、現在生成中のreleaseが履歴に二重計上される可能性がある。</td>
+          </tr>
+          <tr>
+            <td>Topic選択ロジックを変える</td>
+            <td><code>detect_specsheet_topic_names</code> / <code>resolve_specsheet_topic_name</code></td>
+            <td>Appは指定topicより実データ内topicを優先する場合がある。直接awspecとの差分になりやすい。</td>
+          </tr>
+          <tr>
+            <td>Analyzer libraryを更新する</td>
+            <td><code>_scene_dataframe_from_dir_compat</code>, <code>_get_blocks_compat</code>, <code>_update_template_compat</code>, <code>_specsheet_compat</code></td>
+            <td>Appはsignature差分を吸収している。library更新時はwrapperが新旧どちらにも対応しているか確認する。</td>
+          </tr>
+          <tr>
+            <td>DevOps表示を変える</td>
+            <td><code>_write_devops_trend_summary</code> と <code>load_devops_trend_data</code></td>
+            <td>DevOps summaryはnested dict構造。<code>passed</code>/<code>total</code> の階層を変えるとtrend分類・plot生成に影響する。</td>
+          </tr>
+          <tr>
+            <td>出力先や静的linkを変える</td>
+            <td><code>lib/release_specsheet_library.py</code> と import script</td>
+            <td>PDF生成場所とUI表示用/static公開場所は別。片方だけ変えるとJIRA/画面リンクが切れる。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>開発時の確認順序</h3>
+      <div class="diagram">
+        <div class="flow">
+          <div class="step appline">
+            <strong>1. 入口</strong>
+            <span><code>worker/tasks.py</code> で入力parameterとmetadataが期待通りか確認</span>
+          </div>
+          <div class="step appline">
+            <strong>2. Artifact</strong>
+            <span><code>performance/</code>, <code>devops/</code> にparquet, csv, summaryができるか確認</span>
+          </div>
+          <div class="step appline">
+            <strong>3. Topic/CSV</strong>
+            <span><code>resolve_specsheet_topic_name</code> と <code>ensure_specsheet_csvs</code> の結果を確認</span>
+          </div>
+          <div class="step libline">
+            <strong>4. Blocks</strong>
+            <span><code>specsheet/resources/summary.json</code> がfullとして分類されるか確認</span>
+          </div>
+          <div class="step libline">
+            <strong>5. PDF</strong>
+            <span><code>trend_assets/*.png</code>, <code>specsheet.html</code>, <code>specsheet.pdf</code> を確認</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>関連実装</h2>
+      <table>
+        <thead><tr><th>File</th><th>役割</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>worker/tasks.py</code></td>
+            <td>Release workflow本体。Job準備、artifact作成、DevOps summary作成、PDF生成呼び出し。</td>
+          </tr>
+          <tr>
+            <td><code>lib/specsheet_report.py</code></td>
+            <td>App側のPDF生成wrapper。topic検出、CSV補完、trend context生成、互換wrapper。</td>
+          </tr>
+          <tr>
+            <td><code>perception_catalog_analyzer/cli.py</code></td>
+            <td><code>awspec export/pdf/all</code> のCLI flow。</td>
+          </tr>
+          <tr>
+            <td><code>perception_catalog_analyzer/data_build.py</code></td>
+            <td>直接利用時のexport、blocks作成、DevOps/trendデータ作成。</td>
+          </tr>
+          <tr>
+            <td><code>perception_catalog_analyzer/specsheet/specsheet.py</code></td>
+            <td>HTML block結合、目次付与、WeasyPrint PDF出力。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="mini">
+        詳細版: <code>docs/specsheet_pipeline_comparison.html</code>。このファイルはJIRA向けの短縮・図中心版。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

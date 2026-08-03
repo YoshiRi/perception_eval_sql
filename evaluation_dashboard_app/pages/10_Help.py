@@ -20,6 +20,28 @@ render_page_hero(
     mode="Single Run",
 )
 
+GUIDE_BASE = "app/static/guide"
+GUIDE_CHAPTERS = [
+    ("Guide home", "index.html", "System map, chapter routing, artifact matrix"),
+    ("Getting Started", "getting_started.html", "Download or Workflow path, run selection, share links"),
+    ("Page Reference", "pages.html", "Every page: inputs, sections, compare mode, empty states"),
+    ("Viewers & 3D", "visual_systems.html", "BEV viewer, T4 3D viewer, Local BBox tooling, T4 server console"),
+    ("Data & Reports", "data_reports.html", "Run folder anatomy, PDF report, exports, housekeeping"),
+    ("Specsheet & Trends", "specsheet.html", "Release spec-sheet, trend groups, Trend Insights"),
+    ("Deployment", "deployment.html", "Local, Docker stack, env vars, local client, debug pages"),
+]
+
+st.markdown(
+    "#### 📘 Full documentation site\n"
+    "The illustrated guide covers every page with screenshots, workflows, and "
+    "troubleshooting — open it in a new tab:"
+)
+link_cols = st.columns(4)
+for idx, (label, page, help_text) in enumerate(GUIDE_CHAPTERS):
+    with link_cols[idx % 4]:
+        st.markdown(f"[**{label}**]({GUIDE_BASE}/{page})  \n{help_text}", help=None)
+st.divider()
+
 # Streamlit markdown does not run Mermaid; split fenced ```mermaid blocks and render via Mermaid.js.
 MERMAID_FENCE = re.compile(r"```mermaid\s*\n([\s\S]*?)```", re.IGNORECASE)
 IMAGE_PATTERN = re.compile(r"!\[(.*?)\]\((.*?)\)")

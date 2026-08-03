@@ -1,5 +1,7 @@
 # Evaluation Dashboard
 
+> 📘 **Documentation site**: a detailed, illustrated guide covering every page lives at [docs/guide/index.html](docs/guide/index.html). On a running dashboard it is also served at `<app URL>/app/static/guide/index.html` (linked from the Help page).
+
 ## Required Installation
 
 This dashboard and evaluation tool require the following prerequisites and Python packages.

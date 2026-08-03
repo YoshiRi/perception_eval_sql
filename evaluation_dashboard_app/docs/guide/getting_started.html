@@ -3,204 +3,242 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>How to Use the Evaluation Dashboard</title>
+  <title>Getting Started — Evaluation Dashboard Guide</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="hero compact">
-    <div class="shell">
-      <div class="eyebrow"><span class="signal"></span>User Workflow</div>
-      <h1>How to Use</h1>
-      <p class="lead">
-        This is the practical path for users: get evaluator data, generate artifacts, view a run,
-        compare candidate results, and share the exact dashboard state with teammates.
-      </p>
-    </div>
-  </header>
-  <nav>
-    <div class="shell nav-inner">
-      <a href="index.html">Home</a>
-      <a class="active" href="getting_started.html">How to Use</a>
-      <a href="pages.html">Pages</a>
-      <a href="data_reports.html">Data & Reports</a>
-      <a href="specsheet.html">Specsheet</a>
-      <a href="deployment.html">Deployment</a>
-      <a href="visual_systems.html">Diagrams</a>
+
+  <nav class="topnav">
+    <div class="shell topnav-inner">
+      <a class="brand" href="index.html"><span class="tick">▸</span> EVAL·DASH GUIDE</a>
+      <a class="navlink" href="index.html">Home</a>
+      <a class="navlink active" href="getting_started.html">Getting Started</a>
+      <a class="navlink" href="pages.html">Page Reference</a>
+      <a class="navlink" href="visual_systems.html">Viewers &amp; 3D</a>
+      <a class="navlink" href="data_reports.html">Data &amp; Reports</a>
+      <a class="navlink" href="specsheet.html">Specsheet &amp; Trends</a>
+      <a class="navlink" href="deployment.html">Deployment</a>
     </div>
   </nav>
 
+  <header class="hero">
+    <div class="shell">
+      <span class="kicker">Getting Started</span>
+      <h1>From evaluator job to first insight.</h1>
+      <p class="lead">
+        There are two ways to get evaluation results onto the dashboard: the
+        <strong>manual path</strong> on the Download page (paste a job ID, download, evaluate) and the
+        <strong>automated path</strong> on the Workflow page (schedule the evaluator job and let a background
+        worker do everything). Both end at the same place: a run folder under <code>data/</code> that you
+        select on Overview.
+      </p>
+      <div class="hero-meta">
+        <span class="pill est">Manual · Download page</span>
+        <span class="pill tp">Automated · Workflow page</span>
+        <span class="pill fn">Offline · Local desktop client</span>
+      </div>
+    </div>
+  </header>
+
   <main>
-    <section id="download" class="reveal">
+
+    <section class="block reveal" id="manual">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Workflow 1</div>
-          <h2>Download evaluator results into a run folder.</h2>
-          <p class="lead">
-            A run is normally one direct subdirectory under <code>data/</code>. Use one folder per test so
-            it is easy to select in Overview and safe to delete later.
+          <span class="kicker">Path A — Manual</span>
+          <h2>Download page: paste IDs, download, evaluate.</h2>
+          <p>Use this when the evaluator job already finished and you just want its results locally.</p>
+        </div>
+
+        <div class="flow h">
+          <div class="step"><span class="n">01</span><strong>Configure</strong><span>Sidebar: Project ID (e.g. <code>x2_dev</code>), Job ID or the full report URL (the ID is auto-extracted), optional Suite, and an Output Path dedicated to this test.</span></div>
+          <div class="step"><span class="n">02</span><strong>Download</strong><span>Tab “Download Results”. Pick Archives (ZIP) with a phase to extract, or Result JSON only. Or press the one-click <strong>Download + Eval + Parquet</strong>.</span></div>
+          <div class="step"><span class="n">03</span><strong>Evaluate</strong><span>Tab “Eval Results”: run <code>eval_result</code>, generate Summary.csv / Score.csv, and build <code>scene_result.parquet</code>.</span></div>
+          <div class="step"><span class="n">04</span><strong>Select</strong><span>Open Overview, choose the new run as Baseline (A). Every other page now follows.</span></div>
+        </div>
+
+        <div class="shot est">
+          <span class="bracket"></span>
+          <span class="shot-label">Download · results downloader</span>
+          <img src="img/download.png" alt="Download page with the configuration sidebar, Download Job Results controls, and the one-click Download + Eval + Parquet section" />
+        </div>
+        <p class="shot-caption">
+          The Download page. Left: shared configuration (project, job, suites, output path, download type).
+          Right: per-action tabs — Download Results, Download Scenarios, View Downloads, Eval Results.
+        </p>
+
+        <div class="callout warn">
+          <span class="callout-title">Prerequisite for CSV generation</span>
+          <p>
+            Generating <code>Summary.csv</code> / <code>Score.csv</code> needs a pilot-auto (ROS 2)
+            environment with <code>perception_eval</code> importable —
+            <code>source path_to_pilot/install/setup.sh</code> before starting Streamlit when running
+            locally. In the Docker deployment the workers already have it.
           </p>
         </div>
-        <div class="flow">
-          <div class="step"><strong>Open Workflow or Download</strong><span>Use <strong>Evaluator Workflow</strong> for the guided path, or <code>pages/6_Download.py</code> for manual tabs.</span></div>
-          <div class="step"><strong>Select Download Results</strong><span>Enter Project ID, Job ID, and optional Suite ID.</span></div>
-          <div class="step"><strong>Choose Output Path</strong><span>Recommended: <code>data/&lt;test_name&gt;</code>.</span></div>
-          <div class="step"><strong>Pick Download Type</strong><span>Archives for full local analysis, Result JSON only for lightweight summary generation.</span></div>
-          <div class="step"><strong>Run Download</strong><span>Wait for completion or watch Recent Tasks when queue mode is enabled.</span></div>
-        </div>
-        <div class="split" style="margin-top:24px">
-          <div class="media">
-            <img src="../images/download_config.png" alt="Download Results configuration" />
-            <div class="caption">Use a dedicated output folder under the data root. That folder becomes the run you select later.</div>
-          </div>
-          <div class="card">
-            <h3>Decision: Archives or Result JSON only?</h3>
-            <ul>
-              <li><strong>Archives (ZIP):</strong> best for complete local investigation, eval_result, parquet generation, and visual inspection.</li>
-              <li><strong>Result JSON only:</strong> faster and lighter. Good when you mainly need downloaded result JSON, not full local analysis.</li>
-              <li><strong>Scenario downloads:</strong> use the Download Scenarios tab when TLR Analysis needs scenario data.</li>
-            </ul>
-          </div>
+
+        <div class="callout info">
+          <span class="callout-title">Task queue vs inline</span>
+          <p>
+            With <code>USE_TASK_QUEUE=true</code> (the production deployment) every heavy action becomes a
+            background task with a live status list at the top of the page — you can close the tab.
+            Without the queue, the same work runs inline in your browser session with a progress HUD.
+          </p>
         </div>
       </div>
     </section>
 
-    <section id="generate" class="reveal">
+    <section class="block reveal" id="automated">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Workflow 2</div>
-          <h2>Generate Summary.csv and Score.csv.</h2>
-          <p class="lead">
-            Most analysis pages need generated CSV artifacts. Stay on Download, switch to Eval Results,
-            and point the root directory to the same folder you used as the download output path.
+          <span class="kicker">Path B — Automated</span>
+          <h2>Workflow page: schedule, wait, and land results automatically.</h2>
+          <p>
+            Use this when the evaluator job hasn’t run yet. <strong>Start new workflow</strong> schedules the job
+            from a catalog, polls until it finishes, downloads, evaluates, and builds parquet — all as one
+            background task. A release-mode variant schedules the standard Performance + DevOps catalogs
+            and generates the release specsheet with trend metadata (see
+            <a href="specsheet.html">Specsheet &amp; Trends</a>).
           </p>
         </div>
-        <div class="grid cols-3">
-          <div class="card">
-            <div class="number">1</div>
-            <h3>Root directory to evaluate</h3>
-            <p>Use the same path, for example <code>data/my_test_20250203</code>. This keeps generated artifacts next to the run.</p>
-          </div>
-          <div class="card">
-            <div class="number">2</div>
-            <h3>Search subdirectories</h3>
-            <p>Usually enable this. It lets the app find <code>result.txt</code> or <code>score.json</code> in job/suite subfolders.</p>
-          </div>
-          <div class="card">
-            <div class="number">3</div>
-            <h3>Choose generation mode</h3>
-            <p>If results already exist, generate only Summary/Score. If not, run full eval_result generation.</p>
-          </div>
+
+        <div class="shot tp">
+          <span class="bracket"></span>
+          <span class="shot-label">Workflow · team control room</span>
+          <img src="img/workflow.png" alt="Workflow page with current tasks, Start new workflow button, recent evaluator jobs with filters, and per-job Details / Download / Retest actions" />
         </div>
-        <div class="callout" style="margin-top:20px">
-          <strong>Score.csv identity:</strong> Criteria pages identify rows by scenario. When a
-          <code>Dataset</code> field is available, scenario and dataset are treated together so repeated
-          scenario names from different datasets stay separate.
-        </div>
-        <div class="split" style="margin-top:24px">
-          <div class="media">
-            <img src="../images/eval_result.png" alt="Eval Results screen" />
-            <div class="caption">Eval Results produces the CSVs consumed by Overview, TP Summary, and Criteria pages.</div>
-          </div>
-          <div class="callout warn">
-            <strong>Environment note:</strong> when generation uses <code>perception_eval</code>, activate the pilot-auto ROS environment first:
-            <div class="code" style="margin-top:12px">
-              <div class="code-title">before running generation</div>
-              <pre>source path_to_pilot/install/setup.sh</pre>
-            </div>
-          </div>
-        </div>
+        <p class="shot-caption">
+          The Workflow page: everyone’s background tasks (with an opt-in “Only mine” filter and an
+          optional pixel-office visualization), the Start new workflow dialog, PR test-branch preparation,
+          and a browser of recent evaluator jobs with Details / Download / Retest per job.
+        </p>
+
+        <ul>
+          <li><strong>Current Tasks</strong> — the whole team’s running/pending tasks by default; switch to “Only mine” when you have a Cloudflare identity. The 🕹️ pixel-office toggle renders active tasks as an animated office floor (hover a desk for status, click for details).</li>
+          <li><strong>Run Evaluator Workflow</strong> — pick a catalog preset, branch/tag, and output folder; advanced options cover poll interval, max wait, download type, eval/parquet toggles. TLR catalogs are detected automatically and switch to result-JSON mode for the TLR Analysis page.</li>
+          <li><strong>Recent evaluator jobs</strong> — search by branch, description, job ID, SHA or user; open Details, or press <em>Run</em> to queue Download + Eval + Parquet for an existing job.</li>
+          <li><strong>Local Runs tab</strong> — every finished run on the server: filter by catalog/branch/user/date, inspect metadata, download a ZIP of artifacts, delete with typed confirmation, or tick several runs and press <strong>Compare</strong> to deep-link Overview.</li>
+        </ul>
       </div>
     </section>
 
-    <section id="view" class="reveal">
+    <section class="block reveal" id="select">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Workflow 3</div>
-          <h2>Select the run in Overview and explore.</h2>
-          <p class="lead">
-            Overview is the state hub. Many pages use the run selection and compare mode from Overview,
-            so users should start there before opening detail pages.
-          </p>
-        </div>
-        <div class="split">
-          <div class="card">
-            <h3>Single-run review</h3>
-            <ol>
-              <li>Open <strong>Overview</strong>.</li>
-              <li>Select <strong>Single Mode</strong>.</li>
-              <li>Choose your run as <strong>Baseline (A)</strong>.</li>
-              <li>Apply Perception Label or Product Label filters if needed.</li>
-              <li>Move to TP Summary, Criteria, Detection Stats, Bounding Box Viewer, or Prediction Evaluation.</li>
-            </ol>
-          </div>
-          <div class="media">
-            <img src="../images/overview.png" alt="Overview screen" />
-            <div class="caption">Overview gives the first read: summary metrics, filters, report export, and links to specialized pages.</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="compare" class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Workflow 4</div>
-          <h2>Compare baseline A against candidate B.</h2>
-          <p class="lead">
-            Compare mode lets users answer the product question: did this candidate improve, regress,
-            or change behavior in a specific slice?
-          </p>
+          <span class="kicker">Step 2 — Select On Overview</span>
+          <h2>Pick Baseline A, add candidates, filter labels.</h2>
         </div>
         <div class="grid cols-2">
           <div class="card">
-            <h3>How to set up compare mode</h3>
-            <ol>
-              <li>Open Overview.</li>
-              <li>Switch to <strong>Compare Mode</strong>.</li>
-              <li>Select Baseline (A), usually the current accepted run.</li>
-              <li>Select Candidate (B), usually the new run.</li>
-              <li>Check the summary metric deltas before going deeper.</li>
-            </ol>
+            <span class="tag est">SINGLE MODE</span>
+            <h3>One run under the microscope</h3>
+            <p>
+              Choose <strong>Baseline (A)</strong> in the sidebar. Overview shows Summary metrics
+              (TP mean, XRMS/YRMS/XSTD/YSTD, per-label bars); detail pages show their single-run views.
+            </p>
           </div>
           <div class="card">
-            <h3>Where compare mode is most useful</h3>
-            <ul>
-              <li><strong>TP Summary:</strong> TP and kinematic metric deltas.</li>
-              <li><strong>Criteria Score:</strong> Practical Pass Rate changes and absolute gate comparison.</li>
-              <li><strong>Detection Stats:</strong> TP/FP distance-bin and status distribution differences.</li>
-              <li><strong>Bounding Box Viewer:</strong> spatial inspection across runs.</li>
-              <li><strong>Prediction Evaluation:</strong> ADE/FDE delta matrices and distance bins.</li>
-            </ul>
+            <span class="tag fn">COMPARE MODE</span>
+            <h3>Baseline vs candidates</h3>
+            <p>
+              Switch the Mode radio to Compare, add <strong>Candidate (B)</strong> — and more with
+              “➕ Add run” (C, D, E…). Every metric gains Δ-vs-baseline views, and pages like
+              Detection Stats unlock recovered/lost object diffs.
+            </p>
           </div>
         </div>
-        <div class="callout" style="margin-top:20px">
-          <strong>Sharing:</strong> Overview stores mode and run choices in URL query parameters such as
-          <code>?mode=compare&amp;run_a=old_run&amp;run_b=new_run</code>. Copy that link to let another user open the same comparison.
+
+        <div class="callout ok">
+          <span class="callout-title">Share any view as a link</span>
+          <p>
+            Overview writes <code>?mode=…&amp;run_a=…&amp;run_b=…</code> into the URL and shows the query in a
+            “Shareable link” callout. Anyone opening that URL gets the same runs loaded — Data
+            Management can compose these links too. Viewer pages add their own parameters
+            (scene, frame, comparison layout), so even a specific 3D frame is linkable.
+          </p>
+        </div>
+
+        <div class="callout warn">
+          <span class="callout-title">Compare delta looks empty?</span>
+          <p>
+            Delta views join baseline and candidate on the Summary keys (<code>id</code>, plus
+            <code>perception_label</code> when both sides have it). If the two runs share no keys,
+            Overview warns <em>“TP Summary delta views will be empty”</em> and shows a key-overlap
+            diagnostic table with sample one-sided keys.
+          </p>
         </div>
       </div>
     </section>
 
-    <section id="recommended" class="reveal">
+    <section class="block reveal" id="analyze">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Recommended Review Route</div>
-          <h2>A good investigation has a rhythm.</h2>
+          <span class="kicker">Step 3 — Analyze</span>
+          <h2>Route your question to the right page.</h2>
         </div>
-        <table class="table">
-          <thead><tr><th>Step</th><th>Page</th><th>What to look for</th></tr></thead>
-          <tbody>
-            <tr><td>1</td><td>Overview</td><td>High-level TP, error metrics, filters, and immediate A/B signal.</td></tr>
-            <tr><td>2</td><td>Criteria Score</td><td>Practical Pass Rate distribution, failing scenarios, absolute gates, and scenario leaderboard.</td></tr>
-            <tr><td>3</td><td>Detection Stats</td><td>Status distribution, TP/FP by distance, label/scenario concentration, and object-count shifts.</td></tr>
-            <tr><td>4</td><td>Bounding Box Viewer</td><td>Frame-level spatial causes: missed objects, false positives, geometry, visibility, source/status.</td></tr>
-            <tr><td>5</td><td>Prediction Evaluation</td><td>ADE/FDE behavior by label, horizon, distance bin, and polar region.</td></tr>
-            <tr><td>6</td><td>Trend Insights</td><td>Release-level story across full, usecase, and devops jobs.</td></tr>
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Question</th><th>Page</th><th>What you get</th></tr></thead>
+            <tbody>
+              <tr><td>“How did overall detection KPIs change?”</td><td><a href="pages.html#detection-stats">Detection Stats</a></td><td>GT/TP/FP/FN, recall, precision, F1 with per-candidate deltas and auto-written comparison prose</td></tr>
+              <tr><td>“Which scenarios regressed the most?”</td><td><a href="pages.html#tp-summary">TP Summary</a></td><td>Per-scenario ΔTP ranking (most improved / most degraded)</td></tr>
+              <tr><td>“Do we pass the release gate?”</td><td><a href="pages.html#criteria">Criteria Based Score</a></td><td>Absolute pass/fail gates with verdict banners, donuts, failing-scenario tables, CSV export</td></tr>
+              <tr><td>“Which exact objects were lost or recovered?”</td><td><a href="pages.html#detection-stats">Detection Stats</a> → Perception diff</td><td>FN→TP / TP→FN object diffs drilled to scenario → dataset → frame, with “Open 3D” deep links</td></tr>
+              <tr><td>“What does that frame actually look like?”</td><td><a href="visual_systems.html#bev">Bounding Box Viewer</a> / <a href="visual_systems.html#t4-3d">T4 3D Viewer</a></td><td>BEV boxes per frame, camera overlays, full 3D scene playback with eval boxes</td></tr>
+              <tr><td>“How is trajectory prediction quality?”</td><td><a href="pages.html#prediction">Prediction Evaluation</a></td><td>minADE/minFDE at 1/3/5 s, distance ladders, polar fields — after a one-click cache build</td></tr>
+              <tr><td>“How did traffic-light recognition do?”</td><td><a href="pages.html#tlr">TLR Analysis</a></td><td>Criteria matrices, status × TLR-type heatmaps, per-frame details, embedded TLR viewer</td></tr>
+              <tr><td>“How does this release compare to history?”</td><td><a href="specsheet.html#trend-insights">Trend Insights</a></td><td>Release history table, mAP/recall/pass-rate trends, defect breakdowns</td></tr>
+              <tr><td>“I need a document for review.”</td><td><a href="data_reports.html#pdf-report">Overview exports</a></td><td>Evaluation Dashboard Report PDF or the release Spec-sheet PDF</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="shot est">
+          <span class="bracket"></span>
+          <span class="shot-label">Detection Stats · KPI summary</span>
+          <img src="img/detection_stats.png" alt="Detection Stats page showing the loaded run, sidebar filters, and the KPI metrics card with GT, TP, FP, FN, recall, FP rate, precision, and F1" />
+        </div>
+        <p class="shot-caption">
+          Detection Stats with a parquet-only run loaded: sidebar filters (topic, labels, suites,
+          visibility, max range) and the headline KPI card.
+        </p>
       </div>
     </section>
+
+    <section class="block reveal" id="offline">
+      <div class="shell">
+        <div class="section-head">
+          <span class="kicker">Optional — Offline</span>
+          <h2>The local desktop client.</h2>
+          <p>
+            <code>evaldash-local</code> is a self-contained app that pulls already-generated results from a
+            running dashboard into a local workspace and serves the same bbox explorer/viewer against
+            them — offline, without VPN, Streamlit or Docker. The default <em>criteria</em> download tier is
+            about 18× smaller than the raw run. It can also fetch T4 point-cloud scenes for local 3D
+            playback and start server-side workflows. Details in
+            <a href="deployment.html#local-client">Deployment → Local desktop client</a>.
+          </p>
+        </div>
+        <pre><code># from source
+pip install -r client/requirements.txt
+python3 -m client login --server https://your-dashboard.example
+python3 -m client pull &lt;run-name&gt;          # default tier: criteria
+python3 -m client open                       # opens the local home page
+
+# or the packaged single file
+./client/build_app.sh --server https://your-dashboard.example
+dist/evaldash-local</code></pre>
+      </div>
+    </section>
+
   </main>
-  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+
+  <footer class="footer">
+    <div class="shell">
+      <strong>Next:</strong> the full <a href="pages.html">Page Reference</a>, or jump straight to
+      <a href="visual_systems.html">Viewers &amp; 3D</a>.
+    </div>
+  </footer>
   <script src="guide.js"></script>
 </body>
 </html>

@@ -7,134 +7,188 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+
+  <nav class="topnav">
+    <div class="shell topnav-inner">
+      <a class="brand" href="index.html"><span class="tick">▸</span> EVAL·DASH GUIDE</a>
+      <a class="navlink active" href="index.html">Home</a>
+      <a class="navlink" href="getting_started.html">Getting Started</a>
+      <a class="navlink" href="pages.html">Page Reference</a>
+      <a class="navlink" href="visual_systems.html">Viewers &amp; 3D</a>
+      <a class="navlink" href="data_reports.html">Data &amp; Reports</a>
+      <a class="navlink" href="specsheet.html">Specsheet &amp; Trends</a>
+      <a class="navlink" href="deployment.html">Deployment</a>
+    </div>
+  </nav>
+
   <header class="hero">
-    <div class="shell hero-grid">
-      <div>
-        <div class="eyebrow"><span class="signal"></span>Dashboard Documentation</div>
-        <h1>Evaluation Dashboard<br>Guide</h1>
-        <p class="lead">
-          This guide is the entry point for using, debugging, extending, and deploying the
-          evaluation dashboard. The home page gives the system map; each substantial topic lives in
-          its own focused chapter.
-        </p>
-        <div class="actions">
-          <a class="button primary" href="getting_started.html">Use the Tool</a>
-          <a class="button" href="visual_systems.html">Architecture Diagrams</a>
-          <a class="button" href="deployment.html">Deploy</a>
-        </div>
-      </div>
-      <div class="card hero-console">
-        <h3>Guide Structure</h3>
-        <ul>
-          <li><strong>Home:</strong> system role, ownership map, and chapter routing.</li>
-          <li><strong>Workflow:</strong> Download -> Eval Results -> Overview -> Compare.</li>
-          <li><strong>Page Guide:</strong> page-by-page artifact and state contracts.</li>
-          <li><strong>Data/Reports:</strong> run artifacts, trend data, dashboard PDF, specsheet.</li>
-          <li><strong>Deployment:</strong> local, Docker, production, task queue, multi-user operations.</li>
-          <li><strong>Diagrams:</strong> real sequence/system diagrams for key flows.</li>
-        </ul>
+    <div class="shell">
+      <span class="kicker">Perception Evaluation Dashboard</span>
+      <h1>From evaluator job to release verdict, on one dashboard.</h1>
+      <p class="lead">
+        The dashboard pulls Autoware Evaluator results, runs the perception evaluation locally,
+        and turns the artifacts — <strong>Summary.csv, Score.csv, parquet</strong> — into
+        explorable evidence: KPI comparisons, bounding-box playback in BEV and 3D,
+        traffic-light analysis, release trend history, and exportable PDF reports.
+        This guide covers every page as it exists today.
+      </p>
+      <div class="hero-meta">
+        <span class="pill tp">GT / TP · matched ground truth</span>
+        <span class="pill fn">GT / FN · missed ground truth</span>
+        <span class="pill est">EST / TP · matched estimate</span>
+        <span class="pill fp">EST / FP · false positive</span>
       </div>
     </div>
   </header>
 
-  <nav>
-    <div class="shell nav-inner">
-      <a class="active" href="index.html">Home</a>
-      <a href="getting_started.html">How to Use</a>
-      <a href="pages.html">Pages</a>
-      <a href="data_reports.html">Data & Reports</a>
-      <a href="specsheet.html">Specsheet</a>
-      <a href="deployment.html">Deployment</a>
-      <a href="visual_systems.html">Diagrams</a>
-    </div>
-  </nav>
-
   <main>
-    <section class="reveal">
+
+    <section class="block reveal">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">System Role</div>
-          <h2>The dashboard turns evaluator outputs into explorable review evidence.</h2>
+          <span class="kicker">The System In One Look</span>
+          <h2>Four stages, one shared selection.</h2>
           <p>
-            It reads run folders under the configured data root, generates dashboard artifacts when
-            needed, shares selected run state across Streamlit pages, and provides local or production
-            workflows for comparison, report generation, T4 visualization, and release trend review.
+            Everything downstream reads the run selection made on <strong>Overview</strong>.
+            The selection travels through the URL (<code>?mode=…&amp;run_a=…</code>), a browser
+            cookie, and a server-side store — which is what makes every view shareable as a link.
           </p>
         </div>
-        <div class="grid cols-4 metric-grid">
-          <div class="card metric"><strong>Overview.py</strong><span>Run selection, compare mode, filters, share links, dashboard PDF, and specsheet entry.</span></div>
-          <div class="card metric"><strong>pages/</strong><span>Numbered Streamlit pages. Filename order is part of the navigation contract.</span></div>
-          <div class="card metric"><strong>lib/</strong><span>Data loading, plotting, reporting, T4 clients, task queue integration, and shared UI utilities.</span></div>
-          <div class="card metric"><strong>deploy/</strong><span>Docker Compose, Nginx, Redis/RQ workers, Postgres, and production scripts.</span></div>
+        <div class="flow h">
+          <div class="step"><span class="n">STAGE 01</span><strong>Acquire</strong><span>Download or Workflow page pulls evaluator results into a run folder under <code>data/</code>.</span></div>
+          <div class="step"><span class="n">STAGE 02</span><strong>Process</strong><span>Local eval produces Summary.csv / Score.csv; parquet build produces detection frames.</span></div>
+          <div class="step"><span class="n">STAGE 03</span><strong>Select</strong><span>Overview picks Baseline A (and Candidates B, C, …), sets label filters, mints the share link.</span></div>
+          <div class="step"><span class="n">STAGE 04</span><strong>Analyze</strong><span>Detail pages, 3D viewers, TLR analysis, trend history, and PDF / specsheet exports.</span></div>
         </div>
+        <div class="shot est">
+          <span class="bracket"></span>
+          <span class="shot-label">Overview · the control panel</span>
+          <img src="img/overview.png" alt="Overview page with a loaded baseline run, shareable link, summary metrics, and the two PDF export sections" />
+        </div>
+        <p class="shot-caption">
+          Overview with a baseline run loaded: the Loaded Data card, the shareable link,
+          Summary metrics, and the two export sections (Dashboard Report and Specsheet Report).
+        </p>
       </div>
     </section>
 
-    <section class="reveal alt">
+    <section class="block reveal">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Chapter Map</div>
+          <span class="kicker">Chapters</span>
           <h2>Open the chapter that matches your question.</h2>
         </div>
         <div class="grid cols-3">
-          <a class="card feature-card" href="getting_started.html" style="text-decoration:none">
-            <h3>How do I use this tool?</h3>
-            <p>Download results, generate Eval Results, select runs in Overview, compare baseline and candidate, then inspect detail pages.</p>
+          <a class="card" href="getting_started.html">
+            <span class="tag tp">START HERE</span>
+            <h3>Getting Started</h3>
+            <p>The end-to-end path: get results (manual Download or the automated Workflow), generate artifacts, select runs, compare, share.</p>
           </a>
-          <a class="card feature-card analysis" href="pages.html" style="text-decoration:none">
-            <h3>What does each page require?</h3>
-            <p>Inputs, outputs, compare behavior, and empty-state causes for Overview, TP, Criteria, Detection, BEV, T4, TLR, Trend, and debug pages.</p>
+          <a class="card" href="pages.html">
+            <span class="tag est">REFERENCE</span>
+            <h3>Page Reference</h3>
+            <p>Every page, one by one: what it needs, what each section shows, what its compare mode adds, and why it might look empty.</p>
           </a>
-          <a class="card feature-card ops" href="data_reports.html" style="text-decoration:none">
-            <h3>How are data and reports handled?</h3>
-            <p>Summary.csv, Score.csv, parquet, trend metadata, dashboard PDFs, release specsheets, and report troubleshooting.</p>
+          <a class="card" href="visual_systems.html">
+            <span class="tag est">3D &amp; VIEWERS</span>
+            <h3>Viewers &amp; 3D</h3>
+            <p>BEV bounding-box viewer, the T4 3D viewer, the standalone Local BBox viewer &amp; explorer, the T4 dataset server console, and the TLR viewer.</p>
           </a>
-          <a class="card feature-card advanced" href="deployment.html" style="text-decoration:none">
-            <h3>How should this be deployed?</h3>
-            <p>Local development, single-container Docker, production compose, Nginx, Redis/RQ, Postgres, env vars, and multi-user operation.</p>
+          <a class="card" href="data_reports.html">
+            <span class="tag fn">DATA MODEL</span>
+            <h3>Data &amp; Reports</h3>
+            <p>What a run folder contains, which page needs which artifact, the Dashboard PDF report, LLM analysis packages, and housekeeping.</p>
           </a>
-          <a class="card feature-card spatial" href="visual_systems.html" style="text-decoration:none">
-            <h3>How does the system really flow?</h3>
-            <p>Artifact maps, Download/Eval sequence, Compare state propagation, T4 camera rendering, T4 Three.js overlays, and report generation.</p>
+          <a class="card" href="specsheet.html">
+            <span class="tag fn">RELEASE</span>
+            <h3>Specsheet &amp; Trends</h3>
+            <p>Release spec-sheet generation, trend metadata, release trend groups, and the Trend Insights page that reads the whole history.</p>
           </a>
-          <a class="card feature-card advanced" href="specsheet.html" style="text-decoration:none">
-            <h3>How does specsheet work?</h3>
-            <p>Focused deep dive for release specsheet generation, trend context, DevOps/pass-rate plots, and generated PDF sections.</p>
+          <a class="card" href="deployment.html">
+            <span class="tag fp">OPERATIONS</span>
+            <h3>Deployment</h3>
+            <p>Local run, Docker production stack (Nginx / Redis / workers / Postgres), environment variables, the local desktop client, and debug pages.</p>
           </a>
         </div>
       </div>
     </section>
 
-    <section class="reveal">
-      <div class="shell split">
-        <div>
-          <div class="kicker">Primary Flow</div>
-          <h2>The common operational path is still one clear chain.</h2>
-          <p>
-            The detailed instructions live in the Workflow chapter, but the mental model is simple:
-            create or choose a run folder, generate the dashboard artifacts, select run A in Overview,
-            optionally select candidate B, then use the dedicated pages for deeper analysis.
-          </p>
-          <div class="actions">
-            <a class="button primary" href="getting_started.html">Open Workflow Chapter</a>
-            <a class="button" href="visual_systems.html#download-sequence">Open Sequence Diagram</a>
+    <section class="block reveal">
+      <div class="shell">
+        <div class="section-head">
+          <span class="kicker">Map Of The App</span>
+          <h2>Seventeen pages, grouped by job.</h2>
+          <p>Sidebar order is the filename order in <code>pages/</code>. Debug pages appear at the bottom; Deployment Debug is only visible inside Docker.</p>
+        </div>
+        <div class="grid cols-4">
+          <div class="card">
+            <span class="tag tp">SELECT &amp; SCORE</span>
+            <h3>Analysis</h3>
+            <p><a href="pages.html#overview">Overview</a> · <a href="pages.html#tp-summary">TP Summary</a> · <a href="pages.html#criteria">Criteria Based Score</a> · <a href="pages.html#detection-stats">Detection Stats</a> · <a href="pages.html#prediction">Prediction Evaluation</a> · <a href="pages.html#tlr">TLR Analysis</a></p>
+          </div>
+          <div class="card">
+            <span class="tag est">SEE THE FRAMES</span>
+            <h3>Viewers</h3>
+            <p><a href="visual_systems.html#bev">Bounding Box Viewer</a> · <a href="visual_systems.html#t4-3d">T4 3D Viewer</a> · <a href="visual_systems.html#local-bbox">Local 3D BBox Viewer</a> · <a href="visual_systems.html#t4-server">T4 Dataset Server</a></p>
+          </div>
+          <div class="card">
+            <span class="tag fn">GET &amp; RUN DATA</span>
+            <h3>Pipeline</h3>
+            <p><a href="pages.html#download">Download</a> · <a href="pages.html#workflow">Workflow</a> · <a href="pages.html#data-management">Data Management</a> · <a href="specsheet.html#trend-insights">Trend Insights</a></p>
+          </div>
+          <div class="card">
+            <span class="tag fp">WHEN THINGS BREAK</span>
+            <h3>Debug</h3>
+            <p><a href="pages.html#parquet-debug">Parquet Debug</a> · <a href="pages.html#local-evaluator">Local Evaluator Debug</a> · <a href="deployment.html#deployment-debug">Deployment Debug</a> · <a href="pages.html#help">Help</a></p>
           </div>
         </div>
-        <div class="flow compact-flow">
-          <div class="step"><strong>Download</strong><span>Project/Job/Suite results into a run folder.</span></div>
-          <div class="step"><strong>Eval Results</strong><span>Generate Summary, Score, and parquet artifacts.</span></div>
-          <div class="step"><strong>Overview</strong><span>Select run A and synchronize state.</span></div>
-          <div class="step"><strong>Compare</strong><span>Add candidate B when needed.</span></div>
-          <div class="step"><strong>Detail Pages</strong><span>Investigate the specific signal.</span></div>
+
+        <div class="callout info">
+          <span class="callout-title">The one rule that answers most questions</span>
+          <p>
+            <strong>Always start on Overview.</strong> It is the only page that sets mode, runs and
+            label filters, and the only one that seeds the share link / cookie / server-side memory
+            that all other pages restore from. If a page says
+            <em>“Please load data from the Overview page first”</em>, open Overview once so the URL
+            contains <code>run_a=…</code>, then return.
+          </p>
         </div>
       </div>
     </section>
+
+    <section class="block reveal">
+      <div class="shell">
+        <div class="section-head">
+          <span class="kicker">Artifact Requirements</span>
+          <h2>Which page needs which file.</h2>
+          <p>A run folder that has parquet but no CSVs is a valid “parquet-only” run — detection pages work, Summary/Score pages do not.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Page</th><th>Summary.csv</th><th>Score.csv</th><th>*.parquet</th><th>Other</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Overview</strong> (metrics area)</td><td>required</td><td>—</td><td>—</td><td>runs load without it, metrics are skipped</td></tr>
+              <tr><td><strong>TP Summary</strong></td><td>required</td><td>—</td><td>—</td><td>delta views need overlapping Summary keys</td></tr>
+              <tr><td><strong>Criteria Based Score</strong></td><td>recommended</td><td>required</td><td>—</td><td>Summary labels feed the gate filter</td></tr>
+              <tr><td><strong>Detection Stats</strong></td><td>—</td><td>—</td><td>required</td><td>frames 0–2 always excluded from statistics</td></tr>
+              <tr><td><strong>Bounding Box / T4 3D Viewer</strong></td><td>—</td><td>—</td><td>required</td><td>camera / 3D preview needs a reachable t4-server</td></tr>
+              <tr><td><strong>Prediction Evaluation</strong></td><td>—</td><td>—</td><td><code>future.parquet</code> or <code>future.csv</code></td><td>plus a built summary cache (one click)</td></tr>
+              <tr><td><strong>TLR Analysis</strong></td><td>—</td><td>—</td><td>—</td><td>directories containing <code>result.json</code></td></tr>
+              <tr><td><strong>Trend Insights</strong></td><td>—</td><td>—</td><td>—</td><td>release trend groups (<code>summary.json</code> + <code>metadata.yaml</code> per role)</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <footer class="footer">
     <div class="shell">
       <strong>Evaluation Dashboard Guide</strong>
-      <p>This home page routes to the detailed chapters instead of duplicating them.</p>
+      <p>Regenerated from the current codebase. Screenshots live in <code>docs/guide/img/</code>; retake them after major UI changes.</p>
     </div>
   </footer>
   <script src="guide.js"></script>

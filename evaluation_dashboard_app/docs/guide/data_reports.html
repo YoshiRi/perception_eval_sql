@@ -3,243 +3,204 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Evaluation Dashboard Data and Reports</title>
+  <title>Data &amp; Reports — Evaluation Dashboard Guide</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="hero compact">
-    <div class="shell">
-      <div class="eyebrow"><span class="signal"></span>Data and Reports</div>
-      <h1>Artifacts</h1>
-      <p class="lead">
-        The dashboard is driven by files. Understanding which file powers which page makes the app much easier to use and debug.
-      </p>
-    </div>
-  </header>
-  <nav>
-    <div class="shell nav-inner">
-      <a href="index.html">Home</a>
-      <a href="getting_started.html">How to Use</a>
-      <a href="pages.html">Pages</a>
-      <a class="active" href="data_reports.html">Data & Reports</a>
-      <a href="specsheet.html">Specsheet</a>
-      <a href="deployment.html">Deployment</a>
-      <a href="visual_systems.html">Diagrams</a>
+
+  <nav class="topnav">
+    <div class="shell topnav-inner">
+      <a class="brand" href="index.html"><span class="tick">▸</span> EVAL·DASH GUIDE</a>
+      <a class="navlink" href="index.html">Home</a>
+      <a class="navlink" href="getting_started.html">Getting Started</a>
+      <a class="navlink" href="pages.html">Page Reference</a>
+      <a class="navlink" href="visual_systems.html">Viewers &amp; 3D</a>
+      <a class="navlink active" href="data_reports.html">Data &amp; Reports</a>
+      <a class="navlink" href="specsheet.html">Specsheet &amp; Trends</a>
+      <a class="navlink" href="deployment.html">Deployment</a>
     </div>
   </nav>
 
+  <header class="hero">
+    <div class="shell">
+      <span class="kicker">Data &amp; Reports</span>
+      <h1>What a run is made of, and what you can export from it.</h1>
+      <p class="lead">
+        Every view in the dashboard traces back to a handful of files inside a run folder. This chapter
+        maps the folder anatomy, the caches the app builds on top, and the exportable documents:
+        the <strong>Evaluation Dashboard Report</strong> PDF, the <strong>LLM analysis package</strong>, and
+        the CSV/JSON exports scattered through the pages.
+      </p>
+    </div>
+  </header>
+
   <main>
-    <section class="reveal">
+
+    <section class="block reveal" id="run-anatomy">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Run Model</div>
-          <h2>A run is a folder under the data root.</h2>
-          <p class="lead">
-            The default data root is <code>data/</code>. In production it can be changed with
-            <code>EVAL_DASHBOARD_DATA_ROOT</code>. Download and Eval paths are restricted under this root.
+          <span class="kicker">Run Folder Anatomy</span>
+          <h2>One directory per run, under the data root.</h2>
+          <p>
+            The data root is <code>EVAL_DASHBOARD_DATA_ROOT</code> (default <code>./data</code>,
+            <code>/app/data</code> in Docker). Two shapes exist: plain runs, and release containers whose
+            role children (<code>performance</code> / <code>usecase</code> / <code>devops</code>) each count as a
+            selectable run named like <code>[REL] &lt;version&gt; | &lt;Role&gt; | &lt;date&gt;</code>.
           </p>
         </div>
-        <div class="split">
-          <div class="tree">
-            <div>data/</div>
-            <div>  my_test_20250203/</div>
-            <div>    Summary.csv</div>
-            <div>    Score.csv</div>
-            <div>    result.txt / score.json / logs...</div>
-            <div>    current.parquet / future.parquet</div>
-            <div>    resources/metadata.yaml + summary.json</div>
-            <div>    specsheet/specsheet.pdf</div>
-          </div>
-          <div class="card">
-            <h3>Why one folder per test?</h3>
-            <p>
-              It keeps Overview selection simple, makes Data Management safer, and lets users share links using stable run names.
-              If output is scattered across arbitrary folders, users cannot easily know what to select or delete.
-            </p>
-          </div>
+        <div class="console">
+<pre>data/
+├── my_eval_run/                     # a plain run
+│   ├── Summary.csv                  # TP &amp; kinematics rows  → Overview, TP Summary
+│   ├── Score.csv                    # criteria blocks       → Criteria Based Score
+│   ├── scene_result.parquet         # detection frames      → Detection Stats, viewers
+│   ├── future.parquet               # prediction tracks     → Prediction Evaluation
+│   ├── metadata.yaml                # owner, task, evaluator job info
+│   └── .dashboard_cache/            # derived caches (auto-built, auto-invalidated)
+│
+├── my_release/                      # a release container
+│   ├── metadata.yaml                # tags, pilot_auto_version, data_count, date…
+│   ├── performance/                 # role runs, each parquet + summary.json + metadata
+│   ├── devops/
+│   ├── usecase/                     # optional
+│   └── specsheet/                   # generated spec-sheet PDFs + trend assets
+│
+└── some_tlr_result/                 # TLR: any folder containing result.json
+    └── result.json                  # JSONL, one line per frame → TLR Analysis</pre>
         </div>
-      </div>
-    </section>
-
-    <section class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Core Files</div>
-          <h2>Which artifact powers which page?</h2>
-        </div>
-        <table class="table">
-          <thead><tr><th>Artifact</th><th>Created By</th><th>Used By</th><th>Meaning</th></tr></thead>
-          <tbody>
-            <tr>
-              <td><code>Summary.csv</code></td>
-              <td>Download -> Eval Results</td>
-              <td>Overview, TP Summary</td>
-              <td>Object-level summary metrics such as TP, x/y RMS, x/y STD, velocity, perception labels, and product labels.</td>
-            </tr>
-            <tr>
-              <td><code>Score.csv</code></td>
-              <td>Download -> Eval Results</td>
-              <td>Criteria Based Score</td>
-              <td>Criteria block metrics including scenario, optional dataset ID, option, GT object, criteria label, NM, TP/TN, ADD, AIL, UIL, PFN/PFP, Practical Pass Rate, thresholds, and counts.</td>
-            </tr>
-            <tr>
-              <td><code>.parquet</code></td>
-              <td>Download/eval/parquet build workflows</td>
-              <td>Detection Stats, Bounding Box Viewer, Prediction Evaluation, Debug</td>
-              <td>Structured frame/object rows: position, dimensions, yaw, label, status, source, scenario metadata, and prediction metrics.</td>
-            </tr>
-            <tr>
-              <td><code>metadata.yaml</code> + <code>summary.json</code></td>
-              <td>Specsheet/trend generation or analyzer output</td>
-              <td>Trend Insights, Specsheet trend export</td>
-              <td>Release identity and trend summary payloads. Summary shape decides full/usecase/devops role.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Score.csv Structure</div>
-          <h2>Score.csv is the Criteria page source.</h2>
-          <p class="lead">
-            Each row describes one scenario result and then repeats the criteria metric block for each
-            available criteria range.
+        <div class="callout info">
+          <span class="callout-title">Caches you may notice</span>
+          <p>
+            Detection Stats materializes a flattened <code>eval_flat</code> cache parquet per run (per
+            polygon setting); Prediction Evaluation writes
+            <code>.dashboard_cache/prediction_eval_cache/</code> (three summary parquets + manifest, rebuilt
+            when <code>future.parquet</code> changes). Both are safe to delete — they regenerate.
           </p>
         </div>
-        <table class="table">
-          <thead><tr><th>Part</th><th>Fields</th><th>How the dashboard uses it</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>Row identity</td>
-              <td><code>Scenario</code>, optional <code>Dataset</code></td>
-              <td>Used for scenario filters, scenario leaderboards, compare joins, gates, and PDF tables.</td>
-            </tr>
-            <tr>
-              <td>Scenario context</td>
-              <td><code>Option</code>, <code>GT_OBJ</code></td>
-              <td>Used for grouping charts and understanding the matching policy/object class behind the row.</td>
-            </tr>
-            <tr>
-              <td>Criteria block</td>
-              <td><code>Distance</code>, <code>NM</code>, <code>TP/TN</code>, <code>ADD</code>, <code>AIL</code>, <code>UIL</code>, <code>PFN/PFP</code>, <code>UUID Num</code>, <code>Practical Pass Rate</code>, <code>MAX_DIST_THRESH</code>, <code>OBJ_CNTS</code></td>
-              <td>Used by Criteria Based Score for distributions, deltas, absolute gates, and scenario-level ranking.</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="callout">
-          <strong>Tip:</strong> if two rows share a scenario name but have different dataset IDs, the app keeps
-          them separate in Criteria comparisons and gate summaries.
-        </div>
       </div>
     </section>
 
-    <section class="reveal">
+    <section class="block reveal" id="pdf-report">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Pass Metrics</div>
-          <h2>TP is not the same metric as Practical Pass Rate.</h2>
+          <span class="kicker">Export 1</span>
+          <h2>Evaluation Dashboard Report (PDF).</h2>
+          <p>
+            One A4 PDF that mirrors the four main analysis pages for the runs and label filters currently
+            selected on Overview. Generated by the <strong>Generate Evaluation Dashboard Report</strong> button on
+            Overview; the download stays valid only while the selection matches — change a run or filter
+            and you regenerate.
+          </p>
         </div>
-        <table class="table">
-          <thead><tr><th>Dashboard label</th><th>Source</th><th>Calculation / meaning</th><th>Used by</th></tr></thead>
-          <tbody>
-            <tr>
-              <td><code>TP</code>, TP mean</td>
-              <td><code>Summary.csv</code></td>
-              <td>Comes from <code>summarize_ratio()</code> as TP rate. AIL and ADD are not added to this metric.</td>
-              <td>Overview, TP Summary, dashboard PDF TP sections.</td>
-            </tr>
-            <tr>
-              <td><code>pass_rate</code>, Pass rate mean</td>
-              <td><code>Score.csv</code> <code>Practical Pass Rate</code></td>
-              <td><code>(TP/TN + ADD + AIL) / NM * 100</code>. AIL and ADD are pass-side outcomes for this practical score.</td>
-              <td>Criteria Based Score, absolute pass/fail gates, Criteria PDF sections.</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="grid cols-4">
+          <div class="card"><span class="tag est">SECTION 1</span><h3>Overview</h3><p>Metric cards (TP mean, XRMS/YRMS/XSTD/YSTD per run) and TP-mean-by-label figures.</p></div>
+          <div class="card"><span class="tag est">SECTION 2</span><h3>TP Summary</h3><p>Metrics table plus distributions/violins — or per-candidate delta figures in compare mode.</p></div>
+          <div class="card"><span class="tag est">SECTION 3</span><h3>Criteria Score</h3><p>Criteria tables and figures, compare deltas, spider comparisons.</p></div>
+          <div class="card"><span class="tag est">SECTION 4</span><h3>Detection Stats</h3><p>KPI table, status distributions, distance panels; diff / lens figures in compare mode.</p></div>
+        </div>
         <div class="callout warn">
-          <strong>Important:</strong> when reviewing pass/fail gates, read “pass rate” as
-          <strong>Practical Pass Rate</strong>, not the traditional TP rate from <code>Summary.csv</code>.
-        </div>
-      </div>
-    </section>
-
-    <section class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Trend Data</div>
-          <h2>Trend summaries are classified by JSON shape.</h2>
-          <p class="lead">
-            Trend Insights scans the data root for <code>metadata.yaml</code> files that have sibling <code>summary.json</code>.
-            It then classifies the summary and groups related jobs into releases.
+          <span class="callout-title">Sections degrade gracefully</span>
+          <p>
+            A run without <code>Summary.csv</code> skips the TP section with a note; missing
+            <code>Score.csv</code> skips Criteria; no compatible parquet skips Detection Stats. A figure that
+            cannot be rasterized becomes a note instead of aborting the PDF. PDF chart export uses
+            Plotly/Kaleido and needs Chrome — the Docker image includes it.
           </p>
         </div>
-        <div class="grid cols-3">
-          <div class="card">
-            <h3>Full performance</h3>
-            <p>Summary has <code>blocks</code> containing the header <code>全数データセット評価</code>. Used for mAP, precision, recall, error, and prediction trends.</p>
-          </div>
-          <div class="card">
-            <h3>Usecase</h3>
-            <p>Summary has <code>blocks</code> containing <code>ユースケース評価</code>. It participates in release grouping and inventory.</p>
-          </div>
-          <div class="card">
-            <h3>DevOps pass-rate</h3>
-            <p>Summary is a nested dictionary without <code>blocks</code>, with category results containing <code>passed</code> and <code>total</code>.</p>
-          </div>
-        </div>
       </div>
     </section>
 
-    <section class="reveal">
+    <section class="block reveal" id="llm-package">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Report Outputs</div>
-          <h2>Reports are optional outputs, not the main app path.</h2>
-          <p class="lead">
-            Users can explore directly in Streamlit, then export when they need a portable artifact for review.
+          <span class="kicker">Export 2</span>
+          <h2>LLM analysis package (ZIP).</h2>
+          <p>
+            On Detection Stats, <strong>Prepare LLM report ZIP</strong> bundles the evidence tables for a
+            baseline-vs-candidate comparison plus prompt files, and the page shows a paste-ready prompt.
+            The bundled instructions ask an LLM for an 11-section regression report: executive summary, KPI
+            dashboard, distance and class analysis, TP improvement / FP increase hotspots, safety-critical
+            regressions, localization quality, root-cause hypotheses, and a recommendation.
           </p>
         </div>
-        <div class="grid cols-3">
-          <div class="card">
-            <h3>Dashboard PDF</h3>
-            <p>Generated from the current Overview selection and filters. Best for summarizing the dashboard state as a curated report.</p>
-          </div>
-          <div class="card">
-            <h3>Release Specsheet PDF</h3>
-            <p>Advanced release-oriented report generated through <code>perception_catalog_analyzer</code>. It can include trend pages when trend metadata is enabled.</p>
-            <div class="actions"><a class="button" href="specsheet.html">Open specsheet details</a></div>
-          </div>
-          <div class="card">
-            <h3>ZIP outputs</h3>
-            <p>Data Management can package outputs for download, useful when moving run artifacts out of a shared server.</p>
-          </div>
+      </div>
+    </section>
+
+    <section class="block reveal" id="csv-exports">
+      <div class="shell">
+        <div class="section-head">
+          <span class="kicker">Export 3</span>
+          <h2>CSV / JSON exports around the app.</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Where</th><th>Button</th><th>File</th></tr></thead>
+            <tbody>
+              <tr><td>Criteria Based Score</td><td>Download gate results</td><td><code>criteria_absolute_gates[_compare].csv</code></td></tr>
+              <tr><td>Criteria Based Score</td><td>Download overlay data</td><td><code>criteria_compare_filtered.csv</code></td></tr>
+              <tr><td>Detection Stats</td><td>Download status count</td><td><code>detection_status_count.csv</code></td></tr>
+              <tr><td>Detection Stats</td><td>Download FN by frame</td><td><code>fn_by_frame.csv</code></td></tr>
+              <tr><td>Detection Stats</td><td>Download skipped datasets</td><td>one-sided dataset lists (GT diff and FP diff)</td></tr>
+              <tr><td>TLR Analysis</td><td>CSV / JSON downloads</td><td>per-frame details, scenario summaries (JSON with a stable <code>format_version</code> envelope)</td></tr>
+              <tr><td>Data Management / Workflow</td><td>Prepare ZIP</td><td><code>&lt;run&gt;_artifacts.zip</code> (Summary, Score, top-level parquet)</td></tr>
+              <tr><td>Local BBox explorer</td><td>Stats drawer</td><td>scenario statistics CSV</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
 
-    <section class="reveal">
+    <section class="block reveal" id="housekeeping">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Debugging by Artifact</div>
-          <h2>When a page is empty, first check the file it needs.</h2>
+          <span class="kicker">Housekeeping</span>
+          <h2>Data Management: list, share, package, delete.</h2>
         </div>
-        <table class="table">
-          <thead><tr><th>Symptom</th><th>Likely missing</th><th>Fix</th></tr></thead>
-          <tbody>
-            <tr><td>Overview summary is sparse</td><td><code>Summary.csv</code></td><td>Generate Summary.csv from Download -> Eval Results.</td></tr>
-            <tr><td>Criteria page has no rows</td><td><code>Score.csv</code></td><td>Generate Score.csv from result files or score JSON.</td></tr>
-            <tr><td>Detection/BEV pages cannot load</td><td>Parquet files</td><td>Build or place parquet artifacts under the expected data root/run path.</td></tr>
-            <tr><td>Trend Insights has no releases</td><td><code>metadata.yaml</code> + <code>summary.json</code></td><td>Generate or copy trend-compatible release outputs under data root.</td></tr>
-            <tr><td>Specsheet trend section says no data</td><td>Trend rows or PNG plots</td><td>Check trend classification and generated plot files in <code>specsheet/</code>.</td></tr>
-          </tbody>
-        </table>
+        <div class="shot fn">
+          <span class="bracket"></span>
+          <span class="shot-label">Data Management</span>
+          <img src="img/data_management.png" alt="Data Management page listing all runs with artifact availability plus share, download and delete sections" />
+        </div>
+        <ul>
+          <li><strong>Runs in data root</strong> — name, size, modified time, and ✓/— for Summary.csv / Score.csv / parquet.</li>
+          <li><strong>Share</strong> — compose the exact Overview query string for a single run or an A/B pair.</li>
+          <li><strong>Download</strong> — lazy ZIP of a run’s generated artifacts (built on demand, dropped when you switch runs).</li>
+          <li><strong>Delete</strong> — permanent, type-the-name confirmation, restricted to run directories under the data root.</li>
+        </ul>
+        <div class="callout danger">
+          <span class="callout-title">Shared server etiquette</span>
+          <p>Delete frees disk for everyone — and removes the run for everyone. The Workflow page’s Local Runs tab offers the same delete with the run’s ownership metadata visible; prefer it when unsure whose run it is.</p>
+        </div>
       </div>
     </section>
+
+    <section class="block reveal" id="inspecting">
+      <div class="shell">
+        <div class="section-head">
+          <span class="kicker">When Data Looks Wrong</span>
+          <h2>Inspect the artifact itself.</h2>
+          <p>
+            <a href="pages.html#parquet-debug">Parquet Debug</a> opens any parquet (schema, filtered
+            previews, column stats, ad-hoc DuckDB SQL), PKL (structure tree, embedded DataFrames), or TLR
+            <code>result.json</code> (criteria table, success timeline, status heatmap) without leaving the app.
+          </p>
+        </div>
+        <div class="shot fp">
+          <span class="bracket"></span>
+          <span class="shot-label">Parquet Debug</span>
+          <img src="img/parquet_debug.png" alt="Parquet Debug page inspecting a parquet file with schema and preview controls" />
+        </div>
+      </div>
+    </section>
+
   </main>
-  <footer class="footer"><div class="shell"><a href="index.html">Back to guide home</a></div></footer>
+
+  <footer class="footer">
+    <div class="shell">
+      <strong>Next:</strong> <a href="specsheet.html">Specsheet &amp; Trends</a> — the release documents and
+      the history that backs them.
+    </div>
+  </footer>
   <script src="guide.js"></script>
 </body>
 </html>

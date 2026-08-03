@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Specsheet Pipeline Comparison: Dashboard App vs Direct awspec</title>
+  <style>
+    :root {
+      --ink: #18202c;
+      --muted: #607084;
+      --line: #d7dee8;
+      --paper: #f7f9fc;
+      --panel: #ffffff;
+      --app: #1f7a8c;
+      --lib: #6b4fa3;
+      --warn: #a66412;
+      --ok: #2f7d54;
+      --code: #263142;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    header {
+      background: #15202e;
+      color: #fff;
+      padding: 44px 28px 36px;
+      border-bottom: 5px solid #47a7a5;
+    }
+    main { max-width: 1280px; margin: 0 auto; padding: 28px; }
+    h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 48px); line-height: 1.08; letter-spacing: 0; }
+    h2 { margin: 34px 0 12px; font-size: 26px; letter-spacing: 0; }
+    h3 { margin: 18px 0 10px; font-size: 18px; letter-spacing: 0; }
+    p { margin: 0 0 12px; }
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      color: var(--code);
+    }
+    code {
+      background: #eef2f7;
+      border: 1px solid #dfe6ef;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    pre {
+      margin: 10px 0 0;
+      padding: 14px;
+      overflow-x: auto;
+      background: #101722;
+      color: #e7edf7;
+      border-radius: 6px;
+    }
+    pre code { color: inherit; background: transparent; border: 0; padding: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+    }
+    th { background: #eaf0f7; font-weight: 700; }
+    ul { margin: 8px 0 16px 22px; padding: 0; }
+    li { margin: 4px 0; }
+    .lead { color: #dce8f3; max-width: 980px; font-size: 18px; }
+    .note {
+      background: #fff8e8;
+      border: 1px solid #e5c678;
+      border-left: 5px solid var(--warn);
+      padding: 14px 16px;
+      margin: 14px 0 22px;
+      border-radius: 6px;
+    }
+    .ok {
+      background: #ecf8f1;
+      border: 1px solid #b9dcc8;
+      border-left: 5px solid var(--ok);
+      padding: 14px 16px;
+      margin: 14px 0 22px;
+      border-radius: 6px;
+    }
+    .grid { display: grid; gap: 16px; }
+    .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+    .badge.app { background: var(--app); }
+    .badge.lib { background: var(--lib); }
+    .badge.shared { background: #4d687f; }
+    .diagram {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 14px 0 24px;
+      overflow-x: auto;
+    }
+    .flow {
+      min-width: 940px;
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+    .node {
+      border: 1px solid var(--line);
+      border-top: 5px solid #4d687f;
+      border-radius: 6px;
+      background: #fff;
+      padding: 10px;
+      min-height: 106px;
+      position: relative;
+    }
+    .node.app { border-top-color: var(--app); }
+    .node.lib { border-top-color: var(--lib); }
+    .node.shared { border-top-color: #4d687f; }
+    .node strong { display: block; margin-bottom: 4px; }
+    .node small { color: var(--muted); display: block; }
+    .arrow {
+      align-self: center;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 20px;
+    }
+    .swimlane {
+      display: grid;
+      grid-template-columns: 180px repeat(6, minmax(150px, 1fr));
+      border: 1px solid var(--line);
+      background: #fff;
+      min-width: 1040px;
+    }
+    .lane-label, .lane-cell {
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 10px;
+      min-height: 76px;
+    }
+    .lane-label { font-weight: 700; background: #eef3f8; }
+    .lane-cell.app { background: #eef8fa; }
+    .lane-cell.lib { background: #f3effb; }
+    .lane-cell.shared { background: #f8fafc; }
+    .tree { white-space: pre; font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; line-height: 1.45; }
+    .mini { color: var(--muted); font-size: 13px; }
+    .compare td:first-child { width: 230px; font-weight: 700; }
+    .source td:first-child { width: 320px; }
+    @media (max-width: 900px) {
+      main { padding: 18px; }
+      .cols-2, .cols-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Specsheet PDF With Trend Data: Dashboard App vs Direct <code>awspec</code></h1>
+    <p class="lead">
+      Developer-oriented map of how this Streamlit dashboard generates a release specsheet PDF with trend data,
+      compared with directly using the internal <code>perception_catalog_analyzer</code> / <code>awspec</code> library.
+    </p>
+  </header>
+
+  <main>
+    <section>
+      <h2>Executive Summary</h2>
+      <div class="note">
+        In this workspace, <code>awspec</code> is not importable as a Python module. It is the Typer CLI name declared
+        by <code>perception_catalog_analyzer.cli</code>. The app imports the library package directly as
+        <code>perception_catalog_analyzer</code>.
+      </div>
+      <div class="grid cols-3">
+        <div class="card">
+          <span class="badge app">APP</span>
+          <h3>What the dashboard adds</h3>
+          <p>
+            Job scheduling/reuse, app-native downloads, role folders, trend metadata validation, DevOps summary
+            synthesis, topic autodetection, compatibility shims, progress logging, and dashboard inventory/static links.
+          </p>
+        </div>
+        <div class="card">
+          <span class="badge lib">DIRECT awspec</span>
+          <h3>What the library owns</h3>
+          <p>
+            <code>SceneDataFrame</code> loading, metric block generation, summary JSON production, trend plot rendering,
+            template rendering, table-of-contents insertion, HTML output, and WeasyPrint PDF output.
+          </p>
+        </div>
+        <div class="card">
+          <span class="badge shared">BOTTOM LINE</span>
+          <h3>Main difference</h3>
+          <p>
+            Direct <code>awspec</code> is a job-ID-centered export/PDF tool. The app is a release-workflow orchestrator
+            that prepares dashboard-native artifacts, then calls selected analyzer functions through wrappers.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>End-To-End Pipeline Difference</h2>
+      <div class="diagram">
+        <div class="flow">
+          <div class="node app">
+            <strong>1. User starts release workflow</strong>
+            <small>Streamlit task submits <code>run_release_specsheet_workflow</code> with project, target, version, topic, labels, metadata.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node app">
+            <strong>2. App schedules or reuses jobs</strong>
+            <small>Performance + DevOps are required. Optional Planning Test can be added.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node app">
+            <strong>3. App builds local artifacts</strong>
+            <small>Downloads archives/results into <code>data/release_spec_*/performance</code> and <code>devops</code>.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node app">
+            <strong>4. App writes trend inputs</strong>
+            <small>Writes <code>metadata.yaml</code>, creates/reuses DevOps <code>resources/summary.json</code>, validates full summary.</small>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <div class="flow">
+          <div class="node shared">
+            <strong>5. App calls analyzer functions</strong>
+            <small><code>SceneDataFrame.from_dir</code>, <code>get_blocks</code>, trend plot helpers, <code>update_template</code>, <code>specsheet</code>.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node lib">
+            <strong>6. Analyzer computes sections</strong>
+            <small>Filters by topic, bins polar grid, computes abstract/detail HTML, writes block summary.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node shared">
+            <strong>7. Trend context assembled</strong>
+            <small>App scans dashboard data root for metadata/summary pairs, then analyzer plot helpers write PNGs.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node lib">
+            <strong>8. PDF rendered</strong>
+            <small>Template HTML + abstract/detail blocks become <code>specsheet.html</code> and <code>specsheet.pdf</code>.</small>
+          </div>
+        </div>
+      </div>
+
+      <h3>Direct <code>awspec all</code> / <code>awspec pdf</code> Pipeline</h3>
+      <div class="diagram">
+        <div class="flow">
+          <div class="node lib">
+            <strong>1. User provides job IDs</strong>
+            <small><code>--full-job-id</code>, <code>--usecase-job-id</code>, <code>--devops-job-id</code>, metadata paths, topic.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node lib">
+            <strong>2. PathManager creates output shape</strong>
+            <small><code>output/export/{job_id}</code> and <code>output/pdf/{full}_{usecase}_{devops}/{topic}</code>.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node lib">
+            <strong>3. Library downloads/exports</strong>
+            <small>Performance jobs become <code>current/future</code> CSV or parquet. DevOps becomes <code>devops.csv</code>.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node lib">
+            <strong>4. Library builds PDF</strong>
+            <small><code>build_performance_data</code>, <code>build_devops_data</code>, <code>build_trend_data</code>, <code>update_template</code>, <code>specsheet</code>.</small>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Side-By-Side Responsibilities</h2>
+      <table class="compare">
+        <thead>
+          <tr><th>Concern</th><th>Dashboard App</th><th>Direct <code>awspec</code> / analyzer</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Entry point</td>
+            <td><code>worker.tasks.job_run_release_specsheet_workflow()</code> plus Streamlit pages/task queue.</td>
+            <td>Typer commands <code>awspec export</code>, <code>awspec pdf</code>, and <code>awspec all</code>.</td>
+          </tr>
+          <tr>
+            <td>Job acquisition</td>
+            <td>Can schedule evaluator jobs, wait for completion, or reuse existing job IDs/local artifacts.</td>
+            <td>Assumes job IDs are provided. It downloads/export builds from those IDs, but does not orchestrate a release workflow.</td>
+          </tr>
+          <tr>
+            <td>Release roles</td>
+            <td>Current workflow treats <code>performance</code> and <code>devops</code> as core roles; <code>planning_test</code> is optional. Other code can discover <code>usecase</code> for imported/library-style releases.</td>
+            <td>Native CLI has <code>full</code>, <code>usecase</code>, and <code>devops</code> job IDs.</td>
+          </tr>
+          <tr>
+            <td>Output layout</td>
+            <td><code>data/release_spec_*/performance/specsheet/specsheet.pdf</code>, role folders, metadata in <code>resources</code>, dashboard inventory under <code>static/release_specs</code> when imported/published.</td>
+            <td><code>output/export/{job_id}</code> and <code>output/pdf/{full}_{usecase}_{devops}/{topic}/specsheet/specsheet.pdf</code>.</td>
+          </tr>
+          <tr>
+            <td>Input normalization</td>
+            <td>Converts parquet to CSV if missing; can build CSV from <code>pkl</code>/<code>pkl.z</code>; coerces numeric columns before metric calculation.</td>
+            <td><code>SceneDataFrame.from_dir</code> loads existing <code>current/future</code> parquet or CSV and filters by topic.</td>
+          </tr>
+          <tr>
+            <td>Topic handling</td>
+            <td>Detects available topics from CSV/parquet and may replace requested topic with fallback or only detected topic.</td>
+            <td>Uses the topic passed into <code>PathManager</code> and <code>SceneDataFrame.from_dir</code>.</td>
+          </tr>
+          <tr>
+            <td>Metrics</td>
+            <td>Defaults to dashboard list: mAP, precision, recall, FNR, max consecutive FN duration, x/y/yaw/speed error; adds 1s/3s/5s ADE/FDE only when future data exists.</td>
+            <td>CLI default includes 1s/3s/5s/7s/9s ADE/FDE, then removes prediction metrics if no future dataframe; removes mAP/precision for usecase blocks.</td>
+          </tr>
+          <tr>
+            <td>Trend metadata</td>
+            <td>Validates YAML fields (<code>tags</code>, <code>pilot_auto_version</code>, <code>data_count</code>, <code>date</code>) and writes <code>resources/metadata.yaml</code>.</td>
+            <td>Uses metadata paths passed to export or metadata already inside the library PDF tree. Trend discovery scans metadata under <code>pdf_path</code>.</td>
+          </tr>
+          <tr>
+            <td>Trend summary</td>
+            <td>Requires a full-performance <code>summary.json</code> from block generation and synthesizes DevOps summary from suite rows when possible.</td>
+            <td><code>get_blocks</code> produces summary for performance blocks; <code>build_devops_data</code> loads <code>devops.csv</code> and writes a summary payload.</td>
+          </tr>
+          <tr>
+            <td>Trend history discovery</td>
+            <td>Scans dashboard <code>data</code> root for metadata/summary pairs, excludes generated history and <code>release_spec_*</code> containers, then infers topic from metadata/path.</td>
+            <td>Scans <code>path_manager.pdf_path/**/metadata.yaml</code>; topic is inferred using parent positions expected by library layout.</td>
+          </tr>
+          <tr>
+            <td>Compatibility</td>
+            <td>Uses signature inspection wrappers for analyzer API drift: <code>_scene_dataframe_from_dir_compat</code>, <code>_get_blocks_compat</code>, <code>_update_template_compat</code>, <code>_specsheet_compat</code>.</td>
+            <td>Calls library functions directly with the current package signature.</td>
+          </tr>
+          <tr>
+            <td>User feedback</td>
+            <td>Writes task logs/progress and patches analyzer <code>tqdm</code> to expose block-generation progress.</td>
+            <td>Prints CLI progress/messages to stdout.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Swimlane View</h2>
+      <div class="diagram">
+        <div class="swimlane">
+          <div class="lane-label">Layer</div>
+          <div class="lane-label">Schedule</div>
+          <div class="lane-label">Download/export</div>
+          <div class="lane-label">Normalize</div>
+          <div class="lane-label">Metric blocks</div>
+          <div class="lane-label">Trend context</div>
+          <div class="lane-label">Render</div>
+
+          <div class="lane-label">Dashboard app</div>
+          <div class="lane-cell app">Schedules or reuses evaluator jobs; waits; records statuses.</div>
+          <div class="lane-cell app">Uses app download/build helpers into release role folders.</div>
+          <div class="lane-cell app">Ensures CSVs, autodetects topic, coerces numeric values.</div>
+          <div class="lane-cell app">Calls analyzer <code>get_blocks</code> via compatibility wrapper.</div>
+          <div class="lane-cell app">Writes trend metadata, validates summaries, synthesizes DevOps summary, scans dashboard history.</div>
+          <div class="lane-cell app">Calls analyzer template/PDF functions via wrappers.</div>
+
+          <div class="lane-label">Analyzer / awspec</div>
+          <div class="lane-cell lib">No release scheduling in PDF path; CLI expects job IDs.</div>
+          <div class="lane-cell lib">Exports pkl/archive data and devops CSV from evaluator APIs.</div>
+          <div class="lane-cell lib">Loads <code>SceneDataFrame</code> from current/future parquet or CSV.</div>
+          <div class="lane-cell lib">Bins, computes blocks, writes debug parquet and <code>summary.json</code>.</div>
+          <div class="lane-cell lib">Loads metadata/summary from library PDF tree and generates trend PNGs.</div>
+          <div class="lane-cell lib">Renders Jinja template and writes PDF using WeasyPrint.</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Trend Data Contract</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>Required metadata</h3>
+          <pre><code>tags: [trend]
+pilot_auto_version: "Pilot.Auto v4.4.0 (bevfusion model/2.7.1)"
+data_count: 99,776+
+description: "Data added"
+date: 2025.11.7
+topic_name: perception.object_recognition.objects   # optional but useful
+pilot_auto_version_abbr: p440-b271                  # optional short display label</code></pre>
+          <p class="mini">
+            The app validates this shape. Direct library mode usually receives metadata files through CLI options or
+            existing export/PDF folders.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Summary role classification</h3>
+          <table>
+            <thead><tr><th>Role</th><th>Recognized by app</th><th>Used for</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Full performance</td>
+                <td><code>summary.blocks[].header == "全数データセット評価"</code></td>
+                <td>mAP, precision, recall, ADE/FDE trends.</td>
+              </tr>
+              <tr>
+                <td>Usecase</td>
+                <td><code>summary.blocks[].header == "ユースケース評価"</code></td>
+                <td>Release grouping/inventory context.</td>
+              </tr>
+              <tr>
+                <td>DevOps</td>
+                <td>Nested dict with <code>passed</code>/<code>total</code> leaves.</td>
+                <td>Current pass-rate plot and pass-rate trend plots.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h3>Trend transformation path</h3>
+      <div class="diagram">
+        <div class="flow">
+          <div class="node shared">
+            <strong>metadata.yaml</strong>
+            <small>Version, date, data count, description, topic, trend tag.</small>
+          </div>
+          <div class="arrow">+</div>
+          <div class="node shared">
+            <strong>summary.json</strong>
+            <small>Full metric table or DevOps pass totals.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node app">
+            <strong>App normalization</strong>
+            <small>Average by labels; infer topic; align DevOps case structure.</small>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node lib">
+            <strong>Analyzer plot helpers</strong>
+            <small><code>map_trend.png</code>, <code>prediction_trend.png</code>, <code>devops*.png</code>.</small>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>File Layout Comparison</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <span class="badge app">APP RELEASE WORKFLOW</span>
+          <div class="tree">data/release_spec_&lt;release_key&gt;/
+  metadata.yaml
+  performance/
+    current.parquet
+    future.parquet
+    current.csv                 # created if needed
+    future.csv                  # created if needed
+    resources/
+      metadata.yaml             # trend metadata
+      summary.json              # full metric summary
+    specsheet/
+      resources/
+        current.parquet         # analyzer debug/filter output
+        future.parquet
+        summary.json            # analyzer block summary
+      trend_assets/
+        map_trend.png
+        prediction_trend.png
+        devops.png
+        devops_trend.png
+        devops_trend_detail.png
+      specsheet.html
+      specsheet.pdf
+  devops/
+    resources/
+      metadata.yaml
+      summary.json              # app-created/reused pass-rate summary</div>
+        </div>
+        <div class="card">
+          <span class="badge lib">DIRECT awspec</span>
+          <div class="tree">output/export/
+  &lt;full_job_id&gt;/
+    archive/
+    current.parquet
+    future.parquet
+    metadata.yaml
+  &lt;usecase_job_id&gt;/
+    archive/
+    current.parquet
+    future.parquet
+    metadata.yaml
+  &lt;devops_job_id&gt;/
+    devops.csv
+    metadata.yaml
+
+output/pdf/
+  &lt;full&gt;_&lt;usecase&gt;_&lt;devops&gt;/
+    &lt;topic&gt;/
+      &lt;full_job_id&gt;/
+        abstract.json
+        detailed.json
+        summary.json
+        metadata.yaml
+      &lt;usecase_job_id&gt;/
+        abstract.json
+        detailed.json
+        metadata.yaml
+      &lt;devops_job_id&gt;/
+        devops.csv
+        devops.png
+        summary.json
+      trend/
+        map_trend.png
+        prediction_trend.png
+        devops_trend.png
+        devops_trend_detail.png
+      specsheet/
+        specsheet.html
+        specsheet.pdf</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Important Behavioral Differences</h2>
+      <table>
+        <thead><tr><th>Area</th><th>Why developers should care</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>App may skip external downloads</td>
+            <td>If local release folders already contain parquet/download artifacts, the app can bypass evaluator waiting/download. Direct <code>awspec export</code> is job-ID oriented.</td>
+          </tr>
+          <tr>
+            <td>App excludes some trend sources from scan</td>
+            <td><code>discover_trend_metadata_files()</code> skips paths containing <code>_app_trend_history</code> and any path under <code>release_spec_*</code>. This avoids double counting release workflow internals but means imported <code>trend_release_*</code> or standalone runs are the main history sources.</td>
+          </tr>
+          <tr>
+            <td>App validates full summary before rendering trend PDF</td>
+            <td>If <code>summary.json</code> is absent or classifies as non-full, app trend generation fails early. Direct library trend building can silently skip metadata entries with no usable full summary.</td>
+          </tr>
+          <tr>
+            <td>DevOps trend shape is normalized by app</td>
+            <td>The app accepts several nested pass-rate shapes, unwraps <code>DevOps</code> if present, and fills missing cases with zero-count entries so versions align in detail plots.</td>
+          </tr>
+          <tr>
+            <td>Analyzer API drift is hidden by app wrappers</td>
+            <td>The app maps semantic kwargs onto the installed analyzer function signatures. Direct code that copies current analyzer calls may break across analyzer versions unless it uses similar wrappers.</td>
+          </tr>
+          <tr>
+            <td>Template dataset assets may be redirected</td>
+            <td>The app patches analyzer template globals so dataset-summary files are copied into the specsheet context instead of relying on read-only package config paths.</td>
+          </tr>
+          <tr>
+            <td>PDF body role differs</td>
+            <td>Direct <code>awspec</code> can combine full and usecase metric blocks. The current app release workflow calls <code>generate_specsheet_pdf()</code> on <code>performance_path</code> and uses <code>evaluation_type="full"</code> for the body; DevOps enters through trend/current pass-rate context.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Source Map</h2>
+      <table class="source">
+        <thead><tr><th>Source</th><th>What to inspect</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>worker/tasks.py:1521-1866</code></td>
+            <td>App release workflow: parameter validation, evaluator scheduling/reuse, artifact building, DevOps summary creation, call to <code>generate_specsheet_pdf</code>.</td>
+          </tr>
+          <tr>
+            <td><code>lib/specsheet_report.py:73-161</code></td>
+            <td>Dashboard artifact path contract and topic detection/resolution.</td>
+          </tr>
+          <tr>
+            <td><code>lib/specsheet_report.py:327-423</code></td>
+            <td>Trend metadata validation/writing and dashboard trend metadata discovery.</td>
+          </tr>
+          <tr>
+            <td><code>lib/specsheet_report.py:807-1164</code></td>
+            <td>Full summary validation, trend metric extraction, DevOps normalization, plot context construction.</td>
+          </tr>
+          <tr>
+            <td><code>lib/specsheet_report.py:1167-1445</code></td>
+            <td>Compatibility wrappers for analyzer template, block, and PDF APIs.</td>
+          </tr>
+          <tr>
+            <td><code>lib/specsheet_report.py:1448-1632</code></td>
+            <td>Main app-native PDF generation pipeline.</td>
+          </tr>
+          <tr>
+            <td><code>/home/leigu/perception_catalog_analyzer/.../cli.py:36-282</code></td>
+            <td>Direct <code>awspec export</code> and <code>awspec pdf</code> command flow.</td>
+          </tr>
+          <tr>
+            <td><code>/home/leigu/perception_catalog_analyzer/.../data_build.py:155-386</code></td>
+            <td>Library export, performance block building, DevOps building, and trend data building.</td>
+          </tr>
+          <tr>
+            <td><code>/home/leigu/perception_catalog_analyzer/.../specsheet/specsheet.py:23-178</code></td>
+            <td>Analyzer block generation and final HTML/PDF assembly.</td>
+          </tr>
+          <tr>
+            <td><code>/home/leigu/perception_catalog_analyzer/.../path.py:40-155</code></td>
+            <td>Direct library output directory contract.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Debugging Checklist</h2>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>When using the dashboard app</h3>
+          <ul>
+            <li>Confirm release metadata contains <code>tags: [trend]</code>, <code>pilot_auto_version</code>, <code>data_count</code>, and <code>date</code>.</li>
+            <li>Check <code>performance/resources/summary.json</code> or <code>performance/specsheet/resources/summary.json</code> classifies as full performance.</li>
+            <li>Check <code>devops/resources/summary.json</code> exists if DevOps trend/current pass-rate plots are expected.</li>
+            <li>Verify the requested topic exists in <code>current.parquet</code>/<code>future.parquet</code>; the app may log a detected-topic replacement.</li>
+            <li>Open <code>performance/specsheet/trend_assets</code> to verify PNGs were created before debugging template rendering.</li>
+            <li>Remember that <code>release_spec_*</code> paths are excluded from history scanning, so historical trend inputs should come from imported <code>trend_release_*</code> or standalone trend runs.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>When using direct <code>awspec</code></h3>
+          <ul>
+            <li>Make sure <code>PathManager</code> has full/usecase/devops job IDs if you expect trend folders and specsheet output paths.</li>
+            <li>Make sure metadata files are present under the library PDF tree; <code>build_trend_data()</code> scans <code>pdf_path/**/metadata.yaml</code>.</li>
+            <li>Confirm metadata parent structure matches analyzer assumptions because topic is inferred from path parents in library trend code.</li>
+            <li>Use <code>--skip-download</code> only when <code>output/export/{job_id}/archive/*.pkl.z</code> or exported files already exist.</li>
+            <li>If prediction trends are missing, check that <code>future.csv</code> or <code>future.parquet</code> exists and contains the selected topic.</li>
+            <li>If usecase metrics look different, remember direct library removes <code>mAP</code> and <code>precision</code> for usecase blocks.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Short Mental Model</h2>
+      <div class="ok">
+        Use direct <code>awspec</code> when you already have clean job IDs and want the analyzer's standard
+        <code>output/export</code> plus <code>output/pdf</code> lifecycle. Use the dashboard app when you want a managed
+        release workflow: scheduling/reusing evaluator jobs, app-native artifact storage, dashboard inventory, robust
+        trend metadata handling, and compatibility across analyzer versions.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -3,271 +3,164 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Specsheet Details</title>
+  <title>Specsheet &amp; Trends — Evaluation Dashboard Guide</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="hero compact">
-    <div class="shell">
-      <div class="eyebrow"><span class="signal"></span>Specsheet</div>
-      <h1>Specsheet Details</h1>
-      <p class="lead">
-        The specsheet export creates a release-oriented PDF from the selected run, optional trend metadata,
-        and the external <code>perception_catalog_analyzer</code> library.
-      </p>
-    </div>
-  </header>
 
-  <nav>
-    <div class="shell nav-inner">
-      <a href="index.html">Home</a>
-      <a href="getting_started.html">How to Use</a>
-      <a href="pages.html">Pages</a>
-      <a href="data_reports.html">Data & Reports</a>
-      <a class="active" href="specsheet.html">Specsheet</a>
-      <a href="deployment.html">Deployment</a>
-      <a href="visual_systems.html">Diagrams</a>
+  <nav class="topnav">
+    <div class="shell topnav-inner">
+      <a class="brand" href="index.html"><span class="tick">▸</span> EVAL·DASH GUIDE</a>
+      <a class="navlink" href="index.html">Home</a>
+      <a class="navlink" href="getting_started.html">Getting Started</a>
+      <a class="navlink" href="pages.html">Page Reference</a>
+      <a class="navlink" href="visual_systems.html">Viewers &amp; 3D</a>
+      <a class="navlink" href="data_reports.html">Data &amp; Reports</a>
+      <a class="navlink active" href="specsheet.html">Specsheet &amp; Trends</a>
+      <a class="navlink" href="deployment.html">Deployment</a>
     </div>
   </nav>
 
+  <header class="hero">
+    <div class="shell">
+      <span class="kicker">Specsheet &amp; Trends</span>
+      <h1>The release document, and the history behind it.</h1>
+      <p class="lead">
+        A <strong>release trend group</strong> bundles the three role summaries of one release
+        (full / usecase / devops). The <strong>spec-sheet</strong> is the PDF generated from a release run —
+        optionally with trend context plotted from every previous release. <strong>Trend Insights</strong> is
+        the page that reads the whole history.
+      </p>
+      <div class="hero-meta">
+        <span class="pill tp">full · 全数データセット評価</span>
+        <span class="pill est">usecase · ユースケース評価</span>
+        <span class="pill fn">devops · 過去課題評価</span>
+      </div>
+    </div>
+  </header>
+
   <main>
-    <section class="reveal">
+
+    <section class="block reveal" id="release-flow">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">Overview</div>
-          <h2>What the specsheet export does.</h2>
-          <p class="lead">
-            The dashboard handles the UI, selected run path, metadata, progress, and local artifact setup.
-            The analyzer library handles the metric blocks, template rendering, plots, and PDF output.
-          </p>
+          <span class="kicker">The Release Pipeline</span>
+          <h2>From two catalogs to a versioned history entry.</h2>
         </div>
-        <div class="flow">
-          <div class="step">
-            <strong>1. Select a run</strong>
-            <span><code>Overview.py</code> gathers project, version, topic, labels, and optional trend metadata.</span>
-          </div>
-          <div class="step">
-            <strong>2. Prepare files</strong>
-            <span><code>ensure_specsheet_csvs()</code> creates <code>current.csv</code> and <code>future.csv</code> when needed.</span>
-          </div>
-          <div class="step">
-            <strong>3. Build blocks</strong>
-            <span><code>SceneDataFrame.from_dir()</code> and <code>get_blocks()</code> produce abstract and detailed sections.</span>
-          </div>
-          <div class="step">
-            <strong>4. Add trend context</strong>
-            <span><code>metadata.yaml</code> and <code>summary.json</code> files are classified and converted into trend rows and plots.</span>
-          </div>
-          <div class="step">
-            <strong>5. Render PDF</strong>
-            <span><code>update_template()</code> creates HTML, then <code>specsheet()</code> writes <code>specsheet.pdf</code>.</span>
-          </div>
+        <div class="flow h">
+          <div class="step"><span class="n">01</span><strong>Release workflow</strong><span>Workflow page → Start new workflow → “Release data workflow”. Schedules the fixed Performance + DevOps (+ optional Planning Test) catalogs, or reuses existing job IDs.</span></div>
+          <div class="step"><span class="n">02</span><strong>Metadata</strong><span>Release metadata YAML (tags, release_group, pilot_auto_version, data_count, description, date) is edited inline with live validation, or hydrated from an existing folder.</span></div>
+          <div class="step"><span class="n">03</span><strong>Specsheet</strong><span>The workflow (or Overview’s export section) generates the spec-sheet PDF, with trend plots when trend mode is on.</span></div>
+          <div class="step"><span class="n">04</span><strong>History</strong><span>The release joins the trend inventory; Trend Insights and future trend-mode specsheets pick it up automatically.</span></div>
         </div>
       </div>
     </section>
 
-    <section class="reveal">
+    <section class="block reveal" id="generate">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">App and Library</div>
-          <h2>The integration boundary is mostly in <code>lib/specsheet_report.py</code>.</h2>
-        </div>
-        <table class="table">
-          <thead><tr><th>Layer</th><th>Key file/module</th><th>Responsibility</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>Streamlit UI</td>
-              <td><code>Overview.py</code></td>
-              <td>Collects project identity, version, topic, labels, selected run, trend toggle, and user-facing progress.</td>
-            </tr>
-            <tr>
-              <td>Dashboard wrapper</td>
-              <td><code>lib/specsheet_report.py</code></td>
-              <td>Defines artifact paths, adapts analyzer signatures, discovers trend files, classifies summaries, and prepares plot paths.</td>
-            </tr>
-            <tr>
-              <td>Analyzer library</td>
-              <td><code>perception_catalog_analyzer</code></td>
-              <td>Loads scene data, generates specsheet metric blocks, renders template HTML, creates plots, and writes the final PDF.</td>
-            </tr>
-            <tr>
-              <td>Local artifacts</td>
-              <td><code>data/&lt;run&gt;/...</code></td>
-              <td>Stores run CSV/parquet files, trend metadata, summary files, generated PNGs, HTML, and <code>specsheet.pdf</code>.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Files</div>
-          <h2>Specsheet input and output files live inside the run folder.</h2>
-          <p class="lead">
-            Trend files can come from a standalone dashboard run or from a grouped release folder. In both cases,
-            each trend item needs a <code>metadata.yaml</code> file next to its <code>summary.json</code>.
+          <span class="kicker">Spec-sheet Generation</span>
+          <h2>What goes into the PDF.</h2>
+          <p>
+            Generated from Overview’s <strong>Export Specsheet Report</strong> section (or automatically by the
+            release workflow). Inputs: Project ID, Version and Topic name (auto-filled from release
+            metadata), the run’s parquet/CSV artifacts, and — in trend mode — validated trend metadata.
           </p>
         </div>
         <div class="grid cols-2">
           <div class="card">
-            <h3>Standalone run shape</h3>
-            <div class="tree" aria-label="Standalone run file tree">
-              <div>data/my_run/</div>
-              <div>  current.csv</div>
-              <div>  future.csv</div>
-              <div>  resources/</div>
-              <div>    metadata.yaml</div>
-              <div>    summary.json</div>
-              <div>  specsheet/</div>
-              <div>    specsheet.html</div>
-              <div>    specsheet.pdf</div>
-            </div>
+            <span class="tag est">ALWAYS</span>
+            <h3>Abstract + detail blocks</h3>
+            <p>
+              Per-label metric blocks from <code>perception_catalog_analyzer</code>: mAP, precision, recall,
+              FNR, max consecutive FN duration, x/y/yaw/speed error — plus minADE/minFDE @1/3/5 s when
+              future data exists. Default labels: car, truck, bus, bicycle, pedestrian, motorcycle.
+            </p>
           </div>
           <div class="card">
-            <h3>Grouped release shape</h3>
-            <div class="tree" aria-label="Grouped release file tree">
-              <div>data/trend_release_full_usecase_devops/</div>
-              <div>  perception.object_recognition.objects/</div>
-              <div>    &lt;full_job_id&gt;/metadata.yaml + summary.json</div>
-              <div>    &lt;usecase_job_id&gt;/metadata.yaml + summary.json</div>
-              <div>    &lt;devops_job_id&gt;/metadata.yaml + summary.json</div>
-              <div>  specsheet/</div>
-              <div>    map_trend.png</div>
-              <div>    devops_trend.png</div>
-              <div>    specsheet.pdf</div>
-            </div>
+            <span class="tag fn">TREND MODE</span>
+            <h3>Trend context</h3>
+            <p>
+              mAP trend, prediction trend, current pass-rate plot and pass-rate trend plots rendered into
+              <code>specsheet/trend_assets/</code>, built from every discovered release’s metadata (merged,
+              de-duplicated, sorted by date). Requires valid trend metadata for the current release.
+            </p>
           </div>
         </div>
-        <div class="callout">
-          <strong>Note:</strong> <code>discover_trend_metadata_files()</code> scans the data root for
-          metadata/summary pairs, and <code>discover_trend_release_groups()</code> decides how those files
-          should be grouped for the release PDF.
-        </div>
-      </div>
-    </section>
-
-    <section class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Trend Data</div>
-          <h2>Trend summaries are classified by JSON shape.</h2>
-          <p class="lead">
-            Metadata provides release identity. The summary payload decides whether the item is a full,
-            usecase, devops, or unknown trend source.
+        <ul style="margin-top:18px">
+          <li><strong>Freshness</strong> — if the PDF is newer than all source artifacts, generation is skipped and the existing PDF is offered (“Using existing up-to-date spec-sheet PDF”); a Regenerate button forces it.</li>
+          <li><strong>Editing saved metadata</strong> — the YAML editor validates live; changing saved metadata requires ticking “Confirm saved metadata changes”, and the edit is written back to the release’s role directories.</li>
+            <li><strong>Manual history</strong> — “Choose trend history manually” lets you pick exactly which past releases appear in the trend plots; the current release is always included.</li>
+          <li><strong>Multiple runs</strong> — in compare mode you can queue several runs; output is one <code>specsheet.pdf</code> or a <code>specsheet_reports.zip</code>. Trend mode supports exactly one run at a time.</li>
+          <li><strong>Publishing</strong> — generated PDFs are linked into <code>static/release_specs/&lt;release&gt;/&lt;topic&gt;.pdf</code> so the browser can open them straight from the Trend Insights history table.</li>
+        </ul>
+        <div class="callout warn">
+          <span class="callout-title">Metadata format is strict</span>
+          <p>
+            <code>date</code> must be <code>YYYY.M.D</code> (e.g. <code>2026.5.22</code>) and
+            <code>data_count</code> digits with optional commas/<code>+</code>. Trend-group assembly also insists
+            each summary file actually classifies as its declared role — a usecase summary can’t be
+            registered as devops.
           </p>
         </div>
-        <table class="table">
-          <thead><tr><th>Role</th><th>How it is recognized</th><th>Specsheet use</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>Full performance</td>
-              <td><code>summary.json</code> has <code>blocks</code> containing <code>全数データセット評価</code>.</td>
-              <td>Feeds mAP, precision, recall, error, and prediction trend sections.</td>
-            </tr>
-            <tr>
-              <td>Usecase</td>
-              <td><code>summary.json</code> has <code>blocks</code> containing <code>ユースケース評価</code>.</td>
-              <td>Participates in release grouping and inventory context.</td>
-            </tr>
-            <tr>
-              <td>DevOps pass-rate</td>
-              <td>Summary is a nested dictionary without <code>blocks</code>, with category results containing <code>passed</code> and <code>total</code>.</td>
-              <td>Feeds overall pass-rate trend and pass-rate detail plots.</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </section>
 
-    <section class="reveal">
+    <section class="block reveal" id="trend-insights">
       <div class="shell">
         <div class="section-head">
-          <div class="kicker">PDF Assembly</div>
-          <h2>The final PDF is assembled from analyzer HTML plus dashboard trend context.</h2>
+          <span class="kicker">The History Page</span>
+          <h2>Trend Insights: every release on one page.</h2>
+          <p>
+            Reads all release trend groups plus the specsheet inventory and renders the release history,
+            cross-release performance tables and trend charts, defect breakdowns, and per-release deep
+            dives. A <strong>History category</strong> control (All / Release / Periodic Evaluation) filters the whole
+            page.
+          </p>
         </div>
-        <div class="grid cols-2">
-          <div class="card">
-            <h3><code>get_blocks()</code></h3>
-            <p>
-              Creates abstract and detailed metric fragments for labels, metrics, and evaluation type.
-              These fragments become the main technical body of the PDF.
-            </p>
-          </div>
-          <div class="card">
-            <h3><code>update_template()</code></h3>
-            <p>
-              Receives project/version metadata and trend context, then renders the analyzer template body.
-              Generated PNG paths are included when trend plots exist.
-            </p>
-          </div>
-          <div class="card">
-            <h3><code>specsheet()</code></h3>
-            <p>
-              Combines body HTML, abstract HTML, and detailed HTML, then writes
-              <code>specsheet/specsheet.html</code> and <code>specsheet/specsheet.pdf</code>.
-            </p>
-          </div>
-          <div class="card">
-            <h3>Trend plots</h3>
-            <p>
-              Full performance trends can generate <code>map_trend.png</code> and
-              <code>prediction_trend.png</code>. DevOps summaries can generate
-              <code>devops_trend.png</code> and <code>devops_trend_detail.png</code>.
-            </p>
-          </div>
+        <div class="shot est">
+          <span class="bracket"></span>
+          <span class="shot-label">Trend Insights · release history</span>
+          <img src="img/trend_insights.png" alt="Trend Insights release history table with version, type pills, dates, per-role Open links, specsheet PDFs, and evaluator job links" />
+        </div>
+        <p class="shot-caption">
+          The Release History table: type pills (Release / Periodic Evaluation), per-role “Open” links that
+          deep-link Overview, spec-sheet PDF links, and evaluator report links. Clicking a type pill flips a
+          release between Release and Periodic Evaluation by updating its metadata.
+        </p>
+        <div class="shot est">
+          <span class="bracket"></span>
+          <span class="shot-label">Trend Insights · trend charts</span>
+          <img src="img/trend_insights_charts.png" alt="Trend Insights charts: usecase recall and FNR, overall pass rate with scenario counts, and major category pass rate across versions" />
+        </div>
+        <h4>Sections, top to bottom</h4>
+        <ul>
+          <li><strong>Release History</strong> — sortable inventory: version, type, date, description, data count, per-role Overview links, specsheet PDFs (Prediction / Detection columns), evaluator job reports, folder.</li>
+          <li><strong>Release Performance</strong> — Perception Performance vs ML Model Performance tables (mAP, precision, recall, FNR, errors, pass rate), as dataframes or colored in-cell bars.</li>
+          <li><strong>Major Performance Scores</strong> — mAP / precision / recall lines across versions with data-count bars.</li>
+          <li><strong>Prediction Trend</strong> — minADE/minFDE @1/3/5 s across releases.</li>
+          <li><strong>UseCase Metrics Trend</strong> and <strong>Pass Rate Trend</strong> — recall/FNR, overall + major/mid category pass rates; releases analyzed with <code>perception_catalog_analyzer ≥ 0.2.0</code> add recall-by-distance-band lines.</li>
+          <li><strong>Defect Evaluation</strong> — the major/mid/minor defect-category hierarchy per version as bars, treemap, icicle or sunburst, colored by pass rate, with a worst-first case table.</li>
+          <li><strong>Release Details / Trend Details</strong> — per-release metric atlas heatmap (metrics × labels), minADE/minFDE label profiles, per-label timeline heatmaps.</li>
+          <li><strong>Case Explorer / Grouped Raw Browser</strong> — drill from major → mid → minor → case; inspect the raw <code>summary.json</code> and group manifest per role.</li>
+          <li><strong>Build Release Trend Group</strong> — the manual assembler: point at the three role summaries, provide the metadata YAML, and it creates the <code>trend_release_…</code> folder for you (each source must classify as its declared role).</li>
+        </ul>
+        <div class="callout info">
+          <span class="callout-title">Empty page?</span>
+          <p>
+            “No saved trend metadata was found yet” means no release trend groups exist under the data
+            root — create one with the release workflow or the builder expander at the bottom of the page.
+          </p>
         </div>
       </div>
     </section>
 
-    <section class="reveal">
-      <div class="shell">
-        <div class="section-head">
-          <div class="kicker">Debugging</div>
-          <h2>When a specsheet section is missing, check the data contract.</h2>
-        </div>
-        <table class="table">
-          <thead><tr><th>Symptom</th><th>What to check</th><th>Expected condition</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>No trend section</td>
-              <td>Trend metadata discovery</td>
-              <td>At least one <code>metadata.yaml</code> has a sibling <code>summary.json</code>.</td>
-            </tr>
-            <tr>
-              <td>Full trend is missing</td>
-              <td>Full summary role</td>
-              <td><code>summary.json</code> has full-performance blocks and generated full trend rows.</td>
-            </tr>
-            <tr>
-              <td>Pass Rate Trend is missing</td>
-              <td>DevOps summary and plot files</td>
-              <td>DevOps rows are non-empty and <code>devops_trend.png</code> exists in the specsheet output folder.</td>
-            </tr>
-            <tr>
-              <td>PDF says no data</td>
-              <td>Template context</td>
-              <td>The relevant trend list is non-empty before calling <code>update_template()</code>.</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="code">
-          <div class="code-title">quick local verification</div>
-          <pre>PYTHONPATH=. python - <<'PY'
-from pathlib import Path
-from lib.specsheet_report import _build_trend_context, discover_trend_metadata_files
-
-ctx = _build_trend_context(discover_trend_metadata_files(), Path("/tmp/specsheet-trend-check"))
-print(len(ctx["performance_trend_data"]), len(ctx["devops_trend_data"]))
-PY</pre>
-        </div>
-      </div>
-    </section>
   </main>
 
   <footer class="footer">
-    <div class="shell"><a href="data_reports.html">Back to Data & Reports</a></div>
+    <div class="shell">
+      <strong>Next:</strong> <a href="deployment.html">Deployment</a> — how the stack runs in production.
+    </div>
   </footer>
   <script src="guide.js"></script>
 </body>
