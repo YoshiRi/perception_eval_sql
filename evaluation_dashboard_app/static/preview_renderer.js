@@ -306,11 +306,16 @@ function previewInteractionViewport(rect, clientX = null) {
 function previewColor(b) {
   const status = String(b.status || "").toUpperCase();
   const source = String(b.source || "").toUpperCase();
-  if (source === "GT" && status === "FN") return TH.c("warn");
-  if (source === "GT") return TH.c("good");
-  if (status === "FP") return TH.c("bad");
-  if (status === "TP") return TH.c("accent");
-  return TH.c("mutedBright");
+  if (source === "GT" && status === "TP") return TH.c("gtTp");
+  if (source === "GT" && status === "FN") return TH.c("gtFn");
+  if (source === "EST" && status === "TP") return TH.c("estTp");
+  if (source === "EST" && status === "FP") return TH.c("estFp");
+  if (source === "GT") return TH.c("gtOther");
+  if (source === "EST") return TH.c("estTp");
+  if (status === "FN") return TH.c("gtFn");
+  if (status === "FP") return TH.c("estFp");
+  if (status === "TP") return TH.c("gtTp");
+  return TH.c("neutralEst");
 }
 function previewLayerKey(b) {
   const source = String(b.source || "").toUpperCase();
@@ -633,7 +638,6 @@ function previewFootprintPoint(pt, sx, sy, scale) {
 function previewHoverText(b) {
   if (!b) return "";
   const parts = [];
-  if (state.compare && b.run) parts.push(`Run ${b.run}`);
   parts.push(b.label || "object");
   if (b.source || b.status) parts.push(`${b.source || ""}/${b.status || ""}`);
   if (b.confidence != null) parts.push(`conf ${Number(b.confidence).toFixed(2)}`);
@@ -1032,7 +1036,7 @@ function renderPreview(message = "") {
   previewCtx.fillText(`Frame ${frame.frame}`, state.compare ? Math.max(88, r.width / 2 - 36) : 10, 16);
   previewCtx.fillStyle = TH.c("muted");
   previewCtx.font = "700 10px Inter, sans-serif";
-  previewCtx.fillText(state.compare ? `A vs B compare · ${compareLensLabel()}` : "GT green · TP cyan · FP red · FN amber", 10, 31);
+  previewCtx.fillText(state.compare ? `A vs B compare · ${compareLensLabel()}` : "GT/EST eval colors", 10, 31);
   const aCount = boxes.filter(b => b.run === "A").length;
   const bCount = boxes.filter(b => b.run === "B").length;
   els.previewStatus.textContent = message || (state.compare
