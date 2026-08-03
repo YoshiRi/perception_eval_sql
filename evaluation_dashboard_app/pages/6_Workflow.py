@@ -2111,7 +2111,14 @@ def _render_current_tasks_section() -> None:
         if st.session_state.get("workflow_pixel_office_view"):
             # The office draws every active task, not just the current history page.
             office_rows = list_recent_tasks(limit=50, session_id=scope_user)
-            render_pixel_office(office_rows)
+            clicked = render_pixel_office(office_rows)
+            # A desk click opens the same full details dialog as the task list's
+            # View button (log, parameters, result summary). The component value
+            # persists across reruns, so only act on a fresh click nonce.
+            if isinstance(clicked, dict) and clicked.get("id"):
+                if clicked.get("t") != st.session_state.get("_pixel_office_click_nonce"):
+                    st.session_state["_pixel_office_click_nonce"] = clicked.get("t")
+                    open_task_detail(str(clicked["id"]))
             _render_office_active_controls(office_rows, scope_user)
             history_tasks = [
                 t

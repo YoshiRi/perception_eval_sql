@@ -36,12 +36,31 @@ MAX_DESKS = 10
 
 _FLOOR_HEIGHT_PX = 300
 _IDLE_HEIGHT_PX = 204
-_ENGINE_PATH = Path(__file__).resolve().parents[2] / "static" / "pixel_office.js"
+_STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
+_ENGINE_PATH = _STATIC_DIR / "pixel_office.js"
 
 
 @functools.lru_cache(maxsize=1)
 def _engine_js() -> str:
     return _ENGINE_PATH.read_text(encoding="utf-8")
+
+
+@functools.lru_cache(maxsize=1)
+def _office_component():
+    """The bidirectional component (static/index.html + the engine).
+
+    Serving through declare_component gives the floor a return channel: desk
+    clicks come back as the component value, so the page can open the same full
+    task-details dialog the task list uses. It also means fragment reruns stream
+    new data into the existing iframe instead of reloading it. Returns None when
+    the API is unavailable so callers can fall back to the inline render.
+    """
+    try:
+        if not (_STATIC_DIR / "index.html").is_file():
+            return None
+        return components.declare_component("pixel_office", path=str(_STATIC_DIR))
+    except Exception:
+        return None
 
 
 def _theme() -> str:
@@ -128,11 +147,29 @@ def _payload(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return items
 
 
-def render_pixel_office(tasks: List[Dict[str, Any]]) -> None:
-    """Draw the office floor for the given task rows (same rows the task list uses)."""
+def render_pixel_office(tasks: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Draw the office floor for the given task rows (same rows the task list uses).
+
+    Returns the last desk click as ``{"id": task_id, "t": nonce}`` (or None). The
+    value persists across reruns, so callers must de-duplicate on the nonce before
+    opening a dialog for it.
+    """
     items = _payload(tasks)
     overflow = max(0, len(items) - MAX_DESKS)
     items = items[:MAX_DESKS]
+    component = _office_component()
+    if component is not None:
+        try:
+            clicked = component(
+                tasks=items,
+                overflow=overflow,
+                theme=_theme(),
+                key="pixel_office_floor",
+                default=None,
+            )
+            return clicked if isinstance(clicked, dict) else None
+        except Exception:
+            pass  # fall back to the inline render below
     height = _FLOOR_HEIGHT_PX if items else _IDLE_HEIGHT_PX
     data = json.dumps(
         {"tasks": items, "overflow": overflow, "theme": _theme()}
@@ -143,3 +180,4 @@ def render_pixel_office(tasks: List[Dict[str, Any]]) -> None:
         "<script>PixelOffice.mount(document.getElementById('pxoffice'), " + data + ");</script>"
     )
     components.html(html, height=height + 8, scrolling=False)
+    return None

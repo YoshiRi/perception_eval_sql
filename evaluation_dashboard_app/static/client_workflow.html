@@ -359,7 +359,13 @@
     const data = PixelOffice.fromWorkflowApi(tasks);
     data.theme = officeTheme();
     if (office) office.setData(data);
-    else office = PixelOffice.mount($("office"), data);
+    else office = PixelOffice.mount($("office"), Object.assign({
+      // Click = full details, same as the dashboard: open the log card below.
+      onSelect: task => {
+        openTaskId = task.id;
+        loadLog().then(() => $("logCard").scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      },
+    }, data));
   }
   // Hidden by default, matching the dashboard; the choice sticks across visits.
   try { $("officeToggle").checked = localStorage.getItem("evaldash.office") === "1"; } catch (e) {}

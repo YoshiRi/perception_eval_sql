@@ -1,0 +1,52 @@
+<!doctype html>
+<!--
+  Streamlit component host for the pixel office (lib/ui/pixel_office.py).
+
+  declare_component(path=static/) serves this file in an iframe and streams task
+  data to it as streamlit:render messages, so the floor updates in place instead
+  of reloading every fragment tick. Desk clicks are posted back as the component
+  value, which the Workflow page turns into the same full "Task details" dialog
+  the task list uses (log, parameters, result summary). Frame height follows the
+  engine's fit ladder via onLayout.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>html, body { margin: 0; padding: 0; overflow: hidden; }</style>
+<script src="./pixel_office.js"></script>
+</head>
+<body>
+<div id="office"></div>
+<script>
+(function () {
+  "use strict";
+  function post(type, data) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+  }
+  let office = null;
+  window.addEventListener("message", function (ev) {
+    const msg = ev.data;
+    if (!msg || msg.type !== "streamlit:render") return;
+    const args = msg.args || {};
+    const data = {
+      tasks: args.tasks || [],
+      overflow: args.overflow || 0,
+      theme: args.theme === "dark" ? "dark" : "light",
+    };
+    if (office) { office.setData(data); return; }
+    office = PixelOffice.mount(document.getElementById("office"), Object.assign({
+      onSelect: function (task) {
+        // Nonce makes re-clicking the same desk observable on the Python side.
+        post("streamlit:setComponentValue", { value: { id: task.id, t: Date.now() }, dataType: "json" });
+      },
+      onLayout: function (size) {
+        post("streamlit:setFrameHeight", { height: Math.ceil(size.height) + 4 });
+      },
+    }, data));
+  });
+  post("streamlit:componentReady", { apiVersion: 1 });
+  post("streamlit:setFrameHeight", { height: 212 });
+})();
+</script>
+</body>
+</html>

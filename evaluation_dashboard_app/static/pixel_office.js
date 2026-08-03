@@ -16,10 +16,15 @@
   seconds) never visibly resets the scene.
 
   API:
-    const office = PixelOffice.mount(el, {theme, tasks, overflow});
+    const office = PixelOffice.mount(el, {theme, tasks, overflow, onSelect, onLayout});
     office.setData({tasks, overflow, theme});   // cheap; rebuilds only when needed
     office.destroy();
     PixelOffice.fromWorkflowApi(items) -> {tasks, overflow}   // /api/workflow_tasks
+
+  onSelect(task): when given, clicking a desk calls it instead of opening the
+  built-in canvas detail card (the Streamlit page uses this to open its own,
+  much richer task dialog). onLayout({width, height}): called whenever the
+  canvas is (re)built, so a host can size its frame to the fit ladder.
 */
 (function (global) {
 'use strict';
@@ -436,6 +441,9 @@ function mount(container, opts) {
     if (canvas && w === W && h === H && wantCompact === compact && sc === S) return;
     compact = wantCompact; S = sc;
     W = w; H = h; FLOOR_Y = H - 30; DESK_Y = H - 26;
+    if (opts.onLayout) {
+      try { opts.onLayout({ width: W * S, height: H * S }); } catch (e) {}
+    }
     if (canvas) canvas.remove();
     canvas = document.createElement('canvas');
     canvas.width = Math.round(W * S * dpr); canvas.height = Math.round(H * S * dpr);
@@ -453,6 +461,11 @@ function mount(container, opts) {
     });
     canvas.addEventListener('mouseleave', () => { mouse.over = false; mouse.x = mouse.y = -1; });
     canvas.addEventListener('click', () => {
+      if (opts.onSelect) {                       // host owns the detail view
+        const i = hoverCell();
+        if (i >= 0) opts.onSelect(state.tasks[i]);
+        return;
+      }
       if (selectedId) {
         if (!inRect(panelRect) || inRect(closeRect)) setSelected(null);
         return;
@@ -1108,7 +1121,7 @@ function mount(container, opts) {
 
   function overlay(now) {
     closeRect = panelRect = null;
-    const selected = selectedId && state.tasks.find(t => t.id === selectedId);
+    const selected = !opts.onSelect && selectedId && state.tasks.find(t => t.id === selectedId);
     const hov = hoverCell();
     if (hov >= 0 && !selected) {                                   // corner brackets
       const x0 = LEFT + hov * CELL_W, c = statusColor(state.tasks[hov].status);

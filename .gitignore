@@ -40,3 +40,4 @@ evaluation_dashboard_app/static/*
 !evaluation_dashboard_app/static/client_home.html
 !evaluation_dashboard_app/static/client_workflow.html
 !evaluation_dashboard_app/static/pixel_office.js
+!evaluation_dashboard_app/static/index.html
