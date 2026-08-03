@@ -788,6 +788,87 @@ function drawPreviewDevopsHighlights(boxes, sx, sy, scale) {
   });
   previewCtx.restore();
 }
+function drawPreviewEgoVehicle(sx, sy, scale) {
+  const ego = window.EgoVehicleShape;
+  if (!ego || !ego.dimensions) {
+    const egoX = sx - (0 - state.previewPanY) * scale;
+    const egoY = sy - (0 - state.previewPanX) * scale;
+    previewCtx.fillStyle = TH.a("text", .86);
+    previewCtx.beginPath();
+    previewCtx.moveTo(egoX, egoY - 9); previewCtx.lineTo(egoX - 6, egoY + 8); previewCtx.lineTo(egoX + 6, egoY + 8); previewCtx.closePath(); previewCtx.fill();
+    return;
+  }
+  const {front, rear, halfWidth, wheelBase, wheelTread} = ego.dimensions;
+  const pt = (x, y) => [sx - (y - state.previewPanY) * scale, sy - (x - state.previewPanX) * scale];
+  const drawPoly2d = (points, fill, stroke, width = 1) => {
+    const p = points.map(([x, y]) => pt(x, y));
+    previewCtx.beginPath();
+    previewCtx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) previewCtx.lineTo(p[i][0], p[i][1]);
+    previewCtx.closePath();
+    previewCtx.fillStyle = fill;
+    previewCtx.strokeStyle = stroke;
+    previewCtx.lineWidth = width;
+    previewCtx.fill();
+    previewCtx.stroke();
+  };
+  const drawLine2d = (points, stroke, width = 1) => {
+    const p = points.map(([x, y]) => pt(x, y));
+    previewCtx.beginPath();
+    previewCtx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) previewCtx.lineTo(p[i][0], p[i][1]);
+    previewCtx.strokeStyle = stroke;
+    previewCtx.lineWidth = width;
+    previewCtx.stroke();
+  };
+  const bodyInset = Math.min(.16, halfWidth * .18);
+  const windowInset = Math.min(.34, halfWidth * .36);
+  const frontWindowX = front - .62;
+  const rearWindowX = rear + .42;
+  const rearWheelX = -wheelBase / 2;
+  const frontWheelX = wheelBase / 2;
+  const wheelY = wheelTread / 2;
+  const lineW = Math.max(1, Math.min(2.2, scale * .08));
+  previewCtx.save();
+  previewCtx.lineJoin = "round";
+  previewCtx.lineCap = "round";
+  drawPoly2d(
+    [[front, -halfWidth], [front, halfWidth], [rear, halfWidth], [rear, -halfWidth]],
+    TH.a("surface", .86),
+    TH.a("lineStrong", .84),
+    lineW
+  );
+  drawPoly2d(
+    [[frontWindowX, -halfWidth + windowInset], [frontWindowX, halfWidth - windowInset], [rearWindowX, halfWidth - windowInset], [rearWindowX, -halfWidth + windowInset]],
+    TH.a("deep", .62),
+    TH.a("accent", .68),
+    lineW
+  );
+  drawPoly2d(
+    [[front, -halfWidth + .22], [front, halfWidth - .22], [front - .34, halfWidth - .3], [front - .34, -halfWidth + .3]],
+    TH.a("accentBright", .28),
+    TH.a("accentBright", .78),
+    lineW
+  );
+  drawPoly2d(
+    [[rear, -halfWidth + .28], [rear, halfWidth - .28], [rear + .26, halfWidth - .34], [rear + .26, -halfWidth + .34]],
+    TH.a("lineStrong", .12),
+    TH.a("lineStrong", .52),
+    lineW
+  );
+  for (const x of [rearWheelX, frontWheelX]) {
+    for (const y of [-wheelY, wheelY]) {
+      const outer = y + Math.sign(y) * .2;
+      drawPoly2d([[x + .38, y], [x + .38, outer], [x - .38, outer], [x - .38, y]], TH.a("lineStrong", .86), TH.a("surface", .88), lineW);
+    }
+  }
+  for (const x of [rear + 1.18, rear + 2.12, rear + 3.06]) {
+    if (x > rearWindowX && x < frontWindowX) drawLine2d([[x, -halfWidth + windowInset], [x, halfWidth - windowInset]], TH.a("surface", .62), Math.max(1, lineW * .75));
+  }
+  drawLine2d([[front, 0], [front + .55, 0]], TH.a("accentBright", .92), Math.max(1.2, lineW));
+  drawLine2d([[rear, -halfWidth + bodyInset], [rear, halfWidth - bodyInset]], TH.a("lineStrong", .9), Math.max(1.1, lineW));
+  previewCtx.restore();
+}
 function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBoundsMaxAbs()) {
   const scale = previewScaleForRect(viewport);
   const sx = viewport.x + viewport.w / 2;
@@ -806,11 +887,7 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
   const egoScreenY = sy - (0 - state.previewPanX) * scale;
   drawPreviewRings(egoScreenX, egoScreenY, scale, maxAbs);
   drawDevopsCriteriaRings(egoScreenX, egoScreenY, scale, maxAbs);
-  const egoX = sx - (0 - state.previewPanY) * scale;
-  const egoY = sy - (0 - state.previewPanX) * scale;
-  previewCtx.fillStyle = TH.a("text", .86);
-  previewCtx.beginPath();
-  previewCtx.moveTo(egoX, egoY - 9); previewCtx.lineTo(egoX - 6, egoY + 8); previewCtx.lineTo(egoX + 6, egoY + 8); previewCtx.closePath(); previewCtx.fill();
+  drawPreviewEgoVehicle(sx, sy, scale);
   const sorted = [...boxes].filter(previewLayerVisible).sort((a, b) => (String(a.source) === "GT" ? -1 : 1) - (String(b.source) === "GT" ? -1 : 1));
   sorted.forEach(b => drawPreviewBox(b, sx, sy, scale));
   drawPreviewDevopsHighlights(sorted, sx, sy, scale);
