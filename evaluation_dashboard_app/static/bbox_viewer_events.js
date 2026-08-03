@@ -239,7 +239,7 @@ els.canvas.addEventListener("pointermove", e => {
     }
   } else if (els.viewMode.value === "bev") {
     const vp = activeViewport || {w: els.canvas.clientWidth, h: els.canvas.clientHeight};
-    const scale = Math.min(vp.w, vp.h) / Math.max(20, state.distance * 2.15);
+    const scale = Math.min(vp.w, vp.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
     state.panY += (e.clientX - state.lastX) / Math.max(0.001, scale);
     state.panX += (e.clientY - state.lastY) / Math.max(0.001, scale);
   }
@@ -259,9 +259,9 @@ els.canvas.addEventListener("wheel", e => {
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   const before = els.viewMode.value === "bev" ? bevScreenToWorld(sx, sy) : null;
-  state.distance = Math.max(18, Math.min(420, state.distance + e.deltaY * .08));
+  state.distance = Math.max(BBOX_VIEWER_MIN_DISTANCE, Math.min(420, state.distance + e.deltaY * .08));
   if (before && els.viewMode.value === "bev") {
-    const afterScale = Math.min(els.canvas.clientWidth, els.canvas.clientHeight) / Math.max(20, state.distance * 2.15);
+    const afterScale = Math.min(els.canvas.clientWidth, els.canvas.clientHeight) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
     state.panX = before.x + (sy - els.canvas.clientHeight / 2) / Math.max(0.001, afterScale);
     state.panY = before.y + (sx - els.canvas.clientWidth / 2) / Math.max(0.001, afterScale);
   }

@@ -1362,7 +1362,7 @@ els.preview.addEventListener("wheel", e => {
   const localY = e.clientY - rect.top;
   const worldY = state.previewPanY - (localX - sx) / oldScale;
   const worldX = state.previewPanX - (localY - sy) / oldScale;
-  state.previewScale = Math.max(.35, Math.min(8, state.previewScale * (e.deltaY > 0 ? .9 : 1.1)));
+  state.previewScale = Math.max(.2, Math.min(32, state.previewScale * (e.deltaY > 0 ? .9 : 1.1)));
   const nextScale = Math.max(.001, previewScaleForRect(vp));
   state.previewPanY = worldY + (localX - sx) / nextScale;
   state.previewPanX = worldX + (localY - sy) / nextScale;
@@ -1482,7 +1482,7 @@ els.canvas.addEventListener("wheel", e => {
     return;
   }
   e.preventDefault();
-  state.scale = Math.max(.35, Math.min(3.4, state.scale * (e.deltaY > 0 ? .92 : 1.08)));
+  state.scale = Math.max(.2, Math.min(8, state.scale * (e.deltaY > 0 ? .92 : 1.08)));
   render();
 }, {passive: false});
 els.statsDetailClose.addEventListener("click", () => {

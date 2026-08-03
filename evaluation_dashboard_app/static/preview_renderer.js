@@ -223,6 +223,15 @@ function previewBoundsMaxAbs() {
       const y = Number(b.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       maxAbs = Math.max(maxAbs, Math.abs(x) + 8, Math.abs(y) + 8);
+      if (Array.isArray(b.footprint)) {
+        for (const pt of b.footprint) {
+          const px = Number(pt[0]);
+          const py = Number(pt[1]);
+          if (Number.isFinite(px) && Number.isFinite(py)) {
+            maxAbs = Math.max(maxAbs, Math.abs(px) + 8, Math.abs(py) + 8);
+          }
+        }
+      }
     }
   }
   return Math.min(PREVIEW_MAX_VIEW_EXTENT, maxAbs);
@@ -230,7 +239,7 @@ function previewBoundsMaxAbs() {
 function previewScaleForRect(r) {
   const width = Number(r.width ?? r.w) || 1;
   const height = Number(r.height ?? r.h) || 1;
-  return Math.min(width, height) / Math.max(50, previewBoundsMaxAbs() * 2.25) * state.previewScale;
+  return Math.min(width, height) / Math.max(8, previewBoundsMaxAbs() * 2.25) * state.previewScale;
 }
 function previewInteractionViewport(rect, clientX = null) {
   if (!state.compare) return {x: 0, y: 0, width: rect.width, height: rect.height};
@@ -562,6 +571,12 @@ function previewPoint(b, sx, sy, scale) {
 function previewBoxScreenCenter(b, sx, sy, scale) {
   return previewPoint(b, sx, sy, scale);
 }
+function previewFootprintPoint(pt, sx, sy, scale) {
+  return [
+    sx - ((Number(pt[1]) || 0) - state.previewPanY) * scale,
+    sy - ((Number(pt[0]) || 0) - state.previewPanX) * scale
+  ];
+}
 function previewHoverText(b) {
   if (!b) return "";
   const parts = [];
@@ -627,6 +642,26 @@ function drawPreviewPersistentLabels(boxes, sx, sy, scale) {
   previewCtx.restore();
 }
 function drawPreviewBox(b, sx, sy, scale) {
+  if (Array.isArray(b.footprint) && b.footprint.length >= 3) {
+    const pts = b.footprint.map(pt => previewFootprintPoint(pt, sx, sy, scale));
+    const color = previewColor(b);
+    previewCtx.strokeStyle = color;
+    previewCtx.fillStyle = color;
+    previewCtx.lineWidth = 1.9;
+    previewCtx.setLineDash([]);
+    previewCtx.beginPath();
+    pts.forEach((p, i) => i ? previewCtx.lineTo(p[0], p[1]) : previewCtx.moveTo(p[0], p[1]));
+    previewCtx.closePath();
+    previewCtx.stroke();
+    previewCtx.globalAlpha = .1;
+    previewCtx.fill();
+    previewCtx.globalAlpha = 1;
+    const p = previewPoint(b, sx, sy, scale);
+    previewCtx.beginPath();
+    previewCtx.arc(p[0], p[1], 2.2, 0, Math.PI * 2);
+    previewCtx.fill();
+    return;
+  }
   if (isPointLikeBox(b)) {
     const p = previewPoint(b, sx, sy, scale);
     const color = previewColor(b);

@@ -1,7 +1,15 @@
+var BBOX_VIEWER_MIN_DISTANCE = 3;
+var BBOX_VIEWER_MIN_PROJECTION_DISTANCE = 4;
+
 function fitBounds() {
   let maxAbs = 30;
   for (const f of state.frames) for (const b of f.boxes) {
     maxAbs = Math.max(maxAbs, Math.abs(b.x || 0) + 6, Math.abs(b.y || 0) + 6);
+    if (Array.isArray(b.footprint)) {
+      for (const pt of b.footprint) {
+        maxAbs = Math.max(maxAbs, Math.abs(Number(pt[0]) || 0) + 6, Math.abs(Number(pt[1]) || 0) + 6);
+      }
+    }
   }
   state.bounds.maxAbs = maxAbs;
   state.distance = Math.max(45, maxAbs * 1.45);
@@ -38,12 +46,12 @@ function focusSelectedObject() {
 }
 function perspectiveCameraBasis() {
   const target = [state.panX, state.panY, 0];
-  const radius = Math.max(18, state.distance);
+  const radius = Math.max(BBOX_VIEWER_MIN_DISTANCE, state.distance);
   const elev = Math.max(0.18, Math.min(1.24, state.pitch));
   const cam = [
     target[0] - Math.cos(elev) * Math.cos(state.yaw) * radius,
     target[1] - Math.cos(elev) * Math.sin(state.yaw) * radius,
-    Math.max(3, Math.sin(elev) * radius)
+    Math.max(0.6, Math.sin(elev) * radius)
   ];
   const forward = normalize3([target[0] - cam[0], target[1] - cam[1], target[2] - cam[2]]);
   const worldUp = [0, 0, 1];
@@ -90,7 +98,7 @@ function project(p) {
   const panX = state.panX;
   const panY = state.panY;
   if (els.viewMode.value === "bev") {
-    const scale = Math.min(vp.w, vp.h) / Math.max(20, state.distance * 2.15);
+    const scale = Math.min(vp.w, vp.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
     return [
       vp.x + vp.w / 2 - (p[1] - panY) * scale,
       vp.y + vp.h / 2 - (p[0] - panX) * scale,
