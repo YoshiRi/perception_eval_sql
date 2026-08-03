@@ -28,7 +28,6 @@ const MAX_DESKS = 10;
 const RECENT_FINISH_MS = 75000;                 // finished desks linger this long
 const CHEER_MS = 45000, WALKOUT_MS = 14000, WALKIN_MS = 3800;
 const BREAK_EVERY = 6, BREAK_LEN_MS = 21000, BREAK_WALK_MS = 3800;
-const S = 3;                                    // css px per virtual pixel
 const FLOOR_H = 100, IDLE_H = 68;               // virtual units
 // Full layout vs. the compact one used when the full floor would not fit the
 // container: narrower cells, door-only left wing, machine-only right corner.
@@ -388,6 +387,7 @@ function mount(container, opts) {
   let W = 0, H = 0, cells = 0, idle = true, FLOOR_Y = 0, DESK_Y = 0;
   let CELL_W = LAYOUT_FULL.CELL_W, LEFT = LAYOUT_FULL.LEFT, RIGHT = LAYOUT_FULL.RIGHT;
   let compact = false;
+  let S = 3;                                     // css px per virtual pixel (see rebuild)
   const DOOR_X = 16;
   let canvas = null, ctx = null;
   const dpr = Math.min(2, (global.devicePixelRatio || 1));
@@ -418,26 +418,32 @@ function mount(container, opts) {
   function rebuild() {
     idle = state.tasks.length === 0;
     const avail = (container.clientWidth || (global.document && document.body.clientWidth) || 700);
-    // Compact mode: when the full floor would overflow the container, shrink the
-    // cells and drop the side wings before falling back to horizontal scrolling.
-    let lay = LAYOUT_FULL;
-    const wantCompact = !idle
-      && LAYOUT_FULL.LEFT + state.tasks.length * LAYOUT_FULL.CELL_W + LAYOUT_FULL.RIGHT > avail / S;
-    if (wantCompact) lay = LAYOUT_COMPACT;
+    // Fit ladder: every desk and the whole room (door to CAFE corner) should be
+    // visible at any width. Try the full layout, then the compact one, then keep
+    // the compact layout and shrink the pixels; only truly tiny containers scroll.
+    const n = state.tasks.length;
+    const fits = (lay, sc) => (lay.LEFT + n * lay.CELL_W + lay.RIGHT) * sc <= avail;
+    let lay = LAYOUT_FULL, sc = 3;
+    if (!idle && !fits(LAYOUT_FULL, 3)) {
+      lay = LAYOUT_COMPACT;
+      sc = fits(LAYOUT_COMPACT, 3) ? 3 : fits(LAYOUT_COMPACT, 2) ? 2 : 1.5;
+    }
+    const wantCompact = lay === LAYOUT_COMPACT;
     CELL_W = lay.CELL_W; LEFT = lay.LEFT; RIGHT = lay.RIGHT;
-    const minCells = Math.max(2, Math.ceil((avail / S - LEFT - RIGHT) / CELL_W));
-    cells = idle ? minCells : state.tasks.length;
+    const minCells = Math.max(2, Math.ceil((avail / sc - LEFT - RIGHT) / CELL_W));
+    cells = idle ? minCells : n;
     const w = LEFT + cells * CELL_W + RIGHT, h = idle ? IDLE_H : FLOOR_H;
-    if (canvas && w === W && h === H && wantCompact === compact) return;
-    compact = wantCompact;
+    if (canvas && w === W && h === H && wantCompact === compact && sc === S) return;
+    compact = wantCompact; S = sc;
     W = w; H = h; FLOOR_Y = H - 30; DESK_Y = H - 26;
     if (canvas) canvas.remove();
     canvas = document.createElement('canvas');
-    canvas.width = W * S * dpr; canvas.height = H * S * dpr;
+    canvas.width = Math.round(W * S * dpr); canvas.height = Math.round(H * S * dpr);
     canvas.style.width = (W * S) + 'px'; canvas.style.height = (H * S) + 'px';
     canvas.style.imageRendering = 'pixelated';
     canvas.style.borderRadius = '8px';
     canvas.style.display = 'block';
+    canvas.style.margin = '0 auto';              // center when narrower than the container
     container.appendChild(canvas);
     ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
