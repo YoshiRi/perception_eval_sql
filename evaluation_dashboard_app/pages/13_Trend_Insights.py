@@ -163,6 +163,8 @@ def _history_type_from_text(value: Any) -> str | None:
         return HISTORY_TYPE_RELEASE
     if text in {"periodic_evaluation", "periodic_eval", "regular_evaluation", "regular_eval", "scheduled_eval"}:
         return HISTORY_TYPE_PERIODIC
+    if text in {"other", "uncategorized", "unspecified"}:
+        return HISTORY_TYPE_OTHER
     return None
 
 
@@ -299,7 +301,7 @@ def _release_dir_from_token(token: str) -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-def _update_yaml_history_type(metadata_path: Path, history_type: str) -> bool:
+def _update_yaml_metadata(metadata_path: Path, updates: dict[str, Any]) -> bool:
     if not metadata_path.exists() or not metadata_path.is_file():
         return False
     try:
@@ -308,13 +310,21 @@ def _update_yaml_history_type(metadata_path: Path, history_type: str) -> bool:
         return False
     if not isinstance(payload, dict):
         return False
-    payload["history_type"] = _history_metadata_value(history_type)
+    for key, value in updates.items():
+        payload[key] = value
+        # Older metadata files spell the abbreviation `version_abbr`; keep both in sync
+        # so readers that prefer either key see the edit.
+        if key == "pilot_auto_version_abbr" and "version_abbr" in payload:
+            payload["version_abbr"] = value
     with metadata_path.open("w", encoding="utf-8") as fh:
         yaml.safe_dump(payload, fh, allow_unicode=True, sort_keys=False)
     return True
 
 
-def _set_release_history_type(release_dir: Path, history_type: str) -> int:
+def _set_release_metadata(release_dir: Path, updates: dict[str, Any]) -> int:
+    """Write trend metadata fields to every metadata.yaml of a release plus its run metadata."""
+    if not updates:
+        return 0
     metadata_paths = sorted(
         {
             path
@@ -322,28 +332,19 @@ def _set_release_history_type(release_dir: Path, history_type: str) -> int:
             if path.is_file() and "_app_trend_history" not in path.parts
         }
     )
-    updated = sum(1 for path in metadata_paths if _update_yaml_history_type(path, history_type))
-    metadata_value = _history_metadata_value(history_type)
-    upsert_run_metadata(
-        release_dir,
-        {
-            "history_type": metadata_value,
-            "request": {
-                "parameters": {
-                    "trend_metadata": {
-                        "history_type": metadata_value,
-                    }
-                }
-            },
-            "release_specsheet": {
-                "metadata": {
-                    "history_type": metadata_value,
-                }
-            },
-        },
-        create_missing=False,
-    )
+    updated = sum(1 for path in metadata_paths if _update_yaml_metadata(path, updates))
+    patch: dict[str, Any] = {
+        "request": {"parameters": {"trend_metadata": dict(updates)}},
+        "release_specsheet": {"metadata": dict(updates)},
+    }
+    if "history_type" in updates:
+        patch["history_type"] = updates["history_type"]
+    upsert_run_metadata(release_dir, patch, create_missing=False)
     return updated
+
+
+def _set_release_history_type(release_dir: Path, history_type: str) -> int:
+    return _set_release_metadata(release_dir, {"history_type": _history_metadata_value(history_type)})
 
 
 def _consume_history_type_toggle(releases: list[dict[str, Any]]) -> None:
@@ -371,12 +372,17 @@ def _consume_history_type_toggle(releases: list[dict[str, Any]]) -> None:
     st.rerun()
 
 
-def _render_history_type_fallback_editor(releases: list[dict[str, Any]]) -> None:
+_TREND_DATE_INPUT_PATTERN = re.compile(r"^\d{4}\.\d{1,2}\.\d{1,2}$")
+_TREND_DATA_COUNT_INPUT_PATTERN = re.compile(r"^\d[\d,]*\+?$")
+
+
+def _render_release_metadata_editor(releases: list[dict[str, Any]]) -> None:
+    """Edit the trend metadata of one release in place, instead of hand-editing each metadata.yaml."""
     editable_releases = [release for release in releases if isinstance(release.get("release_dir"), Path)]
     if not editable_releases:
         return
 
-    with st.expander("Change history type", expanded=False):
+    with st.expander("Edit release metadata", expanded=False):
         labels = []
         label_to_release: dict[str, dict[str, Any]] = {}
         for idx, release in enumerate(editable_releases, start=1):
@@ -395,25 +401,102 @@ def _render_history_type_fallback_editor(releases: list[dict[str, Any]]) -> None
             labels.append(label)
             label_to_release[label] = release
 
-        editor_cols = st.columns([3, 1.2, 0.9])
-        selected_label = editor_cols[0].selectbox(
+        selected_label = st.selectbox(
             "Run",
             options=labels,
-            key="trend_history_type_editor_run",
+            key="trend_metadata_editor_run",
         )
         selected_release = label_to_release[selected_label]
+        release_dir = selected_release["release_dir"]
+        # Key the widgets by run so switching runs reloads the fields instead of keeping
+        # the previous run's edits.
+        prefix = f"trend_metadata_editor_{_safe_path_part(_release_token(release_dir), 'run')}"
+        st.caption(path_display(release_dir))
+
         current_type = str(selected_release.get("history_type") or HISTORY_TYPE_OTHER)
-        target_options = [HISTORY_TYPE_RELEASE, HISTORY_TYPE_PERIODIC]
-        target_type = editor_cols[1].selectbox(
-            "Set type",
-            options=target_options,
-            index=target_options.index(_next_history_type(current_type)) if current_type in target_options else 0,
-            key="trend_history_type_editor_target",
+        current = {
+            "pilot_auto_version": str(selected_release.get("pilot_auto_version") or ""),
+            "pilot_auto_version_abbr": str(selected_release.get("version_abbr") or ""),
+            "date": str(selected_release.get("date") or ""),
+            "data_count": str(selected_release.get("data_count") or ""),
+            "description": str(selected_release.get("description") or ""),
+        }
+
+        with st.form(f"{prefix}_form"):
+            row1 = st.columns(2)
+            new_version = row1[0].text_input(
+                "Pilot.Auto version",
+                value=current["pilot_auto_version"],
+                placeholder="Pilot.Auto v4.3.0 (centerpoint x2/2.3.1)",
+                key=f"{prefix}_pilot_auto_version",
+            )
+            new_abbr = row1[1].text_input(
+                "Version abbreviation",
+                value=current["pilot_auto_version_abbr"],
+                placeholder="p430-c231",
+                key=f"{prefix}_version_abbr",
+            )
+            row2 = st.columns(3)
+            new_date = row2[0].text_input(
+                "Date (YYYY.M.D)",
+                value=current["date"],
+                placeholder="2025.11.7",
+                key=f"{prefix}_date",
+            )
+            new_data_count = row2[1].text_input(
+                "Data count",
+                value=current["data_count"],
+                placeholder="99,776+",
+                key=f"{prefix}_data_count",
+            )
+            type_options = list(HISTORY_TYPE_ORDER)
+            new_type = row2[2].selectbox(
+                "History type",
+                options=type_options,
+                index=type_options.index(current_type) if current_type in type_options else 0,
+                key=f"{prefix}_history_type",
+            )
+            new_description = st.text_input(
+                "Description",
+                value=current["description"],
+                placeholder="データの追加",
+                key=f"{prefix}_description",
+            )
+            submitted = st.form_submit_button("Apply", type="primary")
+
+        if not submitted:
+            return
+
+        edited = {
+            "pilot_auto_version": new_version.strip(),
+            "pilot_auto_version_abbr": new_abbr.strip(),
+            "date": new_date.strip(),
+            "data_count": new_data_count.strip(),
+            "description": new_description.strip(),
+        }
+        errors = []
+        if edited["date"] and not _TREND_DATE_INPUT_PATTERN.match(edited["date"]):
+            errors.append("`date` must look like `2025.11.7`.")
+        if edited["data_count"] and not _TREND_DATA_COUNT_INPUT_PATTERN.match(edited["data_count"]):
+            errors.append("`data_count` must look like `99,776+` or `12345`.")
+        if errors:
+            st.error(" ".join(errors))
+            return
+
+        updates = {key: value for key, value in edited.items() if value != current[key]}
+        if new_type != current_type:
+            updates["history_type"] = _history_metadata_value(new_type)
+        if not updates:
+            st.info("No changes to apply.")
+            return
+
+        updated = _set_release_metadata(release_dir, updates)
+        st.toast(
+            f"Updated {', '.join(sorted(updates))} for "
+            f"{selected_release.get('version') or selected_release.get('release')} "
+            f"({updated} metadata file(s))."
         )
-        if editor_cols[2].button("Apply", key="trend_history_type_editor_apply", use_container_width=True):
-            updated = _set_release_history_type(selected_release["release_dir"], target_type)
-            st.success(f"Updated `{selected_release.get('version') or selected_release.get('release')}` to {target_type} ({updated} metadata file(s)).")
-            st.rerun()
+        st.rerun()
 
 
 def _select_primary_metadata(group: TrendReleaseGroup) -> dict[str, Any]:
@@ -2176,8 +2259,7 @@ if release_specsheets:
         ),
         reverse=True,
     )
-    if show_history_type_column:
-        _render_history_type_fallback_editor(release_specsheets)
+    _render_release_metadata_editor(release_specsheets)
     _render_release_library_table(
         release_specsheets,
         show_type_column=show_history_type_column,
