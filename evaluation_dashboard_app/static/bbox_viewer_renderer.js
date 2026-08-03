@@ -61,28 +61,48 @@ function drawEgoGlyph() {
     ctx.stroke();
     return p;
   };
-  const z = els.viewMode.value === "bev" ? 0.08 : 0.16;
-  const body = [[2.45, .92, z], [1.8, 1.08, z], [-1.85, 1.02, z], [-2.35, .72, z], [-2.5, -.72, z], [-1.85, -1.02, z], [1.8, -1.08, z], [2.45, -.92, z]];
-  const hood = [[2.45, .62, z + .03], [1.65, .82, z + .03], [1.18, .36, z + .03], [1.18, -.36, z + .03], [1.65, -.82, z + .03], [2.45, -.62, z + .03]];
-  const cabin = [[.82, .62, z + .08], [-.72, .58, z + .08], [-1.05, .28, z + .08], [-1.05, -.28, z + .08], [-.72, -.58, z + .08], [.82, -.62, z + .08], [1.06, -.34, z + .08], [1.06, .34, z + .08]];
-  const windshield = [[.88, .42, z + .1], [.24, .44, z + .1], [.24, -.44, z + .1], [.88, -.42, z + .1]];
-  const rearGlass = [[-.64, .42, z + .1], [-.98, .24, z + .1], [-.98, -.24, z + .1], [-.64, -.42, z + .1]];
+  const cuboid = (x0, x1, y0, y1, z0, z1, fills) => {
+    const p000 = [x0, y0, z0], p100 = [x1, y0, z0], p110 = [x1, y1, z0], p010 = [x0, y1, z0];
+    const p001 = [x0, y0, z1], p101 = [x1, y0, z1], p111 = [x1, y1, z1], p011 = [x0, y1, z1];
+    drawPoly([p000, p100, p110, p010], fills.base, fills.stroke, fills.width || 1.1);
+    drawPoly([p000, p001, p101, p100], fills.side, fills.stroke, fills.width || 1.1);
+    drawPoly([p010, p110, p111, p011], fills.side, fills.stroke, fills.width || 1.1);
+    drawPoly([p100, p101, p111, p110], fills.front, fills.stroke, fills.width || 1.1);
+    drawPoly([p000, p010, p011, p001], fills.rear, fills.stroke, fills.width || 1.1);
+    drawPoly([p001, p011, p111, p101], fills.top, fills.stroke, fills.width || 1.3);
+  };
+  const z = 0.02;
   ctx.save();
-  drawPoly(body, TH.a("surface", .9), TH.a("lineStrong", .82), 1.5);
-  drawPoly(hood, TH.a("accent", .12), TH.a("accent", .54), 1.1);
-  drawPoly(cabin, TH.a("deep", .76), TH.a("accent", .72), 1.35);
-  drawPoly(windshield, TH.a("accentBright", .18), TH.a("accentBright", .52), 1);
-  drawPoly(rearGlass, TH.a("accentBright", .12), TH.a("accentBright", .42), 1);
+  cuboid(-2.35, 2.35, -.95, .95, z, z + .72, {
+    base: TH.a("deep", .42),
+    side: TH.a("surface", .74),
+    front: TH.a("accent", .18),
+    rear: TH.a("lineStrong", .16),
+    top: TH.a("surface", .92),
+    stroke: TH.a("lineStrong", .84),
+    width: 1.25
+  });
+  cuboid(-.78, .88, -.62, .62, z + .72, z + 1.42, {
+    base: TH.a("deep", .55),
+    side: TH.a("deep", .72),
+    front: TH.a("accentBright", .22),
+    rear: TH.a("accentBright", .12),
+    top: TH.a("accent", .18),
+    stroke: TH.a("accent", .72),
+    width: 1.05
+  });
+  drawPoly([[.98, -.58, z + .76], [2.12, -.72, z + .76], [2.12, .72, z + .76], [.98, .58, z + .76]], TH.a("accent", .1), TH.a("accent", .48), 1);
+  drawPoly([[-2.1, -.72, z + .75], [-.95, -.58, z + .75], [-.95, .58, z + .75], [-2.1, .72, z + .75]], TH.a("lineStrong", .08), TH.a("lineStrong", .4), 1);
   const wheelFill = TH.a("lineStrong", .8);
   const wheelStroke = TH.a("surface", .9);
   for (const x of [1.32, -1.42]) {
     for (const y of [1.08, -1.08]) {
-      drawPoly([[x + .34, y, z + .02], [x + .34, y + Math.sign(y) * .18, z + .02], [x - .34, y + Math.sign(y) * .18, z + .02], [x - .34, y, z + .02]], wheelFill, wheelStroke, 1);
+      drawPoly([[x + .34, y, z + .16], [x + .34, y + Math.sign(y) * .2, z + .16], [x - .34, y + Math.sign(y) * .2, z + .16], [x - .34, y, z + .16]], wheelFill, wheelStroke, 1);
     }
   }
-  const origin = project([0, 0, z + .18]);
-  const forward = project([6.2, 0, z + .18]);
-  const left = project([0, 3.8, z + .18]);
+  const origin = project([0, 0, z + .9]);
+  const forward = project([6.2, 0, z + .9]);
+  const left = project([0, 3.8, z + .9]);
   ctx.lineWidth = 2;
   ctx.strokeStyle = TH.a("accent", .95);
   ctx.fillStyle = TH.a("accent", .95);
