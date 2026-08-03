@@ -3,14 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local BBox Viewer</title>
   <link rel="stylesheet" href="bbox_viewer.css?v=theme-blueprint-20260731a">
   <!-- Loads before body paint so the saved/inherited theme applies without a flash. -->
   <script>/*__BBOX_THEME_JS__*/</script>
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
+    <aside class="sidebar" aria-label="Local bbox viewer controls">
+      <div class="viewer-group brand">
         <div>
           <a class="home-link" href="/">← Home</a>
           <h1>Local BBox Viewer</h1>
@@ -19,33 +20,37 @@
         <div class="pulse" title="API connected"></div>
       </div>
       <div class="load-status" id="loadStatus"><b>Ready.</b> Scanning bbox-compatible parquet files.</div>
-      <div class="field">
-        <label>Data root or parquet path</label>
-        <div class="input-row">
-          <!-- Empty means the server's data root; see local_bbox_explorer.html. -->
-          <input id="rootInput" value="" placeholder="data root (default)" spellcheck="false">
-          <button class="icon" id="scanBtn" title="Scan">↻</button>
+      <div class="viewer-group source-group">
+        <div class="field">
+          <label>Data root or parquet path</label>
+          <div class="input-row">
+            <!-- Empty means the server's data root; see local_bbox_explorer.html. -->
+            <input id="rootInput" value="" placeholder="data root (default)" spellcheck="false">
+            <button class="icon" id="scanBtn" title="Scan">↻</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Run A parquet</label>
+          <select id="parquetSelect"></select>
+        </div>
+        <div class="field">
+          <label class="toggle"><input id="compareEnabled" type="checkbox"> Compare with Run B</label>
+          <select id="parquetSelectB"></select>
         </div>
       </div>
-      <div class="field">
-        <label>Run A parquet</label>
-        <select id="parquetSelect"></select>
-      </div>
-      <div class="field">
-        <label class="toggle"><input id="compareEnabled" type="checkbox"> Compare with Run B</label>
-        <select id="parquetSelectB"></select>
-      </div>
-      <div class="field">
-        <label>Scenario search</label>
-        <input id="searchInput" placeholder="scenario, suite, topic, label..." spellcheck="false">
-      </div>
-      <div class="filters">
-        <div class="field wide"><label>Suite</label><select id="suiteFilter"><option value="">Any</option></select></div>
-        <div class="field wide is-hidden"><label>Scenario</label><select id="scenarioFilter"><option value="">Any</option></select></div>
-        <div class="field is-hidden"><label>Dataset</label><select id="datasetFilter"><option value="">Any</option></select></div>
-        <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
-        <div class="field is-hidden"><label>Frame min</label><input id="frameMin" type="number" placeholder="auto"></div>
-        <div class="field is-hidden"><label>Frame max</label><input id="frameMax" type="number" placeholder="auto"></div>
+      <div class="viewer-group filter-group">
+        <div class="field">
+          <label>Scenario search</label>
+          <input id="searchInput" placeholder="scenario, suite, topic, label..." spellcheck="false">
+        </div>
+        <div class="filters">
+          <div class="field wide"><label>Suite</label><select id="suiteFilter"><option value="">Any</option></select></div>
+          <div class="field wide is-hidden"><label>Scenario</label><select id="scenarioFilter"><option value="">Any</option></select></div>
+          <div class="field is-hidden"><label>Dataset</label><select id="datasetFilter"><option value="">Any</option></select></div>
+          <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
+          <div class="field is-hidden"><label>Frame min</label><input id="frameMin" type="number" placeholder="auto"></div>
+          <div class="field is-hidden"><label>Frame max</label><input id="frameMax" type="number" placeholder="auto"></div>
+        </div>
       </div>
       <div class="field is-hidden">
         <label>Status</label>
@@ -56,7 +61,9 @@
         <div class="chips" id="sourceChips"></div>
       </div>
       <button id="loadBtn" class="is-hidden">Load Selected Scene</button>
-      <div class="results" id="results"></div>
+      <div class="viewer-group results-group">
+        <div class="results" id="results"></div>
+      </div>
     </aside>
     <main class="stage">
       <canvas id="canvas"></canvas>
@@ -81,7 +88,7 @@
           <button id="themeToggleBtn" title="Switch theme">☀</button>
         </div>
       </div>
-      <div class="viewer-controls">
+      <div class="viewer-controls" aria-label="BBox display controls">
         <div class="viewer-controls-row" id="layerChips">
           <span class="chip layer active sw-gt-tp" data-layer="gt_tp">GT·TP <span class="layer-count" id="cntGtTp">0</span></span>
           <span class="chip layer active sw-gt-fn" data-layer="gt_fn">GT·FN <span class="layer-count" id="cntGtFn">0</span></span>

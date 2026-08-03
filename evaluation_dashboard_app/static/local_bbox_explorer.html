@@ -10,74 +10,78 @@
 </head>
 <body>
   <div class="app">
-    <aside class="panel left">
-      <div>
+    <aside class="panel left" aria-label="Dataset bbox explorer controls">
+      <div class="panel-group explorer-brand">
         <a class="home-link" href="/">← Home</a>
         <h1>Dataset BBox Summary</h1>
         <p class="sub">Scenario-level view for FP/FN hotspots, devops intent, criteria gates, and frame-level issues.</p>
       </div>
-      <div class="field">
-        <label>Data root or parquet</label>
-        <!-- Empty means the server's data root: the workspace in the packaged client, data/ on
+      <div class="panel-group source-group" aria-label="Run source">
+        <div class="field">
+          <label>Data root or parquet</label>
+          <!-- Empty means the server's data root: the workspace in the packaged client, data/ on
      the dashboard. A literal "data" here broke the client, whose cwd has no such dir. -->
-        <div class="row"><input id="rootInput" value="" placeholder="data root (default)" spellcheck="false"><button id="scanBtn" class="icon">↻</button></div>
+          <div class="row"><input id="rootInput" value="" placeholder="data root (default)" spellcheck="false"><button id="scanBtn" class="icon">↻</button></div>
+        </div>
+        <div class="field"><label>Run A parquet</label><select id="parquetSelect"></select></div>
+        <div class="field">
+          <label class="toggle"><input id="compareEnabled" type="checkbox"> Compare with Run B</label>
+          <select id="parquetSelectB"></select>
+        </div>
+        <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
+        <div class="field"><label>Search scenarios / suite / label</label><input id="searchInput" placeholder="pedestrian FP, Kawasaki, PDD..." spellcheck="false"></div>
       </div>
-      <div class="field"><label>Run A parquet</label><select id="parquetSelect"></select></div>
-      <div class="field">
-        <label class="toggle"><input id="compareEnabled" type="checkbox"> Compare with Run B</label>
-        <select id="parquetSelectB"></select>
-      </div>
-      <div class="field"><label>Topic</label><select id="topicFilter"><option value="">Any</option></select></div>
-      <div class="field"><label>Search scenarios / suite / label</label><input id="searchInput" placeholder="pedestrian FP, Kawasaki, PDD..." spellcheck="false"></div>
-      <div>
+      <div class="panel-group mode-group">
         <h2>Explorer Mode</h2>
         <div class="chips" id="modeChips">
           <span class="chip active" data-mode="hotspots">Hotspots</span>
           <span class="chip" data-mode="devops">DevOps Review</span>
         </div>
       </div>
-      <div class="lens-section">
-        <h2>Issue Lens</h2>
-        <div class="chips" id="lensChips">
-          <span class="chip" data-lens="count">Count</span>
-          <span class="chip active" data-lens="fp">FP</span>
-          <span class="chip" data-lens="fn">FN</span>
-          <span class="chip" data-lens="fpr">FPR</span>
-          <span class="chip" data-lens="fnr">FNR</span>
-          <span class="chip" data-lens="error">TP error</span>
-          <span class="chip" data-lens="intent_risk">Intent risk</span>
-          <span class="chip" data-lens="target_fn">Target FN</span>
-          <span class="chip" data-lens="target_fp">Target FP</span>
-          <span class="chip compare-chip" data-lens="changed_only">Changed only</span>
-          <span class="chip compare-chip" data-lens="delta_fp">FP change</span>
-          <span class="chip compare-chip" data-lens="delta_fn">FN change</span>
-          <span class="chip compare-chip" data-lens="regression">More FP/FN in B</span>
+      <div class="panel-group filter-group">
+        <div class="lens-section">
+          <h2>Issue Lens</h2>
+          <div class="chips" id="lensChips">
+            <span class="chip" data-lens="count">Count</span>
+            <span class="chip active" data-lens="fp">FP</span>
+            <span class="chip" data-lens="fn">FN</span>
+            <span class="chip" data-lens="fpr">FPR</span>
+            <span class="chip" data-lens="fnr">FNR</span>
+            <span class="chip" data-lens="error">TP error</span>
+            <span class="chip" data-lens="intent_risk">Intent risk</span>
+            <span class="chip" data-lens="target_fn">Target FN</span>
+            <span class="chip" data-lens="target_fp">Target FP</span>
+            <span class="chip compare-chip" data-lens="changed_only">Changed only</span>
+            <span class="chip compare-chip" data-lens="delta_fp">FP change</span>
+            <span class="chip compare-chip" data-lens="delta_fn">FN change</span>
+            <span class="chip compare-chip" data-lens="regression">More FP/FN in B</span>
+          </div>
         </div>
-      </div>
-      <div class="label-filter-section">
-        <h2>Object Label</h2>
-        <div class="chips" id="labelChips"><span class="chip active" data-label="">All labels</span></div>
-      </div>
-      <div class="range-section">
-        <h2>Ego Range</h2>
-        <div class="chips" id="rangeChips">
-          <span class="chip active" data-range="">All range</span>
-          <span class="chip" data-range="5">&lt;5m</span>
-          <span class="chip" data-range="20">&lt;20m</span>
-          <span class="chip" data-range="30">&lt;30m</span>
-          <span class="chip" data-range="40">&lt;40m</span>
-          <span class="chip" data-range="60">&lt;60m</span>
-          <span class="chip" data-range="100">&lt;100m</span>
+        <div class="label-filter-section">
+          <h2>Object Label</h2>
+          <div class="chips" id="labelChips"><span class="chip active" data-label="">All labels</span></div>
         </div>
-      </div>
-      <div class="shortcut-section">
-        <h2>Shortcuts</h2>
-        <div class="chips">
-          <span class="chip" id="devopsIntentBtn">DevOps intent</span>
-          <span class="chip" id="nearPedBtn">Nearby pedestrian</span>
-          <span class="chip" id="nearPedFpBtn">Nearby pedestrian FP</span>
-          <span class="chip" id="animalBtn">Animal / debris</span>
-          <span class="chip" id="falseStopBtn">False stop FP</span>
+        <div class="range-section">
+          <h2>Ego Range</h2>
+          <div class="chips" id="rangeChips">
+            <span class="chip active" data-range="">All range</span>
+            <span class="chip" data-range="5">&lt;5m</span>
+            <span class="chip" data-range="20">&lt;20m</span>
+            <span class="chip" data-range="30">&lt;30m</span>
+            <span class="chip" data-range="40">&lt;40m</span>
+            <span class="chip" data-range="60">&lt;60m</span>
+            <span class="chip" data-range="100">&lt;100m</span>
+          </div>
+        </div>
+        <div class="shortcut-section">
+          <h2>Shortcuts</h2>
+          <div class="chips">
+            <span class="chip" id="devopsIntentBtn">DevOps intent</span>
+            <span class="chip" id="nearPedBtn">Nearby pedestrian</span>
+            <span class="chip" id="nearPedFpBtn">Nearby pedestrian FP</span>
+            <span class="chip" id="animalBtn">Animal / debris</span>
+            <span class="chip" id="falseStopBtn">False stop FP</span>
+          </div>
         </div>
       </div>
       <div class="kpis">
@@ -85,7 +89,7 @@
         <div class="kpi"><b id="kFp">0</b><span id="kFpLabel">FP</span></div>
         <div class="kpi"><b id="kFn">0</b><span id="kFnLabel">FN</span></div>
       </div>
-      <div class="scenario-list-section">
+      <div class="panel-group scenario-list-section">
         <h2 id="scenarioListTitle">Top Issues</h2>
         <div class="list" id="scenarioList"></div>
       </div>
@@ -171,7 +175,7 @@
       </div>
       <div class="toast" id="toast"></div>
     </main>
-    <aside class="panel right">
+    <aside class="panel right inspector-drawer" aria-label="Selected scenario inspector">
       <div class="card">
         <h2>Selected Scenario</h2>
         <div class="selected-title" id="selTitle">No scenario selected</div>
