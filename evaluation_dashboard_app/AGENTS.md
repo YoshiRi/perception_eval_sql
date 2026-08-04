@@ -11,6 +11,19 @@ Setup: `EVAL_DASHBOARD_URL` (backend API base URL) and, if the server demands on
 Human-facing companion doc (what users can ask for, in plain language):
 `docs/AGENT_TASKS.md`.
 
+**Before doing one of these tasks, read the matching playbook** — they hold the
+judgment this file omits (failure-log patterns, metadata sanity checks, report
+structure), and they are plain markdown, not Claude-specific:
+
+| Task | Read first |
+|---|---|
+| evaluate a branch | `.claude/skills/eval-branch/SKILL.md` |
+| release spec-sheet | `.claude/skills/release-specsheet/SKILL.md` |
+| check/diagnose/cancel tasks | `.claude/skills/workflow-status/SKILL.md` |
+| trend history / metric trends | `.claude/skills/trend-report/SKILL.md` |
+| analyze or compare runs | `.claude/skills/analyze-run/SKILL.md` |
+| connection/auth problems | `.claude/skills/eval-setup/SKILL.md` |
+
 ## Commands
 
 ```bash
