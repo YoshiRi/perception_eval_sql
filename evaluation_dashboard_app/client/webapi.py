@@ -35,6 +35,11 @@ class PullJob:
         self.message = ""
         self.error = ""
         self.progress: dict[str, Any] = {}
+        # What the plan asked for, so the UI can say why this pull is the size it is:
+        # what is new vs changed, what was already local, what resumes from a .part.
+        self.plan: dict[str, Any] = {}
+        # Failures as they happen, rather than only in the final result.
+        self.failures: list[str] = []
         self.result: dict[str, Any] = {}
         self.started_at = time.time()
         self.finished_at: float | None = None
@@ -56,6 +61,8 @@ class PullJob:
             "message": self.message,
             "error": self.error,
             "progress": self.progress,
+            "plan": self.plan,
+            "failures": list(self.failures),
             "result": self.result,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -72,6 +79,15 @@ def _current_job() -> PullJob | None:
         return _JOB
 
 
+def _human_duration(seconds: float) -> str:
+    seconds = int(max(seconds, 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
 def _run_pull(job: PullJob) -> None:
     try:
         remote = connect(config.Config.load())
@@ -85,6 +101,25 @@ def _run_pull(job: PullJob) -> None:
             checksums=True,
         )
         plan = sync.build_plan(manifest)
+        by_reason: dict[str, int] = {}
+        for item in plan.download:
+            by_reason[item.reason] = by_reason.get(item.reason, 0) + 1
+        job.plan = {
+            "tier": plan.tier,
+            "roles": plan.roles,
+            "download_files": len(plan.download),
+            "download_bytes": plan.download_bytes,
+            # What the files weigh in full, vs what still has to move after resuming
+            # part-files: the gap is bytes an interrupted pull already banked.
+            "full_bytes": plan.total_bytes,
+            "resumed_bytes": max(plan.total_bytes - plan.download_bytes, 0),
+            "new_files": by_reason.get("new", 0),
+            "changed_files": by_reason.get("changed", 0),
+            "incomplete_files": by_reason.get("incomplete", 0),
+            "keep_files": len(plan.keep),
+            "obsolete_files": len(plan.obsolete),
+            "server_files": len(plan.download) + len(plan.keep),
+        }
         job.progress = {
             "done_bytes": 0,
             "total_bytes": plan.download_bytes,
@@ -94,7 +129,7 @@ def _run_pull(job: PullJob) -> None:
         }
         if not plan.download:
             job.state = "done"
-            job.message = "Already up to date."
+            job.message = f"Already up to date; {len(plan.keep)} file(s) already local."
             job.result = {"downloaded": 0, "kept": len(plan.keep), "bytes": 0}
             job.finished_at = time.time()
             return
@@ -107,22 +142,23 @@ def _run_pull(job: PullJob) -> None:
             plan,
             on_progress=lambda snap: setattr(job, "progress", snap),
             should_stop=lambda: job.cancelled,
-            on_error=lambda rel, exc: None,
+            on_error=lambda rel, exc: job.failures.append(f"{rel}: {exc}"),
         )
         job.result = result
         job.finished_at = time.time()
+        elapsed = max(job.finished_at - job.started_at, 1e-6)
+        moved = f"{result['downloaded']} file(s), {sync.human_bytes(result['bytes'])}"
+        took = f"in {_human_duration(elapsed)} ({sync.human_bytes(result['bytes'] / elapsed)}/s)"
         if result.get("cancelled"):
             job.state = "cancelled"
-            job.message = "Cancelled. Partial files are kept; pulling again resumes."
+            job.message = f"Cancelled after {moved} {took}. Partial files are kept; pulling again resumes."
         elif result.get("failed"):
             job.state = "failed"
             job.error = f"{len(result['failed'])} file(s) failed: " + ", ".join(result["failed"][:3])
-            job.message = "Pull again to retry the failures."
+            job.message = f"Got {moved} {took}. Pull again to retry the failures."
         else:
             job.state = "done"
-            job.message = (
-                f"Downloaded {result['downloaded']} file(s), {sync.human_bytes(result['bytes'])}."
-            )
+            job.message = f"Downloaded {moved} {took}."
     except Exception as exc:
         job.state = "failed"
         job.error = str(exc)

@@ -70,6 +70,30 @@ Measured on a real 11 GB run:
 
 `criteria` is 18× smaller than the run and loses nothing the viewer displays.
 
+### Run layouts
+
+Three shapes are listed and pulled, matching what the dashboard itself treats as a run:
+
+| Layout | Looks like | Roles column |
+|---|---|---|
+| Release container | `<run>/{devops,performance,usecase}/current.parquet` | the role names |
+| Flat run | `<run>/current.parquet` + `<run>/<suite>/<scenario>/` | `no role split` |
+| TLR run | `<run>/<scenario>/result.json` | `tlr (N scenarios)` |
+
+Tiers work the same way in all of them, because every tier rule is relative to the
+directory the parquet sits in. `trend_release_*` directories are the dashboard's own
+trend output and are never offered.
+
+### TLR runs
+
+Traffic-light runs are laid out differently: no `devops/`/`performance/` split and no
+parquet, just a `result.json` per scenario (`<run>/<scenario>/` or
+`<run>/<suite>/<testcase>/`). They are listed alongside perception runs — tagged `tlr`
+with a scenario count instead of roles — and pull the same way. Tier makes almost no
+difference to them: `result.json` is the whole dataset the TLR viewer reads, so every
+tier carries it, and only `raw` adds the pickle fallback. Once pulled, open a TLR run
+with **Open TLR** on the home page, or the **TLR** link in the header.
+
 ---
 
 ## Server setup (once)

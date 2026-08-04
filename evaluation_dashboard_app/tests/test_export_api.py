@@ -346,6 +346,151 @@ def test_runs_enforces_the_access_policy(data_root):
         export_api.runs(_cf(), {"sizes": False})
 
 
+# -------------------------------------------------------------- run layouts
+#
+# Runs come in three shapes and only one of them used to be exported: a release
+# container with role directories. Most runs on a real server are flat -- the parquet
+# and its scenario folders sit in the run directory itself -- and those were skipped
+# entirely, so a client saw a fraction of what the dashboard lists.
+
+
+@pytest.fixture()
+def flat_run(data_root) -> Path:
+    run = data_root / "flat_run"
+    scenario = run / "Suite_abc" / "Scenario_One"
+    scenario.mkdir(parents=True)
+    (run / "current.parquet").write_bytes(b"PAR1" + b"x" * 900)
+    (run / "future.parquet").write_bytes(b"PAR1" + b"y" * 100)
+    (run / "metadata.yaml").write_text("version: 1\n")
+    (run / "resources").mkdir()
+    (run / "resources" / "summary.json").write_text("{}")
+    (scenario / "scenario.yaml").write_text("Evaluation: {}\n")
+    (scenario / "scene_result.pkl").write_bytes(b"\x80\x04" + b"z" * 4000)
+    return run
+
+
+def test_runs_lists_a_run_whose_parquet_is_at_its_root(flat_run):
+    items = {item["name"]: item for item in export_api.runs(_auth(), {"sizes": False})["items"]}
+    assert "flat_run" in items
+    assert items["flat_run"]["roles"] == []
+    assert items["flat_run"]["kind"] == "perception"
+    assert items["flat_run"]["parquets"] == ["current.parquet", "future.parquet"]
+
+
+def test_flat_run_tiers_behave_like_a_role_run(flat_run):
+    def rels(tier, **kw):
+        return {f["rel_path"] for f in export_api.export_manifest(
+            _auth(), {"run": "flat_run", "tier": tier, **kw})["files"]}
+
+    minimal = rels("minimal")
+    assert "current.parquet" in minimal
+    assert "future.parquet" not in minimal          # opt-in, as for role runs
+    assert "future.parquet" in rels("minimal", include_future=True)
+    assert "Suite_abc/Scenario_One/scenario.yaml" in rels("criteria")
+    assert "Suite_abc/Scenario_One/scenario.yaml" not in minimal
+    assert "Suite_abc/Scenario_One/scene_result.pkl" in rels("raw")
+    assert not any(r.endswith(".pkl") for r in rels("criteria"))
+
+
+def test_a_run_with_only_summary_csv_is_still_a_run(data_root):
+    """lib.path_utils treats these as runs, so the export list must agree."""
+    bare = data_root / "csv_only"
+    bare.mkdir()
+    (bare / "Summary.csv").write_text("a,b\n1,2\n")
+    names = [item["name"] for item in export_api.runs(_auth(), {"sizes": False})["items"]]
+    assert "csv_only" in names
+
+
+def test_usecase_is_a_role_like_devops_and_performance(data_root):
+    run = data_root / "release_run"
+    (run / "usecase").mkdir(parents=True)
+    (run / "usecase" / "current.parquet").write_bytes(b"PAR1" + b"u" * 200)
+    items = {item["name"]: item for item in export_api.runs(_auth(), {"sizes": False})["items"]}
+    assert items["release_run"]["roles"] == ["usecase"]
+    assert items["release_run"]["parquets"] == ["usecase/current.parquet"]
+
+
+def test_internal_trend_output_is_not_offered_as_a_run(data_root):
+    victim = data_root / "trend_release_abc" / "topic" / "id"
+    victim.mkdir(parents=True)
+    (victim / "usecase_devops.parquet").write_bytes(b"PAR1")
+    names = [item["name"] for item in export_api.runs(_auth(), {"sizes": False})["items"]]
+    assert not [n for n in names if n.startswith("trend_release_")]
+
+
+def test_prebake_state_is_keyed_by_the_parquet_path_within_the_run(flat_run, data_root):
+    from backend import prebake
+
+    entry_dir = prebake.prebake_dir(flat_run / "current.parquet") / "devops_result"
+    entry_dir.mkdir(parents=True)
+    (entry_dir / "a.json.gz").write_bytes(b"\x1f\x8b" + b"0" * 20)
+    items = {item["name"]: item for item in export_api.runs(_auth(), {"sizes": False})["items"]}
+    # Keys are run-relative paths; a flat run's are bare file names. Both parquets in the
+    # directory report the same entries because .prebake is per directory, as before.
+    assert list(items["flat_run"]["prebaked"]) == ["current.parquet", "future.parquet"]
+
+
+# -------------------------------------------------------------------------- TLR
+#
+# TLR runs have no devops/performance directory and no parquet, so role detection alone
+# skipped them and they never reached a client's run list at all.
+
+
+@pytest.fixture()
+def tlr_run(data_root) -> Path:
+    """A TLR run beside the perception one: suite layout plus a flat scenario."""
+    run = data_root / "tlr_run"
+    suite = run / "suite_a" / "case_1"
+    suite.mkdir(parents=True)
+    (suite / "result.json").write_text('{"Frame":{}}\n' * 3)
+    (suite / "scene_result.pkl").write_bytes(b"\x80\x04" + b"p" * 2000)
+    flat = run / "flat_scenario"
+    flat.mkdir(parents=True)
+    (flat / "result.json").write_text('{"Frame":{}}\n' * 5)
+    (run / "metadata.yaml").write_text("kind: tlr\n")
+    return run
+
+
+def test_runs_lists_tlr_runs_with_a_scenario_count(tlr_run):
+    items = {item["name"]: item for item in export_api.runs(_auth(), {"sizes": False})["items"]}
+    assert set(items) == {"run_one", "tlr_run"}
+    assert items["tlr_run"]["kind"] == "tlr"
+    assert items["tlr_run"]["tlr_scenarios"] == 2  # one suite testcase + one flat
+    assert items["tlr_run"]["roles"] == []
+    # The perception run must be untouched by the new detection.
+    assert items["run_one"]["kind"] == "perception"
+    assert items["run_one"]["tlr_scenarios"] == 0
+
+
+def test_tlr_manifest_carries_every_result_json(tlr_run):
+    manifest = export_api.export_manifest(_auth(), {"run": "tlr_run", "tier": "criteria"})
+    rels = {f["rel_path"] for f in manifest["files"]}
+    assert manifest["kind"] == "tlr"
+    assert rels == {"metadata.yaml", "suite_a/case_1/result.json", "flat_scenario/result.json"}
+    assert manifest["total_bytes"] == sum(f["size"] for f in manifest["files"])
+
+
+def test_tlr_results_are_tier_independent_but_pickles_are_not(tlr_run):
+    """result.json is the whole dataset the TLR viewer reads, so every tier carries it;
+    the pickle fallback is gigabytes and stays behind the raw tier."""
+    tiers = {
+        tier: {f["rel_path"] for f in export_api.export_manifest(
+            _auth(), {"run": "tlr_run", "tier": tier})["files"]}
+        for tier in export_api.TIERS
+    }
+    for tier in ("minimal", "criteria", "full"):
+        assert "suite_a/case_1/result.json" in tiers[tier]
+        assert not any(rel.endswith(".pkl") for rel in tiers[tier]), tier
+    assert "suite_a/case_1/scene_result.pkl" in tiers["raw"]
+
+
+def test_a_run_with_neither_role_nor_tlr_results_is_still_skipped(data_root):
+    (data_root / "not_a_run").mkdir()
+    (data_root / "not_a_run" / "notes.txt").write_text("hello")
+    names = [item["name"] for item in export_api.runs(_auth(), {"sizes": False})["items"]]
+    assert "not_a_run" not in names
+
+
 # ------------------------------------------------------------------ range parse
 
 

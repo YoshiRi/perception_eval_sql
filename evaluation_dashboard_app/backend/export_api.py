@@ -45,7 +45,22 @@ RUN_ROOT_FILES = ("metadata.yaml", ".run_metadata.json", "Summary.csv", "Score.c
 # Per-scenario sidecars that make the DevOps criteria views work.
 SCENARIO_SIDECARS = ("scenario.yaml", "planning_factor.jsonl", "t4_metadata.json")
 
-ROLE_DIRS = ("devops", "performance")
+# Role sub-directories of a release container, matching lib.path_utils.RELEASE_ROLE_DIRS.
+ROLE_DIRS = ("devops", "performance", "usecase")
+
+# Many runs have no role split at all: the parquet and its scenario folders sit directly
+# in the run directory. Everything the viewer reads is relative to the parquet's own
+# directory, so such a run is simply one whose data directory *is* the run directory.
+FLAT_RUN_MARKERS = ("Summary.csv", "Score.csv", "current.csv", "future.csv")
+
+# Written by the dashboard's own trend machinery, not runs anyone pulls.
+INTERNAL_DIR_PREFIX = "trend_release_"
+
+# TLR runs have no devops/performance split. Their scenarios sit directly under the run
+# (``<run>/<scenario>/result.json``) or one suite level down
+# (``<run>/<suite>/<testcase>/result.json``), which is why role detection alone used to
+# skip them entirely and they never appeared in a client's run list.
+TLR_RESULT_NAME = "result.json"
 
 # Never exported: regenerable derived state, and the published report bundles that are
 # far larger than everything else combined.
@@ -223,6 +238,64 @@ def _roles_present(run_dir: Path) -> list[str]:
     return [name for name in ROLE_DIRS if (run_dir / name).is_dir()]
 
 
+def _data_dirs(run_dir: Path, roles: Iterable[str]) -> list[Path]:
+    """Directories holding a parquet and its sidecars.
+
+    One per role for a release container; the run directory itself for a flat run. The
+    tier rules below are all expressed relative to this directory, exactly as the viewer
+    resolves scenario YAML and pre-bakes relative to the parquet it opened.
+    """
+    dirs = [run_dir / role for role in roles]
+    return dirs or [run_dir]
+
+
+def _parquet_rel_paths(run_dir: Path, roles: Iterable[str]) -> list[str]:
+    return sorted(
+        str(path.relative_to(run_dir)).replace("\\", "/")
+        for data_dir in _data_dirs(run_dir, roles)
+        for path in data_dir.glob("*.parquet")
+    )
+
+
+def _is_flat_run(run_dir: Path) -> bool:
+    """A run whose own directory holds the analysis, with no role split.
+
+    Mirrors ``lib.path_utils._looks_like_analysis_run``, which is how the dashboard
+    decides the same thing.
+    """
+    if any(run_dir.glob("*.parquet")):
+        return True
+    return any((run_dir / name).is_file() for name in FLAT_RUN_MARKERS)
+
+
+def _tlr_scenarios(run_dir: Path) -> int:
+    """How many TLR scenarios this run holds, flat and suite layouts both counted.
+
+    Mirrors ``lib.path_utils.count_tlr_scenarios``, which the dashboard uses to find the
+    same directories. Kept local because the export routes must not depend on ``lib``,
+    which the packaged client does not ship.
+    """
+    count = 0
+    try:
+        children = sorted(run_dir.iterdir())
+    except OSError:
+        return 0
+    for child in children:
+        if not child.is_dir() or child.name.startswith(".") or child.name in EXCLUDED_PARTS:
+            continue
+        if (child / TLR_RESULT_NAME).is_file():
+            count += 1
+            continue
+        try:
+            testcases = sorted(child.iterdir())
+        except OSError:
+            continue
+        for testcase in testcases:
+            if testcase.is_dir() and (testcase / TLR_RESULT_NAME).is_file():
+                count += 1
+    return count
+
+
 def _dir_size(path: Path) -> int:
     total = 0
     for item in path.rglob("*"):
@@ -268,20 +341,24 @@ def runs(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
         return {"root": str(root), "items": [], "error": f"Data root does not exist: {root}"}
 
     for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-        if not child.is_dir() or child.name.startswith("."):
+        if not child.is_dir() or child.name.startswith(".") or child.name.startswith(INTERNAL_DIR_PREFIX):
             continue
         roles = _roles_present(child)
-        parquets = sorted(
-            str(p.relative_to(child)).replace("\\", "/")
-            for role in roles
-            for p in (child / role).glob("*.parquet")
-        )
-        if not roles and not parquets:
+        parquets = _parquet_rel_paths(child, roles)
+        flat = not roles and _is_flat_run(child)
+        # Only probe for TLR results once the cheaper shapes have said no: a perception
+        # run would otherwise pay an extra directory walk per listing.
+        tlr_scenarios = 0 if roles or flat else _tlr_scenarios(child)
+        if not roles and not flat and not tlr_scenarios:
             continue
         if query and query not in child.name.lower():
             continue
         entry: dict[str, Any] = {
             "name": child.name,
+            # "tlr" runs are viewed in the TLR page, not the bbox explorer, so clients
+            # need to tell them apart before they open one.
+            "kind": "tlr" if tlr_scenarios else "perception",
+            "tlr_scenarios": tlr_scenarios,
             "roles": roles,
             "parquets": parquets,
             "prebaked": _prebake_state(child, roles),
@@ -306,8 +383,8 @@ def _prebake_state(run_dir: Path, roles: Iterable[str]) -> dict[str, Any]:
     from backend import prebake
 
     out: dict[str, Any] = {}
-    for role in roles:
-        for parquet in sorted((run_dir / role).glob("*.parquet")):
+    for data_dir in _data_dirs(run_dir, roles):
+        for parquet in sorted(data_dir.glob("*.parquet")):
             entries = list(prebake.prebake_dir(parquet).rglob("*.json.gz"))
             if not entries:
                 continue
@@ -319,7 +396,9 @@ def _prebake_state(run_dir: Path, roles: Iterable[str]) -> dict[str, Any]:
             index = prebake.read_index(parquet)
             if index:
                 state["index"] = index
-            out[f"{role}/{parquet.name}"] = state
+            # Keyed by the parquet's path within the run, which for a flat run is just
+            # the file name.
+            out[str(parquet.relative_to(run_dir)).replace("\\", "/")] = state
     return out
 
 
@@ -346,8 +425,20 @@ def _collect(
         take(run_dir / name)
     take(run_dir / "summary.json")
 
-    for role in roles:
-        role_dir = run_dir / role
+    # TLR results, in both the flat and the suite layout. Tier-independent: result.json
+    # is the whole dataset the TLR viewer reads, and it is JSONL measured in MB, not the
+    # GBs that make tiers worth having for perception runs. The globs cost nothing on a
+    # perception run, whose scenarios sit one level deeper.
+    for pattern in (f"*/{TLR_RESULT_NAME}", f"*/*/{TLR_RESULT_NAME}"):
+        for path in run_dir.glob(pattern):
+            take(path)
+    if rank >= TIERS.index("raw"):
+        # The analyzer's fallback source, only worth the gigabytes at the raw tier.
+        for pattern in ("*/scene_result.pkl", "*/*/scene_result.pkl", "*/*.pkl.z", "*/*/*.pkl.z"):
+            for path in run_dir.glob(pattern):
+                take(path)
+
+    for role_dir in _data_dirs(run_dir, roles):
         if not role_dir.is_dir():
             continue
         take(role_dir / "current.parquet")
@@ -410,8 +501,11 @@ def export_manifest(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
     files = _collect(run_dir, roles, tier, include_future=include_future)
     if with_sha:
         files = [_file_entry(_resolve_in_run(run_dir, f["rel_path"]), run_dir, with_sha=True) for f in files]
+    tlr_scenarios = 0 if roles or _is_flat_run(run_dir) else _tlr_scenarios(run_dir)
     return {
         "run": run_dir.name,
+        "kind": "tlr" if tlr_scenarios else "perception",
+        "tlr_scenarios": tlr_scenarios,
         "roles": roles,
         "tier": tier,
         "include_future": include_future,

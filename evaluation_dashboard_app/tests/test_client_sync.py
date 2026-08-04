@@ -1,6 +1,8 @@
 """Plan building decides what moves over the network, so its edge cases matter."""
 
+import contextlib
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -197,6 +199,127 @@ def test_files_dropped_by_the_server_are_reported_obsolete(home):
     _write_local("run_one", "a.parquet", b"abc")
     plan = sync.build_plan(_manifest([_entry("a.parquet", b"abc")]))
     assert plan.obsolete == ["gone.yaml"]
+
+
+# -------------------------------------------------------------------- progress
+#
+# The client UI polls these snapshots, so they are the download status: if the
+# arithmetic drifts the user sees a bar that lies.
+
+
+class _FakeRemote:
+    """Serves manifest bytes, optionally dropping one file's connection mid-transfer."""
+
+    base_url = "http://fake"
+
+    def __init__(self, blobs, flaky=()):
+        self.blobs = blobs
+        self.flaky = set(flaky)
+
+    @contextlib.contextmanager
+    def open_file(self, run, rel, offset=0):
+        data = self.blobs[rel][offset:]
+        if rel in self.flaky:
+            self.flaky.discard(rel)
+            yield _BreaksMidStream(data[: len(data) // 2])
+            return
+        yield io.BytesIO(data)
+
+
+class _BreaksMidStream(io.BytesIO):
+    def read(self, n=-1):
+        chunk = super().read(n)
+        if not chunk:
+            raise ConnectionError("connection reset mid-file")
+        return chunk
+
+
+def _run_execute(run, blobs, *, flaky=()):
+    manifest = _manifest([_entry(rel, data) for rel, data in blobs.items()], run=run)
+    plan = sync.build_plan(manifest)
+    seen: list[dict] = []
+    result = sync.execute(_FakeRemote(dict(blobs), flaky), manifest, plan, on_progress=seen.append)
+    return plan, result, seen
+
+
+def test_progress_totals_add_up_over_a_whole_pull(home):
+    blobs = {"a.json": b"x" * 3000, "b/big.parquet": b"y" * 300_000}
+    plan, result, seen = _run_execute("run_one", blobs)
+    last = seen[-1]
+    assert last["done_bytes"] == last["total_bytes"] == plan.download_bytes
+    assert last["done_files"] == last["total_files"] == 2
+    assert last["percent"] == pytest.approx(100.0)
+    assert result["downloaded"] == 2
+
+
+def test_progress_reports_the_file_currently_moving(home):
+    """Per-file detail: a pull is thousands of small files and a few large ones, and
+    overall bytes alone make the big ones look like a stall."""
+    blobs = {"b/big.parquet": b"y" * 300_000}
+    _, _, seen = _run_execute("run_one", blobs)
+    named = [s for s in seen if s["current"]]
+    assert named, "no snapshot named the file being fetched"
+    assert named[-1]["current"] == "b/big.parquet"
+    assert named[-1]["current_size"] == 300_000
+    assert all(s["current_done"] <= s["current_size"] for s in named)
+
+
+def test_resumed_bytes_do_not_push_the_bar_past_100_percent(home):
+    """The total is what still has to move, so a .part's bytes belong to the file's own
+    progress only. Counting them twice drove the overall bar to 164%."""
+    data = b"z" * 200_000
+    part = config.run_dir("run_one") / ("b/big.parquet" + sync.PART_SUFFIX)
+    part.parent.mkdir(parents=True, exist_ok=True)
+    part.write_bytes(data[:80_000])
+    plan, _, seen = _run_execute("run_one", {"b/big.parquet": data})
+    assert plan.download_bytes == 120_000
+    last = seen[-1]
+    assert last["done_bytes"] == last["total_bytes"] == 120_000
+    assert last["percent"] == pytest.approx(100.0)
+    # The file's own bar still shows the whole file, resumed part included.
+    assert last["current_done"] == last["current_size"] == 200_000
+
+
+def test_a_retry_is_counted_and_does_not_double_count_bytes(home):
+    blobs = {"flaky.bin": b"q" * 200_000}
+    _, result, seen = _run_execute("run_one", blobs, flaky=["flaky.bin"])
+    last = seen[-1]
+    assert last["retries"] >= 1
+    assert max(s["current_attempt"] for s in seen) >= 2
+    assert last["done_bytes"] == last["total_bytes"] == 200_000
+    assert result["failed"] == []
+
+
+# ------------------------------------------------------------------------- TLR
+
+
+def test_plan_carries_the_run_kind_from_the_manifest(home):
+    manifest = _manifest([_entry("s/result.json", b"{}\n")], run="tlr_run")
+    manifest["kind"] = "tlr"
+    assert sync.build_plan(manifest).kind == "tlr"
+
+
+def test_kind_defaults_to_perception_on_an_older_server(home):
+    """A server that predates TLR export sends no kind; nothing may break on that."""
+    assert sync.build_plan(_manifest([_entry("a.parquet", b"x")])).kind == "perception"
+
+
+def test_local_summary_labels_a_downloaded_tlr_run(home):
+    """The home page routes TLR runs to the TLR viewer, so the label decides the link."""
+    _write_local("tlr_run", "suite_a/case_1/result.json", b'{"Frame":{}}\n')
+    _write_local("bbox_run", "performance/current.parquet", b"PAR1")
+    kinds = {row["name"]: row["kind"] for row in sync.local_run_summary()}
+    assert kinds == {"tlr_run": "tlr", "bbox_run": "perception"}
+
+
+def test_recorded_kind_survives_into_the_run_state(home):
+    blobs = {"s/result.json": b'{"Frame":{}}\n'}
+    manifest = _manifest([_entry(rel, data) for rel, data in blobs.items()], run="tlr_run")
+    manifest["kind"] = "tlr"
+    plan = sync.build_plan(manifest)
+    sync.execute(_FakeRemote(dict(blobs)), manifest, plan)
+    assert config.read_run_state("tlr_run")["kind"] == "tlr"
+    assert sync.local_run_summary()[0]["kind"] == "tlr"
 
 
 # --------------------------------------------------------------------- helpers

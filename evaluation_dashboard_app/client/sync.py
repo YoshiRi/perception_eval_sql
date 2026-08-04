@@ -49,6 +49,9 @@ class Plan:
     download: list[PlanItem]
     keep: list[str]
     obsolete: list[str]
+    # "perception" (devops/performance parquets) or "tlr" (result.json scenarios). The
+    # two open in different viewers, so the client records which it downloaded.
+    kind: str = "perception"
 
     @property
     def download_bytes(self) -> int:
@@ -140,6 +143,7 @@ def build_plan(manifest: dict[str, Any], *, verify: bool = False) -> Plan:
         download=download,
         keep=keep,
         obsolete=obsolete,
+        kind=str(manifest.get("kind") or "perception"),
     )
 
 
@@ -167,6 +171,13 @@ class Progress:
         self._last_render = 0.0
         self._last_sink = 0.0
         self.current = ""
+        # Per-file detail. A run pull is thousands of small files with the occasional
+        # large parquet, so overall bytes alone leave the UI looking stalled on the big
+        # ones; these say which file is moving and how far along it is.
+        self.current_size = 0
+        self.current_done = 0
+        self.current_attempt = 1
+        self.retries = 0
         self.sink = sink
 
     def snapshot(self) -> dict[str, Any]:
@@ -179,6 +190,10 @@ class Progress:
             "done_files": self.done_files,
             "total_files": self.total_files,
             "current": self.current,
+            "current_size": self.current_size,
+            "current_done": min(self.current_done, self.current_size) if self.current_size else self.current_done,
+            "current_attempt": self.current_attempt,
+            "retries": self.retries,
             "rate_bps": rate,
             "elapsed_sec": elapsed,
             "eta_sec": (remaining / rate) if rate > 0 else None,
@@ -199,23 +214,32 @@ class Progress:
 
     def advance(self, count: int) -> None:
         self.done_bytes += count
+        self.current_done += count
         now = time.monotonic()
         if self.tty and now - self._last_render >= 0.1:
             self._last_render = now
             self._render()
         self._emit()
 
-    def start_file(self, rel_path: str, resumed: int = 0) -> None:
+    def start_file(self, rel_path: str, resumed: int = 0, size: int = 0, attempt: int = 1) -> None:
         self.current = rel_path
-        if resumed:
-            self.done_bytes += resumed
-        if not self.tty:
+        self.current_size = size
+        # ``resumed`` counts toward this file's own bar (it is real progress through the
+        # file) but never toward ``done_bytes``: the total is plan.download_bytes, which
+        # already discounts what a .part holds. Adding it there drove the overall bar
+        # past 100% on any resumed pull.
+        self.current_done = resumed
+        self.current_attempt = attempt
+        if attempt > 1:
+            self.retries += 1
+        if not self.tty and attempt == 1:
             note = f" (resuming at {human_bytes(resumed)})" if resumed else ""
             print(f"  fetching {rel_path}{note}", file=self.stream, flush=True)
         self._emit(force=True)
 
     def finish_file(self) -> None:
         self.done_files += 1
+        self.current_done = self.current_size
         if self.tty:
             self._render()
         self._emit(force=True)
@@ -261,7 +285,7 @@ def _download_one(
     attempt = 0
     while True:
         attempt += 1
-        progress.start_file(item.rel_path, resumed=offset if attempt == 1 else 0)
+        progress.start_file(item.rel_path, resumed=offset, size=item.size, attempt=attempt)
         try:
             with remote.open_file(run, item.rel_path, offset=offset) as response:
                 mode = "ab" if offset else "wb"
@@ -380,6 +404,7 @@ def execute(
             "run": plan.run,
             "tier": plan.tier,
             "roles": plan.roles,
+            "kind": plan.kind,
             "server": remote.base_url,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "files": files_state,
@@ -404,6 +429,14 @@ def remove_run(run_name: str) -> tuple[bool, str]:
     return True, f"Removed {target}"
 
 
+def _local_kind(directory: Path) -> str:
+    """"tlr" when the run holds result.json scenarios, flat or suite layout."""
+    for pattern in ("*/result.json", "*/*/result.json"):
+        if next(directory.glob(pattern), None) is not None:
+            return "tlr"
+    return "perception"
+
+
 def local_run_summary() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for name in config.local_runs():
@@ -424,6 +457,9 @@ def local_run_summary() -> list[dict[str, Any]]:
             {
                 "name": name,
                 "tier": state.get("tier") or "?",
+                # Runs pulled before the client knew about TLR have no recorded kind,
+                # so fall back to what is on disk rather than mislabelling them.
+                "kind": state.get("kind") or _local_kind(directory),
                 "roles": state.get("roles") or [],
                 "files": len(state.get("files") or {}),
                 "bytes": total,

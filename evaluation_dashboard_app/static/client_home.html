@@ -95,6 +95,7 @@
   .pill.ok { background: var(--good-bg); color: var(--good); }
   .pill.no { background: var(--warn-bg); color: var(--warn); }
   .pill.err { background: var(--bad-bg); color: var(--bad); }
+  .pill.tlr { background: var(--panel2); color: var(--muted); border: 1px solid var(--line-strong); }
 
   .muted { color: var(--muted); }
   .small { font-size: 12px; }
@@ -110,6 +111,28 @@
               margin-left: 7px; border-radius: 999px; background: var(--panel2);
               border: 1px solid var(--line); overflow: hidden; }
   .coverage > i { display: block; height: 100%; background: var(--accent); }
+
+  /* Download detail: a metric strip under the progress bar. auto-fit keeps it one row
+     on a wide window and wraps to two on a narrow one without a breakpoint. */
+  .metrics { display: grid; gap: 1px; margin-top: 12px;
+             grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+             background: var(--line); border: 1px solid var(--line); border-radius: 9px;
+             overflow: hidden; }
+  .metrics > div { background: var(--panel); padding: 8px 11px; }
+  .metrics b { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metrics span { display: block; font-size: 10px; text-transform: uppercase;
+                  letter-spacing: .06em; color: var(--muted); margin-top: 2px; }
+  .metrics > div.warn b { color: var(--warn); }
+
+  .current { margin-top: 12px; font-size: 12px; }
+  .current-name { color: var(--muted); word-break: break-all;
+                  /* Tail of the path first: the file name identifies it, the folder rarely does. */
+                  direction: rtl; text-align: left; unicode-bidi: plaintext;
+                  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .current-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar.file-bar { height: 4px; margin-top: 5px; }
+  .failures { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--bad); }
+  .failures li { word-break: break-all; margin-bottom: 3px; }
 
   .banner { border-radius: 9px; padding: 10px 13px; margin-bottom: 14px; font-size: 13px; }
   .banner.err { background: var(--bad-bg); color: var(--bad); }
@@ -167,7 +190,23 @@
       <button class="danger" id="cancelBtn">Cancel</button>
     </div>
     <div class="bar"><i id="jobBar"></i></div>
+    <!-- The numbers that answer "is it moving, and how long will it take". Kept as a
+         grid rather than one long sentence so values stay in the same place as they
+         change and the eye can track just the one it cares about. -->
+    <div class="metrics" id="jobMetrics" hidden></div>
+    <!-- Current file: its own row because rel paths are long and would otherwise push
+         the metrics around on every file. -->
+    <div class="current" id="jobCurrent" hidden>
+      <span class="current-name" id="jobCurrentName"></span>
+      <span class="current-size" id="jobCurrentSize"></span>
+      <div class="bar file-bar"><i id="jobFileBar"></i></div>
+    </div>
+    <p class="hint" id="jobPlan" hidden></p>
     <p class="hint" id="jobDetail"></p>
+    <details id="jobFailures" hidden>
+      <summary class="hint" id="jobFailuresSummary"></summary>
+      <ul class="failures" id="jobFailuresList"></ul>
+    </details>
   </div>
 
   <!-- Server runs -->
@@ -300,6 +339,9 @@
     while (Math.abs(n) >= 1024 && i < units.length - 1) { n /= 1024; i++; }
     return i === 0 ? `${n.toFixed(0)} B` : `${n.toFixed(1)} ${units[i]}`;
   }
+  function fmtInt(n) {
+    return Number(n || 0).toLocaleString();
+  }
   function secs(s) {
     if (!s || !isFinite(s)) return "-";
     s = Math.round(s);
@@ -361,13 +403,19 @@
       const tr = document.createElement("tr");
       const tierBytes = (run.tier_bytes || {})[tier];
       const baked = Object.keys(run.prebaked || {}).length;
+      // TLR runs carry no parquets or roles: one result.json per scenario, the same at
+      // every tier, opened in the TLR viewer rather than the bbox explorer.
+      const isTlr = run.kind === "tlr";
       tr.innerHTML = `
-        <td class="name">${esc(run.name)}</td>
-        <td class="small muted">${esc((run.roles || []).join(", ")) || "-"}</td>
+        <td class="name">${esc(run.name)}${isTlr ? ` <span class="pill tlr">TLR</span>` : ""}</td>
+        <td class="small muted">${isTlr
+          ? `${fmtInt(run.tlr_scenarios)} scenario(s)`
+          : (esc((run.roles || []).join(", ")) || "no role split")}</td>
         <td class="num small muted">${human(run.total_bytes)}</td>
         <td class="num"><strong>${human(tierBytes)}</strong></td>
-        <td>${baked ? `<span class="pill ok">${baked} parquet</span>`
-                    : `<span class="pill no">none</span>`}</td>
+        <td>${isTlr ? `<span class="pill">n/a</span>`
+                    : (baked ? `<span class="pill ok">${baked} parquet</span>`
+                             : `<span class="pill no">none</span>`)}</td>
         <td style="text-align:right"></td>`;
       const btn = document.createElement("button");
       btn.className = "primary";
@@ -387,17 +435,24 @@
     }
     runs.forEach(run => {
       const tr = document.createElement("tr");
+      const isTlr = run.kind === "tlr";
       tr.innerHTML = `
-        <td class="name">${esc(run.name)}</td>
-        <td class="small">${esc(run.tier || "?")}</td>
-        <td class="small muted">${esc((run.roles || []).join(", ")) || "-"}</td>
+        <td class="name">${esc(run.name)}${isTlr ? ` <span class="pill tlr">TLR</span>` : ""}</td>
+        <td class="small">${isTlr ? "-" : esc(run.tier || "?")}</td>
+        <td class="small muted">${isTlr ? "traffic light" : (esc((run.roles || []).join(", ")) || "-")}</td>
         <td class="num small">${run.files}</td>
         <td class="num">${human(run.bytes)}</td>
         <td class="small muted">${esc((run.updated_at || "").slice(0, 16).replace("T", " "))}</td>
         <td style="text-align:right"></td>`;
       const cell = tr.lastElementChild;
       const open = document.createElement("a");
-      open.className = "btn"; open.href = "/explorer"; open.textContent = "Open";
+      // Name the run so the viewer opens on it rather than on the last session's run.
+      // TLR results have no bbox parquet; their home is the TLR analysis page.
+      open.className = "btn";
+      open.href = isTlr
+        ? `/tlr?path=${encodeURIComponent(run.name)}`
+        : `/explorer?run=${encodeURIComponent(run.name)}`;
+      open.textContent = isTlr ? "Open TLR" : "Open";
       cell.appendChild(open);
       const del = document.createElement("button");
       del.className = "danger"; del.textContent = "Delete";
@@ -426,19 +481,63 @@
     card.hidden = false;
     $("jobRun").textContent = `${job.run}  ·  ${job.role} / ${job.tier}`;
     const st = $("jobState");
-    st.textContent = job.state;
     st.className = "pill " + (job.state === "done" ? "ok"
       : (job.state === "failed" ? "err" : (job.state === "cancelled" ? "no" : "ok")));
     const p = job.progress || {};
-    $("jobBar").style.width = `${Math.max(0, Math.min(100, p.percent || 0)).toFixed(1)}%`;
-    const bits = [];
-    if (p.total_bytes) bits.push(`${human(p.done_bytes)} / ${human(p.total_bytes)}`);
-    if (p.rate_bps) bits.push(`${human(p.rate_bps)}/s`);
-    if (p.eta_sec) bits.push(`eta ${secs(p.eta_sec)}`);
-    if (p.total_files) bits.push(`file ${p.done_files}/${p.total_files}`);
-    if (p.current) bits.push(p.current);
-    $("jobDetail").textContent = job.error || job.message || bits.join("  ·  ");
-    if (!job.active && bits.length) $("jobDetail").textContent = job.error || job.message;
+    const pct = Math.max(0, Math.min(100, p.percent || 0));
+    $("jobBar").style.width = `${pct.toFixed(1)}%`;
+    st.textContent = job.active && p.total_bytes ? `${job.state} ${pct.toFixed(0)}%` : job.state;
+
+    // Live numbers while it runs; once it stops the message below tells the whole story
+    // and a frozen metric strip would just be stale.
+    const metrics = $("jobMetrics");
+    metrics.hidden = !job.active || !p.total_bytes;
+    if (!metrics.hidden) {
+      metrics.innerHTML = [
+        [`${human(p.done_bytes)} <span class="muted">/ ${human(p.total_bytes)}</span>`, "transferred"],
+        [`${human(p.rate_bps)}/s`, "rate"],
+        [secs(p.eta_sec), "eta"],
+        [secs(p.elapsed_sec), "elapsed"],
+        [`${fmtInt(p.done_files)} <span class="muted">/ ${fmtInt(p.total_files)}</span>`, "files"],
+      ].map(([value, label]) => `<div><b>${value}</b><span>${label}</span></div>`).join("")
+        + (p.retries ? `<div class="warn"><b>${fmtInt(p.retries)}</b><span>retries</span></div>` : "")
+        + (job.failures?.length ? `<div class="warn"><b>${fmtInt(job.failures.length)}</b><span>failed</span></div>` : "");
+    }
+
+    const current = $("jobCurrent");
+    current.hidden = !job.active || !p.current;
+    if (!current.hidden) {
+      $("jobCurrentName").textContent = p.current;
+      const filePct = p.current_size ? Math.max(0, Math.min(100, 100 * p.current_done / p.current_size)) : 0;
+      $("jobCurrentSize").textContent = p.current_size
+        ? `${human(p.current_done)} / ${human(p.current_size)}`
+        + (p.current_attempt > 1 ? `  ·  retry ${p.current_attempt}` : "")
+        : "";
+      $("jobFileBar").style.width = `${filePct.toFixed(1)}%`;
+    }
+
+    // Why this pull is the size it is. Stays visible after it finishes: "kept 900 files"
+    // is the answer to "why was that so fast".
+    const plan = job.plan || {};
+    const planBits = [];
+    if (plan.new_files) planBits.push(`${fmtInt(plan.new_files)} new`);
+    if (plan.changed_files) planBits.push(`${fmtInt(plan.changed_files)} changed`);
+    if (plan.incomplete_files) planBits.push(`${fmtInt(plan.incomplete_files)} partial`);
+    if (plan.keep_files) planBits.push(`${fmtInt(plan.keep_files)} already local`);
+    if (plan.resumed_bytes) planBits.push(`${human(plan.resumed_bytes)} resumed`);
+    if (plan.obsolete_files) planBits.push(`${fmtInt(plan.obsolete_files)} no longer on server`);
+    $("jobPlan").hidden = !planBits.length;
+    $("jobPlan").textContent = planBits.join("  ·  ");
+
+    $("jobDetail").textContent = job.error ? `${job.message} ${job.error}`.trim() : job.message;
+
+    const failed = job.failures || [];
+    $("jobFailures").hidden = !failed.length;
+    if (failed.length) {
+      $("jobFailuresSummary").textContent = `${fmtInt(failed.length)} file(s) failed - click to see which`;
+      $("jobFailuresList").innerHTML = failed.slice(0, 50).map(f => `<li>${esc(f)}</li>`).join("")
+        + (failed.length > 50 ? `<li class="muted">...and ${fmtInt(failed.length - 50)} more</li>` : "");
+    }
     $("cancelBtn").disabled = !job.active;
 
     if (job.active) startPolling();

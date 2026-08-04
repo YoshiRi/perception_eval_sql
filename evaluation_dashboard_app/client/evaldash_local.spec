@@ -57,6 +57,12 @@ hiddenimports = [
     "client.sync",
     "client.t4",
     "client.webapi",
+    # The TLR routes the client inherits import these inside the request, which is late
+    # enough that a bundle built without them 404s the whole TLR page. They only need
+    # pandas/numpy/yaml, all of which the client already ships.
+    "lib.path_utils",
+    "lib.tlr_eval_analyzer",
+    "lib.tlr_llm_package",
 ]
 
 # Only present when build_app.sh was given --server; config.py imports it optionally.

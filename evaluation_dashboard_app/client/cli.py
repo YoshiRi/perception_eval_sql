@@ -144,10 +144,17 @@ def cmd_runs(args: argparse.Namespace) -> int:
     rows = []
     for item in items:
         tiers = item.get("tier_bytes") or {}
+        # TLR runs have no roles, and a flat run's parquet sits in the run directory
+        # itself; say so instead of leaving the column blank.
+        roles = ",".join(item.get("roles") or [])
+        if item.get("kind") == "tlr":
+            roles = f"tlr ({item.get('tlr_scenarios') or 0} scenarios)"
+        elif not roles:
+            roles = "-"
         rows.append(
             [
                 item["name"],
-                ",".join(item.get("roles") or []),
+                roles,
                 sync.human_bytes(item.get("total_bytes") or 0) if not args.fast else "-",
                 sync.human_bytes(tiers.get("minimal") or 0) if tiers else "-",
                 sync.human_bytes(tiers.get("criteria") or 0) if tiers else "-",
@@ -243,7 +250,7 @@ def cmd_ls(args: argparse.Namespace) -> int:
             [
                 r["name"],
                 r["tier"],
-                ",".join(r["roles"]),
+                "tlr" if r.get("kind") == "tlr" else ",".join(r["roles"]),
                 str(r["files"]),
                 sync.human_bytes(r["bytes"]),
                 str(r["incomplete"]) if r["incomplete"] else "-",
