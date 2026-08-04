@@ -2832,9 +2832,18 @@ def scenario_devops_tn_objects(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def frames(payload: dict[str, Any]) -> dict[str, Any]:
+def _frames_max_rows(payload: dict[str, Any]) -> int:
+    return min(max(int(payload.get("max_rows") or 120000), 100), 600000)
+
+
+def _frames_dataframe(payload: dict[str, Any]) -> "pd.DataFrame":
+    """Rows for one scenario's frames, filtered and de-duplicated.
+
+    Split out of :func:`frames` so the 3D overlay can be built from exactly the boxes
+    the 2D preview shows -- two answers to "what happened here" that disagree would be
+    worse than either alone.
+    """
     path = _resolve_local_path(payload.get("path"))
-    run_label = _as_text(payload.get("run")) or "A"
     cols = _columns(path)
     _require_columns(cols, ("frame_index", "source", "x", "y", "length", "width", "yaw"))
     filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
@@ -2844,7 +2853,7 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
     select_cols_with_frame_int = select_cols + ["TRY_CAST(frame_index AS INTEGER) AS _frame_index_int"]
     order_cols = ["TRY_CAST(frame_index AS INTEGER)"]
     order_cols.extend(c for c in ("source", "status", "label") if c in select_cols)
-    max_rows = min(max(int(payload.get("max_rows") or 120000), 100), 600000)
+    max_rows = _frames_max_rows(payload)
     dedupe = payload.get("dedupe", True) is not False
     shape_type_col = "shape_type" if "shape_type" in cols else ("type" if "type" in cols else None)
     polygon_keep_sql = (
@@ -2910,6 +2919,13 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
         ).df()
     finally:
         con.close()
+    return df
+
+
+def frames(payload: dict[str, Any]) -> dict[str, Any]:
+    run_label = _as_text(payload.get("run")) or "A"
+    max_rows = _frames_max_rows(payload)
+    df = _frames_dataframe(payload)
     out_frames: list[dict[str, Any]] = []
     if not df.empty:
         for frame_index, group in df.groupby("_frame_index_int", sort=True):
@@ -2954,6 +2970,36 @@ def frames(payload: dict[str, Any]) -> dict[str, Any]:
         "row_count": int(len(df)),
         "frame_count": len(out_frames),
         "truncated": int(len(df)) >= max_rows,
+    }
+
+
+def t4_layers(payload: dict[str, Any]) -> dict[str, Any]:
+    """The run's boxes packed for the T4 three.js viewer's overlay channel.
+
+    That viewer draws the point cloud and the dataset's own annotations; the evaluation
+    result -- predictions, and which of them were TP/FP/FN -- only exists in the parquet.
+    The dashboard already pushes it in as a ``T4BBOX1`` binary over postMessage, so this
+    builds the identical payload from the same rows the 2D preview uses, base64'd
+    because the transport here is JSON.
+    """
+    import base64
+
+    from lib.t4_three_layers import (
+        _pack_three_layer_payload_binary,
+        build_three_layer_payload_all_frames,
+        infer_external_bbox_alignment_query_params,
+    )
+
+    df = _frames_dataframe(payload)
+    if "frame_index" not in df.columns and "_frame_index_int" in df.columns:
+        df = df.assign(frame_index=df["_frame_index_int"])
+    blob, stats = _pack_three_layer_payload_binary(build_three_layer_payload_all_frames(df))
+    return {
+        "payload_b64": base64.b64encode(blob).decode("ascii"),
+        "stats": stats,
+        # Yaw convention and dimension normalisation the viewer must apply to these
+        # boxes; the same params the dashboard puts on its iframe URL.
+        "viewer_query": infer_external_bbox_alignment_query_params(df),
     }
 
 
@@ -3133,6 +3179,7 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         "/api/scenario_devops_tn_objects": scenario_devops_tn_objects,
         "/api/scenario_devops_frame_results": scenario_devops_frame_results,
         "/api/frames": frames,
+        "/api/t4_layers": t4_layers,
         "/api/compare_frames": compare_frames,
         "/api/tlr_dirs": tlr_dirs,
         "/api/tlr_summary": tlr_summary,

@@ -357,3 +357,30 @@ def test_restart_can_be_forced_over_a_download(home, monkeypatch):
     monkeypatch.setattr(app, "restart", lambda page=None: calls.append(page) or ["cmd"])
     assert webapi.client_restart({"force": True})["ok"] is True
     assert calls == [None]
+
+
+# ------------------------------------------------------------------ opening links
+
+
+def test_a_link_is_opened_in_the_real_browser(home, monkeypatch):
+    """The native window has no tabs, so window.open dies there and this route stands in."""
+    import webbrowser
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda url, new=0: opened.append((url, new)) or True)
+    result = webapi.client_open_url({"url": "https://dash.example.test/T4_3D_Viewer?a=1"})
+    assert result["ok"] and opened == [("https://dash.example.test/T4_3D_Viewer?a=1", 2)]
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "javascript:alert(1)", ""])
+def test_only_http_links_are_opened(home, url):
+    with pytest.raises(ValueError, match="http"):
+        webapi.client_open_url({"url": url})
+
+
+def test_a_browser_that_will_not_launch_is_reported(home, monkeypatch):
+    import webbrowser
+
+    monkeypatch.setattr(webbrowser, "open", lambda url, new=0: False)
+    with pytest.raises(RuntimeError, match="No browser"):
+        webapi.client_open_url({"url": "http://127.0.0.1:8765/viewer/three"})

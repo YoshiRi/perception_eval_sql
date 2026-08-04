@@ -47,3 +47,6 @@ evaluation_dashboard_app/static/*
 !evaluation_dashboard_app/static/tlr_viewer.css
 !evaluation_dashboard_app/static/tlr_viewer.js
 !evaluation_dashboard_app/static/tlr_api.js
+# Offline 3D scene wrapper: the cached T4 viewer plus the run's eval boxes
+# (served by client/webapi.py at /viewer/three_eval).
+!evaluation_dashboard_app/static/local_t4_overlay.html

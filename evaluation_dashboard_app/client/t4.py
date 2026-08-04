@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import struct
 import time
 import urllib.error
@@ -459,6 +460,30 @@ class CacheMiss(T4Error):
     """The cache has no answer for this request."""
 
 
+# The mirrored page was rendered by t4-server with its query string already substituted
+# into the script, which is why it replays offline with no server. The cost is that it
+# then ignores its own URL: the frame to open on, and the external_bbox_* alignment the
+# eval overlay needs, are both read from that literal. Re-point it at the query actually
+# being served, keeping the scene identity the cache is keyed by.
+_PAGE_QUERY_RE = re.compile(rb'new URLSearchParams\("([^"\\]*)"\)')
+_PAGE_IDENTITY_KEYS = ("t4dataset_id", "scenario_name", "version")
+
+
+def _page_with_query(scene: Path, query: dict[str, list[str]]) -> bytes:
+    body = scene.joinpath("page.html").read_bytes()
+    match = _PAGE_QUERY_RE.search(body)
+    if not match:
+        return body  # an older or newer page shape: serve it verbatim rather than guess
+    baked = urllib.parse.parse_qs(match.group(1).decode("utf-8"))
+    merged = {k: list(v) for k, v in query.items()}
+    for key in _PAGE_IDENTITY_KEYS:
+        if key in baked:
+            merged[key] = baked[key]
+    pairs = [(k, v) for k, values in merged.items() for v in values]
+    replacement = f'new URLSearchParams("{urllib.parse.urlencode(pairs)}")'.encode("utf-8")
+    return body[: match.start()] + replacement + body[match.end() :]
+
+
 def serve_request(path: str, query: dict[str, list[str]]) -> tuple[bytes, str, dict[str, str]]:
     """Answer a mirrored ``/viewer/three*`` request from the cache.
 
@@ -486,7 +511,7 @@ def serve_request(path: str, query: dict[str, list[str]]) -> tuple[bytes, str, d
     tail = path[len("/viewer/three") :] or "/"
 
     if tail in ("", "/"):
-        return scene.joinpath("page.html").read_bytes(), "text/html; charset=utf-8", {}
+        return _page_with_query(scene, query), "text/html; charset=utf-8", {}
 
     if tail == "/meta":
         return _read_or_miss(scene / "meta.json"), "application/json", {}

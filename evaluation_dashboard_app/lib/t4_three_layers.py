@@ -11,9 +11,9 @@ from urllib.parse import urlencode
 from typing import TYPE_CHECKING
 
 import pandas as pd
-import streamlit.components.v1 as components
 
-from lib.ui.theme import token
+# Streamlit is imported inside render_t4_three_js_embed, not here: the desktop client
+# builds the very same overlay payload for its offline viewer and has no Streamlit.
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -632,6 +632,10 @@ def _pack_three_layer_payload_binary(layer_payload: dict) -> tuple[bytes, dict]:
 
 def render_t4_three_js_embed(viewer_three_url: str, layer_payload: dict, height: int = 700) -> dict:
     """Iframe to T4 three viewer + postMessage with bbox layer payload (GT, pred, matched pairs)."""
+    import streamlit.components.v1 as components
+
+    from lib.ui.theme import token
+
     _payload_binary, _payload_stats = _pack_three_layer_payload_binary(layer_payload)
     _payload_binary_b64 = base64.b64encode(_payload_binary).decode("ascii")
     _payload_stats = dict(_payload_stats)

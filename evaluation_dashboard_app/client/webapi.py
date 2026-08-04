@@ -269,6 +269,25 @@ def client_reset_server(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def client_open_url(payload: dict[str, Any]) -> dict[str, Any]:
+    """Open a link in the user's real browser.
+
+    ``window.open`` does nothing in the native window (pywebview has no tabs to open
+    into), which left the explorer's 3D buttons looking broken. Handing the URL to the
+    system browser also lands it where the user's Cloudflare Access session already
+    lives, which the embedded webview does not share.
+    """
+    import webbrowser
+
+    url = str(payload.get("url") or "").strip()
+    scheme = (urlparse(url).scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise ValueError("Only http(s) links can be opened.")
+    if not webbrowser.open(url, new=2):
+        raise RuntimeError("No browser could be launched for this link.")
+    return {"ok": True, "url": url}
+
+
 def client_remote_runs(payload: dict[str, Any]) -> dict[str, Any]:
     remote = connect(config.Config.load())
     data = remote.runs(sizes=payload.get("sizes", True) is not False, query=str(payload.get("q") or ""))
@@ -793,6 +812,7 @@ CLIENT_ROUTES = {
     "/api/client/restart": client_restart,
     "/api/client/login": client_login,
     "/api/client/reset_server": client_reset_server,
+    "/api/client/open_url": client_open_url,
     "/api/client/remote_runs": client_remote_runs,
     "/api/client/pull": client_pull,
     "/api/client/pull_status": client_pull_status,
@@ -851,6 +871,9 @@ def build_handler() -> type:
                 "/": "client_home.html", "/home": "client_home.html", "/home/": "client_home.html",
                 "/workflow": "client_workflow.html", "/workflow/": "client_workflow.html",
                 "/trends": "client_trends.html", "/trends/": "client_trends.html",
+                # Wraps the cached T4 viewer and feeds it the run's boxes; must be
+                # matched before the /viewer/three passthrough below.
+                "/viewer/three_eval": "local_t4_overlay.html",
             }.get(parsed.path)
             if page:
                 try:

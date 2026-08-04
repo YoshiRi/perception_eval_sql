@@ -1163,9 +1163,11 @@ async function probeT4Scenes() {
       .filter(s => (s.frames_cached || 0) > 0)
       .map(s => [String(s.dataset_id), s]));
     state.t4Dashboard = (data.config && data.config.dashboard_url) || "";
+    state.isLocalClient = true;
     if (data.job && data.job.active) watchT4Fetch();  // a fetch started elsewhere
   } catch {
     state.t4Scenes = null;  // not the local client, or no T4 support in this build
+    state.isLocalClient = false;
   }
   update3dButton();
 }
@@ -1254,7 +1256,7 @@ function dashboard3dUrl(s) {
 }
 function openServer3dViewer() {
   const url = state.selected && dashboard3dUrl(state.selected);
-  if (url) window.open(url, "_blank");
+  if (url) openExternal(new URL(url, window.location.href).href);
 }
 function setT4FetchStatus(text) {
   els.t4FetchStatus.hidden = !text;
@@ -1349,13 +1351,41 @@ function stopT4Watch() {
   clearInterval(watchT4Fetch._timer);
   watchT4Fetch._timer = null;
 }
+// Opening a link is not one call. The desktop client runs inside a pywebview window
+// with no tabs, where window.open silently does nothing -- which is why the 3D buttons
+// looked dead. There, the client's own process opens the user's real browser, which is
+// also where their Cloudflare Access session lives. Everywhere else, a normal tab.
+async function openExternal(url) {
+  if (state.isLocalClient) {
+    try {
+      await api("/api/client/open_url", {url});
+      return;
+    } catch (err) {
+      toast(`Could not open a browser: ${err.message}`);
+    }
+  }
+  if (!window.open(url, "_blank")) window.location.href = url;
+}
 function open3dViewer() {
   const scene = selectedT4Scene();
-  if (!scene) return;
+  const s = state.selected;
+  if (!scene || !s) return;
   const p = new URLSearchParams();
   p.set("t4dataset_id", scene.dataset_id);
   if (scene.scenario) p.set("scenario_name", scene.scenario);
-  window.open(`${API_BASE}/viewer/three?${p.toString()}`, "_blank");
+  // The point cloud alone answers "what was there", not "what did the run do about
+  // it", so the run and the scenario's filters travel with it: /viewer/three_eval
+  // pushes those boxes into the same viewer.
+  // eval_* keys, because scenario_name already means the T4 scene here and the
+  // parquet's scenario is a different name for the same drive.
+  p.set("path", state.path);
+  if (s.topic_name) p.set("eval_topic", s.topic_name);
+  if (s.scenario_name) p.set("eval_scenario", s.scenario_name);
+  if (s.suite_name) p.set("eval_suite", s.suite_name);
+  if (state.rangeMax !== "") p.set("eval_distance_max", String(state.rangeMax));
+  // Served by this same client, so make it absolute before handing it to a browser
+  // that is not pointed at localhost:<port>.
+  openExternal(new URL(`${API_BASE}/viewer/three_eval?${p.toString()}`, window.location.href).href);
 }
 function showViewer(url, frame = null) {
   state.viewerUrl = url;
@@ -1376,7 +1406,7 @@ function closeViewer() {
 }
 function openViewerNewTab() {
   if (!state.viewerUrl) return;
-  window.open(state.viewerUrl, "_blank");
+  openExternal(new URL(state.viewerUrl, window.location.href).href);
 }
 els.scan.addEventListener("click", scan);
 els.parquet.addEventListener("change", async () => { state.path = els.parquet.value; await hydrate(); await loadSummary(); saveExplorerSessionSoon(); });

@@ -460,9 +460,21 @@ roughly 1.6–3.2 MB and a 100-frame scene is 200–300 MB. Fetching is resumabl
 incremental — an already-cached frame is skipped unless you pass `--force` — and
 `--no-camera` / `--no-lanelet` trim what is stored.
 
+**Open 3D shows the run, not just the dataset.** The viewer's own boxes are the T4
+annotations; predictions and their TP/FP/FN verdicts exist only in the parquet. The
+explorer opens `/viewer/three_eval`, which wraps the cached viewer and pushes the
+scenario's boxes into it over the same `bbox_layers_binary_v1` channel the dashboard
+uses (`/api/t4_layers` packs them), applying the same filters as the 2D preview and
+opening on the first frame the run actually evaluated. **Annotations only** in that
+page's header is the plain viewer, for comparison.
+
 Once cached, the client serves the same `/viewer/three*` paths locally, byte-for-byte,
 including the `X-T4V-*` headers. Because every URL the viewer page fetches is
-root-relative, the page works unchanged. A request for something that was never fetched
+root-relative, the page works unchanged. The one edit is to `page.html`: t4-server had
+already substituted the query string into it, so the mirror re-points that literal at
+the query it is being served with — otherwise the entry frame and the overlay's
+alignment params would be frozen at whatever they were when the scene was fetched. A
+request for something that was never fetched
 returns a 404 naming the exact command to run rather than silently rendering an empty
 scene.
 

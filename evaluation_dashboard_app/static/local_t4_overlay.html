@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Scene with Evaluation Results</title>
+  <!-- Loads before body paint so the saved theme applies without a flash. -->
+  <script>/*__BBOX_THEME_JS__*/</script>
+  <style>
+    :root[data-theme="dark"] {
+      --bg: #050812; --panel: #0b1122; --line: rgba(148,163,184,.22);
+      --text: #eaf2ff; --muted: #91a4bf; --accent: #38bdf8; --bad: #fb7185; --good: #34d399;
+    }
+    :root[data-theme="light"] {
+      --bg: #f1f5f9; --panel: #ffffff; --line: rgba(71,85,105,.2);
+      --text: #0f172a; --muted: #52627a; --accent: #0891b2; --bad: #be123c; --good: #047857;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+      font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 9px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    h1 { font-size: 13px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+    .meta, .status { color: var(--muted); font-size: 12px; }
+    .status.err { color: var(--bad); }
+    .status.ok { color: var(--good); }
+    .spacer { flex: 1; }
+    a.btn {
+      color: var(--text); text-decoration: none; font-weight: 550;
+      border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px;
+    }
+    a.btn:hover { border-color: var(--accent); }
+    iframe { flex: 1; width: 100%; border: 0; background: var(--bg); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>3D Scene <span class="meta">· point cloud + evaluation boxes</span></h1>
+    <span class="meta" id="sceneMeta"></span>
+    <span class="spacer"></span>
+    <span class="status" id="status">Loading the cached scene...</span>
+    <a class="btn" id="plainLink" href="#" title="The scene without the run's boxes">Annotations only</a>
+    <a class="btn" href="/explorer">← Explorer</a>
+  </header>
+  <iframe id="viewer" title="T4 3D viewer" allowfullscreen allow="fullscreen *"></iframe>
+
+<script>
+// The cached t4-server viewer draws the point cloud, the cameras and the dataset's own
+// annotations, but knows nothing of an evaluation run. It does accept boxes over
+// postMessage ("bbox_layers_binary_v1"), which is how the dashboard shows GT/EST and
+// TP/FP/FN on top -- this page is that same handshake for the offline client: ask the
+// API for the packed payload, hand it to the iframe once it has loaded.
+const q = new URLSearchParams(window.location.search);
+const $ = id => document.getElementById(id);
+const setStatus = (text, kind = "") => { $("status").textContent = text; $("status").className = `status ${kind}`; };
+
+const dataset = q.get("t4dataset_id") || "";
+const scene = q.get("scenario_name") || "";
+function viewerUrl(extra = "", frame = null) {
+  const p = new URLSearchParams({t4dataset_id: dataset});
+  if (scene) p.set("scenario_name", scene);
+  const entry = q.get("frame_index") || (frame != null ? String(frame) : "");
+  if (entry) p.set("frame_index", entry);
+  return `/viewer/three?${p.toString()}${extra ? `&${extra}` : ""}`;
+}
+$("plainLink").href = viewerUrl();
+$("sceneMeta").textContent = [q.get("eval_scenario") || scene, dataset].filter(Boolean).join(" · ");
+
+// Same filters the explorer's preview uses, so the two views agree on what is drawn.
+// They arrive as eval_*: the parquet's scenario name is not the T4 scene name above.
+const filters = {};
+const evalFilters = {eval_topic: "topic_name", eval_scenario: "scenario_name", eval_suite: "suite_name"};
+Object.entries(evalFilters).forEach(([param, key]) => {
+  const value = q.get(param);
+  if (value) filters[key] = value;
+});
+if (q.get("eval_distance_max")) filters.distance_max = Number(q.get("eval_distance_max"));
+
+let payloadBuffer = null;
+let iframeLoaded = false;
+
+function showViewer(url) {
+  const frame = $("viewer");
+  frame.addEventListener("load", () => { iframeLoaded = true; post(); }, {once: true});
+  frame.src = url;
+}
+
+function bytesToBuffer(b64) {
+  const bin = atob(String(b64 || "").replace(/\s+/g, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function post() {
+  if (!payloadBuffer || !iframeLoaded) return;
+  const frame = $("viewer").contentWindow;
+  if (!frame) return;
+  // Transferring the buffer empties it here, so this can only be sent once.
+  frame.postMessage({type: "bbox_layers_binary_v1", buffer: payloadBuffer}, "*", [payloadBuffer]);
+  payloadBuffer = null;
+}
+
+// The payload comes first, because two things about the viewer URL depend on it: the
+// yaw/dimension convention these boxes use, and which frame to open on -- landing on a
+// frame the run never evaluated looks exactly like an overlay that failed to arrive.
+async function start() {
+  const path = q.get("path") || "";
+  if (!path) {
+    setStatus("No run in the link; showing annotations only.", "err");
+    showViewer(viewerUrl());
+    return;
+  }
+  try {
+    const res = await fetch("/api/t4_layers", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({path, filters, max_rows: 400000, dedupe: true}),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    const stats = data.stats || {};
+    payloadBuffer = bytesToBuffer(data.payload_b64);
+    setStatus(`${(stats.gt_box_count || 0).toLocaleString()} GT · `
+      + `${(stats.pred_box_count || 0).toLocaleString()} EST over `
+      + `${(stats.frame_count || 0).toLocaleString()} frames`, "ok");
+    showViewer(viewerUrl(data.viewer_query || "", stats.first_frame));
+  } catch (err) {
+    setStatus(`Evaluation boxes unavailable: ${err.message}`, "err");
+    showViewer(viewerUrl());
+  }
+}
+
+start();
+</script>
+</body>
+</html>
