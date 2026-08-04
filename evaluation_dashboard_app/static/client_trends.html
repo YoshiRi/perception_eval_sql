@@ -143,14 +143,23 @@
      green-good / red-bad heat so it reads the same as the explorer and TLR views. */
   table.atlas { font-size: 12px; }
   table.atlas th, table.atlas td { padding: 5px 7px; white-space: nowrap; }
+  /* Latest and Δ ride with the case name so the answer stays on screen while the
+     release columns scroll. The three widths are fixed and the sticky offsets are
+     their running total — guessed offsets overlap as soon as a name is long. */
   table.atlas th.case, table.atlas td.case {
-    position: sticky; left: 0; z-index: 1; background: var(--panel);
-    max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+    position: sticky; left: 0; z-index: 2; background: var(--panel);
+    width: 230px; min-width: 230px; max-width: 230px;
+    overflow: hidden; text-overflow: ellipsis;
   }
-  /* Latest and Δ ride with the name so the answer stays on screen while the release
-     columns scroll. */
-  table.atlas th.num:nth-child(2), table.atlas td.num:nth-child(2) { position: sticky; left: 240px; background: var(--panel); }
-  table.atlas th.num:nth-child(3), table.atlas td.num:nth-child(3) { position: sticky; left: 296px; background: var(--panel); z-index: 1; }
+  table.atlas th.pin1, table.atlas td.pin1 {
+    position: sticky; left: 230px; z-index: 2; background: var(--panel);
+    width: 62px; min-width: 62px;
+  }
+  table.atlas th.pin2, table.atlas td.pin2 {
+    position: sticky; left: 292px; z-index: 2; background: var(--panel);
+    width: 72px; min-width: 72px;
+    box-shadow: 1px 0 0 var(--line);
+  }
   table.atlas td.cell { min-width: 42px; }
   table.atlas tbody tr:hover td.case { background: var(--panel2); }
   table.atlas td.cell {
@@ -219,6 +228,59 @@
     <div class="tiles" id="latestTiles"></div>
   </div>
 
+  <!-- Sections and their order follow pages/13_Trend_Insights.py so the two read the
+       same way. Where that page overlays three or more series on one axis, this one
+       uses small multiples: the app's categorical palette only separates two series
+       safely in all three themes (checked with the palette validator), and the metrics
+       in a group share a unit, so panels on a common scale compare just as directly. -->
+  <div class="card">
+    <h2>Release Trends</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr id="tableHead"></tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="groupPerf">
+    <h2>Major Performance Scores</h2>
+    <div class="sparks" data-group="performance"></div>
+    <p class="hint">Shared 0–1 scale · click a panel to open it in the detail chart below.</p>
+  </div>
+
+  <div class="card" id="groupPred" hidden>
+    <h2>Prediction Error Trend</h2>
+    <div class="sparks" data-group="prediction"></div>
+    <p class="hint">Shared metre scale across the horizons.</p>
+  </div>
+
+  <div class="card" id="groupUsecase">
+    <div class="chart-head">
+      <span class="chart-title">UseCase Recall / FNR</span>
+      <span class="chart-sub" id="usecaseSub"></span>
+    </div>
+    <div class="canvas-wrap" id="usecaseWrap" style="height:220px">
+      <canvas id="usecaseChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card" id="groupPass">
+    <div class="chart-head">
+      <span class="chart-title">Overall Pass Rate</span>
+      <span class="chart-sub" id="passSub"></span>
+    </div>
+    <div class="canvas-wrap" id="passWrap" style="height:220px">
+      <canvas id="passChart"></canvas>
+    </div>
+  </div>
+
+  <div class="card" id="groupError">
+    <h2>Estimation Error</h2>
+    <div class="sparks" data-group="error"></div>
+    <p class="hint">Each error has its own scale — they share no unit.</p>
+  </div>
+
   <div class="card">
     <div class="chart-head">
       <span class="chart-title" id="chartTitle">–</span>
@@ -228,23 +290,25 @@
       <canvas id="chart"></canvas>
       <div class="tip" id="tip" hidden></div>
     </div>
-  </div>
-
-  <div class="card">
-    <h2>All Metrics</h2>
-    <div class="sparks" id="sparks"></div>
-    <p class="hint">Each sparkline has its own scale — click one to chart it above.</p>
+    <p class="hint">Pick the metric above, or click any panel in the sections above.</p>
   </div>
 
   <div class="card" id="categoryCard" hidden>
-    <h2>DevOps Category Pass Rate</h2>
+    <h2>Major Category Pass Rate</h2>
     <div class="sparks" id="categorySparks"></div>
     <p class="hint">Same 0–100% scale in every panel, so the categories are comparable.</p>
   </div>
 
+  <div class="card" id="midCard" hidden>
+    <h2>Mid Category Pass Rate</h2>
+    <div class="sparks" id="midSparks"></div>
+    <p class="hint">Sub-categories of the selected major category, same 0–100% scale.</p>
+  </div>
+
+
   <div class="card" id="caseCard" hidden>
     <div class="row" style="margin-bottom:10px">
-      <h2 style="margin:0">Case Atlas</h2>
+      <h2 style="margin:0">Case Pass Rates · Metric Atlas</h2>
       <div class="spacer"></div>
       <div class="chips" id="caseChips"></div>
       <select id="caseSort">
@@ -260,16 +324,6 @@
       </table>
     </div>
     <p class="hint" id="caseHint"></p>
-  </div>
-
-  <div class="card">
-    <h2>Releases</h2>
-    <div class="scroll">
-      <table>
-        <thead><tr id="tableHead"></tr></thead>
-        <tbody id="tableBody"></tbody>
-      </table>
-    </div>
   </div>
 </div>
 
@@ -296,6 +350,13 @@
     {key: "minFDE@3s", label: "minFDE@3s", unit: "metres", better: "down"},
     {key: "scenario_count", label: "Scenarios", unit: "count", better: "flat"}
   ];
+  // Groups mirror the Streamlit page's sections. Members of a group share a unit, so
+  // their panels share one scale and can be read against each other directly.
+  const GROUPS = {
+    performance: {keys: ["mAP", "precision", "recall", "FNR", "scenario_count"], scale: [0, 1]},
+    prediction: {keys: ["minADE@1s", "minFDE@1s", "minADE@3s", "minFDE@3s", "minADE@5s", "minFDE@5s"], scale: "shared"},
+    error: {keys: ["x_error", "y_error", "yaw_error", "speed_error"], scale: "own"}
+  };
   const state = {items: [], topic: "", metric: "mAP", limit: 15, hover: -1, stale: false,
                  caseCategory: "", caseSort: "regression"};
 
@@ -529,15 +590,37 @@
   function renderSparks() {
     const rows = seriesForTopic();
     const latest = rows[rows.length - 1];
-    $("sparks").innerHTML = METRICS.map(m => {
-      const v = latest ? valueAt(latest, m.key) : null;
-      return `<div class="spark" role="button" tabindex="0" data-metric="${esc(m.key)}"` +
-        ` aria-pressed="${m.key === state.metric}">` +
-        `<div class="top"><span class="name">${esc(m.label)}</span>` +
-        `<span class="val">${fmtValue(v, m.unit)}</span></div>` +
-        `<canvas data-spark="${esc(m.key)}"></canvas></div>`;
-    }).join("");
-    $("sparks").querySelectorAll("canvas[data-spark]").forEach(c => drawSpark(c, c.dataset.spark));
+    const prev = rows[rows.length - 2];
+    Object.entries(GROUPS).forEach(([name, group]) => {
+      const host = document.querySelector(`.sparks[data-group="${name}"]`);
+      if (!host) return;
+      const defs = group.keys.map(metricDef).filter(m => group.keys.includes(m.key));
+      const present = defs.filter(m => pointsFor(m.key).some(p => p.value != null));
+      const card = host.closest(".card");
+      if (card) card.hidden = !present.length;
+      host.innerHTML = present.map(m => {
+        const v = latest ? valueAt(latest, m.key) : null;
+        const p = prev ? valueAt(prev, m.key) : null;
+        const d = v == null || p == null ? null : v - p;
+        return `<div class="spark" role="button" tabindex="0" data-metric="${esc(m.key)}"` +
+          ` aria-pressed="${m.key === state.metric}">` +
+          `<div class="top"><span class="name">${esc(m.label)}</span>` +
+          `<span class="val">${fmtValue(v, m.unit)}` +
+          (d == null ? "" : ` <em style="font-size:11px;font-style:normal;color:${deltaColor(d, m.better)}">${fmtDelta(d, m.unit)}</em>`) +
+          `</span></div><canvas data-spark="${esc(m.key)}"></canvas></div>`;
+      }).join("");
+      // A group scale makes the panels comparable; "own" is for metrics that share the
+      // section but not the unit.
+      let bounds = null;
+      if (group.scale === "shared") {
+        const all = present.flatMap(m => pointsFor(m.key).map(p => p.value));
+        bounds = niceBounds(all);
+      } else if (Array.isArray(group.scale)) {
+        bounds = {lo: group.scale[0], hi: group.scale[1]};
+      }
+      host.querySelectorAll("canvas[data-spark]").forEach(c =>
+        drawPoints(c, pointsFor(c.dataset.spark).map(p => p.value), bounds));
+    });
   }
   function renderTable() {
     const cols = METRICS.filter(m => ["mAP", "precision", "recall", "FNR", "overall_pass_rate", "scenario_count"].includes(m.key));
@@ -655,7 +738,7 @@
     // Release names run to 40 characters; at that width four columns fill the table and
     // the trend the grid exists to show is off-screen. The date identifies the column,
     // the full name lives in its tooltip.
-    $("caseHead").innerHTML = `<th class="case">Case</th><th class="num">Latest</th><th class="num">Δ</th>` +
+    $("caseHead").innerHTML = `<th class="case">Case</th><th class="num pin1">Latest</th><th class="num pin2">Δ</th>` +
       releases.map(r => `<th class="num" title="${esc(`${r.version || ""} · ${r.release || ""}`)}">${esc(r.date || "?")}</th>`).join("");
     $("caseBody").innerHTML = rows.length ? rows.map(row => {
       const cells = row.values.map((v, i) => {
@@ -667,13 +750,151 @@
       }).join("");
       const d = row.delta;
       return `<tr><td class="case" title="${esc(row.major)} › ${esc(row.mid)} › ${esc(row.name)}">${esc(row.name)}</td>` +
-        `<td class="num">${row.latest == null ? "–" : `${row.latest.toFixed(0)}%`}</td>` +
-        `<td class="num" style="color:${deltaColor(d, "up")}">${d == null ? "–" : fmtDelta(d, "percent")}</td>` +
+        `<td class="num pin1">${row.latest == null ? "–" : `${row.latest.toFixed(0)}%`}</td>` +
+        `<td class="num pin2" style="color:${deltaColor(d, "up")}">${d == null ? "–" : fmtDelta(d, "percent")}</td>` +
         cells + `</tr>`;
     }).join("") : `<tr><td class="empty" colspan="${releases.length + 3}">No cases in this category.</td></tr>`;
     $("caseHint").textContent =
       `${rows.length} case(s) × ${releases.length} release(s) · cell = pass rate %, green passes, red fails` +
       ` · Δ last compares the two most recent releases that ran the case`;
+  }
+
+  /* ---------- the two named single-purpose charts ----------
+     Recall and FNR share a unit and are the pair the Streamlit page plots together, so
+     they stay on one axis. Two series is also the most this app's categorical palette
+     separates safely in every theme, and both lines carry a direct label. */
+  function drawSeriesChart(canvasId, series, {fixedScale = null, subId = ""} = {}) {
+    const canvas = $(canvasId);
+    const {ctx, w, h} = setup(canvas);
+    ctx.clearRect(0, 0, w, h);
+    const withData = series.filter(s => s.points.some(v => v != null));
+    if (!withData.length) {
+      ctx.fillStyle = cssVar("--muted");
+      ctx.font = "600 13px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Not recorded for these releases.", w / 2, h / 2);
+      ctx.textAlign = "left";
+      if (subId) $(subId).textContent = "";
+      return false;
+    }
+    const bounds = fixedScale
+      ? {lo: fixedScale[0], hi: fixedScale[1]}
+      : niceBounds(withData.flatMap(s => s.points));
+    const n = withData[0].points.length;
+    const padL = 62, padR = 74, padT = 12, padB = 34;
+    const gx = padL, gy = padT, gw = Math.max(10, w - padL - padR), gh = Math.max(10, h - padT - padB);
+    const xAt = i => n === 1 ? gx + gw / 2 : gx + (i / (n - 1)) * gw;
+    const yAt = v => gy + gh - ((v - bounds.lo) / (bounds.hi - bounds.lo)) * gh;
+    ctx.strokeStyle = cssVar("--line");
+    ctx.fillStyle = cssVar("--muted");
+    ctx.font = "600 10.5px ui-sans-serif, system-ui, sans-serif";
+    for (let k = 0; k <= 3; k++) {
+      const v = bounds.lo + (bounds.hi - bounds.lo) * (k / 3);
+      const y = Math.round(yAt(v)) + .5;
+      ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx + gw, y); ctx.stroke();
+      ctx.textAlign = "right";
+      ctx.fillText(withData[0].fmt(v), gx - 8, y + 3.5);
+    }
+    const pts = pointsFor("mAP");
+    const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(gw / 78))));
+    ctx.textAlign = "center";
+    pts.forEach((p, i) => {
+      if (i % step && i !== n - 1) return;
+      ctx.fillStyle = cssVar("--muted");
+      ctx.fillText(String(p.date || p.label).slice(0, 12), xAt(i), gy + gh + 16);
+    });
+    ctx.textAlign = "left";
+    withData.forEach(s => {
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      let pen = false;
+      s.points.forEach((v, i) => {
+        if (v == null) { pen = false; return; }
+        if (pen) ctx.lineTo(xAt(i), yAt(v)); else ctx.moveTo(xAt(i), yAt(v));
+        pen = true;
+      });
+      ctx.stroke();
+      s.points.forEach((v, i) => {
+        if (v == null) return;
+        ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = s.color; ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = cssVar("--panel"); ctx.stroke();
+      });
+      // Direct label at the line end: identity without a legend box.
+      const lastIdx = s.points.map((v, i) => v == null ? -1 : i).filter(i => i >= 0).pop();
+      if (lastIdx != null && lastIdx >= 0) {
+        ctx.fillStyle = s.color;
+        ctx.font = "700 11.5px ui-sans-serif, system-ui, sans-serif";
+        ctx.fillText(`${s.name} ${s.fmt(s.points[lastIdx])}`, xAt(lastIdx) + 8, yAt(s.points[lastIdx]) + 4);
+      }
+    });
+    return true;
+  }
+  function renderUsecase() {
+    const pct = v => v == null ? "–" : `${(v * 100).toFixed(1)}%`;
+    // Slots 3 and 4 of the app palette: the pair the validator separates best under
+    // both CVD simulations in every theme.
+    const series = [
+      {name: "Recall", color: window.TH ? TH.cat(3) : cssVar("--accent"),
+       points: pointsFor("recall").map(p => p.value), fmt: pct},
+      {name: "FNR", color: window.TH ? TH.cat(4) : cssVar("--muted"),
+       points: pointsFor("FNR").map(p => p.value), fmt: pct}
+    ];
+    // Visibility is decided from the data and applied *before* drawing: a canvas sized
+    // while its card is display:none measures 0 and paints nothing, which is what an
+    // early render with no data left behind.
+    const has = series.some(s => s.points.some(v => v != null));
+    $("groupUsecase").hidden = !has;
+    if (!has) return;
+    drawSeriesChart("usecaseChart", series, {fixedScale: [0, 1]});
+    $("usecaseSub").textContent = `${seriesForTopic().length} releases · recall higher is better`;
+  }
+  function renderPassRate() {
+    const series = [{
+      name: "Pass rate", color: cssVar("--accent"),
+      points: pointsFor("overall_pass_rate").map(p => p.value),
+      fmt: v => v == null ? "–" : `${v.toFixed(1)}%`
+    }];
+    const has = series[0].points.some(v => v != null);
+    $("groupPass").hidden = !has;
+    if (!has) return;
+    drawSeriesChart("passChart", series, {fixedScale: [0, 100]});
+    $("passSub").textContent = "share of DevOps scenarios passing · higher is better";
+  }
+  function renderMidCategories() {
+    // Sub-categories of whichever major category the case filter selects; without a
+    // selection this would be forty panels, so it stays folded until one is chosen.
+    const releases = caseReleases();
+    if (!state.caseCategory || !releases.length) { $("midCard").hidden = true; return; }
+    const mids = [...new Set(releases.flatMap(r => (r.cases || [])
+      .filter(c => (c.major_category || "—") === state.caseCategory)
+      .map(c => c.mid_category || "—")))];
+    $("midCard").hidden = !mids.length;
+    if (!mids.length) return;
+    const series = mids.map(mid => ({
+      name: mid,
+      points: releases.map(r => {
+        const rows = (r.cases || []).filter(c =>
+          (c.major_category || "—") === state.caseCategory && (c.mid_category || "—") === mid);
+        const passed = rows.reduce((n, c) => n + Number(c.passed || 0), 0);
+        const total = rows.reduce((n, c) => n + Number(c.total || 0), 0);
+        return total ? 100 * passed / total : null;
+      })
+    }));
+    $("midSparks").innerHTML = series.map((s, i) => {
+      const known = s.points.filter(v => v != null);
+      const last = known[known.length - 1];
+      const d = known.length > 1 ? last - known[known.length - 2] : null;
+      return `<div class="spark" data-mid="${esc(String(i))}">` +
+        `<div class="top"><span class="name">${esc(s.name)}</span>` +
+        `<span class="val">${last == null ? "–" : `${last.toFixed(1)}%`}` +
+        (d == null ? "" : ` <em style="font-size:11px;font-style:normal;color:${deltaColor(d, "up")}">${fmtDelta(d, "percent")}</em>`) +
+        `</span></div><canvas data-mid-spark="${esc(String(i))}"></canvas></div>`;
+    }).join("");
+    $("midSparks").querySelectorAll("canvas[data-mid-spark]").forEach(c =>
+      drawPoints(c, series[Number(c.dataset.midSpark)].points, {lo: 0, hi: 100}));
   }
 
   function renderChartHead() {
@@ -688,10 +909,13 @@
   function renderAll() {
     renderChartHead();
     renderTiles();
-    renderSparks();
-    renderCategories();
-    renderCases();
     renderTable();
+    renderSparks();
+    renderUsecase();
+    renderPassRate();
+    renderCategories();
+    renderMidCategories();
+    renderCases();
     drawChart();
   }
 
@@ -737,21 +961,26 @@
     $("tip").hidden = true;
     drawChart();
   });
-  $("sparks").addEventListener("click", ev => {
+  // One delegated handler for every metric group, so a new section needs no wiring.
+  document.addEventListener("click", ev => {
     const card = ev.target.closest(".spark[data-metric]");
     if (!card) return;
     state.metric = card.dataset.metric;
     $("metric").value = state.metric;
     renderAll();
+    $("chartWrap").scrollIntoView({behavior: "smooth", block: "center"});
   });
-  $("sparks").addEventListener("keydown", ev => {
-    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.target.closest(".spark")?.click(); }
+  document.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const card = ev.target.closest?.(".spark[data-metric]");
+    if (card) { ev.preventDefault(); card.click(); }
   });
   $("caseChips").addEventListener("click", ev => {
     const chip = ev.target.closest(".chip[data-cat]");
     if (!chip) return;
     state.caseCategory = chip.dataset.cat || "";
     renderCases();
+    renderMidCategories();
   });
   $("caseChips").addEventListener("keydown", ev => {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.target.closest(".chip")?.click(); }
@@ -764,7 +993,8 @@
   let resizeT = null;
   window.addEventListener("resize", () => {
     clearTimeout(resizeT);
-    resizeT = setTimeout(() => { drawChart(); renderSparks(); }, 120);
+    // Canvases carry no CSS-derived layout, so a resize means repainting all of them.
+    resizeT = setTimeout(renderAll, 120);
   });
   if (window.TH && TH.onChange) TH.onChange(() => renderAll());
 
