@@ -542,12 +542,12 @@ async function selectScenario(s, flash = true) {
   renderResultPanel("Loading result explanation...");
   renderScenarioLabels(s);
   // A sized estimate belongs to the scenario it was taken for.
-  if (!state.t4Estimate || state.t4Estimate.dataset !== String(s.t4dataset_id || "")) {
+  if (!state.t4Estimate || state.t4Estimate.dataset !== t4DatasetKey(s)) {
     state.t4Estimate = null;
   }
   update3dButton();
   // Only worth a probe when there is something to download: a dataset id with no scene.
-  if (state.t4Scenes && s.t4dataset_id && !selectedT4Scene()) ensureT4ServerProbe();
+  if (state.t4Scenes && t4DatasetKey(s) && !selectedT4Scene()) ensureT4ServerProbe();
   if (!(state.t4Job && state.t4Job.active)) setT4FetchStatus("");
   renderList();
   render();
@@ -1175,8 +1175,25 @@ async function probeT4Scenes() {
   }
   update3dButton();
 }
+// Exports disagree about which column carries the dataset: some fill t4dataset_id and
+// leave the name as the all-zero placeholder, others do the reverse. Whichever is not a
+// placeholder is the one that addresses a scene; lib.t4_three_layers.resolve_t4_dataset_id
+// picks the same way on the Python side.
+const T4_PLACEHOLDER_IDS = new Set([
+  "00000000-0000-0000-0000-000000000000",
+  "00000000-0000-0000-0000-000000000001",
+]);
+function t4DatasetKey(s) {
+  for (const value of [s && s.t4dataset_id, s && s.t4dataset_name]) {
+    const text = String(value ?? "").trim();
+    if (!text || ["none", "nan", "<na>"].includes(text.toLowerCase())) continue;
+    if (T4_PLACEHOLDER_IDS.has(text)) continue;
+    return text;
+  }
+  return "";
+}
 function selectedT4Scene() {
-  const id = state.selected && String(state.selected.t4dataset_id || "");
+  const id = state.selected && t4DatasetKey(state.selected);
   if (!id || !state.t4Scenes) return null;
   return state.t4Scenes.get(id) || null;
 }
@@ -1202,11 +1219,11 @@ function update3dButton() {
     btn.disabled = !scene;
     btn.title = scene
       ? `Open ${scene.scenario || scene.dataset_id} in the 3D viewer`
-      : (state.selected && state.selected.t4dataset_id
+      : (state.selected && t4DatasetKey(state.selected)
         ? "This scenario's T4 scene is not downloaded yet"
         : "This scenario has no T4 dataset id");
   }
-  const dataset = state.selected && String(state.selected.t4dataset_id || "");
+  const dataset = state.selected && t4DatasetKey(state.selected);
   const onServer = els.open3dServer;
   if (onServer) {
     const url = state.selected ? dashboard3dUrl(state.selected) : "";
@@ -1252,16 +1269,57 @@ function dashboard3dBase() {
   if (!state.t4Scenes) return "";  // dashboard-hosted: same origin
   return state.t4Dashboard || null;  // local client: only with a configured server
 }
+// The run's storage name, which is what the dashboard's run hydration accepts next to a
+// display name (lib/overview_url_hydrate._name_to_dir). In a release container each role
+// directory is itself a run (lib/path_utils.list_run_directories), and the storage name
+// is the path relative to the data root -- so "<run>/<role>", not "<run>". Sending the
+// container alone matches nothing and the page stops at "load data from the Overview
+// page first".
+const RELEASE_ROLE_DIRS = ["performance", "usecase", "devops"];
+function runNameFromPath(path) {
+  // /api/parquets already reports each file relative to the data root, which is the
+  // storage name plus the file -- exact, however deeply runs are nested.
+  const item = (state.parquets || []).find(p => p.path === path);
+  if (item && item.display) {
+    const parts = String(item.display).split(/[\\/]/).filter(Boolean);
+    parts.pop();
+    if (parts.length) return parts.join("/");
+  }
+  // No listing to consult (a path restored from a session, say): assume the run sits
+  // directly under the root, which is the layout the scanner produces.
+  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+  parts.pop();
+  const last = (parts[parts.length - 1] || "").toLowerCase();
+  if (RELEASE_ROLE_DIRS.includes(last) && parts.length >= 2) {
+    return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+  }
+  return parts[parts.length - 1] || "";
+}
 function dashboard3dUrl(s) {
   const base = dashboard3dBase();
   if (base === null) return "";
   const p = new URLSearchParams();
-  p.set("mode", "single");
+  // Carry the explorer's own comparison across, the way "Inspect BBoxes" does: two runs
+  // side by side, never stacked. Overlaying two sets of boxes in one scene makes it
+  // impossible to say which run drew which.
+  const runA = runNameFromPath(state.path);
+  const runB = state.compare ? runNameFromPath(els.parquetB.value || state.pathB) : "";
+  const comparing = Boolean(runB && runB !== runA);
+  p.set("mode", comparing ? "compare" : "single");
+  // Without the run, the page opens whichever run it defaults to; if that release does
+  // not contain this scenario it silently selects a different one, which reads as the
+  // link having pointed somewhere else entirely.
+  if (runA) p.set("run_a", runA);
+  if (comparing) p.set("run_b", runB);
   if (s.suite_name) p.set("viewer_suite", s.suite_name);
   if (s.scenario_name) p.set("viewer_scenario", s.scenario_name);
-  if (s.t4dataset_id) p.set("viewer_t4dataset", String(s.t4dataset_id));
+  // Sending a placeholder made the viewer fail to resolve the scene and quietly fall
+  // back to a different scenario, so omit it and let suite+scenario do the work --
+  // the same rule as lib/t4_dataset_embed.t4_dashboard_query_params.
+  const dataset = t4DatasetKey(s);
+  if (dataset) p.set("viewer_t4dataset", dataset);
   if (s.topic_name) p.set("viewer_topic", s.topic_name);
-  p.set("viewer_compare", "overlay");
+  p.set("viewer_compare", "side_by_side");
   return `${base}/T4_3D_Viewer?${p.toString()}`;
 }
 function openServer3dViewer() {
@@ -1291,7 +1349,7 @@ async function download3dScene() {
     return;
   }
   const s = state.selected;
-  const dataset = s && String(s.t4dataset_id || "");
+  const dataset = s && t4DatasetKey(s);
   if (!dataset) return;
   const btn = els.get3d;
   // Second click on a sized scene: the estimate on the button is the agreement, the
@@ -1401,6 +1459,9 @@ function open3dViewer() {
   // eval_* keys, because scenario_name already means the T4 scene here and the
   // parquet's scenario is a different name for the same drive.
   p.set("path", state.path);
+  if (state.compare && (els.parquetB.value || state.pathB)) {
+    p.set("path_b", els.parquetB.value || state.pathB);
+  }
   if (s.topic_name) p.set("eval_topic", s.topic_name);
   if (s.scenario_name) p.set("eval_scenario", s.scenario_name);
   if (s.suite_name) p.set("eval_suite", s.suite_name);

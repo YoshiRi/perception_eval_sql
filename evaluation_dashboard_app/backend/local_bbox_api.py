@@ -2981,6 +2981,10 @@ def t4_layers(payload: dict[str, Any]) -> dict[str, Any]:
     The dashboard already pushes it in as a ``T4BBOX1`` binary over postMessage, so this
     builds the identical payload from the same rows the 2D preview uses, base64'd
     because the transport here is JSON.
+
+    ``runs: [{label, path}, ...]`` packs several runs into one payload, tagged by run the
+    way the viewer's compare mode expects -- the explorer comparing A against B should
+    not silently show only A in 3D.
     """
     import base64
 
@@ -2990,13 +2994,26 @@ def t4_layers(payload: dict[str, Any]) -> dict[str, Any]:
         infer_external_bbox_alignment_query_params,
     )
 
-    df = _frames_dataframe(payload)
+    import pandas as pd
+
+    runs = payload.get("runs")
+    if isinstance(runs, list) and runs:
+        frames_per_run = []
+        for run in runs:
+            label = _as_text(run.get("label")) or "A"
+            part = _frames_dataframe({**payload, "path": run.get("path")})
+            frames_per_run.append(part.assign(run=label))
+        df = pd.concat(frames_per_run, ignore_index=True) if len(frames_per_run) > 1 else frames_per_run[0]
+    else:
+        df = _frames_dataframe(payload)
     if "frame_index" not in df.columns and "_frame_index_int" in df.columns:
         df = df.assign(frame_index=df["_frame_index_int"])
-    blob, stats = _pack_three_layer_payload_binary(build_three_layer_payload_all_frames(df))
+    layer_payload = build_three_layer_payload_all_frames(df)
+    blob, stats = _pack_three_layer_payload_binary(layer_payload)
     return {
         "payload_b64": base64.b64encode(blob).decode("ascii"),
         "stats": stats,
+        "compare_runs": layer_payload.get("compare_runs") or [],
         # Yaw convention and dimension normalisation the viewer must apply to these
         # boxes; the same params the dashboard puts on its iframe URL.
         "viewer_query": infer_external_bbox_alignment_query_params(df),

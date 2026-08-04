@@ -131,20 +131,31 @@ async function start() {
     showViewer(viewerUrl());
     return;
   }
+  // Two runs when the explorer was comparing, so the viewer can put them side by side
+  // rather than showing run A alone and looking like the comparison was lost.
+  const pathB = q.get("path_b") || "";
+  const runs = pathB && pathB !== path
+    ? [{label: "A", path}, {label: "B", path: pathB}]
+    : null;
   try {
     const res = await fetch("/api/t4_layers", {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({path, filters, max_rows: 400000, dedupe: true}),
+      body: JSON.stringify({path, runs, filters, max_rows: 400000, dedupe: true}),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
     const stats = data.stats || {};
     payloadBuffer = bytesToBuffer(data.payload_b64);
+    const compareRuns = data.compare_runs || [];
     setStatus(`${(stats.gt_box_count || 0).toLocaleString()} GT · `
       + `${(stats.pred_box_count || 0).toLocaleString()} EST over `
-      + `${(stats.frame_count || 0).toLocaleString()} frames`, "ok");
-    showViewer(viewerUrl(data.viewer_query || "", stats.first_frame));
+      + `${(stats.frame_count || 0).toLocaleString()} frames`
+      + (compareRuns.length > 1 ? ` · ${compareRuns.join(" vs ")} side by side` : ""), "ok");
+    // Never overlay: two runs' boxes stacked in one scene cannot be told apart.
+    const query = [data.viewer_query || "", compareRuns.length > 1 ? "compare_view=side_by_side" : ""]
+      .filter(Boolean).join("&");
+    showViewer(viewerUrl(query, stats.first_frame));
   } catch (err) {
     setStatus(`Evaluation boxes unavailable: ${err.message}`, "err");
     showViewer(viewerUrl());

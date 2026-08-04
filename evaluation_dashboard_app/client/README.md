@@ -469,6 +469,11 @@ the dashboard uses (`/api/t4_layers` packs them), applying the same filters as t
 preview and opening on the first frame the run actually evaluated. **Annotations only**
 in that page's header is the plain viewer, for comparison.
 
+With the explorer in comparison mode both runs go into the payload, tagged A and B, and
+the scene opens **side by side** — never overlaid, since two runs' boxes stacked in one
+scene cannot be told apart. **Open 3D on server** carries the same comparison to the
+dashboard's viewer (`mode=compare`, `run_a`/`run_b` by storage name).
+
 Two things about the mirror this depends on. The page is **not** self-contained — it
 loads its theme module, its favicon and the ego mesh from the server's asset routes, so
 those are mirrored too (`~/.evaldash/t4/_assets/`, shared between scenes); a missing

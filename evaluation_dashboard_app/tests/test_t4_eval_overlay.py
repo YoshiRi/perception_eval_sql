@@ -50,6 +50,39 @@ def _layers(parquet, **filters):
     return t4_layers({"path": str(parquet), "filters": {**base, **filters}})
 
 
+# --------------------------------------------------------------- comparing two runs
+
+
+@pytest.fixture()
+def parquet_b(tmp_path: Path, parquet: Path) -> Path:
+    """A second run of the same scenario, with one prediction fewer."""
+    path = tmp_path / "candidate.parquet"
+    pd.DataFrame([
+        _row(1, "GT", "TP", 10.0), _row(1, "EST", "TP", 10.2),
+        _row(1, "GT", "FN", 25.0, "pedestrian"),
+    ]).to_parquet(path)
+    return path
+
+
+def test_two_runs_are_packed_as_one_comparable_payload(parquet, parquet_b):
+    """Comparing A against B in the explorer must not show only A in 3D."""
+    out = t4_layers({
+        "runs": [{"label": "A", "path": str(parquet)}, {"label": "B", "path": str(parquet_b)}],
+        "filters": {"suite_name": SUITE, "scenario_name": SCENARIO, "topic_name": TOPIC},
+    })
+
+    assert out["compare_runs"] == ["A", "B"]
+    assert out["stats"]["compare_run_count"] == 2
+    # Every row from both runs, not one run's.
+    assert out["stats"]["gt_box_count"] == 3 + 2
+    assert out["stats"]["pred_box_count"] == 3 + 1
+
+
+def test_a_single_run_reports_no_comparison(parquet):
+    """The viewer only splits the scene when it is actually given two runs."""
+    assert _layers(parquet)["compare_runs"] == []
+
+
 # ------------------------------------------------------------------- the payload
 
 
@@ -130,3 +163,53 @@ def test_a_page_without_the_literal_is_served_verbatim(cached_scene):
     page = t4.scene_dir(dataset, scenario) / "page.html"
     page.write_text("<html><body>no query literal here</body></html>", encoding="utf-8")
     assert "no query literal here" in _page(cached_scene, frame_index=2)
+
+
+# ------------------------------------------------- the explorer's deep-link constants
+
+# The explorer builds the dashboard's 3D link in JavaScript, so two constants exist in
+# both languages. Drift is silent and expensive: a placeholder dataset id reaching the
+# viewer made it resolve nothing and quietly open a different scenario.
+
+
+def _explorer_js() -> str:
+    return (Path(__file__).resolve().parents[1] / "static" / "events.js").read_text(encoding="utf-8")
+
+
+def test_the_explorer_knows_every_placeholder_dataset_id():
+    from lib.t4_three_layers import PLACEHOLDER_T4_DATASET_IDS
+
+    js = _explorer_js()
+    for placeholder in PLACEHOLDER_T4_DATASET_IDS:
+        assert placeholder in js, f"{placeholder} would be sent to the viewer as a real id"
+
+
+def test_the_explorer_knows_every_release_role_directory():
+    """Used to read the run name out of a parquet path for the link's run_a."""
+    from lib.path_utils import RELEASE_ROLE_DIRS
+
+    js = _explorer_js()
+    for role in RELEASE_ROLE_DIRS:
+        assert f'"{role}"' in js, f"a {role}/ path would yield the role as the run name"
+
+
+def test_a_release_role_directory_is_the_run_name_the_dashboard_accepts(tmp_path, monkeypatch):
+    """The explorer's link puts this in ``run_a``; the container alone matches nothing.
+
+    ``lib.overview_url_hydrate`` looks run names up by storage name, and a release
+    container is not itself a run -- each role directory is. Sending "<run>" left the
+    viewer on "Please load data from the Overview page first".
+    """
+    from lib import path_utils
+
+    run = tmp_path / "per-exp_v4.4.0_20260731"
+    (run / "performance").mkdir(parents=True)
+    (run / "performance" / "current.parquet").write_bytes(b"")
+    (run / "metadata.yaml").write_text("version: v2.5.1exp\n", encoding="utf-8")
+    monkeypatch.setenv("EVAL_DASHBOARD_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(path_utils, "_DATA_ROOT", None)
+
+    names = {path_utils.get_run_storage_name(p) for p in path_utils.list_run_directories()}
+
+    assert "per-exp_v4.4.0_20260731/performance" in names
+    assert "per-exp_v4.4.0_20260731" not in names
