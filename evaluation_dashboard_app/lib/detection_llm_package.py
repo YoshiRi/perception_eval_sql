@@ -886,18 +886,26 @@ def build_llm_analysis_package(
     *,
     tables: Dict[str, pd.DataFrame],
     metadata: Dict[str, Any],
+    package_type: str = "detection_stats_llm_analysis",
+    documents: Dict[str, str] | None = None,
 ) -> bytes:
-    """Create a portable ZIP with prompt, neutral data brief, manifest, and CSV evidence tables."""
+    """Create a portable ZIP with prompt, neutral data brief, manifest, and CSV evidence tables.
+
+    ``documents`` overrides the bundled markdown (keys: ``llm_instructions.md``,
+    ``analysis_data_brief.md``, ``recommended_report_blueprint.md``) so other analysis
+    kinds (TLR, prediction) can ship their own instructions in the same package shape.
+    """
     created_at = pd.Timestamp.now(tz="Asia/Tokyo").isoformat()
     manifest = {
         "created_at": created_at,
-        "package_type": "detection_stats_llm_analysis",
+        "package_type": package_type,
         "metadata": metadata,
         "tables": [],
     }
-    prompt_md = llm_report_instructions(metadata, tables)
-    data_brief_md = llm_data_brief(metadata, tables)
-    blueprint_md = llm_report_blueprint()
+    documents = documents or {}
+    prompt_md = documents.get("llm_instructions.md") or llm_report_instructions(metadata, tables)
+    data_brief_md = documents.get("analysis_data_brief.md") or llm_data_brief(metadata, tables)
+    blueprint_md = documents.get("recommended_report_blueprint.md") or llm_report_blueprint()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("README.md", prompt_md)

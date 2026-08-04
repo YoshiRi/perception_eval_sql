@@ -68,9 +68,137 @@ def _prepare_view(con: Any, run_name: str, role: str, view: str,
     from lib.detection_eval_sql import create_view_eval_flat
 
     run_dir = export_api._resolve_run(run_name)
-    source = _pick_parquet(_tier_dir(run_dir, role))
+    tier = _tier_dir(run_dir, role)
+    source = _pick_parquet(tier)
     create_view_eval_flat(con, str(source), view, exclude_polygons=exclude_polygons)
-    return {"run": run_dir.name, "role": role, "parquet": source.name}
+    return {"run": run_dir.name, "role": role, "parquet": source.name, "tier_dir": str(tier)}
+
+
+# --------------------------------------------------------------------- prediction
+
+
+_PREDICTION_TABLES = {"label_summary": "Prediction label summary",
+                      "distance_summary": "Prediction distance summary"}
+
+
+def _prediction_source(tier_dir: Path) -> Path | None:
+    for name in ("future.parquet", "future.csv"):
+        candidate = tier_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_prediction_summaries(tier_dir: Path) -> dict[str, Any]:
+    """minADE/minFDE summary tables for a run tier, cache-first.
+
+    Reads the Prediction Evaluation page's artifact cache when it is fresh; otherwise
+    computes from future.parquet with the same specsheet-aligned builder. Returns
+    ``{"tables": {...}}`` or ``{"error": reason}`` -- prediction data is an optional
+    bonus in a detection package and must never sink it.
+    """
+    import json
+
+    import pandas as pd
+
+    source = _prediction_source(tier_dir)
+    if source is None:
+        return {}
+    cache_dir = tier_dir / ".dashboard_cache" / "prediction_eval_cache"
+    manifest_path = cache_dir / "manifest.json"
+    try:
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if int(manifest.get("future_mtime_ns", -1)) == source.stat().st_mtime_ns:
+                tables = {
+                    title: pd.read_parquet(cache_dir / f"{name}.parquet")
+                    for name, title in _PREDICTION_TABLES.items()
+                    if (cache_dir / f"{name}.parquet").is_file()
+                }
+                if tables:
+                    return {"tables": tables}
+        from lib.prediction_eval import build_specsheet_aligned_prediction_artifacts
+
+        if source.suffix == ".parquet":
+            future_df = pd.read_parquet(source)
+        else:
+            future_df = pd.read_csv(source)
+        artifacts = build_specsheet_aligned_prediction_artifacts(future_df)
+        return {"tables": {
+            title: artifacts[name] for name, title in _PREDICTION_TABLES.items()
+            if isinstance(artifacts.get(name), pd.DataFrame)
+        }}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _merge_prediction(tables: dict[str, Any], metadata: dict[str, Any],
+                      tier_dir: str, *, suffix: str = "") -> None:
+    result = _load_prediction_summaries(Path(tier_dir))
+    for title, frame in (result.get("tables") or {}).items():
+        tables[f"{title}{suffix}"] = frame
+    if result.get("error"):
+        metadata.setdefault("prediction_errors", {})[suffix.strip(" -") or "run"] = result["error"]
+
+
+# ---------------------------------------------------------------------------- TLR
+
+
+def _resolve_tlr_dir(path_text: str) -> Path:
+    """A TLR result dir may be nested (run/role or deeper); confine it to the data root."""
+    text = str(path_text or "").strip().replace("\\", "/").lstrip("/")
+    if not text:
+        raise AnalysisError("A TLR path (relative to the data root) is required.")
+    root = export_api._data_root()
+    candidate = (root / text).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise AnalysisError(f"Path is outside the data root: {path_text}")
+    if not candidate.is_dir():
+        raise AnalysisError(f"No such directory: {path_text}")
+    return candidate
+
+
+def _build_tlr_package(payload: dict[str, Any], mode: str) -> tuple[bytes, str]:
+    from lib.tlr_llm_package import (
+        build_tlr_compare_tables,
+        build_tlr_llm_analysis_package,
+        build_tlr_llm_analysis_tables,
+        load_tlr_analyzer,
+    )
+
+    def _load(field: str) -> tuple[Any, Path]:
+        path = _resolve_tlr_dir(str(payload.get(field) or ""))
+        try:
+            return load_tlr_analyzer(str(path)), path
+        except ValueError as exc:
+            raise AnalysisError(str(exc)) from exc
+
+    if mode == "single":
+        analyzer, path = _load("run")
+        tables = build_tlr_llm_analysis_tables(analyzer)
+        metadata: dict[str, Any] = {
+            "mode": "single", "kind": "tlr",
+            "scope": {"path": path.name, "stats": analyzer.get_summary_stats()},
+        }
+        filename = f"tlr_analysis_{path.name}.zip"
+    elif mode == "compare":
+        base, base_path = _load("base_run")
+        candidate, candidate_path = _load("candidate_run")
+        if base_path == candidate_path:
+            raise AnalysisError("base_run and candidate_run are the same directory.")
+        tables = build_tlr_compare_tables(base, candidate)
+        metadata = {
+            "mode": "compare", "kind": "tlr",
+            "comparison": {
+                "base": {"path": base_path.name, "stats": base.get_summary_stats()},
+                "candidate": {"path": candidate_path.name,
+                              "stats": candidate.get_summary_stats()},
+            },
+        }
+        filename = f"tlr_compare_{base_path.name}_vs_{candidate_path.name}.zip"
+    else:
+        raise AnalysisError(f"Unknown mode '{mode}'. Expected single or compare.")
+    return build_tlr_llm_analysis_package(tables=tables, metadata=metadata), filename
 
 
 def build_analysis_package_bytes(payload: dict[str, Any]) -> tuple[bytes, str]:
@@ -87,6 +215,11 @@ def build_analysis_package_bytes(payload: dict[str, Any]) -> tuple[bytes, str]:
     )
 
     mode = str(payload.get("mode") or "single").lower()
+    kind = str(payload.get("kind") or "detection").lower()
+    if kind == "tlr":
+        return _build_tlr_package(payload, mode)
+    if kind != "detection":
+        raise AnalysisError(f"Unknown kind '{kind}'. Expected detection or tlr.")
     role = str(payload.get("role") or "performance")
     exclude_polygons = payload.get("exclude_polygons") is True
     # Matches the page's LLM-package call sites: distance filtering is disabled so the
@@ -108,6 +241,7 @@ def build_analysis_package_bytes(payload: dict[str, Any]) -> tuple[bytes, str]:
                 "filters": _filters(payload),
                 "kpis": {source["run"]: kpi_row_for_view(con, "view_eval_flat", filter_clause)},
             }
+            _merge_prediction(tables, metadata, source.pop("tier_dir"))
             filename = f"analysis_{source['run']}.zip"
         elif mode == "compare":
             base_name = str(payload.get("base_run") or "")
@@ -134,6 +268,8 @@ def build_analysis_package_bytes(payload: dict[str, Any]) -> tuple[bytes, str]:
                     candidate["run"]: kpi_row_for_view(con, "view_candidate", filter_clause),
                 },
             }
+            _merge_prediction(tables, metadata, base.pop("tier_dir"), suffix=" - base")
+            _merge_prediction(tables, metadata, candidate.pop("tier_dir"), suffix=" - candidate")
             filename = f"compare_{base['run']}_vs_{candidate['run']}.zip"
         else:
             raise AnalysisError(f"Unknown mode '{mode}'. Expected single or compare.")
