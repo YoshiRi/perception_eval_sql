@@ -89,7 +89,7 @@ async function loadPreview(s, options = {}) {
   els.previewSlider.value = "0";
   renderPreview("Loading scene preview...");
   try {
-    const previewFilters = sceneFilters(s);
+    const previewFilters = sceneFilters(s, {label: false});
     if (options.centerFrame != null) {
       const center = Number(options.centerFrame);
       const radius = Math.max(0, Number(options.radius ?? 4) || 0);
@@ -699,6 +699,7 @@ function drawPreviewPersistentLabels(boxes, sx, sy, scale) {
   previewCtx.restore();
 }
 function drawPreviewBox(b, sx, sy, scale) {
+  const baseAlpha = previewCtx.globalAlpha;  // callers may dim unfocused labels
   if (Array.isArray(b.footprint) && b.footprint.length >= 3) {
     const pts = b.footprint.map(pt => previewFootprintPoint(pt, sx, sy, scale));
     const color = previewColor(b);
@@ -710,9 +711,9 @@ function drawPreviewBox(b, sx, sy, scale) {
     pts.forEach((p, i) => i ? previewCtx.lineTo(p[0], p[1]) : previewCtx.moveTo(p[0], p[1]));
     previewCtx.closePath();
     previewCtx.stroke();
-    previewCtx.globalAlpha = .1;
+    previewCtx.globalAlpha = baseAlpha * .1;
     previewCtx.fill();
-    previewCtx.globalAlpha = 1;
+    previewCtx.globalAlpha = baseAlpha;
     const p = previewPoint(b, sx, sy, scale);
     previewCtx.beginPath();
     previewCtx.arc(p[0], p[1], 2.2, 0, Math.PI * 2);
@@ -893,7 +894,13 @@ function drawPreviewScene(frame, boxes, viewport, label = "", maxAbs = previewBo
   drawDevopsCriteriaRings(egoScreenX, egoScreenY, scale, maxAbs);
   drawPreviewEgoVehicle(sx, sy, scale);
   const sorted = [...boxes].filter(previewLayerVisible).sort((a, b) => (String(a.source) === "GT" ? -1 : 1) - (String(b.source) === "GT" ? -1 : 1));
-  sorted.forEach(b => drawPreviewBox(b, sx, sy, scale));
+  sorted.forEach(b => {
+    // Everything stays on screen; the label picked on the map just reads louder.
+    const focused = !state.label || String(b.label || "") === state.label;
+    previewCtx.globalAlpha = focused ? 1 : .38;
+    drawPreviewBox(b, sx, sy, scale);
+    previewCtx.globalAlpha = 1;
+  });
   drawPreviewDevopsHighlights(sorted, sx, sy, scale);
   drawPreviewPersistentLabels(sorted, sx, sy, scale);
   previewCtx.restore();
@@ -1039,9 +1046,10 @@ function renderPreview(message = "") {
   previewCtx.fillText(state.compare ? `A vs B compare · ${compareLensLabel()}` : "GT/EST eval colors", 10, 31);
   const aCount = boxes.filter(b => b.run === "A").length;
   const bCount = boxes.filter(b => b.run === "B").length;
+  const labelNote = state.label ? ` · all labels shown, ${state.label} highlighted` : "";
   els.previewStatus.textContent = message || (state.compare
-    ? `${state.previewIndex + 1}/${state.previewFrames.length} frames · frame ${frame.frame} · A ${aCount.toLocaleString()} / B ${bCount.toLocaleString()} boxes · drag pan / wheel zoom`
-    : `${state.previewIndex + 1}/${state.previewFrames.length} frames · frame ${frame.frame} · ${boxes.length.toLocaleString()} boxes · drag pan / wheel zoom`);
+    ? `${state.previewIndex + 1}/${state.previewFrames.length} frames · frame ${frame.frame} · A ${aCount.toLocaleString()} / B ${bCount.toLocaleString()} boxes${labelNote} · drag pan / wheel zoom`
+    : `${state.previewIndex + 1}/${state.previewFrames.length} frames · frame ${frame.frame} · ${boxes.length.toLocaleString()} boxes${labelNote} · drag pan / wheel zoom`);
   els.previewSlider.max = String(Math.max(0, state.previewFrames.length - 1));
   els.previewSlider.value = String(state.previewIndex);
   updatePreviewHover();
