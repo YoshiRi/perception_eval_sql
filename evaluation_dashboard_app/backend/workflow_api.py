@@ -945,6 +945,63 @@ def workflow_trends(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"items": items, "total_groups": len(groups)}
 
 
+# ------------------------------------------------------------------------ triage
+
+
+_LOG_ERROR_PATTERN = re.compile(r"(?i)\b(error|failed|failure|exception|traceback|refused|timeout)\b")
+_TRIAGE_LOG_TAIL_LINES = 200
+_TRIAGE_ERROR_LINES = 40
+
+
+def workflow_triage(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Everything needed to root-cause one task, in one structured response.
+
+    Pulls the worker's result_summary apart (evaluator statuses, failed cases, suite
+    roll-ups, report links) and pre-filters the log so a caller diagnosing a failure
+    does not have to regex 200 KB of log itself.
+    """
+    export_api.require_auth(handler)
+    from lib.db import get_task
+
+    task_id = _text(payload.get("task_id"))
+    if not task_id:
+        raise WorkflowError("A task_id is required.")
+    task = get_task(task_id)
+    if not task:
+        raise WorkflowError(f"No such task: {task_id}")
+    if _text(task.get("type")) not in REPORTED_TASK_TYPES:
+        raise WorkflowError(f"Task {task_id} is not a workflow task.")
+    _reconcile(task)
+
+    summary = task.get("result_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    log_lines = _text(task.get("log_output")).splitlines()
+    error_lines = [line for line in log_lines if _LOG_ERROR_PATTERN.search(line)]
+
+    links = {
+        key.removeprefix("evaluator_"): _text(summary.get(key))
+        for key in ("evaluator_report_url", "evaluator_catalog_url", "evaluator_git_ref_url",
+                    "evaluator_git_commit_url", "evaluator_source_url")
+        if _text(summary.get(key))
+    }
+    return {
+        "task": _task_view(task, with_result=False),
+        "error_message": _text(task.get("error_message")),
+        "evaluator": {
+            key.removeprefix("evaluator_"): summary.get(key)
+            for key in ("evaluator_job_id", "evaluator_status", "evaluator_build_status",
+                        "evaluator_test_status", "evaluator_fail_message",
+                        "evaluator_target", "evaluator_git_sha", "evaluator_case_totals")
+            if key in summary
+        },
+        "failed_cases": summary.get("evaluator_failed_cases") or [],
+        "suites": summary.get("evaluator_suites") or [],
+        "links": links,
+        "log_tail": log_lines[-_TRIAGE_LOG_TAIL_LINES:],
+        "error_lines": error_lines[-_TRIAGE_ERROR_LINES:],
+    }
+
+
 JSON_ROUTES: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "/api/workflow_health": workflow_health,
     "/api/workflow_catalogs": workflow_catalogs,
@@ -953,4 +1010,5 @@ JSON_ROUTES: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "/api/workflow_task": workflow_task,
     "/api/workflow_cancel": workflow_cancel,
     "/api/workflow_trends": workflow_trends,
+    "/api/workflow_triage": workflow_triage,
 }

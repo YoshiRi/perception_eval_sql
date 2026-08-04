@@ -408,6 +408,36 @@ def test_task_route_can_return_the_result_without_the_log(data_root, monkeypatch
     assert full["result_summary"]["passed"] == 10
 
 
+def test_triage_bundles_the_failure_evidence(data_root, monkeypatch):
+    """Root-causing needs the failed cases, links and error log lines in one response."""
+    row = {
+        "id": "c" * 32, "type": "run_evaluator_and_process", "status": "failed",
+        "parameters": {"target_name": "beta/v1"}, "created_at": None, "updated_at": None,
+        "error_message": "evaluator job failed",
+        "log_output": "starting\nphase build OK\nERROR: test phase failed\nshutting down",
+        "result_summary": {
+            "evaluator_job_id": "job-9", "evaluator_status": "FAILED",
+            "evaluator_build_status": "SUCCESS", "evaluator_test_status": "FAILED",
+            "evaluator_report_url": "https://evaluator.example/report/job-9",
+            "evaluator_failed_cases": [{"case": "cut_in_01", "reason": "timeout"}],
+            "evaluator_suites": [{"suite": "s1", "passed": 3, "total": 5}],
+        },
+    }
+    monkeypatch.setitem(
+        __import__("sys").modules, "lib.db", SimpleNamespace(get_task=lambda task_id: dict(row))
+    )
+    result = workflow_api.workflow_triage(_Handler(), {"task_id": "c" * 32})
+    assert result["task"]["status"] == "failed"
+    assert result["evaluator"]["job_id"] == "job-9"
+    assert result["evaluator"]["test_status"] == "FAILED"
+    assert result["links"]["report_url"].endswith("job-9")
+    assert result["failed_cases"] == [{"case": "cut_in_01", "reason": "timeout"}]
+    assert result["error_lines"] == ["ERROR: test phase failed"]
+    assert result["log_tail"][-1] == "shutting down"
+    # The triage view must not drag the full log along; log stays opt-in elsewhere.
+    assert "log" not in result["task"]
+
+
 # ---------------------------------------------------------------------- trend data
 
 
