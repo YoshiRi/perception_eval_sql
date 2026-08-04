@@ -3,6 +3,14 @@ var API_BASE = API_BASE_PLACEHOLDER && !API_BASE_PLACEHOLDER.startsWith("__")
   ? API_BASE_PLACEHOLDER
   : (window.location.pathname.startsWith("/bbox-explorer") ? "/bbox-api" : "");
 
+// Where the viewer this explorer opens in its iframe lives. Behind the deployment's
+// nginx the two apps sit at /bbox-explorer/ and /bbox-viewer/; served directly by the
+// bbox API -- the local client, or a Streamlit page pointed at an API host -- the
+// viewer is /viewer under whatever base the API answers on. Hardcoding the nginx path
+// made the local client ask itself for an unknown route and render nothing.
+var VIEWER_BASE = window.BBOX_VIEWER_URL_BASE
+  || (window.location.pathname.startsWith("/bbox-explorer") ? "/bbox-viewer/" : `${API_BASE}/viewer`);
+
 var api = window.api = async function api(route, body = {}) {
   const controller = new AbortController();
   const timeoutMs = Number(body.timeout_ms || 60000);

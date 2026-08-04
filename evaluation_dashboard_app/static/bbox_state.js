@@ -1,6 +1,8 @@
 var $ = id => document.getElementById(id);
 var state = {
   parquets: [], path: "", pathB: "", compare: false, scenarios: [], labels: [], selected: null, curve: [], stats: null, devopsResult: null, devopsFrameResults: null,
+  // Cached T4 scenes by dataset id, or null where /viewer/three is not served (dashboard).
+  t4Scenes: null,
   previewFrames: [], previewIndex: 0, previewVisible: false, previewDrag: null, previewResize: null,
   previewPanX: 0, previewPanY: 0, previewScale: 1, previewPanning: false, previewLastX: 0, previewLastY: 0,
   previewHoverBox: null, previewMouseX: 0, previewMouseY: 0, previewShowRings: true, previewShowLabels: false,
@@ -21,7 +23,7 @@ var els = {
   previewWindow: $("previewWindow"), previewTitlebar: $("previewTitlebar"), previewTitle: $("previewTitle"), previewResize: $("previewResize"),
   preview: $("previewCanvas"), previewStatus: $("previewStatus"), previewSlider: $("previewSlider"), previewFit: $("previewFitBtn"), previewRings: $("previewRingsBtn"), previewLabels: $("previewLabelsBtn"), previewOpen: $("previewOpenBtn"), previewClose: $("previewCloseBtn"),
   previewLayers: $("previewLayers"), previewDevopsOverlay: $("previewDevopsOverlay"),
-  curve: $("curveCanvas"), curveStatus: $("curveStatus"), openViewer: $("openViewerBtn"), labelBreakdown: $("labelBreakdown"),
+  curve: $("curveCanvas"), curveStatus: $("curveStatus"), openViewer: $("openViewerBtn"), open3d: $("open3dBtn"), labelBreakdown: $("labelBreakdown"),
   intentPanel: $("intentPanel"), resultPanel: $("resultPanel"),
   devopsIntent: $("devopsIntentBtn"), nearPed: $("nearPedBtn"), nearPedFp: $("nearPedFpBtn"), animal: $("animalBtn"), falseStop: $("falseStopBtn"),
   hoverCard: $("hoverCard"), compareBanner: $("compareBanner"), compareBannerText: $("compareBannerText"),

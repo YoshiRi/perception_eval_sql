@@ -60,6 +60,31 @@ function applyInitialSession() {
   updateExplorerModeClass();
   state.savingSession = false;
 }
+// The client's home page links here as /explorer?run=<name> when you open a downloaded
+// run. That run has to outrank the restored session, or the explorer reopens whatever
+// was last viewed and the click reads as having done nothing.
+function requestedRun() {
+  try {
+    return new URLSearchParams(window.location.search).get("run") || "";
+  } catch {
+    return "";
+  }
+}
+// A sorted listing puts devops/ ahead of performance/, so "first parquet" opened the
+// explorer on devops. Performance is the view a session normally starts from, and the
+// devops mode switch below keys off the path, so this also picks the right mode.
+function preferPerformance(items) {
+  const performance = items.find(p => String(p.path).replace(/\\/g, "/").includes("/performance/"));
+  return (performance || items[0] || {}).path || "";
+}
+function pickRunParquet(run, saved) {
+  if (!run) return "";
+  const inRun = state.parquets.filter(p => String(p.path).replace(/\\/g, "/").includes(`/${run}/`));
+  if (!inRun.length) return "";
+  // Reopening the same run should land on the parquet it was left on.
+  const kept = inRun.find(p => p.path === saved?.path);
+  return kept ? kept.path : preferPerformance(inRun);
+}
 function restoreSelectValue(selectEl, value) {
   if (!selectEl || !value) return false;
   const option = [...selectEl.options].find(o => o.value === value);
@@ -68,7 +93,7 @@ function restoreSelectValue(selectEl, value) {
   return true;
 }
 
-async function scan() {
+async function scan({runRetry = false} = {}) {
   try {
     toast("Scanning bbox parquets...");
     const data = await api("/api/parquets", {root: els.root.value, limit: 2000, bbox_only: true});
@@ -76,9 +101,22 @@ async function scan() {
     const options = state.parquets.map(p => `<option value="${escapeHtml(p.path)}">${escapeHtml(p.display)}</option>`).join("");
     els.parquet.innerHTML = options;
     els.parquetB.innerHTML = options;
-    if (!state.parquets.length) { toast("No bbox-compatible parquets found."); return; }
     const saved = state.restoreSession;
-    restoreSelectValue(els.parquet, saved?.path);
+    const run = requestedRun();
+    const runPath = pickRunParquet(run, saved);
+    // A root left over from an earlier session can narrow the scan to one folder, which
+    // would hide the run just opened from home. Widen to the server default and retry
+    // once before giving up on it.
+    if (run && !runPath && els.root.value && !runRetry) {
+      els.root.value = "";
+      await scan({runRetry: true});
+      return;
+    }
+    if (!state.parquets.length) { toast("No bbox-compatible parquets found."); return; }
+    if (run && !runPath) toast(`No bbox parquet found in ${run}.`);
+    if (!restoreSelectValue(els.parquet, runPath) && !restoreSelectValue(els.parquet, saved?.path)) {
+      restoreSelectValue(els.parquet, preferPerformance(state.parquets));
+    }
     state.path = els.parquet.value || state.parquets[0].path;
     if (state.parquets[1]) els.parquetB.value = state.parquets[1].path;
     restoreSelectValue(els.parquetB, saved?.pathB);
@@ -503,6 +541,7 @@ async function selectScenario(s, flash = true) {
   renderIntentPanel(s);
   renderResultPanel("Loading result explanation...");
   renderScenarioLabels(s);
+  update3dButton();
   renderList();
   render();
   await loadScenarioDetails(s, flash);
@@ -1061,12 +1100,15 @@ async function loadCurve(s) {
     renderCurve(`Curve failed: ${err.message}`);
   }
 }
-function sceneFilters(s) {
+// The label chips steer the map/metrics, not the scene itself: a preview that
+// only draws the picked label hides the surrounding traffic that explains it.
+// Callers that render geometry pass {label: false} to keep every object.
+function sceneFilters(s, {label = true} = {}) {
   const f = {topic_name: s.topic_name, scenario_name: s.scenario_name};
   if (s.suite_name) f.suite_name = s.suite_name;
   if (devopsContext(s).is_devops) return f;
   if (state.rangeMax !== "") f.distance_max = Number(state.rangeMax);
-  if (state.label) f.label = state.label;
+  if (label && state.label) f.label = state.label;
   return f;
 }
 
@@ -1105,7 +1147,48 @@ function openViewer(frame = null) {
   p.set("scenario", state.selected.scenario_name || "");
   p.set("topic", state.selected.topic_name || "");
   if (frame != null) p.set("frame", String(frame));
-  showViewer(`/bbox-viewer/?${p.toString()}`, frame);
+  showViewer(`${VIEWER_BASE}?${p.toString()}`, frame);
+}
+// --- 3D (T4) viewer -------------------------------------------------------------
+// /viewer/three is served by the local client out of its offline T4 cache, so the
+// button only makes sense where that route exists and the scene has been downloaded.
+// Asking the client for its cached scenes answers both questions in one call.
+async function probeT4Scenes() {
+  try {
+    const data = await api("/api/client/t4_state", {});
+    state.t4Scenes = new Map((data.scenes || [])
+      .filter(s => (s.frames_cached || 0) > 0)
+      .map(s => [String(s.dataset_id), s]));
+  } catch {
+    state.t4Scenes = null;  // not the local client, or no T4 support in this build
+  }
+  update3dButton();
+}
+function selectedT4Scene() {
+  const id = state.selected && String(state.selected.t4dataset_id || "");
+  if (!id || !state.t4Scenes) return null;
+  return state.t4Scenes.get(id) || null;
+}
+function update3dButton() {
+  const btn = els.open3d;
+  if (!btn) return;
+  btn.hidden = !state.t4Scenes;
+  if (btn.hidden) return;
+  const scene = selectedT4Scene();
+  btn.disabled = !scene;
+  btn.title = scene
+    ? `Open ${scene.scenario || scene.dataset_id} in the 3D viewer`
+    : (state.selected && state.selected.t4dataset_id
+      ? "This scenario's T4 scene is not downloaded yet - fetch it from Home, 3D scenes"
+      : "This scenario has no T4 dataset id");
+}
+function open3dViewer() {
+  const scene = selectedT4Scene();
+  if (!scene) return;
+  const p = new URLSearchParams();
+  p.set("t4dataset_id", scene.dataset_id);
+  if (scene.scenario) p.set("scenario_name", scene.scenario);
+  window.open(`${API_BASE}/viewer/three?${p.toString()}`, "_blank");
 }
 function showViewer(url, frame = null) {
   state.viewerUrl = url;
@@ -1278,6 +1361,7 @@ els.resetView.addEventListener("click", () => {
   state.panX = 0; state.panY = 0; state.scale = 1; render();
 });
 els.openViewer.addEventListener("click", () => openViewer());
+if (els.open3d) els.open3d.addEventListener("click", () => open3dViewer());
 els.previewSlider.addEventListener("input", () => {
   if (!state.previewFrames.length) return;
   state.previewIndex = Math.max(0, Math.min(state.previewFrames.length - 1, Number(els.previewSlider.value) || 0));
@@ -1509,3 +1593,4 @@ if (window.TH) {
 }
 applyInitialSession();
 scan();
+probeT4Scenes();

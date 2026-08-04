@@ -1481,7 +1481,9 @@ def _devops_metadata_signature(parquet_path: Path) -> dict[str, Any]:
 
 def _dataset_summary_cache_path(path: Path, payload: dict[str, Any], cols: list[str]) -> Path:
     key_payload = {
-        "version": 11,
+        # 12: rows carry t4dataset_id, so entries written by an older build must not
+        # be served -- they would silently hide the 3D viewer link.
+        "version": 12,
         "path": _path_signature(path),
         "devops_metadata": _devops_metadata_signature(path),
         "filters": payload.get("filters") if isinstance(payload.get("filters"), dict) else {},
@@ -1541,12 +1543,19 @@ def _dataset_summary_uncached(payload: dict[str, Any], *, path: Path | None = No
     status_expr = "UPPER(COALESCE(NULLIF(CAST(status AS VARCHAR), ''), ''))" if "status" in cols else "''"
     source_expr = "UPPER(COALESCE(NULLIF(CAST(source AS VARCHAR), ''), ''))"
     center_error_expr = "TRY_CAST(center_distance AS DOUBLE)" if "center_distance" in cols else "NULL"
+    # The T4 dataset id identifies the scene the 3D viewer loads. It is per-row rather
+    # than per-scenario, and t4dataset_name is a placeholder in most exports, so take
+    # any non-empty value in the group instead of grouping by it.
+    dataset_id_expr = (
+        "MAX(NULLIF(CAST(t4dataset_id AS VARCHAR), ''))" if "t4dataset_id" in cols else "NULL"
+    )
     con = duckdb.connect()
     try:
         scenario_df = con.execute(
             f"""
             SELECT
                 {", ".join(group_cols)},
+                {dataset_id_expr} AS t4dataset_id,
                 COUNT(*) AS rows,
                 COUNT(DISTINCT TRY_CAST(frame_index AS INTEGER)) AS frames,
                 MIN(TRY_CAST(frame_index AS INTEGER)) AS first_frame,
@@ -1649,6 +1658,7 @@ def _dataset_summary_uncached(payload: dict[str, Any], *, path: Path | None = No
         scenarios_out.append(
             {
                 **{c: _as_text(row.get(c)) for c in group_cols},
+                "t4dataset_id": _as_text(row.get("t4dataset_id")),
                 "rows": int(row.get("rows") or 0),
                 "frames": int(row.get("frames") or 0),
                 "first_frame": None if row.get("first_frame") is None else int(row.get("first_frame")),
@@ -1686,6 +1696,7 @@ def _dataset_summary_uncached(payload: dict[str, Any], *, path: Path | None = No
                     **{c: "" for c in group_cols},
                     "suite_name": suite_name_text,
                     "scenario_name": scenario_name_text,
+                    "t4dataset_id": "",
                     "rows": 0,
                     "frames": 0,
                     "first_frame": None,

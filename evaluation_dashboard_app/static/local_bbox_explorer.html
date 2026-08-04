@@ -208,6 +208,10 @@
         <h2>Scenario Actions</h2>
         <div class="row">
           <button id="openViewerBtn">Inspect BBoxes</button>
+          <!-- Shown only where /viewer/three answers, i.e. the local client with a
+               downloaded T4 scene. Hidden on the dashboard, where the 3D viewer is a
+               separate host this page cannot address. -->
+          <button id="open3dBtn" hidden>Open 3D</button>
         </div>
       </div>
       <div class="card labels-card">
@@ -230,13 +234,13 @@
     <iframe id="viewerFrame" title="BBox Viewer"></iframe>
   </div>
   <script>window.BBOX_EXPLORER_API_BASE = "__API_BASE__";</script>
-  <script src="bbox_api.js?v=theme-blueprint-20260731a"></script>
-  <script src="bbox_state.js?v=theme-blueprint-20260731a"></script>
+  <script src="bbox_api.js?v=viewer-base-20260804a"></script>
+  <script src="bbox_state.js?v=open-run-3d-20260804a"></script>
   <script src="metrics.js?v=theme-blueprint-20260731a"></script>
   <script src="ego_vehicle_shape.js?v=ego-bus-shape-20260803a"></script>
   <script src="preview_renderer.js?v=preview-eval-colors-20260803a"></script>
   <script src="map_renderer.js?v=theme-blueprint-20260731a"></script>
   <script src="stats_renderer.js?v=theme-blueprint-20260731a"></script>
-  <script src="events.js?v=theme-blueprint-20260731a"></script>
+  <script src="events.js?v=open-run-3d-20260804a"></script>
 </body>
 </html>
