@@ -1,25 +1,11 @@
-import ast
-from pathlib import Path
-
 import duckdb
 import pandas as pd
 
-
-def _load_eval_flat_select_sql():
-    """Load the SQL helper without executing the Streamlit page body."""
-    source = Path("pages/3_Detection_Stats.py").read_text()
-    module = ast.parse(source)
-    func = next(
-        node
-        for node in module.body
-        if isinstance(node, ast.FunctionDef) and node.name == "eval_flat_select_sql"
-    )
-    namespace = {"SKIP_FIRST_N_FRAMES": 3, "SKIP_LAST_N_FRAMES": 1}
-    exec(compile(ast.Module(body=[func], type_ignores=[]), "eval_flat_select_sql", "exec"), namespace)
-    return namespace["eval_flat_select_sql"]
+import lib.detection_eval_sql as detection_eval_sql
+from lib.detection_eval_sql import eval_flat_select_sql
 
 
-def test_eval_flat_exclude_polygons_matches_analyzer_semantics(tmp_path):
+def test_eval_flat_exclude_polygons_matches_analyzer_semantics(tmp_path, monkeypatch):
     df = pd.DataFrame(
         {
             "frame_index": [3, 3, 3, 3, 3, 4, 4],
@@ -60,7 +46,8 @@ def test_eval_flat_exclude_polygons_matches_analyzer_semantics(tmp_path):
     parquet_path = tmp_path / "current.parquet"
     df.to_parquet(parquet_path)
 
-    eval_flat_select_sql = _load_eval_flat_select_sql()
+    monkeypatch.setattr(detection_eval_sql, "SKIP_FIRST_N_FRAMES", 3)
+    monkeypatch.setattr(detection_eval_sql, "SKIP_LAST_N_FRAMES", 1)
     con = duckdb.connect()
     result = con.execute(
         eval_flat_select_sql(
