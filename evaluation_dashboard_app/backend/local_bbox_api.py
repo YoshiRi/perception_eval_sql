@@ -24,8 +24,9 @@ from urllib.parse import parse_qs, urlparse
 import duckdb
 
 try:
-    from backend import app_paths, export_api, prebake, workflow_api
+    from backend import analysis_api, app_paths, export_api, prebake, workflow_api
 except ImportError:  # pragma: no cover - running the module as a bare script.
+    import analysis_api  # type: ignore[no-redef]
     import app_paths  # type: ignore[no-redef]
     import export_api  # type: ignore[no-redef]
     import prebake  # type: ignore[no-redef]
@@ -2977,7 +2978,7 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
     # Workflow routes authorize through export_api, so both sets share one policy.
     auth_routes = {**export_api.JSON_ROUTES, **workflow_api.JSON_ROUTES}
     # Routes that write their own response body instead of returning JSON.
-    stream_routes = export_api.STREAM_ROUTES
+    stream_routes = {**export_api.STREAM_ROUTES, **analysis_api.STREAM_ROUTES}
 
     def log_message(self, format: str, *args: Any) -> None:
         if os.environ.get("LOCAL_BBOX_API_DEBUG") == "1":
