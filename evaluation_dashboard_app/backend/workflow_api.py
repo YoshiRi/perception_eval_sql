@@ -381,7 +381,9 @@ def enqueue(task_type: str, params: dict[str, Any], who: dict[str, str]) -> str:
 # ----------------------------------------------------------------------- task reading
 
 
-def _task_view(task: dict[str, Any], *, with_log: bool = False) -> dict[str, Any]:
+def _task_view(
+    task: dict[str, Any], *, with_log: bool = False, with_result: bool = False
+) -> dict[str, Any]:
     params = task.get("parameters") or {}
     if not isinstance(params, dict):
         params = {}
@@ -405,12 +407,13 @@ def _task_view(task: dict[str, Any], *, with_log: bool = False) -> dict[str, Any
         "updated_at": _iso(task.get("updated_at")),
         "active": _text(task.get("status")) in ("pending", "running"),
     }
+    if with_result or with_log:
+        summary = task.get("result_summary")
+        view["result_summary"] = summary if isinstance(summary, dict) else {}
     if with_log:
         log = _text(task.get("log_output"))
         view["log"] = log[-_MAX_LOG_CHARS:]
         view["log_truncated"] = len(log) > _MAX_LOG_CHARS
-        summary = task.get("result_summary")
-        view["result_summary"] = summary if isinstance(summary, dict) else {}
     return view
 
 
@@ -449,6 +452,25 @@ def workflow_health(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
             queue_reason = "USE_TASK_QUEUE / DATABASE_URL are not both set on the server."
     except Exception as exc:  # no lib/ (packaged client) or no psycopg2
         queue_reason = f"Task queue support is unavailable here: {exc}"
+    # A configured queue with no worker accepts tasks that then sit pending forever,
+    # which a preflight cannot distinguish from a slow run. None means "could not tell".
+    workers_alive: int | None = None
+    workers_reason = ""
+    if queue_enabled:
+        try:
+            from redis import Redis
+            from rq import Queue, Worker
+
+            connection = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+            queue = Queue(name=os.environ.get("RQ_QUEUE", "default"), connection=connection)
+            workers_alive = int(Worker.count(queue=queue))
+            if workers_alive == 0:
+                workers_reason = (
+                    "No RQ worker is listening on this queue; a started workflow would "
+                    "stay pending until one comes up."
+                )
+        except Exception as exc:
+            workers_reason = f"Could not count workers: {exc}"
     target_hint = _text(payload.get("target_name"), "beta/v4.3.2")
     return {
         "ok": True,
@@ -457,6 +479,8 @@ def workflow_health(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "auth_reason": reason,
         "queue_enabled": queue_enabled,
         "queue_reason": queue_reason,
+        "workers_alive": workers_alive,
+        "workers_reason": workers_reason,
         "kinds": [
             {"name": name, "label": KIND_LABELS[name], "task_type": task_type}
             for name, task_type in KIND_TASK_TYPES.items()
@@ -596,18 +620,74 @@ def _resolve_integration_id(project_id: str, environment: str, catalog_id: str) 
     return _text(active[0].get("id"))
 
 
+def _default_target_repo_url() -> str:
+    try:
+        from lib.local_evaluator_debug import DEFAULT_REPO_URL
+
+        return DEFAULT_REPO_URL
+    except Exception:  # packaged client ships no lib/; mirror its default
+        return os.environ.get("LOCAL_EVALUATOR_REPO_URL", "git@github.com:tier4/pilot-auto.x2.git")
+
+
+def check_target_ref(target_name: str, *, is_tag: bool) -> dict[str, Any]:
+    """Best-effort ``git ls-remote`` existence check for the branch/tag a run would build.
+
+    A typo'd branch is otherwise the most expensive mistake this API allows: the evaluator
+    accepts the job and fails it during build, hours later. ``exists`` is only meaningful
+    when ``checked`` is true; a server without git credentials stays inconclusive rather
+    than blocking anyone.
+    """
+    import subprocess
+
+    repo = os.environ.get("WORKFLOW_TARGET_REPO_URL") or _default_target_repo_url()
+    ref = f"refs/tags/{target_name}" if is_tag else f"refs/heads/{target_name}"
+    result: dict[str, Any] = {"checked": False, "exists": None, "ref": ref, "repo": repo}
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", "--exit-code", repo, ref],
+            capture_output=True, text=True, timeout=20,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except Exception as exc:  # no git binary, timeout
+        result["detail"] = f"Could not run git ls-remote: {exc}"
+        return result
+    if proc.returncode == 0:
+        result.update(checked=True, exists=True)
+    elif proc.returncode == 2:  # connected and listed refs; this one is not there
+        result.update(checked=True, exists=False,
+                      detail=f"{ref} does not exist in {repo}.")
+    else:  # auth/network failure: inconclusive, never blocking
+        result["detail"] = (proc.stderr or proc.stdout).strip()[-500:]
+    return result
+
+
 def workflow_start(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """Validate a request, queue it, and return the task id."""
     who = export_api.require_auth(handler)
     kind, task_type, params = build_params(payload)
+    target_check: dict[str, Any] = {}
+    if _flag(payload.get("check_target"), True):
+        target_check = check_target_ref(
+            params["target_name"], is_tag=bool(params.get("is_tag"))
+        )
     if _flag(payload.get("dry_run"), False):
         # Lets a script (or the UI's "Check" button) see the exact parameters the worker
         # would get without putting anything on the queue.
-        return {"ok": True, "dry_run": True, "kind": kind, "task_type": task_type, "parameters": params}
+        return {"ok": True, "dry_run": True, "kind": kind, "task_type": task_type,
+                "parameters": params, "target_check": target_check}
+    if target_check.get("checked") and target_check.get("exists") is False:
+        # Definitive miss: the evaluator would accept this job and fail it at build time.
+        # An inconclusive check (no credentials, network) never blocks a start.
+        raise WorkflowError(
+            f"Target '{params['target_name']}' was not found "
+            f"({target_check['ref']} in {target_check['repo']}). "
+            "Send check_target: false to start anyway."
+        )
     task_id = enqueue(task_type, params, who)
     return {
         "ok": True,
         "task_id": task_id,
+        "target_check": target_check,
         "kind": kind,
         "task_type": task_type,
         "output_path": _text(params.get("output_path")),
@@ -645,7 +725,11 @@ def workflow_tasks(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def workflow_task(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """One task with its log, for tailing a run."""
+    """One task with its result summary, for tailing a run.
+
+    The log (up to 200 KB) is included by default; a status poller that only wants the
+    structured result can send ``log: false``.
+    """
     export_api.require_auth(handler)
     from lib.db import get_task
 
@@ -658,7 +742,7 @@ def workflow_task(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:
     if _text(task.get("type")) not in REPORTED_TASK_TYPES:
         raise WorkflowError(f"Task {task_id} is not a workflow task.")
     _reconcile(task)
-    return {"task": _task_view(task, with_log=True)}
+    return {"task": _task_view(task, with_log=_flag(payload.get("log"), True), with_result=True)}
 
 
 def workflow_cancel(handler: Any, payload: dict[str, Any]) -> dict[str, Any]:

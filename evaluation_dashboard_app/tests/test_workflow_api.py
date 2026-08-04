@@ -187,7 +187,16 @@ def test_start_requires_authorization(data_root, monkeypatch):
         workflow_api.workflow_start(_Handler(), _evaluator_payload())
 
 
-def test_dry_run_start_queues_nothing(data_root, monkeypatch):
+@pytest.fixture()
+def no_target_check(monkeypatch):
+    """Keep workflow_start off the network; target validation has its own tests."""
+    monkeypatch.setattr(
+        workflow_api, "check_target_ref",
+        lambda target, is_tag: {"checked": False, "exists": None, "ref": "", "repo": ""},
+    )
+
+
+def test_dry_run_start_queues_nothing(data_root, no_target_check, monkeypatch):
     def _explode(*args, **kwargs):
         raise AssertionError("dry_run must not reach the queue")
 
@@ -197,7 +206,7 @@ def test_dry_run_start_queues_nothing(data_root, monkeypatch):
     assert result["parameters"]["catalog_id"] == "cat-1"
 
 
-def test_start_reports_a_server_that_cannot_queue(data_root, monkeypatch):
+def test_start_reports_a_server_that_cannot_queue(data_root, no_target_check, monkeypatch):
     """Without USE_TASK_QUEUE the row would sit pending forever, so refuse up front."""
     monkeypatch.setattr(workflow_api, "enqueue", workflow_api.enqueue)
     monkeypatch.delenv("USE_TASK_QUEUE", raising=False)
@@ -294,6 +303,109 @@ def test_task_views_only_report_workflow_types(data_root, monkeypatch):
     result = workflow_api.workflow_tasks(_Handler(), {})
     assert [item["id"] for item in result["items"]] == ["a" * 32]
     assert result["items"][0]["run_name"] == "eval_beta_v1"
+
+
+def test_a_definitively_missing_branch_is_refused_before_the_queue(data_root, monkeypatch):
+    """The evaluator accepts a typo'd branch and fails it at build time, hours later."""
+    monkeypatch.setattr(
+        workflow_api, "check_target_ref",
+        lambda target, is_tag: {"checked": True, "exists": False,
+                                "ref": f"refs/heads/{target}", "repo": "repo"},
+    )
+    monkeypatch.setattr(workflow_api, "enqueue", lambda *a: pytest.fail("must not enqueue"))
+    with pytest.raises(workflow_api.WorkflowError, match="was not found"):
+        workflow_api.workflow_start(_Handler(), _evaluator_payload())
+    # An explicit opt-out lets a caller start anyway (private fork, odd remote).
+    monkeypatch.setattr(workflow_api, "enqueue", lambda *a: "task-1")
+    started = workflow_api.workflow_start(_Handler(), _evaluator_payload(check_target=False))
+    assert started["task_id"] == "task-1"
+
+
+def test_an_inconclusive_target_check_never_blocks(data_root, monkeypatch):
+    """A server without git credentials must keep working; only a definitive miss refuses."""
+    monkeypatch.setattr(
+        workflow_api, "check_target_ref",
+        lambda target, is_tag: {"checked": False, "exists": None,
+                                "ref": f"refs/heads/{target}", "repo": "repo",
+                                "detail": "auth failed"},
+    )
+    monkeypatch.setattr(workflow_api, "enqueue", lambda *a: "task-2")
+    started = workflow_api.workflow_start(_Handler(), _evaluator_payload())
+    assert started["task_id"] == "task-2"
+    assert started["target_check"]["checked"] is False
+
+
+def test_dry_run_reports_the_target_check_without_refusing(data_root, monkeypatch):
+    monkeypatch.setattr(
+        workflow_api, "check_target_ref",
+        lambda target, is_tag: {"checked": True, "exists": False,
+                                "ref": f"refs/heads/{target}", "repo": "repo"},
+    )
+    result = workflow_api.workflow_start(_Handler(), _evaluator_payload(dry_run=True))
+    assert result["dry_run"] is True
+    assert result["target_check"]["exists"] is False
+
+
+def test_check_target_ref_uses_tag_refs_for_tags(data_root, monkeypatch):
+    calls = {}
+
+    def _fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    result = workflow_api.check_target_ref("v1.2.3", is_tag=True)
+    assert result == {"checked": True, "exists": True, "ref": "refs/tags/v1.2.3",
+                      "repo": calls["cmd"][3]}
+    assert calls["cmd"][:3] == ["git", "ls-remote", "--exit-code"]
+    assert calls["cmd"][4] == "refs/tags/v1.2.3"
+
+
+def test_health_counts_workers_so_a_preflight_can_spot_a_dead_queue(data_root, monkeypatch):
+    """A queue with no worker accepts tasks that sit pending forever; health must say so."""
+    monkeypatch.setitem(
+        __import__("sys").modules, "lib.db", SimpleNamespace(is_task_queue_enabled=lambda: True)
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules, "redis",
+        SimpleNamespace(Redis=SimpleNamespace(from_url=lambda url: object())),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules, "rq",
+        SimpleNamespace(Queue=lambda *a, **k: object(), Worker=SimpleNamespace(count=lambda queue: 0)),
+    )
+    health = workflow_api.workflow_health(_Handler(), {})
+    assert health["queue_enabled"] is True
+    assert health["workers_alive"] == 0
+    assert "stay pending" in health["workers_reason"]
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "rq",
+        SimpleNamespace(Queue=lambda *a, **k: object(), Worker=SimpleNamespace(count=lambda queue: 2)),
+    )
+    health = workflow_api.workflow_health(_Handler(), {})
+    assert health["workers_alive"] == 2 and health["workers_reason"] == ""
+
+
+def test_task_route_can_return_the_result_without_the_log(data_root, monkeypatch):
+    """A status poller wants the structured result_summary, not 200 KB of log."""
+    row = {
+        "id": "a" * 32, "type": "run_evaluator_and_process", "status": "completed",
+        "parameters": {}, "created_at": None, "updated_at": None,
+        "log_output": "x" * 5000, "result_summary": {"job": "run_eval", "passed": 10},
+    }
+    monkeypatch.setitem(
+        __import__("sys").modules, "lib.db", SimpleNamespace(get_task=lambda task_id: dict(row))
+    )
+    slim = workflow_api.workflow_task(_Handler(), {"task_id": "a" * 32, "log": False})["task"]
+    assert slim["result_summary"] == {"job": "run_eval", "passed": 10}
+    assert "log" not in slim
+
+    full = workflow_api.workflow_task(_Handler(), {"task_id": "a" * 32})["task"]
+    assert full["log"] == "x" * 5000
+    assert full["result_summary"]["passed"] == 10
 
 
 # ---------------------------------------------------------------------- trend data
