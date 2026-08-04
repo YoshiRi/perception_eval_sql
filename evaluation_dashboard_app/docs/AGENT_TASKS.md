@@ -90,9 +90,32 @@ The commands compose. A typical end-to-end request:
   `python scripts/evalctl.py --help`, or raw HTTP (`/api/workflow_*`,
   `/api/analysis_package`) for CI jobs.
 
+## Claude Code vs Codex
+
+Both work; the entry points differ.
+
+**Claude Code** auto-discovers the skills in `.claude/skills/` whenever a session
+starts anywhere in this repo — nothing to install or configure. Ask in plain
+language and the matching skill loads on demand, or force one explicitly with
+`/eval-branch`, `/release-specsheet`, `/workflow-status`, `/trend-report`,
+`/analyze-run`, `/eval-setup`. Note the skills only exist for sessions started
+inside this repo; to drive evaluations from other projects, copy them to
+`~/.claude/skills/` (user-global) or use `evalctl` directly.
+
+**Codex** reads `AGENTS.md` at the repo root automatically instead — it holds the
+condensed rules plus a "read first" table pointing at the same skill playbooks, so
+Codex works from the same guidance. Two caveats: there are no slash commands (just
+describe what you want), and `evalctl` needs network access to reach the dashboard
+server — if Codex runs in a network-off sandbox or strict approval mode, allow the
+network / approve the commands.
+
+Either way, the guarantees don't depend on the agent: `evalctl` and the server
+enforce the preflight, the branch validation, and the release confirmation prompt.
+
 ## Where the agent instructions live
 
-- `.claude/skills/` — per-task guidance for Claude Code (eval-branch,
-  release-specsheet, workflow-status, trend-report, analyze-run, eval-setup)
+- `.claude/skills/` — per-task playbooks (eval-branch, release-specsheet,
+  workflow-status, trend-report, analyze-run, eval-setup); plain markdown, used by
+  Claude Code automatically and by Codex via the table in `AGENTS.md`
 - `AGENTS.md` — condensed rules for Codex and other agents
-- `scripts/evalctl.py` — the CLI both of them drive
+- `scripts/evalctl.py` — the CLI all of them drive
