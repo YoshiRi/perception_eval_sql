@@ -559,6 +559,9 @@ _renderer_optional_cols = [
     "z",
     "height",
     "shape_type",
+    # Polygon rows carry their shape here and nowhere else: their length/width are 0, so
+    # without it the viewer has nothing to draw and falls back to a point marker.
+    "footprint",
     "vx",
     "vy",
     "confidence",

@@ -213,3 +213,16 @@ def test_a_release_role_directory_is_the_run_name_the_dashboard_accepts(tmp_path
 
     assert "per-exp_v4.4.0_20260731/performance" in names
     assert "per-exp_v4.4.0_20260731" not in names
+
+
+def test_the_dashboard_3d_page_selects_the_footprint_column():
+    """Polygon rows have length/width 0; the footprint is the only shape they carry.
+
+    The page loads an explicit column list, and leaving this one out is invisible until
+    a scene full of polygons renders as a scatter of point markers.
+    """
+    import re
+
+    page = (Path(__file__).resolve().parents[1] / "pages" / "5_T4_3D_Viewer.py").read_text(encoding="utf-8")
+    optional = re.search(r"_renderer_optional_cols = \[(.*?)\]", page, re.S)
+    assert optional and '"footprint"' in optional.group(1)
