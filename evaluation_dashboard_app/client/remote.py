@@ -7,7 +7,9 @@ keep the frozen bundle small; nothing here needs what ``requests`` adds.
 from __future__ import annotations
 
 import json
+import shutil
 import ssl
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,9 +23,10 @@ PROBE_SUFFIXES = ("", "/bbox-api")
 
 CF_ACCESS_HELP = (
     "The server is behind Cloudflare Access and this app has no valid session. "
-    "Set a service token in Settings (or with --cf-client-id / --cf-client-secret); "
-    "for a personal login run: cloudflared access login <server url>"
+    "Sign in with `evaldash-local login --cf-login`, or set a service token in Settings "
+    "(--cf-client-id / --cf-client-secret) for an unattended machine."
 )
+CF_LOGIN_TIMEOUT_SEC = 300
 
 
 class RemoteError(RuntimeError):
@@ -52,6 +55,58 @@ class _AccessAwareRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+# Access JWTs are minted by `cloudflared access login` and cached by cloudflared itself
+# under ~/.cloudflared. Reading that cache is what lets a personal sign-in -- done once,
+# in a browser -- carry this app for the life of the session, with no secret to store.
+_CF_SESSION: dict[str, str] = {}
+
+
+def _cloudflared() -> str | None:
+    return shutil.which("cloudflared")
+
+
+def cf_session_token(base_url: str, *, refresh: bool = False) -> str:
+    """The cached Access JWT for this host, or "" when there is no usable session."""
+    host = urllib.parse.urlsplit(base_url)
+    app = f"{host.scheme}://{host.netloc}"
+    if not refresh and app in _CF_SESSION:
+        return _CF_SESSION[app]
+    binary = _cloudflared()
+    if not binary:
+        return ""
+    try:
+        done = subprocess.run([binary, "access", "token", f"-app={app}"],
+                              capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    out = (done.stdout or "").strip()
+    # A miss is prose on stdout ("Unable to find token..."), so shape-check the result
+    # rather than trusting the exit code.
+    token = out if done.returncode == 0 and out.count(".") == 2 and " " not in out else ""
+    _CF_SESSION[app] = token
+    return token
+
+
+def cf_browser_login(base_url: str) -> str:
+    """Run the interactive Cloudflare sign-in, then return the JWT it minted."""
+    binary = _cloudflared()
+    if not binary:
+        raise AuthError(
+            "A browser sign-in needs `cloudflared`, which is not installed. Install it from "
+            "Cloudflare's downloads page, or use a service token instead."
+        )
+    host = urllib.parse.urlsplit(base_url)
+    app = f"{host.scheme}://{host.netloc}"
+    try:
+        subprocess.run([binary, "access", "login", app], timeout=CF_LOGIN_TIMEOUT_SEC, check=False)
+    except subprocess.TimeoutExpired:
+        raise AuthError(
+            f"The sign-in did not finish within {CF_LOGIN_TIMEOUT_SEC}s. "
+            f"Run it directly: cloudflared access login {app}"
+        ) from None
+    return cf_session_token(app, refresh=True)
+
+
 class Remote:
     def __init__(self, config: Config, base_url: str | None = None) -> None:
         self.config = config
@@ -70,10 +125,16 @@ class Remote:
         if token:
             headers["Authorization"] = f"Bearer {token}"
         # Cloudflare Access service token, mirroring how the dashboard authenticates
-        # its own outbound calls to the T4 visualizer.
+        # its own outbound calls to the T4 visualizer. Failing that, a browser session
+        # the user established with `cloudflared access login` -- the service token is
+        # preferred because it needs no browser and never expires mid-download.
         if self.config.cf_client_id and self.config.cf_client_secret:
             headers["CF-Access-Client-Id"] = self.config.cf_client_id
             headers["CF-Access-Client-Secret"] = self.config.cf_client_secret
+        else:
+            session = cf_session_token(self.base_url)
+            if session:
+                headers["Cookie"] = f"CF_Authorization={session}"
         if extra:
             headers.update(extra)
         return headers

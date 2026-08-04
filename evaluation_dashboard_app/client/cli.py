@@ -7,7 +7,9 @@ import json
 import sys
 
 from client import config, serve, sync
-from client.remote import AuthError, Remote, RemoteError, connect, probe_server
+from client.remote import (
+    AuthError, Remote, RemoteError, cf_browser_login, connect, probe_server,
+)
 
 EPILOG = """\
 typical use:
@@ -77,6 +79,17 @@ def cmd_login(args: argparse.Namespace) -> int:
         print("error: --server is required the first time", file=sys.stderr)
         return 2
     cfg.server_url = cfg.server_url or cfg.effective_server()
+
+    if getattr(args, "cf_login", False):
+        try:
+            token = cf_browser_login(cfg.server_url)
+        except AuthError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if not token:
+            print("error: the Cloudflare sign-in produced no session", file=sys.stderr)
+            return 1
+        print(f"cloudflare  signed in to {cfg.server_url}")
 
     try:
         resolved, health = probe_server(cfg, cfg.server_url)
@@ -766,6 +779,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token", help="only if the server sets EVAL_EXPORT_REQUIRE_TOKEN")
     p.add_argument("--cf-client-id", help="Cloudflare Access service token id")
     p.add_argument("--cf-client-secret", help="Cloudflare Access service token secret")
+    p.add_argument("--cf-login", action="store_true",
+                   help="sign in to Cloudflare Access in a browser (no secret to store)")
     p.add_argument("--t4-base-url", help="T4 visualizer URL used for 3D point clouds")
     p.add_argument("--insecure", action="store_true", help="skip TLS verification")
     p.add_argument("--reset", action="store_true",

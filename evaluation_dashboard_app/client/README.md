@@ -302,16 +302,35 @@ the app.
 
 ### Behind Cloudflare Access
 
-Pass a service token; it is sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`,
-mirroring how the dashboard authenticates its own calls to the T4 visualizer:
+Access refuses unauthenticated requests at the edge, before the dashboard's own auth is
+ever consulted, so the export token does nothing for it. Two credentials work.
+
+**Browser sign-in** — nothing to store, right for a person's laptop:
+
+```bash
+evaldash-local login --server https://dash.example.com --cf-login
+```
+
+That runs `cloudflared access login` (install `cloudflared` first) and the session it
+mints is cached by `cloudflared` under `~/.cloudflared`. Every later command reads it
+back automatically and sends it as a `CF_Authorization` cookie — including resumed
+downloads, which keep their HTTP `Range` behaviour through the tunnel. The session
+expires on the Access policy's schedule, typically daily; re-run the same command.
+
+**Service token** — no browser, right for a shared or unattended machine. It is sent as
+`CF-Access-Client-Id` / `CF-Access-Client-Secret`, mirroring how the dashboard
+authenticates its own calls to the T4 visualizer, and takes precedence over any browser
+session:
 
 ```bash
 evaldash-local login --server https://dash.example.com --token <export-token> \
   --cf-client-id <id> --cf-client-secret <secret>
 ```
 
-If a Cloudflare sign-in page comes back instead of JSON, the client says so explicitly
-rather than failing on a JSON parse error.
+When neither is available the client says so in those words — naming Cloudflare Access
+and the two ways to fix it — instead of failing on a JSON parse error against a sign-in
+page. Note the API is mounted at `/bbox-api` behind nginx; `login` probes for that and
+saves the resolved URL, so a bare hostname is fine to type.
 
 ### Interrupted downloads
 
