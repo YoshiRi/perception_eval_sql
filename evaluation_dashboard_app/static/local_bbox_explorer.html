@@ -212,7 +212,16 @@
                downloaded T4 scene. Hidden on the dashboard, where the 3D viewer is a
                separate host this page cannot address. -->
           <button id="open3dBtn" hidden>Open 3D</button>
+          <!-- Same conditions, mirrored: offered when the scene is *not* cached and the
+               T4 server can be reached, so the answer to "not downloaded yet" is here
+               rather than a trip to the home page. -->
+          <button id="get3dBtn" hidden>Download 3D</button>
+          <!-- The other way to see the scene: the dashboard's own T4 3D Viewer page,
+               which reads the dataset off the deployed dataset server. Nothing to
+               download, but it needs the network the local cache exists to avoid. -->
+          <button id="open3dServerBtn" hidden>Open 3D on server</button>
         </div>
+        <div class="curve-status" id="t4FetchStatus" hidden></div>
       </div>
       <div class="card labels-card">
         <h2>Labels In Scenario</h2>

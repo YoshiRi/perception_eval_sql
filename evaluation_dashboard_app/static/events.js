@@ -542,6 +542,9 @@ async function selectScenario(s, flash = true) {
   renderResultPanel("Loading result explanation...");
   renderScenarioLabels(s);
   update3dButton();
+  // Only worth a probe when there is something to download: a dataset id with no scene.
+  if (state.t4Scenes && s.t4dataset_id && !selectedT4Scene()) ensureT4ServerProbe();
+  if (!(state.t4Job && state.t4Job.active)) setT4FetchStatus("");
   renderList();
   render();
   await loadScenarioDetails(s, flash);
@@ -1159,6 +1162,8 @@ async function probeT4Scenes() {
     state.t4Scenes = new Map((data.scenes || [])
       .filter(s => (s.frames_cached || 0) > 0)
       .map(s => [String(s.dataset_id), s]));
+    state.t4Dashboard = (data.config && data.config.dashboard_url) || "";
+    if (data.job && data.job.active) watchT4Fetch();  // a fetch started elsewhere
   } catch {
     state.t4Scenes = null;  // not the local client, or no T4 support in this build
   }
@@ -1169,18 +1174,180 @@ function selectedT4Scene() {
   if (!id || !state.t4Scenes) return null;
   return state.t4Scenes.get(id) || null;
 }
+// Reaching the T4 server costs a round trip with a 6 s ceiling, so it is asked only
+// when the answer can change a button: an uncached scene the user might want.
+async function ensureT4ServerProbe() {
+  if (state.t4Server || !state.t4Scenes) return state.t4Server;
+  try {
+    const data = await api("/api/client/t4_state", {probe: true});
+    state.t4Server = data.server || {reachable: false, reason: "no answer"};
+  } catch (err) {
+    state.t4Server = {reachable: false, reason: err.message};
+  }
+  update3dButton();
+  return state.t4Server;
+}
 function update3dButton() {
   const btn = els.open3d;
   if (!btn) return;
   btn.hidden = !state.t4Scenes;
-  if (btn.hidden) return;
   const scene = selectedT4Scene();
-  btn.disabled = !scene;
-  btn.title = scene
-    ? `Open ${scene.scenario || scene.dataset_id} in the 3D viewer`
-    : (state.selected && state.selected.t4dataset_id
-      ? "This scenario's T4 scene is not downloaded yet - fetch it from Home, 3D scenes"
-      : "This scenario has no T4 dataset id");
+  if (!btn.hidden) {
+    btn.disabled = !scene;
+    btn.title = scene
+      ? `Open ${scene.scenario || scene.dataset_id} in the 3D viewer`
+      : (state.selected && state.selected.t4dataset_id
+        ? "This scenario's T4 scene is not downloaded yet"
+        : "This scenario has no T4 dataset id");
+  }
+  const dataset = state.selected && String(state.selected.t4dataset_id || "");
+  const onServer = els.open3dServer;
+  if (onServer) {
+    const url = state.selected ? dashboard3dUrl(state.selected) : "";
+    onServer.hidden = !dataset || !url;
+    onServer.title = url ? `Open this scene in the dashboard's 3D viewer: ${url}` : "";
+  }
+  const get = els.get3d;
+  if (!get) return;
+  const job = state.t4Job;
+  const busy = !!(job && job.active);
+  // Nothing to download once it is cached, and nothing to offer without a dataset id.
+  get.hidden = !state.t4Scenes || !dataset || (!!scene && !busy);
+  if (get.hidden) return;
+  if (busy) {
+    get.disabled = false;
+    get.textContent = "Cancel download";
+    get.title = `Stop fetching ${job.scenario}`;
+    return;
+  }
+  get.textContent = "Download 3D";
+  const server = state.t4Server;
+  if (!server) {  // not probed yet; let the click do it rather than guess
+    get.disabled = false;
+    get.title = "Download this scenario's T4 scene for the 3D viewer";
+  } else {
+    get.disabled = !server.reachable;
+    get.title = server.reachable
+      ? "Download this scenario's T4 scene for the 3D viewer"
+      : `T4 server unavailable: ${server.reason}`;
+  }
+}
+// The dashboard's T4 3D Viewer reads the scene off the deployed dataset server, so it
+// needs no local cache -- only a way to address the dashboard. Served by the dashboard
+// itself this page is already there (same origin); run by the local client it is
+// wherever the client is logged in. Neither: no button.
+function dashboard3dBase() {
+  if (!state.t4Scenes) return "";  // dashboard-hosted: same origin
+  return state.t4Dashboard || null;  // local client: only with a configured server
+}
+function dashboard3dUrl(s) {
+  const base = dashboard3dBase();
+  if (base === null) return "";
+  const p = new URLSearchParams();
+  p.set("mode", "single");
+  if (s.suite_name) p.set("viewer_suite", s.suite_name);
+  if (s.scenario_name) p.set("viewer_scenario", s.scenario_name);
+  if (s.t4dataset_id) p.set("viewer_t4dataset", String(s.t4dataset_id));
+  if (s.topic_name) p.set("viewer_topic", s.topic_name);
+  p.set("viewer_compare", "overlay");
+  return `${base}/T4_3D_Viewer?${p.toString()}`;
+}
+function openServer3dViewer() {
+  const url = state.selected && dashboard3dUrl(state.selected);
+  if (url) window.open(url, "_blank");
+}
+function setT4FetchStatus(text) {
+  els.t4FetchStatus.hidden = !text;
+  els.t4FetchStatus.textContent = text || "";
+}
+// The parquet's scenario name and t4-server's scene names are written by different
+// tools, so match generously before giving up and sending the user to the home page.
+function matchT4Scenario(scenarios, wanted) {
+  const names = scenarios.map(x => x.name);
+  if (!names.length) return "";
+  if (names.length === 1) return names[0];
+  const norm = v => String(v || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = norm(wanted);
+  if (!target) return "";
+  return names.find(n => norm(n) === target)
+    || names.find(n => norm(n).includes(target) || target.includes(norm(n)))
+    || "";
+}
+async function download3dScene() {
+  if (state.t4Job && state.t4Job.active) {
+    try { await api("/api/client/t4_fetch_cancel", {}); } catch (err) { toast(err.message); }
+    return;
+  }
+  const s = state.selected;
+  const dataset = s && String(s.t4dataset_id || "");
+  if (!dataset) return;
+  const btn = els.get3d;
+  btn.disabled = true;
+  try {
+    // The probe can take seconds; say so first, or the click looks like it did nothing.
+    setT4FetchStatus("Checking the T4 server...");
+    const server = await ensureT4ServerProbe();
+    if (!server.reachable) {
+      setT4FetchStatus(`T4 server unavailable: ${server.reason}`);
+      toast("T4 server unavailable - check it on the Home page.");
+      return;
+    }
+    setT4FetchStatus("Listing scenarios...");
+    const listing = await api("/api/client/t4_scenarios", {dataset_id: dataset});
+    const scenario = matchT4Scenario(listing.scenarios || [], scenarioName(s));
+    if (!scenario) {
+      const names = (listing.scenarios || []).map(x => x.name).join(", ") || "none";
+      setT4FetchStatus(`No scene in ${dataset} matches "${scenarioName(s)}" (${names}). `
+        + `Pick one on Home, 3D scenes.`);
+      return;
+    }
+    setT4FetchStatus(`Sizing ${scenario}...`);
+    const est = await api("/api/client/t4_estimate", {dataset_id: dataset, scenario});
+    const size = fmtBytes(est.estimated_bytes);
+    setT4FetchStatus(`${scenario}: ${fmt(est.frames)} frames, about ${size}.`);
+    if (!confirm(`Download ${scenario} (${fmt(est.frames)} frames, about ${size})?\n\n`
+      + `${est.note || ""}`)) {
+      setT4FetchStatus("");
+      return;
+    }
+    const started = await api("/api/client/t4_fetch", {dataset_id: dataset, scenario});
+    state.t4Job = started.job;
+    watchT4Fetch();
+  } catch (err) {
+    setT4FetchStatus(`Download failed: ${err.message}`);
+  } finally {
+    update3dButton();
+  }
+}
+function watchT4Fetch() {
+  if (watchT4Fetch._timer) return;
+  watchT4Fetch._timer = setInterval(async () => {
+    let job;
+    try { job = (await api("/api/client/t4_fetch_status", {})).job; }
+    catch { return; }  // transient; the next tick asks again
+    state.t4Job = job;
+    if (!job) { stopT4Watch(); return; }
+    const p = job.progress || {};
+    if (job.active && p.total) {
+      const eta = p.eta_sec ? ` · ${Math.round(p.eta_sec)}s left` : "";
+      setT4FetchStatus(`${job.scenario}: frame ${fmt(p.index)}/${fmt(p.total)} · `
+        + `${fmtBytes(p.bytes)}${eta}`);
+    } else if (job.active) {
+      setT4FetchStatus(job.message || "Starting...");
+    } else {
+      setT4FetchStatus(job.error ? `${job.message} ${job.error}` : job.message);
+      stopT4Watch();
+      // The scene list is what gates Open 3D, so re-read it before enabling anything.
+      probeT4Scenes().then(() => {
+        if (job.state === "done") toast("3D scene ready - Open 3D is enabled.");
+      });
+    }
+    update3dButton();
+  }, 700);
+}
+function stopT4Watch() {
+  clearInterval(watchT4Fetch._timer);
+  watchT4Fetch._timer = null;
 }
 function open3dViewer() {
   const scene = selectedT4Scene();
@@ -1362,6 +1529,8 @@ els.resetView.addEventListener("click", () => {
 });
 els.openViewer.addEventListener("click", () => openViewer());
 if (els.open3d) els.open3d.addEventListener("click", () => open3dViewer());
+if (els.get3d) els.get3d.addEventListener("click", () => download3dScene());
+if (els.open3dServer) els.open3dServer.addEventListener("click", () => openServer3dViewer());
 els.previewSlider.addEventListener("input", () => {
   if (!state.previewFrames.length) return;
   state.previewIndex = Math.max(0, Math.min(state.previewFrames.length - 1, Number(els.previewSlider.value) || 0));

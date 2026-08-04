@@ -3,6 +3,12 @@ var state = {
   parquets: [], path: "", pathB: "", compare: false, scenarios: [], labels: [], selected: null, curve: [], stats: null, devopsResult: null, devopsFrameResults: null,
   // Cached T4 scenes by dataset id, or null where /viewer/three is not served (dashboard).
   t4Scenes: null,
+  // Probe of the T4 server, fetched once and only when an uncached scene is selected;
+  // and the fetch job in flight, if any.
+  t4Server: null, t4Job: null,
+  // Origin of the dashboard's Streamlit pages, for its server-side 3D viewer. Empty
+  // string means same origin, which is the case when the dashboard serves this page.
+  t4Dashboard: "",
   previewFrames: [], previewIndex: 0, previewVisible: false, previewDrag: null, previewResize: null,
   previewPanX: 0, previewPanY: 0, previewScale: 1, previewPanning: false, previewLastX: 0, previewLastY: 0,
   previewHoverBox: null, previewMouseX: 0, previewMouseY: 0, previewShowRings: true, previewShowLabels: false,
@@ -23,7 +29,8 @@ var els = {
   previewWindow: $("previewWindow"), previewTitlebar: $("previewTitlebar"), previewTitle: $("previewTitle"), previewResize: $("previewResize"),
   preview: $("previewCanvas"), previewStatus: $("previewStatus"), previewSlider: $("previewSlider"), previewFit: $("previewFitBtn"), previewRings: $("previewRingsBtn"), previewLabels: $("previewLabelsBtn"), previewOpen: $("previewOpenBtn"), previewClose: $("previewCloseBtn"),
   previewLayers: $("previewLayers"), previewDevopsOverlay: $("previewDevopsOverlay"),
-  curve: $("curveCanvas"), curveStatus: $("curveStatus"), openViewer: $("openViewerBtn"), open3d: $("open3dBtn"), labelBreakdown: $("labelBreakdown"),
+  curve: $("curveCanvas"), curveStatus: $("curveStatus"), openViewer: $("openViewerBtn"), open3d: $("open3dBtn"),
+  get3d: $("get3dBtn"), open3dServer: $("open3dServerBtn"), t4FetchStatus: $("t4FetchStatus"), labelBreakdown: $("labelBreakdown"),
   intentPanel: $("intentPanel"), resultPanel: $("resultPanel"),
   devopsIntent: $("devopsIntentBtn"), nearPed: $("nearPedBtn"), nearPedFp: $("nearPedFpBtn"), animal: $("animalBtn"), falseStop: $("falseStopBtn"),
   hoverCard: $("hoverCard"), compareBanner: $("compareBanner"), compareBannerText: $("compareBannerText"),
@@ -48,6 +55,13 @@ function escapeHtml(v) {
 }
 function rate(v) { return Number.isFinite(Number(v)) ? `${Math.round(Number(v) * 100)}%` : "-"; }
 function fmt(n) { return Number(n || 0).toLocaleString(); }
+function fmtBytes(n) {
+  if (n === null || n === undefined) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = Number(n) || 0, i = 0;
+  while (Math.abs(v) >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return i === 0 ? `${v.toFixed(0)} B` : `${v.toFixed(1)} ${units[i]}`;
+}
 function fmtDelta(n) {
   const v = Number(n || 0);
   return `${v > 0 ? "+" : ""}${v.toLocaleString()}`;

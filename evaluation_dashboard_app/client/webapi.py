@@ -423,6 +423,17 @@ def normalize_scenarios(payload: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _dashboard_page_origin() -> str:
+    """Where the dashboard's Streamlit pages live, e.g. its T4 3D Viewer.
+
+    The export API is mounted at ``/bbox-api`` behind nginx while the pages sit at the
+    root, so the saved server URL is one suffix away from the page origin.
+    """
+    base = config.Config.load().effective_server()
+    suffix = "/bbox-api"
+    return base[: -len(suffix)] if base.endswith(suffix) else base
+
+
 def _t4_config_view() -> dict[str, Any]:
     from client import t4
 
@@ -430,6 +441,9 @@ def _t4_config_view() -> dict[str, Any]:
     effective = cfg.effective_t4_base_url()
     return {
         "t4_base_url": effective,
+        # Lets the explorer offer the dashboard's own 3D viewer as an alternative to
+        # downloading the scene; empty when no server is configured.
+        "dashboard_url": _dashboard_page_origin(),
         # The env var shadows whatever this page saves, so say so instead of letting a
         # save appear to have no effect.
         "env_override": bool(os.environ.get("EVALDASH_T4_BASE_URL", "").strip()),

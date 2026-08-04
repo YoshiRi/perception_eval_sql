@@ -409,7 +409,16 @@ never proxied it — the browser fetches `frame.bin` from it directly, which is 
 The home page's **3D point clouds & cameras** card does all of this without a terminal:
 save the t4-server URL (with a reachability check), list a dataset's scenarios, see the
 size before committing — the download button only appears after the estimate — fetch
-with a progress bar, and open, resume or delete cached scenes. The CLI equivalents:
+with a progress bar, and open, resume or delete cached scenes.
+
+The explorer's **Scenario Actions** card answers "this scene is not downloaded yet"
+without the trip back to the home page: **Download 3D** sizes the selected scenario's
+scene and fetches it into the local cache (a progress line, and the button becomes
+Cancel), and **Open 3D on server** opens the dashboard's own T4 3D Viewer page for the
+same scene, which streams from the deployed dataset server and caches nothing. The first
+needs disk and patience once; the second needs the network every time.
+
+The CLI equivalents:
 
 ```bash
 evaldash-local login --server https://dash --token <t> --t4-base-url http://t4host:8000
