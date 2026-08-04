@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.parse
 
 from client import config, serve, sync
 from client.remote import (
@@ -26,6 +27,10 @@ starting a run on the server:
 
 The server needs EVAL_EXPORT_TOKEN set for the export routes to answer at all.
 """
+
+
+def _host_of(url: str) -> str:
+    return urllib.parse.urlsplit(url).netloc.lower()
 
 
 def _remote(args: argparse.Namespace) -> Remote:
@@ -90,6 +95,18 @@ def cmd_login(args: argparse.Namespace) -> int:
             print("error: the Cloudflare sign-in produced no session", file=sys.stderr)
             return 1
         print(f"cloudflare  signed in to {cfg.server_url}")
+        # Access grants a session per application, so the T4 visualizer on its own
+        # hostname needs its own sign-in. 3D is optional, so a failure only warns.
+        t4_url = cfg.effective_t4_base_url()
+        if t4_url and _host_of(t4_url) != _host_of(cfg.server_url):
+            try:
+                if cf_browser_login(t4_url):
+                    print(f"cloudflare  signed in to {t4_url} (3D scenes)")
+                else:
+                    print(f"warning: no session minted for {t4_url}; 3D scenes stay unavailable",
+                          file=sys.stderr)
+            except AuthError as exc:
+                print(f"warning: T4 sign-in skipped: {exc}", file=sys.stderr)
 
     try:
         resolved, health = probe_server(cfg, cfg.server_url)
@@ -787,7 +804,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cf-client-id", help="Cloudflare Access service token id")
     p.add_argument("--cf-client-secret", help="Cloudflare Access service token secret")
     p.add_argument("--cf-login", action="store_true",
-                   help="sign in to Cloudflare Access in a browser (no secret to store)")
+                   help="sign in to Cloudflare Access in a browser, for the dashboard and "
+                        "the T4 visualizer (no secret to store)")
     p.add_argument("--t4-base-url", help="T4 visualizer URL used for 3D point clouds")
     p.add_argument("--insecure", action="store_true", help="skip TLS verification")
     p.add_argument("--reset", action="store_true",

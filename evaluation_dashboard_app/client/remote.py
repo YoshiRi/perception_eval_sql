@@ -87,6 +87,39 @@ def cf_session_token(base_url: str, *, refresh: bool = False) -> str:
     return token
 
 
+def access_opener(config: Config) -> urllib.request.OpenerDirector:
+    """An opener that names the Access bounce instead of downloading its login page.
+
+    Shared with :mod:`client.t4`: the T4 visualizer sits behind the same Access edge as
+    the dashboard, so it needs the same two behaviours, not a second interpretation.
+    """
+    handlers: list[Any] = [_AccessAwareRedirect]
+    if not config.verify_tls:
+        handlers.append(urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
+    return urllib.request.build_opener(*handlers)
+
+
+def access_headers(config: Config, base_url: str) -> dict[str, str]:
+    """The Cloudflare Access credential to send to ``base_url``, if there is one.
+
+    A service token when configured, otherwise a browser session established with
+    `cloudflared access login` -- the service token is preferred because it needs no
+    browser and never expires mid-download. Sessions are cached per app origin, so the
+    dashboard and the T4 visualizer each get their own.
+    """
+    if config.cf_client_id and config.cf_client_secret:
+        return {
+            "CF-Access-Client-Id": config.cf_client_id,
+            "CF-Access-Client-Secret": config.cf_client_secret,
+        }
+    # Access always fronts HTTPS, so a plain-HTTP target (a direct port, a test server)
+    # is not worth a `cloudflared` subprocess on every request.
+    if urllib.parse.urlsplit(base_url).scheme != "https":
+        return {}
+    session = cf_session_token(base_url)
+    return {"Cookie": f"CF_Authorization={session}"} if session else {}
+
+
 def cf_browser_login(base_url: str) -> str:
     """Run the interactive Cloudflare sign-in, then return the JWT it minted."""
     binary = _cloudflared()
@@ -112,10 +145,7 @@ class Remote:
         self.config = config
         self.base_url = (base_url or config.require_server()).rstrip("/")
         self._ssl_context = None if config.verify_tls else ssl._create_unverified_context()
-        handlers: list[Any] = [_AccessAwareRedirect]
-        if self._ssl_context is not None:
-            handlers.append(urllib.request.HTTPSHandler(context=self._ssl_context))
-        self._opener = urllib.request.build_opener(*handlers)
+        self._opener = access_opener(config)
 
     # ------------------------------------------------------------------ plumbing
 
@@ -124,17 +154,7 @@ class Remote:
         token = self.config.resolved_token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        # Cloudflare Access service token, mirroring how the dashboard authenticates
-        # its own outbound calls to the T4 visualizer. Failing that, a browser session
-        # the user established with `cloudflared access login` -- the service token is
-        # preferred because it needs no browser and never expires mid-download.
-        if self.config.cf_client_id and self.config.cf_client_secret:
-            headers["CF-Access-Client-Id"] = self.config.cf_client_id
-            headers["CF-Access-Client-Secret"] = self.config.cf_client_secret
-        else:
-            session = cf_session_token(self.base_url)
-            if session:
-                headers["Cookie"] = f"CF_Authorization={session}"
+        headers.update(access_headers(self.config, self.base_url))
         if extra:
             headers.update(extra)
         return headers

@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import ssl
 import struct
 import time
 import urllib.error
@@ -42,7 +41,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from client import config
+from client import config, remote
 
 FRAME_MAGIC = b"T4V3D002"
 
@@ -106,14 +105,20 @@ class T4Client:
         self.base_url = base
         self.cfg = cfg or config.Config.load()
         self.timeout = timeout
-        self._ssl = None if self.cfg.verify_tls else ssl._create_unverified_context()
+        # t4-server sits behind the same Cloudflare Access edge as the dashboard, so it
+        # gets the same opener: one that refuses to follow the sign-in bounce, and that
+        # honours `verify_tls`.
+        self._opener = remote.access_opener(self.cfg)
 
     def _headers(self) -> dict[str, str]:
-        headers = {"User-Agent": "evaldash-local/1"}
-        if self.cfg.cf_client_id and self.cfg.cf_client_secret:
-            headers["CF-Access-Client-Id"] = self.cfg.cf_client_id
-            headers["CF-Access-Client-Secret"] = self.cfg.cf_client_secret
-        return headers
+        return {"User-Agent": "evaldash-local/1", **remote.access_headers(self.cfg, self.base_url)}
+
+    def _access_error(self) -> "T4Error":
+        return T4Error(
+            f"{self.base_url} is behind Cloudflare Access and this app has no valid session. "
+            "Sign in from Home > 3D scenes, or run "
+            f"`cloudflared access login {self.base_url}`, or set a service token in Settings."
+        )
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> tuple[bytes, dict[str, str]]:
         url = f"{self.base_url}{path}"
@@ -121,19 +126,23 @@ class T4Client:
             url = f"{url}?{urllib.parse.urlencode(params)}"
         request = urllib.request.Request(url, method="GET", headers=self._headers())
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout, context=self._ssl) as response:
+            # The opener carries the TLS context, so no `context=` here.
+            with self._opener.open(request, timeout=self.timeout) as response:
                 return response.read(), {k.lower(): v for k, v in response.headers.items()}
+        except remote.AuthError as exc:
+            # Access answers an unauthenticated request with a 302 to its login page;
+            # the opener stops there, which is the only place the cause is still legible.
+            raise self._access_error() from exc
         except urllib.error.HTTPError as exc:
             body = ""
             try:
                 body = exc.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
-            if "<html" in body.lower() and "cloudflare" in body.lower():
-                raise T4Error(
-                    "Got a Cloudflare sign-in page from the T4 visualizer. Configure a service "
-                    "token with --cf-client-id / --cf-client-secret."
-                ) from exc
+            lowered = body.lower()
+            # A hard Access refusal (no redirect) still arrives as HTML or error 1010.
+            if "error code: 1010" in lowered or ("<html" in lowered and "cloudflare" in lowered):
+                raise self._access_error() from exc
             raise T4Error(f"HTTP {exc.code} from {url}: {body}") from exc
         except urllib.error.URLError as exc:
             raise T4Error(f"Cannot reach {url}: {exc.reason}") from exc

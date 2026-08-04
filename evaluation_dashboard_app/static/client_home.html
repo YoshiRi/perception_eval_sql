@@ -275,6 +275,7 @@
         <input id="t4Url" placeholder="http://t4host:8000" spellcheck="false">
       </label>
       <button id="t4SaveBtn" style="align-self: flex-end">Save &amp; check</button>
+      <button id="t4LoginBtn" style="align-self: flex-end" hidden>Sign in to Cloudflare</button>
       <span class="pill" id="t4Pill" style="align-self: flex-end; margin-bottom: 8px"></span>
     </div>
     <p class="hint" id="t4Status">Point clouds and camera overlays come from a separate
@@ -784,6 +785,12 @@
     if (t4Timer) { clearInterval(t4Timer); t4Timer = null; }
   }
 
+  // Only offered when the probe blamed Cloudflare Access: for a host that is simply
+  // down, a sign-in button is a false lead.
+  function showT4Login(server) {
+    $("t4LoginBtn").hidden = !(server && server.needs_login);
+  }
+
   async function refreshT4(probe) {
     try {
       const data = await api("/api/client/t4_state", {probe: probe === true});
@@ -792,10 +799,12 @@
       $("t4CachePath").textContent = `Cache: ${cfg.cache_root || ""}`;
       if (data.server) {
         if (data.server.reachable) t4Pill("ok", "ready");
+        else if (data.server.needs_login) t4Pill("err", "sign-in needed");
         else t4Pill(cfg.t4_base_url ? "err" : "no", cfg.t4_base_url ? "unreachable" : "not set");
         if (!data.server.reachable && data.server.reason && cfg.t4_base_url) {
           $("t4Status").textContent = data.server.reason;
         }
+        showT4Login(data.server);
       }
       if (cfg.env_override) {
         $("t4Status").textContent =
@@ -915,11 +924,29 @@
     try {
       const res = await api("/api/client/t4_config", {t4_base_url: $("t4Url").value.trim()});
       $("t4Url").value = res.config.t4_base_url || "";
+      showT4Login(res.server);
       if (res.server.reachable) { t4Pill("ok", "ready"); banner("ok", "T4 server saved and reachable."); }
       else if (!res.config.t4_base_url) { t4Pill("no", "not set"); }
+      else if (res.server.needs_login) {
+        t4Pill("err", "sign-in needed");
+        banner("err", "Saved. This host is behind Cloudflare Access - sign in to use it.");
+      }
       else { t4Pill("err", "unreachable"); banner("err", `Saved, but not reachable: ${res.server.reason}`); }
     } catch (e) { banner("err", String(e.message || e)); }
     finally { btn.disabled = false; btn.textContent = "Save & check"; }
+  };
+  $("t4LoginBtn").onclick = async () => {
+    const btn = $("t4LoginBtn");
+    btn.disabled = true; btn.textContent = "Waiting for browser...";
+    banner("info", "Complete the Cloudflare sign-in in the browser window that just opened.");
+    try {
+      const res = await api("/api/client/t4_login");
+      showT4Login(res.server);
+      if (res.server.reachable) { t4Pill("ok", "ready"); banner("ok", "Signed in; T4 server reachable."); }
+      else { t4Pill("err", "unreachable"); banner("err", `Signed in, but not reachable: ${res.server.reason}`); }
+      refreshT4(false);
+    } catch (e) { banner("err", String(e.message || e)); }
+    finally { btn.disabled = false; btn.textContent = "Sign in to Cloudflare"; }
   };
   $("t4ListBtn").onclick = t4LoadScenarios;
   $("t4SizeBtn").onclick = t4CheckOrDownload;

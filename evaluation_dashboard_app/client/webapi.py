@@ -441,12 +441,38 @@ def _t4_probe(base_url: str) -> dict[str, Any]:
     from client import t4
 
     if not base_url:
-        return {"reachable": False, "reason": "no T4 server configured"}
+        return {"reachable": False, "reason": "no T4 server configured", "needs_login": False}
     try:
         t4.T4Client(base_url, config.Config.load(), timeout=6.0).health()
-        return {"reachable": True, "reason": ""}
+        return {"reachable": True, "reason": "", "needs_login": False}
     except Exception as exc:
-        return {"reachable": False, "reason": str(exc)[:200]}
+        # 400, not 200: the Access message ends in the command that fixes it, and a
+        # sign-in command cut mid-URL is worse than no command at all.
+        reason = str(exc)[:400]
+        # Access failures are fixable from the page (sign in), unlike a down server, so
+        # the UI needs to tell the two apart.
+        return {"reachable": False, "reason": reason, "needs_login": "Cloudflare Access" in reason}
+
+
+def client_t4_login(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run `cloudflared access login` for the T4 host and re-probe.
+
+    Access grants a session per application, so signing into the dashboard does nothing
+    for the visualizer on its own hostname. This blocks while the user completes the
+    sign-in in a browser; the client's HTTP server is threaded, so other requests still
+    answer, but the caller must not impose a short timeout.
+    """
+    from client import remote
+
+    cfg = config.Config.load()
+    url = cfg.effective_t4_base_url()
+    if not url:
+        raise ValueError("Set a T4 server URL first.")
+    token = remote.cf_browser_login(url)
+    if not token:
+        raise RuntimeError("The Cloudflare sign-in produced no session.")
+    view = _t4_config_view()
+    return {"ok": True, "config": view, "server": _t4_probe(view["t4_base_url"])}
 
 
 def client_t4_state(payload: dict[str, Any]) -> dict[str, Any]:
@@ -742,6 +768,7 @@ CLIENT_ROUTES = {
     "/api/client/workflow_cancel": client_workflow_cancel,
     "/api/client/t4_state": client_t4_state,
     "/api/client/t4_config": client_t4_config,
+    "/api/client/t4_login": client_t4_login,
     "/api/client/t4_scenarios": client_t4_scenarios,
     "/api/client/t4_estimate": client_t4_estimate,
     "/api/client/t4_fetch": client_t4_fetch,

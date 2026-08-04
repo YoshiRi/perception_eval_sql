@@ -1,11 +1,13 @@
 """The offline 3D cache must replay t4-server byte-for-byte with the network gone."""
 
+import io
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
 
-from client import config, t4
+from client import config, remote, t4
 from tests.fake_t4_server import FakeT4Server, pack_frame
 
 DATASET = "T4DS0001"
@@ -269,3 +271,73 @@ def test_scene_dir_sanitises_awkward_names(home):
     path = t4.scene_dir("../../etc", "a/b c")
     assert ".." not in path.parts
     assert path.is_relative_to(t4.t4_root())
+
+
+# ---------------------------------------------------------- Cloudflare Access
+
+# t4-server can sit behind the same Access edge as the dashboard, on its own hostname.
+# Access grants a session per application, so the T4 path needs its own credential --
+# and, when it has none, has to say "Cloudflare Access" rather than "Non-JSON reply".
+
+
+@pytest.fixture(autouse=True)
+def _clean_cf_session(monkeypatch):
+    monkeypatch.setattr(remote, "_CF_SESSION", {})
+
+
+def _cf_cfg(**over):
+    cfg = config.Config()
+    for key, value in over.items():
+        setattr(cfg, key, value)
+    return cfg
+
+
+def test_a_service_token_is_sent_to_the_t4_host(monkeypatch):
+    monkeypatch.setattr(remote, "cf_session_token", lambda url: "aa.bb.cc")
+    headers = t4.T4Client("https://t4.example.test",
+                          _cf_cfg(cf_client_id="id.access", cf_client_secret="shh"))._headers()
+    assert headers["CF-Access-Client-Id"] == "id.access"
+    assert "Cookie" not in headers
+
+
+def test_a_browser_session_is_used_when_no_service_token_is_set(monkeypatch):
+    monkeypatch.setattr(remote, "cf_session_token", lambda url: "aa.bb.cc")
+    client = t4.T4Client("https://t4.example.test", _cf_cfg())
+    assert client._headers()["Cookie"] == "CF_Authorization=aa.bb.cc"
+
+
+def test_the_session_is_looked_up_for_the_t4_host_not_the_dashboard(monkeypatch):
+    asked = []
+    monkeypatch.setattr(remote, "cf_session_token", lambda url: asked.append(url) or "aa.bb.cc")
+    t4.T4Client("https://t4.example.test", _cf_cfg(server_url="https://dash.example.test"))._headers()
+    assert asked == ["https://t4.example.test"]
+
+
+def test_the_access_sign_in_bounce_is_named_not_parsed_as_json(monkeypatch):
+    """The 302 to the login page used to surface as an unexplained 'Non-JSON reply'."""
+    client = t4.T4Client("https://t4.example.test", _cf_cfg())
+
+    def bounce(request, timeout=None):
+        raise remote.AuthError(remote.CF_ACCESS_HELP)
+
+    monkeypatch.setattr(client._opener, "open", bounce)
+    with pytest.raises(t4.T4Error, match="Cloudflare Access"):
+        client.health()
+
+
+def test_a_hard_access_refusal_is_named_too(monkeypatch):
+    client = t4.T4Client("https://t4.example.test", _cf_cfg())
+
+    def refuse(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {},
+                                     io.BytesIO(b"error code: 1010\n"))
+
+    monkeypatch.setattr(client._opener, "open", refuse)
+    with pytest.raises(t4.T4Error, match="Cloudflare Access"):
+        client.health()
+
+
+def test_the_error_names_the_command_that_fixes_it(monkeypatch):
+    client = t4.T4Client("https://t4.example.test", _cf_cfg())
+    message = str(client._access_error())
+    assert "cloudflared access login https://t4.example.test" in message

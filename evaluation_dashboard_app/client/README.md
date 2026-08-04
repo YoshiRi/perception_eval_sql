@@ -420,6 +420,19 @@ evaldash-local t4 ls                                # what is cached
 evaldash-local t4 rm <dataset_id> <scenario>
 ```
 
+**If t4-server is behind Cloudflare Access too**, it needs its own credential: Access
+grants a session per application, so signing into the dashboard does nothing for a
+visualizer on a different hostname. A saved URL that answers with a sign-in page shows
+as *sign-in needed* on the card, with a **Sign in to Cloudflare** button beside it;
+`login --cf-login` signs into both hosts, and the equivalent by hand is:
+
+```bash
+cloudflared access login https://t4host.example.com
+```
+
+A service token (`--cf-client-id` / `--cf-client-secret`) covers both hosts and takes
+precedence, which is the right choice for an unattended machine.
+
 `fetch` sizes the scene from one frame and asks before committing, because the numbers are
 large: frames are `float32[4]` per point with no decimation option, so one frame is
 roughly 1.6–3.2 MB and a 100-frame scene is 200–300 MB. Fetching is resumable and
