@@ -260,6 +260,16 @@ class Remote:
     def workflow_start(self, params: dict[str, Any]) -> dict[str, Any]:
         return self.post_json("/api/workflow_start", params, timeout=180.0)
 
+    def workflow_trends(
+        self, *, topic: str = "", query: str = "", limit: int = 100, metrics: bool = True
+    ) -> dict[str, Any]:
+        """Release history with the summary-derived metrics the trend view charts."""
+        return self.post_json(
+            "/api/workflow_trends",
+            {"topic": topic, "q": query, "limit": limit, "metrics": metrics},
+            timeout=180.0,
+        )
+
     def workflow_tasks(
         self, *, limit: int = 25, since_days: int | None = 7, mine: str = ""
     ) -> dict[str, Any]:

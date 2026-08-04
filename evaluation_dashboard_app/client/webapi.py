@@ -13,9 +13,11 @@ user running the app cannot already reach. The stored token is never echoed back
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -665,8 +667,64 @@ def client_workflow_cancel(payload: dict[str, Any]) -> dict[str, Any]:
     return _forward("workflow_cancel", {"task_id": task_id})
 
 
+def _trends_cache_path() -> Path:
+    return config.cache_dir() / "trends.json"
+
+
+def client_trends(payload: dict[str, Any]) -> dict[str, Any]:
+    """Release history for the trend view, with the last good answer kept on disk.
+
+    The history lives in the server's data root, so this is a forward rather than
+    something the workspace can answer. Caching it keeps the page readable on a
+    laptop that is off the VPN -- the whole reason this client exists -- and the
+    payload is ~100 KB for every release the server has.
+    """
+    try:
+        data = _forward("workflow_trends", {
+            "topic": str(payload.get("topic") or ""),
+            "query": str(payload.get("q") or ""),
+            "limit": int(payload.get("limit") or 200),
+            "metrics": payload.get("metrics") is not False,
+        })
+    except Exception as exc:
+        if payload.get("allow_cache") is False:
+            raise
+        cached = _read_trends_cache()
+        if cached is None:
+            raise
+        cached["stale"] = True
+        cached["stale_reason"] = str(exc)[:300]
+        return cached
+    data["stale"] = False
+    data["fetched_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    _write_trends_cache(data)
+    return data
+
+
+def _read_trends_cache() -> dict[str, Any] | None:
+    path = _trends_cache_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_trends_cache(data: dict[str, Any]) -> None:
+    try:
+        config.ensure_dirs()
+        _trends_cache_path().write_text(
+            json.dumps(data, separators=(",", ":"), ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        pass  # a cache that cannot be written is not a reason to fail the request
+
+
 CLIENT_ROUTES = {
     "/api/client/state": client_state,
+    "/api/client/trends": client_trends,
     "/api/client/login": client_login,
     "/api/client/reset_server": client_reset_server,
     "/api/client/remote_runs": client_remote_runs,
@@ -725,6 +783,7 @@ def build_handler() -> type:
             page = {
                 "/": "client_home.html", "/home": "client_home.html", "/home/": "client_home.html",
                 "/workflow": "client_workflow.html", "/workflow/": "client_workflow.html",
+                "/trends": "client_trends.html", "/trends/": "client_trends.html",
             }.get(parsed.path)
             if page:
                 try:

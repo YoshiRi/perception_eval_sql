@@ -852,6 +852,22 @@ def _job_id_from_matching_release_run_metadata(root_dir: str | Path | None, targ
     return ""
 
 
+_RELEASE_DATE_PATTERN = re.compile(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})")
+
+
+def _release_date_key(text: str) -> tuple[int, int, int]:
+    """Sortable (year, month, day) for the free-form dates releases record.
+
+    Accepts ``2026.6.9``, ``2026.07.08`` and ``2026-05-18`` alike. Anything
+    unparseable sorts oldest, which keeps it out of the way of a trend's recent end.
+    """
+    match = _RELEASE_DATE_PATTERN.search(str(text or ""))
+    if not match:
+        return (0, 0, 0)
+    year, month, day = (int(part) for part in match.groups())
+    return (year, month, day)
+
+
 def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[TrendReleaseGroup]:
     metadata_files = discover_trend_metadata_files(root_dir, include_release_specs=True)
     grouped: dict[str, TrendReleaseGroup] = {}
@@ -1000,14 +1016,18 @@ def discover_trend_release_groups(root_dir: str | Path | None = None) -> list[Tr
                 },
             )
 
-    def _sort_key(group: TrendReleaseGroup) -> tuple[str, str]:
+    def _sort_key(group: TrendReleaseGroup) -> tuple[tuple[int, int, int], str, str]:
         dates = [
             str(job["metadata"].get("date") or "")
             for job in group.jobs.values()
             if isinstance(job.get("metadata"), dict)
         ]
-        newest = max(dates) if dates else ""
-        return (newest, group.display_name)
+        # Compared as parsed dates, not as strings: releases write the month both
+        # padded and unpadded ("2026.07.08" and "2026.6.9"), and a string comparison
+        # puts July 2026 before March 2026, so every trend chart drawn from this order
+        # ran out of chronological sequence.
+        newest = max(dates, key=_release_date_key) if dates else ""
+        return (_release_date_key(newest), newest, group.display_name)
 
     return sorted(_deduplicate_trend_release_groups(grouped.values()), key=_sort_key)
 

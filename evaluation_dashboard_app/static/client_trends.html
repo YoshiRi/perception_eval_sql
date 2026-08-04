@@ -1,0 +1,643 @@
+<!--
+  Release trend page for the local desktop client (evaldash-local).
+
+  Served only by client.webapi.ClientHandler at "/trends". The history lives in the
+  server's data root, so this page is a thin reader of /api/client/trends, which
+  forwards to /api/workflow_trends and keeps the last good answer on disk so the page
+  still opens off the VPN. Styling mirrors client_home.html so the pages read as one app.
+
+  Charting rules this page follows:
+  * One topic at a time. Different topics are different evaluation setups, and
+    overlaying them invites a comparison that is not meaningful.
+  * One measure per axis, ever. The metrics differ by orders of magnitude
+    (mAP 0..1 vs speed error 1e7), so the overview is small multiples with their own
+    scales, never a second y-axis.
+  * A single series wears the accent; the title names it, so no legend is needed.
+    Green/red is reserved for whether a change was an improvement, which depends on
+    the metric: higher is better for mAP, lower is better for FNR and the errors.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evaluation Dashboard — Trends</title>
+
+<!-- Loads before body paint so the saved theme applies without a flash. -->
+<script>/*__BBOX_THEME_JS__*/</script>
+
+<style>
+  :root[data-theme="dark"] {
+    --bg: #050812; --panel: #080d1c; --panel2: #0d1426; --surface: #0f172a;
+    --line: rgba(148,163,184,.22); --line-strong: rgba(148,163,184,.4);
+    --text: #eaf2ff; --muted: #91a4bf;
+    --accent: #38bdf8; --accent-fg: #bae6fd; --on-accent: #07111f;
+    --good: #34d399; --bad: #fb7185; --warn: #fbbf24;
+    --good-bg: rgba(6,78,59,.5); --bad-bg: rgba(127,29,29,.45); --warn-bg: rgba(120,53,15,.45);
+  }
+  :root[data-theme="light"] {
+    --bg: #f1f5f9; --panel: #ffffff; --panel2: #f8fafc; --surface: #ffffff;
+    --line: rgba(71,85,105,.2); --line-strong: rgba(71,85,105,.38);
+    --text: #0f172a; --muted: #52627a;
+    --accent: #0891b2; --accent-fg: #075985; --on-accent: #ffffff;
+    --good: #047857; --bad: #be123c; --warn: #b45309;
+    --good-bg: rgba(16,185,129,.14); --bad-bg: rgba(244,63,94,.12); --warn-bg: rgba(245,158,11,.15);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 0 48px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 22px;
+  }
+  header .wrap { display: flex; align-items: center; gap: 14px; padding: 14px 20px; }
+  h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .spacer { flex: 1; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  button, .btn {
+    font: inherit; font-weight: 550; cursor: pointer;
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    padding: 7px 13px; text-decoration: none; display: inline-block;
+    transition: border-color .12s, background .12s;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.icon { padding: 6px 9px; }
+  select {
+    font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px;
+  }
+  select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label.field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+
+  /* Headline: the latest release, and what moved since the one before it. */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 11px; padding: 11px 13px; min-width: 0;
+  }
+  .tile b {
+    display: block; font-size: 20px; font-weight: 700;
+    font-variant-numeric: tabular-nums; line-height: 1.2;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tile span { display: block; font-size: 10.5px; text-transform: uppercase;
+               letter-spacing: .06em; color: var(--muted); margin-top: 2px; }
+  .tile em { font-style: normal; font-size: 12px; font-weight: 700;
+             font-variant-numeric: tabular-nums; }
+
+  .chart-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .chart-title { font-size: 15px; font-weight: 650; }
+  .chart-sub { color: var(--muted); font-size: 12px; }
+  .canvas-wrap { position: relative; width: 100%; height: 300px; }
+  .canvas-wrap canvas { width: 100%; height: 100%; display: block; }
+  .tip {
+    position: absolute; pointer-events: none; z-index: 5;
+    background: var(--panel2); border: 1px solid var(--line-strong);
+    border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.45;
+    box-shadow: 0 6px 22px rgba(0,0,0,.28); max-width: 260px;
+  }
+  .tip b { display: block; font-size: 12.5px; margin-bottom: 2px; }
+  .tip .v { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+  /* Small multiples: every metric at a glance, each on its own scale. */
+  .sparks { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .spark {
+    background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 11px 6px; cursor: pointer;
+    transition: border-color .12s;
+  }
+  .spark:hover { border-color: var(--accent); }
+  .spark[aria-pressed="true"] { border-color: var(--accent); background: var(--panel); }
+  .spark .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .spark .name { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .spark .val { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .spark canvas { width: 100%; height: 34px; display: block; margin-top: 4px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--panel2); }
+  tbody tr.latest td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .scroll { overflow-x: auto; }
+  .name { font-weight: 550; }
+
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .empty { color: var(--muted); padding: 22px 4px; text-align: center; }
+  .banner { border-radius: 9px; padding: 10px 13px; margin-bottom: 14px; font-size: 13px; }
+  .banner.err { background: var(--bad-bg); color: var(--bad); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .banner.info { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); }
+  [hidden] { display: none !important; }
+</style>
+
+<header>
+  <div class="wrap">
+    <h1>Evaluation Dashboard <span>· Trends</span></h1>
+    <div class="spacer"></div>
+    <a class="btn" href="/">Home</a>
+    <a class="btn" href="/workflow">Workflow</a>
+    <a class="btn" href="/explorer">Explorer</a>
+    <button class="icon" id="themeBtn" title="Toggle theme">☀</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="banner" hidden></div>
+
+  <div class="card">
+    <div class="row">
+      <label class="field">Topic
+        <select id="topic"></select>
+      </label>
+      <label class="field">Metric
+        <select id="metric"></select>
+      </label>
+      <label class="field">Releases
+        <select id="limit">
+          <option value="8">last 8</option>
+          <option value="15" selected>last 15</option>
+          <option value="30">last 30</option>
+          <option value="0">all</option>
+        </select>
+      </label>
+      <div class="spacer"></div>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+    <p class="hint" id="sourceHint">Loading release history…</p>
+  </div>
+
+  <div class="card">
+    <h2>Latest Release</h2>
+    <p class="hint" id="latestMeta" style="margin:0 0 12px">–</p>
+    <div class="tiles" id="latestTiles"></div>
+  </div>
+
+  <div class="card">
+    <div class="chart-head">
+      <span class="chart-title" id="chartTitle">–</span>
+      <span class="chart-sub" id="chartSub"></span>
+    </div>
+    <div class="canvas-wrap" id="chartWrap">
+      <canvas id="chart"></canvas>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>All Metrics</h2>
+    <div class="sparks" id="sparks"></div>
+    <p class="hint">Each sparkline has its own scale — click one to chart it above.</p>
+  </div>
+
+  <div class="card">
+    <h2>Releases</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr id="tableHead"></tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  if (window.TH) TH.bindToggle($("themeBtn"));
+
+  // higher_is_better decides what green means; unit decides how a value is written.
+  const METRICS = [
+    {key: "mAP", label: "mAP", unit: "ratio", better: "up"},
+    {key: "precision", label: "Precision", unit: "ratio", better: "up"},
+    {key: "recall", label: "Recall", unit: "ratio", better: "up"},
+    {key: "FNR", label: "FNR", unit: "ratio", better: "down"},
+    {key: "overall_pass_rate", label: "Pass rate", unit: "percent", better: "up"},
+    {key: "x_error", label: "X error", unit: "metres", better: "down"},
+    {key: "y_error", label: "Y error", unit: "metres", better: "down"},
+    {key: "yaw_error", label: "Yaw error", unit: "rad", better: "down"},
+    {key: "speed_error", label: "Speed error", unit: "raw", better: "down"},
+    {key: "minADE@1s", label: "minADE@1s", unit: "metres", better: "down"},
+    {key: "minFDE@1s", label: "minFDE@1s", unit: "metres", better: "down"},
+    {key: "minADE@3s", label: "minADE@3s", unit: "metres", better: "down"},
+    {key: "minFDE@3s", label: "minFDE@3s", unit: "metres", better: "down"},
+    {key: "scenario_count", label: "Scenarios", unit: "count", better: "flat"}
+  ];
+  const state = {items: [], topic: "", metric: "mAP", limit: 15, hover: -1, stale: false};
+
+  /* ---------- formatting ---------- */
+  function fmtValue(v, unit) {
+    if (v == null || !Number.isFinite(Number(v))) return "–";
+    const n = Number(v);
+    if (unit === "ratio") return n.toFixed(3);
+    if (unit === "percent") return `${n.toFixed(1)}%`;
+    if (unit === "metres") return `${n.toFixed(2)} m`;
+    if (unit === "rad") return n.toFixed(3);
+    if (unit === "count") return n.toLocaleString();
+    // Raw magnitudes here span many orders; compact notation keeps the tile readable.
+    return Math.abs(n) >= 10000 ? n.toExponential(2) : n.toFixed(2);
+  }
+  function fmtDelta(d, unit) {
+    if (d == null || !Number.isFinite(Number(d))) return "";
+    const n = Number(d);
+    if (Math.abs(n) < 1e-12) return "±0";
+    const sign = n > 0 ? "+" : "−";
+    const a = Math.abs(n);
+    if (unit === "ratio") return `${sign}${a.toFixed(3)}`;
+    if (unit === "percent") return `${sign}${a.toFixed(1)}pp`;
+    if (unit === "count") return `${sign}${a.toLocaleString()}`;
+    return `${sign}${a >= 10000 ? a.toExponential(1) : a.toFixed(2)}`;
+  }
+  function deltaColor(d, better) {
+    if (d == null || !Number.isFinite(Number(d)) || Math.abs(Number(d)) < 1e-12 || better === "flat") {
+      return "var(--muted)";
+    }
+    const improved = better === "up" ? Number(d) > 0 : Number(d) < 0;
+    return improved ? "var(--good)" : "var(--bad)";
+  }
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c =>
+      ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  }
+  function metricDef(key) { return METRICS.find(m => m.key === key) || METRICS[0]; }
+
+  /* ---------- data shaping ---------- */
+  // Releases write the date both padded and unpadded ("2026.07.08", "2026.6.9"), so a
+  // string comparison puts July before March. Ordering the x-axis by time is the
+  // chart's own precondition -- it must hold whatever order a server sends back.
+  function dateKey(text) {
+    const m = /(\d{4})\D+(\d{1,2})\D+(\d{1,2})/.exec(String(text || ""));
+    return m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : 0;
+  }
+  function seriesForTopic() {
+    const rows = state.items
+      .filter(i => !state.topic || i.topic === state.topic)
+      .map((row, i) => ({row, i}))
+      // Stable within a date: two releases on the same day keep the server's order.
+      .sort((a, b) => (dateKey(a.row.date) - dateKey(b.row.date)) || (b.i - a.i))
+      .map(x => x.row);
+    return state.limit > 0 ? rows.slice(-state.limit) : rows;
+  }
+  function valueAt(row, key) {
+    const v = (row.metrics || {})[key];
+    return v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+  }
+  function pointsFor(key) {
+    return seriesForTopic().map((row, i) => ({
+      i, row, label: row.version || row.release || "?", date: row.date || "",
+      value: valueAt(row, key)
+    }));
+  }
+
+  /* ---------- canvas ---------- */
+  function setup(canvas) {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return {ctx, w: rect.width, h: rect.height};
+  }
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function niceBounds(values) {
+    const finite = values.filter(v => v != null);
+    if (!finite.length) return null;
+    let lo = Math.min(...finite), hi = Math.max(...finite);
+    if (lo === hi) { const pad = Math.abs(lo) * .1 || 1; lo -= pad; hi += pad; }
+    // A trend is about movement, so the axis frames the data rather than starting at
+    // zero -- with the zero line drawn when it is close enough to be relevant.
+    const pad = (hi - lo) * .12;
+    return {lo: lo - pad, hi: hi + pad};
+  }
+  function drawChart() {
+    const canvas = $("chart");
+    const {ctx, w, h} = setup(canvas);
+    ctx.clearRect(0, 0, w, h);
+    const def = metricDef(state.metric);
+    const pts = pointsFor(state.metric);
+    const known = pts.filter(p => p.value != null);
+    if (known.length < 1) {
+      ctx.fillStyle = cssVar("--muted");
+      ctx.font = "600 13px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`No ${def.label} recorded for these releases.`, w / 2, h / 2);
+      ctx.textAlign = "left";
+      return;
+    }
+    const bounds = niceBounds(pts.map(p => p.value));
+    const padL = 62, padR = 16, padT = 14, padB = 42;
+    const gx = padL, gy = padT, gw = Math.max(10, w - padL - padR), gh = Math.max(10, h - padT - padB);
+    const xAt = i => pts.length === 1 ? gx + gw / 2 : gx + (i / (pts.length - 1)) * gw;
+    const yAt = v => gy + gh - ((v - bounds.lo) / (bounds.hi - bounds.lo)) * gh;
+
+    // Recessive gridlines + axis labels.
+    ctx.strokeStyle = cssVar("--line");
+    ctx.fillStyle = cssVar("--muted");
+    ctx.font = "600 10.5px ui-sans-serif, system-ui, sans-serif";
+    ctx.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) {
+      const v = bounds.lo + (bounds.hi - bounds.lo) * (k / 4);
+      const y = Math.round(yAt(v)) + .5;
+      ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx + gw, y); ctx.stroke();
+      ctx.textAlign = "right";
+      ctx.fillText(fmtValue(v, def.unit), gx - 8, y + 3.5);
+    }
+    ctx.textAlign = "center";
+    // Label every release when they fit, otherwise thin them out evenly.
+    const step = Math.max(1, Math.ceil(pts.length / Math.max(2, Math.floor(gw / 78))));
+    pts.forEach((p, i) => {
+      if (i % step && i !== pts.length - 1) return;
+      const x = xAt(i);
+      ctx.fillStyle = cssVar("--muted");
+      ctx.fillText(String(p.label).slice(0, 14), x, gy + gh + 16);
+      if (p.date) ctx.fillText(String(p.date), x, gy + gh + 29);
+    });
+    ctx.textAlign = "left";
+
+    // The line: one series, accent, 2px, gaps where a release has no value.
+    const accent = cssVar("--accent");
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    let pen = false;
+    pts.forEach((p, i) => {
+      if (p.value == null) { pen = false; return; }
+      const x = xAt(i), y = yAt(p.value);
+      if (pen) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      pen = true;
+    });
+    ctx.stroke();
+
+    // Markers: 2px surface ring so overlapping points stay countable.
+    pts.forEach((p, i) => {
+      if (p.value == null) return;
+      const x = xAt(i), y = yAt(p.value);
+      const hovered = i === state.hover;
+      ctx.beginPath();
+      ctx.arc(x, y, hovered ? 6 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = accent;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = cssVar("--panel");
+      ctx.stroke();
+    });
+    // Direct label on the newest point: the number a reader wants without hovering.
+    const last = [...pts].reverse().find(p => p.value != null);
+    if (last) {
+      const x = xAt(last.i), y = yAt(last.value);
+      ctx.fillStyle = cssVar("--text");
+      ctx.font = "700 12px ui-sans-serif, system-ui, sans-serif";
+      ctx.textAlign = x > gx + gw - 60 ? "right" : "left";
+      ctx.fillText(fmtValue(last.value, def.unit), x + (x > gx + gw - 60 ? -10 : 10), y - 9);
+      ctx.textAlign = "left";
+    }
+    if (state.hover >= 0 && pts[state.hover] && pts[state.hover].value != null) {
+      const x = xAt(state.hover);
+      ctx.strokeStyle = cssVar("--line-strong");
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x, gy + gh); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    canvas._geom = {xAt, gx, gw, count: pts.length};
+  }
+  function drawSpark(canvas, key) {
+    const {ctx, w, h} = setup(canvas);
+    ctx.clearRect(0, 0, w, h);
+    const pts = pointsFor(key).map(p => p.value);
+    const bounds = niceBounds(pts);
+    if (!bounds) return;
+    const yAt = v => h - 3 - ((v - bounds.lo) / (bounds.hi - bounds.lo)) * (h - 6);
+    const xAt = i => pts.length === 1 ? w / 2 : (i / (pts.length - 1)) * (w - 2) + 1;
+    ctx.strokeStyle = cssVar("--accent");
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    let pen = false;
+    pts.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      if (pen) ctx.lineTo(xAt(i), yAt(v)); else ctx.moveTo(xAt(i), yAt(v));
+      pen = true;
+    });
+    ctx.stroke();
+    const lastIdx = pts.map((v, i) => v == null ? -1 : i).filter(i => i >= 0).pop();
+    if (lastIdx != null && lastIdx >= 0) {
+      ctx.beginPath();
+      ctx.arc(xAt(lastIdx), yAt(pts[lastIdx]), 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = cssVar("--accent");
+      ctx.fill();
+    }
+  }
+
+  /* ---------- render ---------- */
+  function renderTiles() {
+    const rows = seriesForTopic();
+    const latest = rows[rows.length - 1];
+    const prev = rows[rows.length - 2];
+    $("latestMeta").textContent = latest
+      ? `${latest.release}${latest.description ? ` · ${latest.description}` : ""}` +
+        `${prev ? `  ·  compared with ${prev.version || prev.release}` : ""}`
+      : "No release in this topic.";
+    const shown = METRICS.filter(m => m.key !== "scenario_count").slice(0, 5);
+    $("latestTiles").innerHTML = shown.map(m => {
+      const v = latest ? valueAt(latest, m.key) : null;
+      const p = prev ? valueAt(prev, m.key) : null;
+      const d = v == null || p == null ? null : v - p;
+      return `<div class="tile"><b>${fmtValue(v, m.unit)}</b><span>${esc(m.label)}</span>` +
+        `<em style="color:${deltaColor(d, m.better)}">${fmtDelta(d, m.unit)}</em></div>`;
+    }).join("");
+  }
+  function renderSparks() {
+    const rows = seriesForTopic();
+    const latest = rows[rows.length - 1];
+    $("sparks").innerHTML = METRICS.map(m => {
+      const v = latest ? valueAt(latest, m.key) : null;
+      return `<div class="spark" role="button" tabindex="0" data-metric="${esc(m.key)}"` +
+        ` aria-pressed="${m.key === state.metric}">` +
+        `<div class="top"><span class="name">${esc(m.label)}</span>` +
+        `<span class="val">${fmtValue(v, m.unit)}</span></div>` +
+        `<canvas data-spark="${esc(m.key)}"></canvas></div>`;
+    }).join("");
+    $("sparks").querySelectorAll("canvas[data-spark]").forEach(c => drawSpark(c, c.dataset.spark));
+  }
+  function renderTable() {
+    const cols = METRICS.filter(m => ["mAP", "precision", "recall", "FNR", "overall_pass_rate", "scenario_count"].includes(m.key));
+    $("tableHead").innerHTML = `<th>Release</th><th>Date</th>` +
+      cols.map(c => `<th class="num">${esc(c.label)}</th>`).join("");
+    const rows = seriesForTopic().slice().reverse();  // newest first to read
+    if (!rows.length) {
+      $("tableBody").innerHTML = `<tr><td class="empty" colspan="${cols.length + 2}">No releases for this topic.</td></tr>`;
+      return;
+    }
+    $("tableBody").innerHTML = rows.map((row, idx) => {
+      const older = rows[idx + 1];
+      const cells = cols.map(c => {
+        const v = valueAt(row, c.key);
+        const p = older ? valueAt(older, c.key) : null;
+        const d = v == null || p == null ? null : v - p;
+        const dtxt = d == null ? "" :
+          ` <span style="color:${deltaColor(d, c.better)};font-size:11px">${fmtDelta(d, c.unit)}</span>`;
+        return `<td class="num">${fmtValue(v, c.unit)}${dtxt}</td>`;
+      }).join("");
+      return `<tr${idx === 0 ? ' class="latest"' : ""}><td class="name">${esc(row.version || row.release)}</td>` +
+        `<td class="small muted">${esc(row.date || "")}</td>${cells}</tr>`;
+    }).join("");
+  }
+  function renderChartHead() {
+    const def = metricDef(state.metric);
+    const rows = seriesForTopic();
+    $("chartTitle").textContent = `${def.label} across releases`;
+    $("chartSub").textContent = rows.length
+      ? `${rows.length} release${rows.length === 1 ? "" : "s"} · ${state.topic || "all topics"}` +
+        ` · ${def.better === "up" ? "higher is better" : def.better === "down" ? "lower is better" : "context only"}`
+      : "";
+  }
+  function renderAll() {
+    renderChartHead();
+    renderTiles();
+    renderSparks();
+    renderTable();
+    drawChart();
+  }
+
+  /* ---------- interaction ---------- */
+  const wrap = $("chartWrap");
+  wrap.addEventListener("mousemove", ev => {
+    const canvas = $("chart");
+    const geom = canvas._geom;
+    if (!geom || !geom.count) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    let best = -1, dist = Infinity;
+    for (let i = 0; i < geom.count; i++) {
+      const d = Math.abs(geom.xAt(i) - x);
+      if (d < dist) { dist = d; best = i; }
+    }
+    // Generous hit target: anywhere in the column, not just on the 8px marker.
+    if (dist > Math.max(24, geom.gw / geom.count)) best = -1;
+    if (best === state.hover) return;
+    state.hover = best;
+    drawChart();
+    const pts = pointsFor(state.metric);
+    const p = pts[best];
+    const tip = $("tip");
+    if (!p) { tip.hidden = true; return; }
+    const def = metricDef(state.metric);
+    const prev = pts.slice(0, best).reverse().find(q => q.value != null);
+    const d = p.value == null || !prev ? null : p.value - prev.value;
+    tip.hidden = false;
+    tip.innerHTML = `<b>${esc(p.label)}</b>` +
+      `<div class="muted small">${esc(p.date || "")}</div>` +
+      `<div><span class="v">${fmtValue(p.value, def.unit)}</span> ${esc(def.label)}` +
+      (d == null ? "" : ` <span style="color:${deltaColor(d, def.better)}">${fmtDelta(d, def.unit)}</span>`) +
+      `</div>` +
+      `<div class="muted small">${esc(p.row.release || "")}</div>`;
+    const tx = Math.min(rect.width - tip.offsetWidth - 8, Math.max(4, geom.xAt(best) + 12));
+    tip.style.left = `${tx}px`;
+    tip.style.top = `12px`;
+  });
+  wrap.addEventListener("mouseleave", () => {
+    if (state.hover < 0) return;
+    state.hover = -1;
+    $("tip").hidden = true;
+    drawChart();
+  });
+  $("sparks").addEventListener("click", ev => {
+    const card = ev.target.closest(".spark[data-metric]");
+    if (!card) return;
+    state.metric = card.dataset.metric;
+    $("metric").value = state.metric;
+    renderAll();
+  });
+  $("sparks").addEventListener("keydown", ev => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.target.closest(".spark")?.click(); }
+  });
+  $("topic").addEventListener("change", () => { state.topic = $("topic").value; renderAll(); });
+  $("metric").addEventListener("change", () => { state.metric = $("metric").value; renderAll(); });
+  $("limit").addEventListener("change", () => { state.limit = Number($("limit").value) || 0; renderAll(); });
+  $("refreshBtn").addEventListener("click", () => load());
+  let resizeT = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => { drawChart(); renderSparks(); }, 120);
+  });
+  if (window.TH && TH.onChange) TH.onChange(() => renderAll());
+
+  /* ---------- load ---------- */
+  function banner(kind, msg) {
+    const el = $("banner");
+    el.hidden = !msg;
+    el.className = `banner ${kind}`;
+    el.textContent = msg || "";
+  }
+  async function api(route, body) {
+    const res = await fetch(route, {
+      method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body || {})
+    });
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch (_e) { throw new Error(text.slice(0, 200)); }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+  async function load() {
+    const btn = $("refreshBtn");
+    btn.disabled = true; btn.textContent = "Loading…";
+    try {
+      const data = await api("/api/client/trends", {limit: 200});
+      state.items = data.items || [];
+      state.stale = Boolean(data.stale);
+      const topics = [...new Set(state.items.map(i => i.topic).filter(Boolean))].sort();
+      if (!state.topic || !topics.includes(state.topic)) {
+        // Default to the topic with the most history: the one a trend is about.
+        const counts = new Map(topics.map(t => [t, state.items.filter(i => i.topic === t).length]));
+        state.topic = topics.sort((a, b) => counts.get(b) - counts.get(a))[0] || "";
+      }
+      $("topic").innerHTML = topics.map(t =>
+        `<option value="${esc(t)}"${t === state.topic ? " selected" : ""}>${esc(t)}` +
+        ` · ${state.items.filter(i => i.topic === t).length}</option>`).join("")
+        || `<option value="">no releases</option>`;
+      $("metric").innerHTML = METRICS.map(m =>
+        `<option value="${esc(m.key)}"${m.key === state.metric ? " selected" : ""}>${esc(m.label)}</option>`).join("");
+      $("sourceHint").textContent =
+        `${state.items.length} release group(s) · ${data.total_groups || state.items.length} on the server` +
+        (data.fetched_at ? ` · fetched ${String(data.fetched_at).slice(0, 16).replace("T", " ")}` : "");
+      if (state.stale) {
+        banner("warn", `Showing the last cached history — the server did not answer: ${data.stale_reason || ""}`);
+      } else {
+        banner("", "");
+      }
+      renderAll();
+    } catch (err) {
+      banner("err", `Could not load trends: ${err.message || err}`);
+      $("sourceHint").textContent = "No history loaded.";
+    } finally {
+      btn.disabled = false; btn.textContent = "Refresh";
+    }
+  }
+  load();
+})();
+</script>

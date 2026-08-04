@@ -17,6 +17,7 @@ from lib.specsheet_report import (
     TREND_SUMMARY_FILENAME,
     _coerce_specsheet_scene_numeric_columns,
     _get_blocks_compat,
+    _release_date_key,
     _recall_ratio_to_percent,
     _aggregate_usecase_devops_frame,
     discover_trend_metadata_files,
@@ -84,6 +85,33 @@ def _write_trend_metadata(resources_dir, version: str, abbr: str | None = None) 
         yaml.safe_dump(metadata, sort_keys=False),
         encoding="utf-8",
     )
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("2026.6.9", (2026, 6, 9)),
+        ("2026.07.08", (2026, 7, 8)),   # releases pad the month inconsistently
+        ("2026-05-18", (2026, 5, 18)),
+        ("2026/12/31", (2026, 12, 31)),
+        ("", (0, 0, 0)),
+        ("no date here", (0, 0, 0)),
+    ],
+)
+def test_release_date_key_parses_the_formats_releases_actually_write(text, expected):
+    assert _release_date_key(text) == expected
+
+
+def test_release_dates_order_chronologically_not_lexically():
+    """Trend charts read left to right in time, and every one of them draws from this
+    ordering. Compared as strings, "2026.07.31" (July) lands before "2026.3.4" (March)
+    because "0" < "3", which silently scrambled the x-axis."""
+    dates = ["2026.07.31", "2026.3.4", "2026.6.9", "2026.5.18", "2026.07.08"]
+    assert sorted(dates, key=_release_date_key) == [
+        "2026.3.4", "2026.5.18", "2026.6.9", "2026.07.08", "2026.07.31",
+    ]
+    assert max(dates, key=_release_date_key) == "2026.07.31"
+    assert sorted(dates) != sorted(dates, key=_release_date_key)  # the bug this replaces
 
 
 def test_ensure_specsheet_inputs_prefers_parquet_without_csv_conversion(tmp_path):

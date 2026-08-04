@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TLR Analysis</title>
-  <link rel="stylesheet" href="tlr_viewer.css?v=tlr-initial-20260804a">
+  <link rel="stylesheet" href="tlr_viewer.css?v=tlr-compare-20260804a">
   <!-- Loads before body paint so the saved theme applies without a flash. -->
   <script>/*__BBOX_THEME_JS__*/</script>
 </head>
@@ -23,10 +23,19 @@
       </div>
       <div class="tools">
         <div class="field dir-field">
-          <label for="dirSelect">Result directory</label>
+          <label for="dirSelect">Result directory<span class="ab-tag" id="dirTagA" hidden>A</span></label>
           <div class="row">
             <select id="dirSelect"></select>
             <button id="reloadBtn" class="icon" title="Rescan TLR directories">↻</button>
+          </div>
+        </div>
+        <!-- Compare is a second directory, not a separate mode to switch into: pick a
+             B and every panel starts showing B against A. -->
+        <div class="field dir-field">
+          <label for="compareSelect">Compare with<span class="ab-tag b" id="dirTagB" hidden>B</span></label>
+          <div class="row">
+            <select id="compareSelect"></select>
+            <button id="swapBtn" class="icon" title="Swap A and B" hidden>⇄</button>
           </div>
         </div>
         <button id="themeToggleBtn" class="icon theme-btn" title="Switch theme">☀</button>
@@ -34,12 +43,24 @@
     </header>
 
     <section class="kpis" id="kpiStrip" aria-label="Overall recognition stats">
-      <div class="kpi kpi-rate"><b id="kTpRate">–</b><span>overall TP rate</span><div class="kpi-bar"><i id="kTpRateBar"></i></div></div>
-      <div class="kpi"><b id="kScenarios">–</b><span>scenarios</span></div>
-      <div class="kpi"><b id="kFrames">–</b><span>evaluated frames</span></div>
+      <div class="kpi kpi-rate">
+        <b id="kTpRate">–</b><span>overall TP rate</span>
+        <div class="kpi-bar"><i id="kTpRateBar"></i></div>
+        <em class="delta" id="dTpRate" hidden></em>
+      </div>
+      <div class="kpi"><b id="kScenarios">–</b><span>scenarios</span><em class="delta" id="dScenarios" hidden></em></div>
+      <div class="kpi"><b id="kFrames">–</b><span>evaluated frames</span><em class="delta" id="dFrames" hidden></em></div>
       <div class="kpi kpi-good"><b id="kBest">–</b><span id="kBestLabel">best criteria</span></div>
       <div class="kpi kpi-bad"><b id="kWorst">–</b><span id="kWorstLabel">worst criteria</span></div>
     </section>
+
+    <div class="compare-banner" id="compareBanner" hidden>
+      <strong>Compare</strong>
+      <span id="compareBannerText"></span>
+      <span class="legend-swatch a"></span><span class="legend-label">A (pale)</span>
+      <span class="legend-swatch b"></span><span class="legend-label">B (TP heat)</span>
+      <span class="legend-note">Δ and heatmap: green = B improved · red = B regressed</span>
+    </div>
 
     <main class="grid">
       <section class="panel" aria-label="Criteria TP rates">
@@ -65,6 +86,11 @@
         <div class="panel-head">
           <h2>Scenarios</h2>
           <span class="sub" id="scenarioMeta">select a directory to load scenarios</span>
+          <div class="chips" id="scenarioChips" hidden>
+            <span class="chip active" data-filter="all" role="button" tabindex="0">All</span>
+            <span class="chip" data-filter="changed" role="button" tabindex="0">Changed only</span>
+            <span class="chip" data-filter="regressed" role="button" tabindex="0">Regressed in B</span>
+          </div>
         </div>
         <div class="table-wrap">
           <table id="scenarioTable" class="data-table">
@@ -92,7 +118,7 @@
           </table>
         </div>
         <div class="worst">
-          <h2>Worst Scenarios</h2>
+          <h2 id="worstTitle">Worst Scenarios</h2>
           <div class="list" id="worstList"></div>
         </div>
       </div>
@@ -101,7 +127,7 @@
     <div class="toast" id="toast"></div>
   </div>
   <script>window.TLR_API_BASE = "__API_BASE__";</script>
-  <script src="tlr_api.js?v=tlr-initial-20260804a"></script>
-  <script src="tlr_viewer.js?v=tlr-initial-20260804a"></script>
+  <script src="tlr_api.js?v=tlr-compare-20260804a"></script>
+  <script src="tlr_viewer.js?v=tlr-compare-20260804a"></script>
 </body>
 </html>

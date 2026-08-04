@@ -239,6 +239,46 @@ button.icon { width: 36px; padding: 0; flex: 0 0 auto; }
 .kpi-bad b { color: var(--rose); font-size: 16px; padding-top: 4px; }
 .kpi-bar { height: 5px; margin-top: 6px; border-radius: 999px; background: rgb(var(--c-line) / .18); overflow: hidden; }
 .kpi-bar i { display: block; height: 100%; width: 0; background: rgb(var(--c-accent)); transition: width .3s ease; }
+/* Change against A, sitting under the value it belongs to. Colour is set inline by
+   the renderer, which owns the one green-good / red-bad convention. */
+.kpi .delta {
+  font-style: normal; font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums; margin-top: 3px;
+}
+
+/* ----- compare chrome ----- */
+.ab-tag {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  border-radius: 4px; font-size: 9.5px; font-weight: 800; letter-spacing: .08em;
+  background: rgb(var(--c-muted) / .22); color: var(--text);
+}
+.ab-tag.b { background: rgb(var(--c-accent) / .3); }
+.compare-banner {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 8px 12px; margin-bottom: 2px;
+  border: 1px solid rgb(var(--c-accent) / .34);
+  background: rgb(var(--c-accent-deep) / .16);
+  border-radius: var(--radius-panel);
+  font-size: 12px; color: var(--muted);
+}
+.compare-banner strong {
+  color: var(--text); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+}
+.compare-banner #compareBannerText { color: var(--text); font-weight: 600; word-break: break-all; }
+.compare-banner .legend-swatch {
+  width: 18px; height: 7px; border-radius: 999px; display: inline-block; margin-left: 8px;
+  background: rgb(var(--c-muted) / .55);
+}
+/* B's bars carry the same miss-heat scale as the single view, so the swatch is that
+   scale rather than one flat colour. */
+.compare-banner .legend-swatch.b {
+  margin-left: 4px;
+  background: linear-gradient(90deg, rgb(var(--c-good)), rgb(var(--c-warn)), rgb(var(--c-bad)));
+}
+.compare-banner .legend-label { font-weight: 700; color: var(--text); }
+.compare-banner .legend-note { margin-left: auto; }
+/* A scenario present on only one side: dimmed, because its Δ columns are blank. */
+.data-table tr.one-sided td { opacity: .72; font-style: italic; }
 
 /* ----- panels grid ----- */
 .grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 12px; }
@@ -386,6 +426,10 @@ button.icon { width: 36px; padding: 0; flex: 0 0 auto; }
   max-width: min(560px, calc(100vw - 30px));
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* Any author `display` beats the UA's [hidden] rule, so the compare chrome -- flex
+   banner, flex chip row, inline-block A/B tags -- stayed on screen in single mode. */
+[hidden] { display: none !important; }
 
 @media (max-width: 1020px) {
   .grid { grid-template-columns: 1fr; }
