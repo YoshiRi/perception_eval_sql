@@ -19,6 +19,12 @@ from client.config import Config
 # mounted at /bbox-api; hit directly it is at the root of port 8765.
 PROBE_SUFFIXES = ("", "/bbox-api")
 
+CF_ACCESS_HELP = (
+    "The server is behind Cloudflare Access and this app has no valid session. "
+    "Set a service token in Settings (or with --cf-client-id / --cf-client-secret); "
+    "for a personal login run: cloudflared access login <server url>"
+)
+
 
 class RemoteError(RuntimeError):
     """A request to the server failed."""
@@ -28,11 +34,33 @@ class AuthError(RemoteError):
     """Server rejected the token, or exports are disabled there."""
 
 
+def _is_access_url(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host.endswith("cloudflareaccess.com") or "/cdn-cgi/access/login" in url
+
+
+class _AccessAwareRedirect(urllib.request.HTTPRedirectHandler):
+    """Stop at the Access sign-in bounce instead of downloading its HTML.
+
+    Following it yields a 200 full of login markup, which surfaces as "Non-JSON reply"
+    -- indistinguishable from a broken server. Fail here, where the cause is still known.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        if _is_access_url(newurl):
+            raise AuthError(CF_ACCESS_HELP)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class Remote:
     def __init__(self, config: Config, base_url: str | None = None) -> None:
         self.config = config
         self.base_url = (base_url or config.require_server()).rstrip("/")
         self._ssl_context = None if config.verify_tls else ssl._create_unverified_context()
+        handlers: list[Any] = [_AccessAwareRedirect]
+        if self._ssl_context is not None:
+            handlers.append(urllib.request.HTTPSHandler(context=self._ssl_context))
+        self._opener = urllib.request.build_opener(*handlers)
 
     # ------------------------------------------------------------------ plumbing
 
@@ -52,9 +80,7 @@ class Remote:
 
     def _open(self, request: urllib.request.Request, timeout: float | None = None):
         try:
-            return urllib.request.urlopen(
-                request, timeout=timeout or self.config.timeout_sec, context=self._ssl_context
-            )
+            return self._opener.open(request, timeout=timeout or self.config.timeout_sec)
         except urllib.error.HTTPError as exc:
             body = ""
             try:
@@ -67,15 +93,20 @@ class Remote:
                 detail = parsed.get("error") or body
             except Exception:
                 pass
+            # Access rejects at the edge, so its refusals must be read before the
+            # generic 401/403 branch turns them into "the server said no".
+            lowered = body.lower()
+            edge_refusal = (
+                "cloudflare-access" in str(exc.headers.get("WWW-Authenticate", "")).lower()
+                or "error code: 1010" in lowered
+                or ("<html" in lowered and "cloudflare" in lowered)
+            )
+            if edge_refusal:
+                raise AuthError(CF_ACCESS_HELP) from exc
             if exc.code in (401, 403):
                 raise AuthError(f"HTTP {exc.code}: {detail or 'unauthorized'}") from exc
             if exc.code == 503:
                 raise AuthError(f"HTTP 503: {detail or 'export API disabled on server'}") from exc
-            if "<html" in body.lower() and "cloudflare" in body.lower():
-                raise AuthError(
-                    "Got a Cloudflare sign-in page instead of JSON. Configure a service token "
-                    "with --cf-client-id / --cf-client-secret."
-                ) from exc
             raise RemoteError(f"HTTP {exc.code} from {request.full_url}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RemoteError(f"Cannot reach {request.full_url}: {exc.reason}") from exc

@@ -1,8 +1,11 @@
 """evalctl is what agents and scripts trust to drive workflows, so its request
 building and refusal logic matter more than its printing."""
 
+import base64
 import importlib.util
+import json
 import sys
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -156,3 +159,131 @@ def test_unknown_catalog_name_is_a_clear_error(monkeypatch, capsys):
     monkeypatch.setattr(evalctl, "api", api)
     assert evalctl.main(["start", "beta/v1", "--catalog", "nope"]) == 2
     assert "Performance Test" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------- cloudflare access
+
+
+@pytest.fixture(autouse=True)
+def _clean_cf_state(monkeypatch):
+    """Access credentials are process-global; no test may inherit another's."""
+    monkeypatch.setattr(evalctl, "_CF",
+                        {"url": "", "headers": {}, "mode": "none", "expires_at": None})
+    for name in ("CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET",
+                 "EVAL_CF_CLIENT_ID", "EVAL_CF_CLIENT_SECRET", "EVAL_CF_AUTO_LOGIN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("EVAL_DASHBOARD_URL", "https://dash.example.test")
+
+
+class _Headers(dict):
+    """Mimic the case-insensitive lookup of an HTTP message."""
+
+    def get(self, key, default=None):  # type: ignore[override]
+        return super().get(key.lower(), default)
+
+
+def test_access_login_redirect_is_recognised_not_followed():
+    handler = evalctl._AccessAwareRedirect()
+    request = urllib.request.Request("https://dash.example.test/api/workflow_health")
+    login = ("https://tier4inc.cloudflareaccess.com/cdn-cgi/access/login/dash.example.test"
+             "?kid=abc")
+    with pytest.raises(evalctl.CloudflareAccessRequired):
+        handler.redirect_request(request, None, 302, "Found", _Headers(), login)
+
+
+def test_ordinary_redirects_still_follow():
+    handler = evalctl._AccessAwareRedirect()
+    request = urllib.request.Request("https://dash.example.test/api/workflow_health")
+    assert handler.redirect_request(
+        request, None, 302, "Found", _Headers({"location": "https://dash.example.test/x"}),
+        "https://dash.example.test/x",
+    ) is not None
+
+
+@pytest.mark.parametrize("code, headers, body", [
+    (403, _Headers(), "error code: 1010"),
+    (403, _Headers({"www-authenticate": 'Cloudflare-Access resource_metadata="..."'}), ""),
+    (302, _Headers({"location": "https://x.cloudflareaccess.com/cdn-cgi/access/login/y"}), ""),
+])
+def test_access_refusals_are_told_apart_from_app_refusals(code, headers, body):
+    assert evalctl._looks_like_access_refusal(code, headers, body)
+
+
+@pytest.mark.parametrize("code, headers, body", [
+    (403, _Headers(), '{"error": "requires an export token"}'),
+    (500, _Headers(), "boom"),
+    (404, _Headers(), "no such route"),
+])
+def test_app_refusals_are_not_mistaken_for_access(code, headers, body):
+    assert not evalctl._looks_like_access_refusal(code, headers, body)
+
+
+def test_service_token_is_sent_without_waiting_to_be_challenged(monkeypatch):
+    monkeypatch.setenv("CF_ACCESS_CLIENT_ID", "id.access")
+    monkeypatch.setenv("CF_ACCESS_CLIENT_SECRET", "shh")
+    headers = evalctl._cf_headers("https://dash.example.test")
+    assert headers == {"CF-Access-Client-Id": "id.access", "CF-Access-Client-Secret": "shh"}
+    assert evalctl.cf_status() == "service token"
+
+
+def test_a_challenge_authenticates_once_and_retries(monkeypatch):
+    args = _args(argv=["doctor"])
+    attempts = []
+
+    def once(_args, path, payload):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise evalctl.CloudflareAccessRequired("challenged")
+        return {"authorized": True}
+
+    monkeypatch.setattr(evalctl, "_api_once", once)
+    monkeypatch.setattr(evalctl, "_cloudflared_token", lambda base: "aa.bb.cc")
+    assert evalctl.api(args, "/api/workflow_health") == {"authorized": True}
+    assert len(attempts) == 2
+    assert evalctl._CF["headers"] == {"cookie": "CF_Authorization=aa.bb.cc"}
+
+
+def test_an_expired_session_forces_a_fresh_login(monkeypatch):
+    args = _args(argv=["doctor"])
+    logins = []
+
+    def once(_args, path, payload):
+        if not logins:
+            raise evalctl.CloudflareAccessRequired("stale cookie")
+        return {"authorized": True}
+
+    monkeypatch.setattr(evalctl, "_api_once", once)
+    monkeypatch.setattr(evalctl, "_cloudflared_token", lambda base: "stale.jwt.x")
+    monkeypatch.setattr(evalctl, "_cloudflared_login",
+                        lambda base: logins.append(base) or "fresh.jwt.y")
+    assert evalctl.api(args, "/api/workflow_health") == {"authorized": True}
+    assert logins == ["https://dash.example.test"]  # cached token tried first, then login
+
+
+def test_no_cf_login_refuses_instead_of_opening_a_browser(monkeypatch, capsys):
+    monkeypatch.setattr(evalctl, "_cloudflared_token", lambda base: "")
+    monkeypatch.setattr(evalctl, "_cloudflared_login",
+                        lambda base: pytest.fail("must not open a browser"))
+    monkeypatch.setattr(evalctl, "_api_once",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            evalctl.CloudflareAccessRequired("challenged")))
+    assert evalctl.main(["--no-cf-login", "doctor"]) == 2
+    assert "cloudflared access login" in capsys.readouterr().out
+
+
+def test_a_rejected_service_token_says_so_instead_of_looping(monkeypatch):
+    monkeypatch.setenv("CF_ACCESS_CLIENT_ID", "wrong.access")
+    monkeypatch.setenv("CF_ACCESS_CLIENT_SECRET", "shh")
+    args = _args(argv=["doctor"])
+    monkeypatch.setattr(evalctl, "_api_once",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            evalctl.CloudflareAccessRequired("challenged")))
+    with pytest.raises(evalctl.ApiError, match="rejected the service token"):
+        evalctl.api(args, "/api/workflow_health")
+
+
+def test_jwt_expiry_is_read_for_the_status_line():
+    exp = int((datetime.now(timezone.utc) + timedelta(hours=20)).timestamp())
+    body = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=")
+    assert evalctl._jwt_expiry(f"aa.{body}.cc") is not None
+    assert evalctl._jwt_expiry("not-a-jwt") is None

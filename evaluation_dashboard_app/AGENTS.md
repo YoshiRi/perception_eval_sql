@@ -6,7 +6,9 @@ it instead of calling the HTTP API by hand. Claude Code users get richer guidanc
 the skills in `.claude/skills/`; this file is the condensed version.
 
 Setup: `EVAL_DASHBOARD_URL` (backend API base URL) and, if the server demands one,
-`EVAL_EXPORT_TOKEN`. Verify with `python scripts/evalctl.py doctor`.
+`EVAL_EXPORT_TOKEN`. Verify with `python scripts/evalctl.py doctor`. If the server is
+behind Cloudflare Access, `evalctl` signs in on its own — see the Cloudflare rule
+below.
 
 Human-facing companion doc (what users can ask for, in plain language):
 `docs/AGENT_TASKS.md`.
@@ -28,6 +30,7 @@ structure), and they are plain markdown, not Claude-specific:
 
 ```bash
 python scripts/evalctl.py doctor                      # connectivity/auth/queue/worker check
+python scripts/evalctl.py login [--force]             # Cloudflare Access sign-in (browser)
 python scripts/evalctl.py start <branch> [--kind tlr] [--catalog NAME] [--dry-run]
 python scripts/evalctl.py release <branch> [--dry-run] [--yes] [--set key=value]
 python scripts/evalctl.py status [task_id] [--log] [--watch] [--json]
@@ -55,4 +58,12 @@ after the user approved the metadata.
 instructions first, then write the report yourself from the tables.
 - On failures, read `status <id> --log` and diagnose before reporting; add `--json`
 to any command for parseable output.
+- **Cloudflare Access**: a `302` to `*.cloudflareaccess.com` or `HTTP 403: error code:
+1010` is the edge, not the app — `EVAL_EXPORT_TOKEN` is irrelevant to it. `evalctl`
+recovers by itself: service token (`CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET`)
+if set, else a cached `cloudflared` session, else an automatic
+`cloudflared access login`. Since that last step needs a human at a browser, ask the
+user to run `python scripts/evalctl.py login` rather than triggering it blind; in an
+unattended context use a service token, or `--no-cf-login` to fail fast instead of
+hanging. Details: `.claude/skills/eval-setup/SKILL.md`.
 

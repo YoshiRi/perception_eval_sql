@@ -9,6 +9,10 @@ every command also has ``--json`` for machine-readable output.
 Configuration comes from the environment:
   EVAL_DASHBOARD_URL   e.g. http://eval-server:8502   (or pass --url)
   EVAL_EXPORT_TOKEN    bearer token, if the server demands one
+  CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET
+                       Cloudflare Access service token, if the server sits behind
+                       Access. Without one, a browser login via `cloudflared` is
+                       performed automatically the first time Access challenges us.
 
 stdlib only: this file must run anywhere Python 3.10+ exists, with no venv.
 """
@@ -16,13 +20,17 @@ stdlib only: this file must run anywhere Python 3.10+ exists, with no venv.
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -50,8 +58,205 @@ def _base_url(args: argparse.Namespace) -> str:
     return url.rstrip("/")
 
 
-def api(args: argparse.Namespace, path: str, payload: dict[str, Any] | None = None) -> Any:
-    """POST JSON to one route; returns parsed JSON or raw bytes for streams."""
+# ---------------------------------------------------------------- cloudflare access
+
+CF_LOGIN_TIMEOUT_SEC = 300
+_CF: dict[str, Any] = {"url": "", "headers": {}, "mode": "none", "expires_at": None}
+
+
+class CloudflareAccessRequired(ApiError):
+    """The request never reached the dashboard -- Cloudflare Access challenged it."""
+
+
+def _is_access_url(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host.endswith("cloudflareaccess.com") or "/cdn-cgi/access/login" in url
+
+
+class _AccessAwareRedirect(urllib.request.HTTPRedirectHandler):
+    """Turn the silent bounce to the Access login page into a typed failure.
+
+    Left alone, urllib follows the 302 and returns Cloudflare's HTML sign-in page (or
+    its ``error code: 1010``), which reads like a broken server instead of "you are
+    not signed in".
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        if _is_access_url(newurl):
+            raise CloudflareAccessRequired(f"Cloudflare Access challenged {req.full_url}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_AccessAwareRedirect)
+
+
+def _looks_like_access_refusal(code: int, headers: Any, body: str) -> bool:
+    if code not in (301, 302, 401, 403):
+        return False
+    if "cloudflare-access" in str(headers.get("www-authenticate", "")).lower():
+        return True
+    if _is_access_url(str(headers.get("location", ""))):
+        return True
+    lowered = body.lower()
+    # 1010 is the edge rejecting a client it will not issue an Access session to.
+    return "error code: 1010" in lowered or "cloudflareaccess.com" in lowered
+
+
+def _service_token() -> tuple[str, str]:
+    """The service-token pair, under either the Cloudflare or the EVAL_-prefixed name."""
+    for id_key, secret_key in (
+        ("CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"),
+        ("EVAL_CF_CLIENT_ID", "EVAL_CF_CLIENT_SECRET"),
+    ):
+        client_id = os.environ.get(id_key, "").strip()
+        secret = os.environ.get(secret_key, "").strip()
+        if client_id and secret:
+            return client_id, secret
+    return "", ""
+
+
+def _jwt_expiry(token: str) -> datetime | None:
+    """Best-effort ``exp`` of an Access JWT, so we can say when the session dies."""
+    try:
+        payload = token.split(".")[1]
+        padded = payload + "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(padded)).get("exp")
+        return datetime.fromtimestamp(float(exp), tz=JST) if exp else None
+    except Exception:
+        return None
+
+
+def _cloudflared() -> str:
+    path = shutil.which("cloudflared")
+    if not path:
+        raise ApiError(
+            "This server is behind Cloudflare Access and no service token is set, so a "
+            "browser login is needed -- but `cloudflared` is not installed.\n"
+            "  Install it (https://developers.cloudflare.com/cloudflare-one/connections/"
+            "connect-networks/downloads/), or set CF_ACCESS_CLIENT_ID and "
+            "CF_ACCESS_CLIENT_SECRET from a service token."
+        )
+    return path
+
+
+def _cloudflared_token(base_url: str) -> str:
+    """Read the cached Access JWT for this app, if a previous login left one."""
+    try:
+        done = subprocess.run(
+            [_cloudflared(), "access", "token", f"-app={base_url}"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    out = (done.stdout or "").strip()
+    # A miss is reported on stdout as prose ("Unable to find token for provided
+    # application."), so shape-check instead of trusting the exit code.
+    return out if done.returncode == 0 and out.count(".") == 2 and " " not in out else ""
+
+
+def _cloudflared_login(base_url: str) -> str:
+    """Run the interactive browser login, then return the freshly minted JWT."""
+    print(
+        f"Cloudflare Access login required for {base_url}\n"
+        "Opening a browser (or printing a URL to open manually)...",
+        file=sys.stderr, flush=True,
+    )
+    try:
+        subprocess.run(
+            [_cloudflared(), "access", "login", base_url],
+            timeout=CF_LOGIN_TIMEOUT_SEC, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise ApiError(
+            f"Cloudflare Access login did not complete within {CF_LOGIN_TIMEOUT_SEC}s. "
+            f"Run it yourself: cloudflared access login {base_url}"
+        ) from None
+    return _cloudflared_token(base_url)
+
+
+def _auto_login_allowed(args: argparse.Namespace) -> bool:
+    if getattr(args, "no_cf_login", False):
+        return False
+    return os.environ.get("EVAL_CF_AUTO_LOGIN", "1").strip().lower() not in ("0", "false", "no")
+
+
+def cf_authenticate(args: argparse.Namespace, *, force: bool = False) -> str:
+    """Obtain Access credentials for the configured server; returns the mode used.
+
+    Service token first (headless, what CI and agents should use), then a cached
+    ``cloudflared`` session, then -- unless suppressed -- an interactive browser login.
+    """
+    base = _base_url(args)
+    client_id, secret = _service_token()
+    if client_id and secret:
+        if force:
+            # We already sent this token and Access still said no; retrying cannot help.
+            raise ApiError(
+                f"Cloudflare Access rejected the service token (CF_ACCESS_CLIENT_ID "
+                f"{client_id[:8]}...) for {base}. Check the token is for this Access "
+                "application and still valid, or unset it to sign in via a browser."
+            )
+        _CF.update(url=base, mode="service token", expires_at=None, headers={
+            "CF-Access-Client-Id": client_id,
+            "CF-Access-Client-Secret": secret,
+        })
+        return _CF["mode"]
+
+    token = "" if force else _cloudflared_token(base)
+    mode = "browser session (cloudflared)"
+    if not token:
+        if not _auto_login_allowed(args):
+            raise ApiError(
+                f"{base} is behind Cloudflare Access and there is no usable session.\n"
+                f"  Sign in:       cloudflared access login {base}\n"
+                "  Or headless:   export CF_ACCESS_CLIENT_ID=... CF_ACCESS_CLIENT_SECRET=..."
+            )
+        token = _cloudflared_login(base)
+        mode = "browser session (cloudflared, just signed in)"
+    if not token:
+        raise ApiError(
+            f"Cloudflare Access login produced no token for {base}. Retry with "
+            f"`cloudflared access login {base}`, or use a service token "
+            "(CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET)."
+        )
+    expires = _jwt_expiry(token)
+    _CF.update(url=base, mode=mode, expires_at=expires,
+               headers={"cookie": f"CF_Authorization={token}"})
+    when = f", valid until {expires.strftime('%Y-%m-%d %H:%M JST')}" if expires else ""
+    print(f"Cloudflare Access: {mode}{when}", file=sys.stderr, flush=True)
+    return mode
+
+
+def _cf_headers(base_url: str) -> dict[str, str]:
+    """Headers for this server: whatever we already resolved, else a service token."""
+    if _CF["url"] == base_url and _CF["headers"]:
+        return dict(_CF["headers"])
+    client_id, secret = _service_token()
+    if client_id and secret:
+        # Send it unprompted: it costs nothing and saves a challenge round trip.
+        _CF.update(url=base_url, mode="service token", expires_at=None, headers={
+            "CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": secret,
+        })
+        return dict(_CF["headers"])
+    return {}
+
+
+def cf_status() -> str:
+    """One line describing how (or whether) Access is being satisfied."""
+    if not _CF["headers"]:
+        return "not required"
+    expires = _CF["expires_at"]
+    if not isinstance(expires, datetime):
+        return str(_CF["mode"])
+    left = expires - datetime.now(JST)
+    hours = left.total_seconds() / 3600
+    return f"{_CF['mode']}, expires in {hours:.1f}h ({expires.strftime('%m-%d %H:%M JST')})"
+
+
+# ------------------------------------------------------------------ request/response
+
+
+def _api_once(args: argparse.Namespace, path: str, payload: dict[str, Any] | None) -> Any:
     url = _base_url(args) + path
     body = json.dumps(payload or {}).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
@@ -59,12 +264,18 @@ def api(args: argparse.Namespace, path: str, payload: dict[str, Any] | None = No
     token = os.environ.get("EVAL_EXPORT_TOKEN", "").strip()
     if token:
         request.add_header("x-export-token", token)
+    for header, value in _cf_headers(_base_url(args)).items():
+        request.add_header(header, value)
     try:
-        with urllib.request.urlopen(request, timeout=float(args.timeout)) as response:
+        with _OPENER.open(request, timeout=float(args.timeout)) as response:
             raw = response.read()
             content_type = response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        if _looks_like_access_refusal(exc.code, exc.headers, detail):
+            raise CloudflareAccessRequired(
+                f"Cloudflare Access refused {url} (HTTP {exc.code})"
+            ) from exc
         try:
             detail = json.loads(detail).get("error", detail)
         except Exception:
@@ -78,6 +289,26 @@ def api(args: argparse.Namespace, path: str, payload: dict[str, Any] | None = No
     if isinstance(data, dict) and data.get("error"):
         raise ApiError(f"{path}: {data['error']}")
     return data
+
+
+def api(args: argparse.Namespace, path: str, payload: dict[str, Any] | None = None) -> Any:
+    """POST JSON to one route; returns parsed JSON or raw bytes for streams.
+
+    An Access challenge is not an error to report but a step to take: authenticate and
+    retry once, then once more forcing a fresh login in case a cached JWT had expired.
+    """
+    for attempt in range(3):
+        try:
+            return _api_once(args, path, payload)
+        except CloudflareAccessRequired:
+            if attempt == 2:
+                raise ApiError(
+                    f"Still blocked by Cloudflare Access after signing in ({cf_status()}). "
+                    "Your account may not be allowed on this application -- ask whoever "
+                    "administers the Access policy."
+                ) from None
+            cf_authenticate(args, force=attempt > 0)
+    raise AssertionError("unreachable")
 
 
 def _print(data: Any, *, as_json: bool) -> None:
@@ -111,6 +342,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"UNREACHABLE  {exc}")
         return 2
     report["workflow"] = workflow
+    report["cloudflare_access"] = cf_status()
     try:
         report["export"] = api(args, "/api/export_health")
     except ApiError as exc:
@@ -123,6 +355,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"{'ok  ' if ok else 'FAIL'} {label}" + (f" -- {reason}" if reason and not ok else ""))
 
     status(True, f"server reachable at {_base_url(args)}")
+    print(f"     cloudflare access: {report['cloudflare_access']}")
     status(bool(workflow.get("authorized")), "authorized", workflow.get("auth_reason", ""))
     status(bool(workflow.get("queue_enabled")), "task queue", workflow.get("queue_reason", ""))
     workers = workflow.get("workers_alive")
@@ -140,6 +373,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"     workflow kinds: {kinds}")
     bad = not workflow.get("authorized") or not workflow.get("queue_enabled") or workers == 0
     return 1 if bad else 0
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Establish a Cloudflare Access session up front, instead of on first challenge."""
+    if not args.force:
+        # Probe before signing in: opening a browser for a server that never asked
+        # would be a confusing way to learn that Access is not in the picture.
+        try:
+            _api_once(args, "/api/workflow_health", None)
+        except CloudflareAccessRequired:
+            pass
+        except ApiError as exc:
+            print(f"evalctl: {exc}\nRun `evalctl doctor` -- this is not an Access problem.",
+                  file=sys.stderr)
+            return 2
+        else:
+            print(f"ok   {_base_url(args)} answers without a Cloudflare Access challenge"
+                  f" ({cf_status()})")
+            return 0
+    mode = cf_authenticate(args, force=args.force)
+    health = api(args, "/api/workflow_health")
+    identity = health.get("identity") or health.get("requested_by") or ""
+    if args.json:
+        _print({"mode": mode, "status": cf_status(), "identity": identity}, as_json=True)
+        return 0
+    print(f"ok   {cf_status()}")
+    print(f"     {_base_url(args)} answers" + (f" as {identity}" if identity else ""))
+    return 0
 
 
 # ------------------------------------------------------------------------- workflows
@@ -455,11 +716,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", help="server base URL (default: $EVAL_DASHBOARD_URL)")
     parser.add_argument("--timeout", default=120, type=float, help="request timeout seconds")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument("--no-cf-login", action="store_true",
+                        help="never open a browser for Cloudflare Access (fail instead)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doctor", help="check connectivity, auth, queue and workers").set_defaults(
         func=cmd_doctor
     )
+
+    login = sub.add_parser("login", help="sign in to Cloudflare Access for this server")
+    login.add_argument("--force", action="store_true",
+                       help="ignore any cached session and sign in again")
+    login.set_defaults(func=cmd_login)
 
     start = sub.add_parser("start", help="start an evaluator workflow for a branch/tag")
     start.add_argument("target", help="git branch (or tag with --tag), e.g. beta/v4.3.2")

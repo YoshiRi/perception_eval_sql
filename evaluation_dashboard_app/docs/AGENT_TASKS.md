@@ -19,6 +19,33 @@ python scripts/evalctl.py doctor
 Or just say: **"check the eval server connection"** — the agent runs the doctor and
 explains any failure (wrong URL, missing token, queue disabled, worker down).
 
+### If the server is behind Cloudflare Access
+
+Nothing extra to configure. The first command that hits the server opens a browser
+sign-in, and the session then lasts as long as your Access policy allows (usually a
+day); `doctor` shows when it expires. To sign in on purpose — say, before leaving a
+long job to run — use:
+
+```bash
+python scripts/evalctl.py login
+```
+
+Two things are worth knowing. The sign-in needs *you* at a browser, so an agent will
+ask you to run that command rather than doing it silently. And for anything
+unattended (CI, cron, a remote box with no browser), use a **service token** instead
+— ask the Access administrator for one, then:
+
+```bash
+export CF_ACCESS_CLIENT_ID=<id>.access
+export CF_ACCESS_CLIENT_SECRET=<secret>
+```
+
+With a token set there is never a browser step. Add `--no-cf-login` to any command to
+make it fail fast instead of trying to sign in.
+
+`error code: 1010` or a redirect to `cloudflareaccess.com` means exactly this: not a
+broken server, just no session yet.
+
 ## What you can say
 
 ### Evaluate a branch
