@@ -193,6 +193,7 @@
     <a class="btn" href="/">Home</a>
     <a class="btn" href="/workflow">Workflow</a>
     <a class="btn" href="/explorer">Explorer</a>
+    <button class="icon" id="restartBtn" title="Restart the app (picks up code changes without retyping the command)">⟳</button>
     <button class="icon" id="themeBtn" title="Toggle theme">☀</button>
   </div>
 </header>
@@ -332,6 +333,55 @@
   "use strict";
   const $ = id => document.getElementById(id);
   if (window.TH) TH.bindToggle($("themeBtn"));
+
+  // Restart: the app re-execs itself, so a code change needs no terminal. The port is
+  // kept, so this page just waits for the same URL to answer again and reloads. In the
+  // native window the window is recreated by the new process instead.
+  $("restartBtn").addEventListener("click", async () => {
+    const btn = $("restartBtn");
+    const page = (location.pathname.replace(/^\/|\/$/g, "") || "home");
+    if (btn.dataset.busy) return;
+    btn.dataset.busy = "1";
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "…";
+    try {
+      let res = await fetch("/api/client/restart", {
+        method: "POST", headers: {"content-type": "application/json"},
+        body: JSON.stringify({page})
+      });
+      let data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        // The only refusal is an active download; offer to take it anyway.
+        if (String(data.error || "").includes("download is running")
+            && confirm(`${data.error}\n\nRestart anyway? The partial file resumes next pull.`)) {
+          res = await fetch("/api/client/restart", {
+            method: "POST", headers: {"content-type": "application/json"},
+            body: JSON.stringify({page, force: true})
+          });
+          data = await res.json().catch(() => ({}));
+        } else {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+      }
+      // Poll the port back up. The old process is gone within a second; the new one
+      // binds the same port, so the first success means the app is ready.
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 400));
+        try {
+          const ping = await fetch("/health", {cache: "no-store"});
+          if (ping.ok) { location.reload(); return; }
+        } catch (_e) { /* still down */ }
+      }
+      throw new Error("the app did not come back on this port");
+    } catch (err) {
+      alert(`Restart failed: ${err.message || err}`);
+      btn.textContent = label;
+      btn.disabled = false;
+      delete btn.dataset.busy;
+    }
+  });
 
   // higher_is_better decides what green means; unit decides how a value is written.
   const METRICS = [

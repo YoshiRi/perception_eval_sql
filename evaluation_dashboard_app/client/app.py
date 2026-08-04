@@ -17,7 +17,9 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 import webbrowser
+from typing import Any
 
 from client import config, serve
 
@@ -35,12 +37,59 @@ def _has_pywebview() -> bool:
     return True
 
 
-PAGES = {"home": "", "workflow": "workflow", "explorer": "explorer", "viewer": "viewer"}
+PAGES = {"home": "", "workflow": "workflow", "explorer": "explorer", "viewer": "viewer",
+         "tlr": "tlr", "trends": "trends"}
+
+# How this process was launched, so it can relaunch itself the same way. Recorded at
+# start rather than reconstructed from sys.argv, which says "-m client" in a checkout
+# and something else entirely in the packaged build.
+_LAUNCH: dict[str, Any] = {}
 
 
 def _page_url(base_url: str, page: str) -> str:
     suffix = PAGES.get(page, "")
     return f"{base_url}/{suffix}" if suffix else f"{base_url}/"
+
+
+def relaunch_command(page: str | None = None) -> list[str]:
+    """The command that starts this app again, on the same port and page.
+
+    Keeping the port makes the restart invisible to whatever is pointed at it: the page
+    polls the same URL back up and reloads itself.
+    """
+    if not _LAUNCH:
+        # Started some other way (``serve``, a test): repeat the original arguments.
+        tail = list(sys.argv[1:])
+        return [sys.executable, *tail] if getattr(sys, "frozen", False) \
+            else [sys.executable, "-m", "client", *tail]
+    args = ["open", "--port", str(_LAUNCH["port"]), "--page", page or _LAUNCH["page"]]
+    if _LAUNCH.get("browser"):
+        args.append("--browser")
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--cli", *args]
+    return [sys.executable, "-m", "client", *args]
+
+
+def restart(page: str | None = None, *, delay: float = 0.35) -> list[str]:
+    """Replace this process with a fresh one.
+
+    ``os.execv`` rather than spawn-and-exit: the terminal, the window manager and any
+    parent script keep talking to the same process id, which is what makes this feel
+    like a restart instead of a second app appearing. The delay lets the HTTP response
+    that asked for it reach the page first.
+    """
+    command = relaunch_command(page)
+
+    def _go() -> None:
+        time.sleep(delay)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # The page that asked for this reloads itself, so the replacement must not also
+        # open a second browser tab. The native window has no such tab and is recreated.
+        os.execve(command[0], command, {**os.environ, "EVALDASH_RESTARTED": "1"})
+
+    threading.Thread(target=_go, name="evaldash-restart", daemon=True).start()
+    return command
 
 
 def _say(message: str, *, error: bool = False) -> None:
@@ -56,6 +105,7 @@ def _say(message: str, *, error: bool = False) -> None:
 def launch(port: int | None = None, page: str = "home", prefer_browser: bool = False) -> int:
     server = serve.LocalServer(port=port)
     base_url = server.start()
+    _LAUNCH.update({"port": server.port, "page": page, "browser": bool(prefer_browser)})
     url = _page_url(base_url, page)
     _say(f"serving   {base_url}")
     _say(f"workspace {config.workspace_dir()}")
@@ -90,9 +140,13 @@ def _run_window(server: serve.LocalServer, url: str) -> int:
 
 
 def _run_browser(server: serve.LocalServer, url: str) -> int:
-    _say(f"opening   {url} (system browser)")
-    # Open on a timer so the server is already accepting connections.
-    threading.Timer(0.4, lambda: webbrowser.open(url)).start()
+    reopened = os.environ.pop("EVALDASH_RESTARTED", "") == "1"
+    if reopened:
+        _say(f"serving   {url} (restarted; the open tab reloads itself)")
+    else:
+        _say(f"opening   {url} (system browser)")
+        # Open on a timer so the server is already accepting connections.
+        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
     _say("\nCtrl-C to stop.")
     server.serve_forever()
     return 0

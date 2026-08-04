@@ -763,9 +763,34 @@ def _write_trends_cache(data: dict[str, Any]) -> None:
         pass  # a cache that cannot be written is not a reason to fail the request
 
 
+def client_restart(payload: dict[str, Any]) -> dict[str, Any]:
+    """Relaunch the app in place, so picking up code changes needs no terminal.
+
+    A download is the one thing worth protecting: the replacement process inherits the
+    workspace but not the transfer, and a part-file would be left mid-flight. Passing
+    ``force`` accepts that (the next pull resumes from the .part anyway).
+    """
+    from client import app
+
+    job = _current_job()
+    if job is not None and job.snapshot()["active"] and payload.get("force") is not True:
+        raise ValueError(
+            f"A download is running ({job.run}). Cancel it first, or restart with force."
+        )
+    page = str(payload.get("page") or "").strip()
+    command = app.restart(page if page in app.PAGES else None)
+    return {
+        "ok": True,
+        "command": " ".join(command),
+        # The page polls this back up; the port is unchanged so its URL still works.
+        "url": f"http://127.0.0.1:{app._LAUNCH.get('port', '')}",
+    }
+
+
 CLIENT_ROUTES = {
     "/api/client/state": client_state,
     "/api/client/trends": client_trends,
+    "/api/client/restart": client_restart,
     "/api/client/login": client_login,
     "/api/client/reset_server": client_reset_server,
     "/api/client/remote_runs": client_remote_runs,

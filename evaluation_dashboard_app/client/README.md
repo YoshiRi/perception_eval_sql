@@ -242,7 +242,7 @@ evaldash-local pull <run_name> --tier minimal --dry-run    # show the plan only
 
 # inspect
 evaldash-local open              # window (or browser) on the home page
-evaldash-local open --page explorer
+evaldash-local open --page explorer   # or workflow / viewer / tlr / trends
 evaldash-local serve             # server only, no window
 evaldash-local ls                # local runs
 evaldash-local rm <run_name>
@@ -355,6 +355,18 @@ When neither is available the client says so in those words — naming Cloudflar
 and the two ways to fix it — instead of failing on a JSON parse error against a sign-in
 page. Note the API is mounted at `/bbox-api` behind nginx; `login` probes for that and
 saves the resolved URL, so a bare hostname is fine to type.
+
+### Restarting the app
+
+The ⟳ button in the header relaunches the app in place, which is how a change to the
+Python under it takes effect: `static/` is re-read per request, but modules are imported
+once per process. It re-execs the same process id on the same port and page, so the open
+page polls the URL back up and reloads itself — no closing the window, no retyping the
+command. A restart takes well under a second.
+
+A running download blocks it, since the replacement process inherits the workspace but
+not the transfer; confirming anyway is offered, and the partial file resumes on the next
+pull. `POST /api/client/restart` does the same thing from a script.
 
 ### Interrupted downloads
 

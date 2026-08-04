@@ -917,7 +917,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("open", help="open the desktop app window")
     p.add_argument("--port", type=int)
-    p.add_argument("--page", default="home", choices=["home", "workflow", "explorer", "viewer"],
+    # Choices come from the app's own page table: the in-app restart relaunches with
+    # --page, so a page the table knows but argparse does not would kill the new process.
+    from client.app import PAGES
+
+    p.add_argument("--page", default="home", choices=sorted(PAGES),
                    help="which page to open (default: home, where you download runs)")
     p.add_argument("--browser", action="store_true", help="use the system browser instead of a window")
     p.set_defaults(func=cmd_open)

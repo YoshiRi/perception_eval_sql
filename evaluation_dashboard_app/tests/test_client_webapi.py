@@ -295,3 +295,65 @@ def test_deleting_the_scene_being_fetched_is_refused(t4_home):
     webapi._T4_JOB = job
     with pytest.raises(ValueError, match="Cancel the fetch first"):
         webapi.client_t4_delete({"dataset_id": "d", "scenario": "s"})
+
+
+# ------------------------------------------------------------------------ restart
+#
+# The button re-execs the app so a code change needs no terminal. What can silently
+# break it is the command it rebuilds -- a wrong port strands the page on a dead URL,
+# and an argument the CLI rejects kills the replacement before it binds anything.
+
+
+def test_relaunch_keeps_the_port_and_page(home, monkeypatch):
+    from client import app
+
+    monkeypatch.setattr(app, "_LAUNCH", {"port": 8765, "page": "home", "browser": False})
+    command = app.relaunch_command("trends")
+    assert command[1:] == ["-m", "client", "open", "--port", "8765", "--page", "trends"]
+
+
+def test_relaunch_keeps_browser_mode(home, monkeypatch):
+    from client import app
+
+    monkeypatch.setattr(app, "_LAUNCH", {"port": 9000, "page": "explorer", "browser": True})
+    assert app.relaunch_command()[1:] == [
+        "-m", "client", "open", "--port", "9000", "--page", "explorer", "--browser",
+    ]
+
+
+def test_relaunch_falls_back_to_the_original_arguments(home, monkeypatch):
+    """Started as ``serve`` rather than ``open``: repeat what was typed."""
+    from client import app
+
+    monkeypatch.setattr(app, "_LAUNCH", {})
+    monkeypatch.setattr("sys.argv", ["client/__main__.py", "serve", "--port", "8770"])
+    assert app.relaunch_command()[1:] == ["-m", "client", "serve", "--port", "8770"]
+
+
+def test_every_page_the_app_knows_is_a_valid_cli_choice():
+    """The relaunch passes --page, so a page argparse rejects kills the new process."""
+    from client import app
+    from client.cli import build_parser
+
+    choices = build_parser()._subparsers._group_actions[0].choices["open"]._option_string_actions
+    assert set(app.PAGES) <= set(choices["--page"].choices)
+
+
+def test_restart_is_refused_while_a_download_runs(home):
+    job = webapi.PullJob("run_a", "all", "criteria", False)
+    job.state = "downloading"
+    webapi._JOB = job
+    with pytest.raises(ValueError, match="download is running"):
+        webapi.client_restart({})
+
+
+def test_restart_can_be_forced_over_a_download(home, monkeypatch):
+    from client import app
+
+    job = webapi.PullJob("run_a", "all", "criteria", False)
+    job.state = "downloading"
+    webapi._JOB = job
+    calls = []
+    monkeypatch.setattr(app, "restart", lambda page=None: calls.append(page) or ["cmd"])
+    assert webapi.client_restart({"force": True})["ok"] is True
+    assert calls == [None]
