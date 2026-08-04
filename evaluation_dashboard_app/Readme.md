@@ -6,11 +6,34 @@
 
 本ダッシュボード・評価ツールの動作には、以下の前提と Python パッケージが必要です。  
 
+### リポジトリの取得
+
+```sh
+git clone https://github.com/tier4/perception_eval_sql.git
+cd perception_eval_sql/evaluation_dashboard_app
+```
+
+コーディングエージェントに渡す場合は、次のセットアップコマンドを貼り付けます。
+
+```sh
+mkdir -p ~/work && cd ~/work && \
+  { [ -d perception_eval_sql/.git ] || git clone https://github.com/tier4/perception_eval_sql.git; } && \
+  cd perception_eval_sql/evaluation_dashboard_app && \
+  printf 'Repository ready. Read AGENTS.md before running dashboard tasks.\n'
+```
+
+または、次の指示をコーディングエージェントに貼り付けます。
+
+> リポジトリ URL が `https://github.com/tier4/perception_eval_sql.git` であることを確認してください。
+> まだ clone されていなければ clone してください。その後
+> `perception_eval_sql/evaluation_dashboard_app` に移動し、`AGENTS.md` を読み、
+> 作業内容に対応する `.claude/skills/` のプレイブックに従ってから、変更や
+> ダッシュボードコマンドを実行してください。
+
 ### Python パッケージ（ローカル開発・フル機能）
 リポジトリ直下で次のように **1 本の requirements** から入れるのが簡単です（プライベート依存あり）。
 
 ```sh
-cd evaluation_dashboard_app
 pip install -r requirements.txt
 ```
 

@@ -9,6 +9,28 @@ Use this for repository development tasks. For server-side evaluation workflows
 (starting evaluator jobs, releases, trends, analysis packages), use `scripts/evalctl.py`
 and the task-specific eval skills instead.
 
+## Agent setup command
+
+When a user needs to hand an agent a single public-safe setup command, use:
+
+```bash
+mkdir -p ~/work && cd ~/work && \
+  { [ -d perception_eval_sql/.git ] || git clone https://github.com/tier4/perception_eval_sql.git; } && \
+  cd perception_eval_sql/evaluation_dashboard_app && \
+  printf 'Repository ready. Read AGENTS.md before running dashboard tasks.\n'
+```
+
+This clones the public repo only when it is missing, avoids pulling over an existing
+checkout, and lands the agent in the dashboard app directory.
+
+Natural-language prompt for an agent:
+
+> Check that the repository URL is `https://github.com/tier4/perception_eval_sql.git`.
+> If the repo is not already cloned, clone it. Then enter
+> `perception_eval_sql/evaluation_dashboard_app`, read `AGENTS.md`, and follow the
+> matching `.claude/skills/` playbook for the task before making changes or running
+> dashboard commands.
+
 ## Local Streamlit app
 
 Start the dashboard from the repo root:

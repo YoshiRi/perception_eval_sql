@@ -6,11 +6,34 @@
 
 This dashboard and evaluation tool require the following prerequisites and Python packages.
 
+### Get the repository
+
+```sh
+git clone https://github.com/tier4/perception_eval_sql.git
+cd perception_eval_sql/evaluation_dashboard_app
+```
+
+For a coding agent, paste this as the setup command:
+
+```sh
+mkdir -p ~/work && cd ~/work && \
+  { [ -d perception_eval_sql/.git ] || git clone https://github.com/tier4/perception_eval_sql.git; } && \
+  cd perception_eval_sql/evaluation_dashboard_app && \
+  printf 'Repository ready. Read AGENTS.md before running dashboard tasks.\n'
+```
+
+Or paste this instruction into a coding agent:
+
+> Check that the repository URL is `https://github.com/tier4/perception_eval_sql.git`.
+> If the repo is not already cloned, clone it. Then enter
+> `perception_eval_sql/evaluation_dashboard_app`, read `AGENTS.md`, and follow the
+> matching `.claude/skills/` playbook for the task before making changes or running
+> dashboard commands.
+
 ### Python packages (local development / full functionality)
 The easiest way is to install from the single `requirements.txt` at the repository root, including private dependencies.
 
 ```sh
-cd evaluation_dashboard_app
 pip install -r requirements.txt
 ```
 
