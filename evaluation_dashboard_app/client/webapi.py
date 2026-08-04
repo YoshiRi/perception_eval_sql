@@ -685,6 +685,7 @@ def client_trends(payload: dict[str, Any]) -> dict[str, Any]:
             "query": str(payload.get("q") or ""),
             "limit": int(payload.get("limit") or 200),
             "metrics": payload.get("metrics") is not False,
+            "include_cases": payload.get("include_cases") is not False,
         })
     except Exception as exc:
         if payload.get("allow_cache") is False:

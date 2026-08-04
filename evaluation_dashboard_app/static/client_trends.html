@@ -139,6 +139,33 @@
   .scroll { overflow-x: auto; }
   .name { font-weight: 550; }
 
+  /* Case atlas: cases down, releases across, pass rate as the app's usual
+     green-good / red-bad heat so it reads the same as the explorer and TLR views. */
+  table.atlas { font-size: 12px; }
+  table.atlas th, table.atlas td { padding: 5px 7px; white-space: nowrap; }
+  table.atlas th.case, table.atlas td.case {
+    position: sticky; left: 0; z-index: 1; background: var(--panel);
+    max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Latest and Δ ride with the name so the answer stays on screen while the release
+     columns scroll. */
+  table.atlas th.num:nth-child(2), table.atlas td.num:nth-child(2) { position: sticky; left: 240px; background: var(--panel); }
+  table.atlas th.num:nth-child(3), table.atlas td.num:nth-child(3) { position: sticky; left: 296px; background: var(--panel); z-index: 1; }
+  table.atlas td.cell { min-width: 42px; }
+  table.atlas tbody tr:hover td.case { background: var(--panel2); }
+  table.atlas td.cell {
+    text-align: right; font-variant-numeric: tabular-nums;
+    color: #fff; font-weight: 650; border-radius: 3px;
+  }
+  table.atlas td.cell.none { color: var(--muted); background: transparent; font-weight: 400; }
+
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    cursor: pointer; border: 1px solid var(--line-strong); border-radius: 999px;
+    padding: 3px 11px; font-size: 12px; font-weight: 550; background: var(--panel2);
+  }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+
   .muted { color: var(--muted); }
   .small { font-size: 12px; }
   .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
@@ -209,6 +236,32 @@
     <p class="hint">Each sparkline has its own scale — click one to chart it above.</p>
   </div>
 
+  <div class="card" id="categoryCard" hidden>
+    <h2>DevOps Category Pass Rate</h2>
+    <div class="sparks" id="categorySparks"></div>
+    <p class="hint">Same 0–100% scale in every panel, so the categories are comparable.</p>
+  </div>
+
+  <div class="card" id="caseCard" hidden>
+    <div class="row" style="margin-bottom:10px">
+      <h2 style="margin:0">Case Atlas</h2>
+      <div class="spacer"></div>
+      <div class="chips" id="caseChips"></div>
+      <select id="caseSort">
+        <option value="regression">worst change first</option>
+        <option value="rate">lowest pass rate first</option>
+        <option value="name">by name</option>
+      </select>
+    </div>
+    <div class="scroll">
+      <table class="atlas">
+        <thead><tr id="caseHead"></tr></thead>
+        <tbody id="caseBody"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="caseHint"></p>
+  </div>
+
   <div class="card">
     <h2>Releases</h2>
     <div class="scroll">
@@ -243,7 +296,8 @@
     {key: "minFDE@3s", label: "minFDE@3s", unit: "metres", better: "down"},
     {key: "scenario_count", label: "Scenarios", unit: "count", better: "flat"}
   ];
-  const state = {items: [], topic: "", metric: "mAP", limit: 15, hover: -1, stale: false};
+  const state = {items: [], topic: "", metric: "mAP", limit: 15, hover: -1, stale: false,
+                 caseCategory: "", caseSort: "regression"};
 
   /* ---------- formatting ---------- */
   function fmtValue(v, unit) {
@@ -426,10 +480,12 @@
     canvas._geom = {xAt, gx, gw, count: pts.length};
   }
   function drawSpark(canvas, key) {
+    drawPoints(canvas, pointsFor(key).map(p => p.value));
+  }
+  function drawPoints(canvas, pts, boundsOverride) {
     const {ctx, w, h} = setup(canvas);
     ctx.clearRect(0, 0, w, h);
-    const pts = pointsFor(key).map(p => p.value);
-    const bounds = niceBounds(pts);
+    const bounds = boundsOverride || niceBounds(pts);
     if (!bounds) return;
     const yAt = v => h - 3 - ((v - bounds.lo) / (bounds.hi - bounds.lo)) * (h - 6);
     const xAt = i => pts.length === 1 ? w / 2 : (i / (pts.length - 1)) * (w - 2) + 1;
@@ -506,6 +562,120 @@
         `<td class="small muted">${esc(row.date || "")}</td>${cells}</tr>`;
     }).join("");
   }
+  /* ---------- DevOps cases ----------
+     The metrics above say a release moved; these say which failure category moved it. */
+  function caseReleases() {
+    return seriesForTopic().filter(r => (r.cases || []).length);
+  }
+  function caseCategories() {
+    const seen = new Set();
+    caseReleases().forEach(r => (r.cases || []).forEach(c => seen.add(c.major_category || "—")));
+    return [...seen];
+  }
+  function categorySeries() {
+    // Pass rate per major category per release: passed and total summed across the
+    // cases in that category, not an average of rates, so a 40-scenario case counts
+    // for more than a 2-scenario one.
+    const cats = caseCategories();
+    const releases = caseReleases();
+    return cats.map(cat => ({
+      name: cat,
+      points: releases.map(r => {
+        const rows = (r.cases || []).filter(c => (c.major_category || "—") === cat);
+        const passed = rows.reduce((n, c) => n + Number(c.passed || 0), 0);
+        const total = rows.reduce((n, c) => n + Number(c.total || 0), 0);
+        return {label: r.version || r.release, date: r.date, value: total ? 100 * passed / total : null,
+                passed, total};
+      })
+    }));
+  }
+  function renderCategories() {
+    const series = categorySeries();
+    $("categoryCard").hidden = !series.length;
+    if (!series.length) return;
+    $("categorySparks").innerHTML = series.map((s, i) => {
+      const last = [...s.points].reverse().find(p => p.value != null);
+      const prev = [...s.points].reverse().filter(p => p.value != null)[1];
+      const d = last && prev ? last.value - prev.value : null;
+      return `<div class="spark" data-cat="${esc(String(i))}">` +
+        `<div class="top"><span class="name">${esc(s.name)}</span>` +
+        `<span class="val">${last ? `${last.value.toFixed(1)}%` : "–"}` +
+        (d == null ? "" : ` <em style="font-size:11px;font-style:normal;color:${deltaColor(d, "up")}">${fmtDelta(d, "percent")}</em>`) +
+        `</span></div><canvas data-cat-spark="${esc(String(i))}"></canvas></div>`;
+    }).join("");
+    $("categorySparks").querySelectorAll("canvas[data-cat-spark]").forEach(c => {
+      const s = series[Number(c.dataset.catSpark)];
+      // Fixed 0-100 across the panels: pass rates share a unit, so a shared scale is
+      // what makes the small multiples comparable rather than merely adjacent.
+      drawPoints(c, s.points.map(p => p.value), {lo: 0, hi: 100});
+    });
+  }
+  function caseRows() {
+    const releases = caseReleases();
+    const byName = new Map();
+    releases.forEach((r, ri) => {
+      (r.cases || []).forEach(c => {
+        const key = c.case_name || c.minor_category || "—";
+        if (!byName.has(key)) {
+          byName.set(key, {name: key, major: c.major_category || "—", mid: c.mid_category || "",
+                          values: new Array(releases.length).fill(null),
+                          counts: new Array(releases.length).fill(null)});
+        }
+        const row = byName.get(key);
+        row.values[ri] = c.pass_rate == null ? null : Number(c.pass_rate);
+        row.counts[ri] = `${c.passed ?? "?"}/${c.total ?? "?"}`;
+      });
+    });
+    let rows = [...byName.values()];
+    if (state.caseCategory) rows = rows.filter(r => r.major === state.caseCategory);
+    rows.forEach(r => {
+      const known = r.values.map((v, i) => ({v, i})).filter(x => x.v != null);
+      r.latest = known.length ? known[known.length - 1].v : null;
+      r.delta = known.length > 1 ? known[known.length - 1].v - known[known.length - 2].v : null;
+      r.known = known.length;
+    });
+    // A case none of the shown releases ran is a row of dashes; drop it rather than
+    // making the reader scroll past it.
+    rows = rows.filter(r => r.known > 0);
+    const cmp = {
+      regression: (a, b) => (a.delta ?? 0) - (b.delta ?? 0),
+      rate: (a, b) => (a.latest ?? 101) - (b.latest ?? 101),
+      name: (a, b) => String(a.name).localeCompare(String(b.name))
+    }[state.caseSort] || (() => 0);
+    return {rows: rows.sort(cmp), releases};
+  }
+  function renderCases() {
+    const cats = caseCategories();
+    $("caseCard").hidden = !cats.length;
+    if (!cats.length) return;
+    $("caseChips").innerHTML = [{key: "", label: "All"}, ...cats.map(c => ({key: c, label: c}))]
+      .map(c => `<span class="chip" role="button" tabindex="0" data-cat="${esc(c.key)}"` +
+        ` aria-pressed="${c.key === state.caseCategory}">${esc(c.label)}</span>`).join("");
+    const {rows, releases} = caseRows();
+    // Release names run to 40 characters; at that width four columns fill the table and
+    // the trend the grid exists to show is off-screen. The date identifies the column,
+    // the full name lives in its tooltip.
+    $("caseHead").innerHTML = `<th class="case">Case</th><th class="num">Latest</th><th class="num">Δ</th>` +
+      releases.map(r => `<th class="num" title="${esc(`${r.version || ""} · ${r.release || ""}`)}">${esc(r.date || "?")}</th>`).join("");
+    $("caseBody").innerHTML = rows.length ? rows.map(row => {
+      const cells = row.values.map((v, i) => {
+        if (v == null) return `<td class="cell none">–</td>`;
+        // Pass rate: 100% calm, 0% hot — the same encoding as every other heat in the app.
+        const heat = window.TH ? TH.heat(1 - Math.max(0, Math.min(1, v / 100))) : "transparent";
+        return `<td class="cell" style="background:${heat}" title="${esc(row.name)} · ${esc(releases[i].version || "")}` +
+          ` · ${esc(row.counts[i] || "")}">${v.toFixed(0)}</td>`;
+      }).join("");
+      const d = row.delta;
+      return `<tr><td class="case" title="${esc(row.major)} › ${esc(row.mid)} › ${esc(row.name)}">${esc(row.name)}</td>` +
+        `<td class="num">${row.latest == null ? "–" : `${row.latest.toFixed(0)}%`}</td>` +
+        `<td class="num" style="color:${deltaColor(d, "up")}">${d == null ? "–" : fmtDelta(d, "percent")}</td>` +
+        cells + `</tr>`;
+    }).join("") : `<tr><td class="empty" colspan="${releases.length + 3}">No cases in this category.</td></tr>`;
+    $("caseHint").textContent =
+      `${rows.length} case(s) × ${releases.length} release(s) · cell = pass rate %, green passes, red fails` +
+      ` · Δ last compares the two most recent releases that ran the case`;
+  }
+
   function renderChartHead() {
     const def = metricDef(state.metric);
     const rows = seriesForTopic();
@@ -519,6 +689,8 @@
     renderChartHead();
     renderTiles();
     renderSparks();
+    renderCategories();
+    renderCases();
     renderTable();
     drawChart();
   }
@@ -575,6 +747,16 @@
   $("sparks").addEventListener("keydown", ev => {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.target.closest(".spark")?.click(); }
   });
+  $("caseChips").addEventListener("click", ev => {
+    const chip = ev.target.closest(".chip[data-cat]");
+    if (!chip) return;
+    state.caseCategory = chip.dataset.cat || "";
+    renderCases();
+  });
+  $("caseChips").addEventListener("keydown", ev => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.target.closest(".chip")?.click(); }
+  });
+  $("caseSort").addEventListener("change", () => { state.caseSort = $("caseSort").value; renderCases(); });
   $("topic").addEventListener("change", () => { state.topic = $("topic").value; renderAll(); });
   $("metric").addEventListener("change", () => { state.metric = $("metric").value; renderAll(); });
   $("limit").addEventListener("change", () => { state.limit = Number($("limit").value) || 0; renderAll(); });
@@ -607,7 +789,7 @@
     const btn = $("refreshBtn");
     btn.disabled = true; btn.textContent = "Loading…";
     try {
-      const data = await api("/api/client/trends", {limit: 200});
+      const data = await api("/api/client/trends", {limit: 200, include_cases: true});
       state.items = data.items || [];
       state.stale = Boolean(data.stale);
       const topics = [...new Set(state.items.map(i => i.topic).filter(Boolean))].sort();

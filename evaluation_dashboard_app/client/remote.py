@@ -261,12 +261,23 @@ class Remote:
         return self.post_json("/api/workflow_start", params, timeout=180.0)
 
     def workflow_trends(
-        self, *, topic: str = "", query: str = "", limit: int = 100, metrics: bool = True
+        self,
+        *,
+        topic: str = "",
+        query: str = "",
+        limit: int = 100,
+        metrics: bool = True,
+        include_cases: bool = False,
     ) -> dict[str, Any]:
-        """Release history with the summary-derived metrics the trend view charts."""
+        """Release history with the summary-derived metrics the trend view charts.
+
+        ``include_cases`` adds the per-case DevOps pass rates, which roughly quadruples
+        the payload (~340 KB for a full history) and is what the case atlas reads.
+        """
         return self.post_json(
             "/api/workflow_trends",
-            {"topic": topic, "q": query, "limit": limit, "metrics": metrics},
+            {"topic": topic, "q": query, "limit": limit, "metrics": metrics,
+             "include_cases": include_cases},
             timeout=180.0,
         )
 

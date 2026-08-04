@@ -210,6 +210,19 @@
     </details>
   </div>
 
+  <!-- Local runs -->
+  <div class="card">
+    <h2>Downloaded on this machine</h2>
+    <div class="scroll"><table>
+      <thead><tr>
+        <th>Run</th><th>Tier</th><th>Roles</th><th class="num">Files</th>
+        <th class="num">Size</th><th>Updated</th><th></th>
+      </tr></thead>
+      <tbody id="localBody"></tbody>
+    </table></div>
+    <p class="hint" id="workspacePath"></p>
+  </div>
+
   <!-- Server runs -->
   <div class="card">
     <div class="row" style="margin-bottom:12px">
@@ -240,19 +253,6 @@
       </tr></thead>
       <tbody id="remoteBody"><tr><td colspan="6" class="empty">Connect to a server to list runs.</td></tr></tbody>
     </table></div>
-  </div>
-
-  <!-- Local runs -->
-  <div class="card">
-    <h2>Downloaded on this machine</h2>
-    <div class="scroll"><table>
-      <thead><tr>
-        <th>Run</th><th>Tier</th><th>Roles</th><th class="num">Files</th>
-        <th class="num">Size</th><th>Updated</th><th></th>
-      </tr></thead>
-      <tbody id="localBody"></tbody>
-    </table></div>
-    <p class="hint" id="workspacePath"></p>
   </div>
 
   <!-- TLR analysis -->
@@ -576,14 +576,19 @@
     return `${where} — not authorized: ${srv.reason || "a token may be required"}`;
   }
 
-  async function refreshState() {
-    const data = await api("/api/client/state");
+  // probe:false answers from disk alone. probe:true adds a round trip to the server,
+  // which is why the first paint asks without it: what is already downloaded should
+  // never wait on the network to be listed.
+  async function refreshState({probe = true} = {}) {
+    const data = await api("/api/client/state", {probe});
     const cfg = data.config || {};
     if (!$("serverUrl").value) $("serverUrl").value = cfg.server_url || "";
     $("token").placeholder = cfg.token_set
       ? "•••••• stored (leave blank to keep)" : "only if the server asks for one";
     $("workspacePath").textContent = `Workspace: ${cfg.workspace || ""}`;
-    $("connStatus").textContent = describeServer(cfg, data.server);
+    $("connStatus").textContent = probe
+      ? describeServer(cfg, data.server)
+      : `${describeServer(cfg, null)} — checking…`;
     $("resetBtn").disabled = !cfg.can_reset;
     if (!tiers.length && data.tiers) { tiers = data.tiers; renderTiers(); }
     renderLocal(data.local_runs);
@@ -930,6 +935,9 @@
   $("token").onkeydown = e => { if (e.key === "Enter") connect(); };
 
   refreshT4(true);
+  // Downloaded runs first and without waiting: they are on this disk, and on a slow
+  // link the server probe below can take seconds.
+  refreshState({probe: false}).catch(() => {});
   refreshState().then(data => {
     // Auto-list whenever the server says it will serve us. With identity-based access
     // that is the normal case, so the common path needs no clicks and no token.
