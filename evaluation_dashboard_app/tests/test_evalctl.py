@@ -3,8 +3,10 @@ building and refusal logic matter more than its printing."""
 
 import base64
 import importlib.util
+import io
 import json
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -280,6 +282,76 @@ def test_a_rejected_service_token_says_so_instead_of_looping(monkeypatch):
                             evalctl.CloudflareAccessRequired("challenged")))
     with pytest.raises(evalctl.ApiError, match="rejected the service token"):
         evalctl.api(args, "/api/workflow_health")
+
+
+def test_the_stock_python_user_agent_is_never_sent(monkeypatch):
+    """Cloudflare's browser-integrity check 403s Python-urllib even with a valid session."""
+    sent = {}
+
+    class _Response:
+        headers = {"Content-Type": "application/json"}
+
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_open(request, timeout=None):
+        sent.update(request.header_items())
+        return _Response()
+
+    monkeypatch.setattr(evalctl._OPENER, "open", fake_open)
+    evalctl._api_once(_args(argv=["doctor"]), "/api/workflow_health", None)
+    agent = {k.lower(): v for k, v in sent.items()}["user-agent"]
+    assert "python-urllib" not in agent.lower()
+    assert agent == evalctl.USER_AGENT
+
+
+def test_edge_rejecting_the_client_is_not_reported_as_a_login_problem(monkeypatch):
+    """1010 with a live session means the WAF dislikes the client, not the identity."""
+    monkeypatch.setitem(evalctl._CF, "headers", {"cookie": "CF_Authorization=a.b.c"})
+    monkeypatch.setitem(evalctl._CF, "mode", "browser session (cloudflared)")
+
+    def fake_open(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", _Headers(),
+                                     io.BytesIO(b"error code: 1010\n"))
+
+    monkeypatch.setattr(evalctl._OPENER, "open", fake_open)
+    with pytest.raises(evalctl.ApiError, match="browser-integrity") as caught:
+        evalctl._api_once(_args(argv=["doctor"]), "/api/workflow_health", None)
+    assert not isinstance(caught.value, evalctl.CloudflareAccessRequired)  # no login loop
+
+
+def test_a_404_falls_forward_to_the_nginx_mount_point(monkeypatch):
+    """The public hostname fronts Streamlit; the API lives under /bbox-api behind it."""
+    monkeypatch.setattr(evalctl, "_PREFIX", {})
+    seen = []
+
+    def once(args, path, payload):
+        seen.append(evalctl._api_base(args) + path)
+        if len(seen) == 1:
+            raise evalctl._RouteMissing("405")
+        return {"ok": True}
+
+    monkeypatch.setattr(evalctl, "_api_once", once)
+    assert evalctl.api(_args(argv=["doctor"]), "/api/workflow_health") == {"ok": True}
+    assert seen == [
+        "https://dash.example.test/api/workflow_health",
+        "https://dash.example.test/bbox-api/api/workflow_health",
+    ]
+
+
+def test_a_url_already_carrying_the_prefix_is_left_alone(monkeypatch):
+    monkeypatch.setattr(evalctl, "_PREFIX", {})
+    monkeypatch.setenv("EVAL_DASHBOARD_URL", "https://dash.example.test/bbox-api")
+    monkeypatch.setattr(evalctl, "_api_once",
+                        lambda *a, **k: (_ for _ in ()).throw(evalctl._RouteMissing("405")))
+    with pytest.raises(evalctl.ApiError, match="backend API base"):
+        evalctl.api(_args(argv=["doctor"]), "/api/workflow_health")
 
 
 def test_jwt_expiry_is_read_for_the_status_line():

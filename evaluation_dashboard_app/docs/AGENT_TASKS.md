@@ -16,6 +16,10 @@ export EVAL_EXPORT_TOKEN=<token>                       # only if the server requ
 python scripts/evalctl.py doctor
 ```
 
+On the public hostname the API sits under `/bbox-api`, so the URL is
+`https://<host>/bbox-api`. Point it at the bare host and `evalctl` finds the right
+path anyway, then prints the line to paste into your profile.
+
 Or just say: **"check the eval server connection"** — the agent runs the doctor and
 explains any failure (wrong URL, missing token, queue disabled, worker down).
 
@@ -43,8 +47,10 @@ export CF_ACCESS_CLIENT_SECRET=<secret>
 With a token set there is never a browser step. Add `--no-cf-login` to any command to
 make it fail fast instead of trying to sign in.
 
-`error code: 1010` or a redirect to `cloudflareaccess.com` means exactly this: not a
-broken server, just no session yet.
+A redirect to `cloudflareaccess.com`, or `error code: 1010` before you have signed in,
+means exactly this: not a broken server, just no session yet. The same `1010` *after*
+a successful sign-in means something else — Cloudflare is refusing the HTTP client
+itself, and only an Access administrator can change that.
 
 ## What you can say
 

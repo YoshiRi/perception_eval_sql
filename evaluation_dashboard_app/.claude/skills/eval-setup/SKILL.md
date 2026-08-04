@@ -8,7 +8,11 @@ description: Configure and verify the connection to the evaluation dashboard ser
 Two environment variables drive everything:
 
 - `EVAL_DASHBOARD_URL` — e.g. `http://eval-server:8502` (the backend API port, not
-  the Streamlit UI port). A public deployment is an `https://…` hostname instead.
+  the Streamlit UI port). Behind nginx or a Cloudflare tunnel the API is mounted at
+  **`/bbox-api`** instead, so the public form is
+  `https://<host>/bbox-api`. `evalctl` falls forward to that prefix by itself when the
+  bare host answers `404`/`405`, and prints the `export` line to make it permanent —
+  but configuring it directly saves a round trip.
 - `EVAL_EXPORT_TOKEN` — only if the server demands a token (`doctor` will say)
 
 If the server sits behind **Cloudflare Access**, see the section below — `evalctl`
@@ -25,6 +29,8 @@ Interpreting it:
 - `UNREACHABLE` → wrong URL/port, VPN, or the server is down. Distinguish
   connection-refused (wrong port / not running) from timeout (network/VPN).
 - `is behind Cloudflare Access` → see below; nothing is wrong with the server.
+- `does not serve /api/…` → the host answered but is not the API. Usually the URL
+  points at the Streamlit UI; use the API port, or add `/bbox-api`.
 - `FAIL authorized` → the reason is printed. "requires an export token" → get the
   token value from the server's `EVAL_EXPORT_TOKEN` env (ask the server admin),
   export it locally, re-run doctor.
@@ -86,6 +92,12 @@ login is worse than a fast failure — pass `--no-cf-login` or set
 
 ### When Access itself is the problem
 
+- **`error code: 1010` with a session that `doctor` calls valid** → this is *not* the
+  identity being refused, it is Cloudflare's browser-integrity check refusing the HTTP
+  client. It fires on the stock `Python-urllib/3.x` User-Agent, which is why `evalctl`
+  sends its own (`USER_AGENT`). If it comes back anyway, the hostname's WAF rules are
+  rejecting API clients — an admin change. Never chase it with more logins; signing in
+  again cannot fix a client the edge dislikes.
 - **`cloudflared` is not installed** → the error says so. Install it from
   Cloudflare's downloads page, or use a service token instead.
 - **Login completes but requests are still refused** → the account that signed in is

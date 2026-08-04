@@ -65,5 +65,10 @@ if set, else a cached `cloudflared` session, else an automatic
 `cloudflared access login`. Since that last step needs a human at a browser, ask the
 user to run `python scripts/evalctl.py login` rather than triggering it blind; in an
 unattended context use a service token, or `--no-cf-login` to fail fast instead of
-hanging. Details: `.claude/skills/eval-setup/SKILL.md`.
+hanging. A `1010` that persists *after* a valid sign-in is the browser-integrity check
+rejecting the HTTP client, not the user — do not retry the login. Details:
+`.claude/skills/eval-setup/SKILL.md`.
+- Behind nginx / a Cloudflare tunnel the API is mounted at `/bbox-api`, not the host
+root; `evalctl` finds it after a 404/405 and prints the `EVAL_DASHBOARD_URL` to make
+permanent.
 

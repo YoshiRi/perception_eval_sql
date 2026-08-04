@@ -41,6 +41,14 @@ JST = timezone(timedelta(hours=9))
 TERMINAL_STATUSES = {"completed", "failed"}
 WATCH_INTERVAL_SEC = 20
 
+# Cloudflare's browser-integrity check answers the stock "Python-urllib/3.x" with
+# 403 "error code: 1010" -- a valid Access session does not save you from it.
+USER_AGENT = "evalctl/1 (+https://github.com/tier4/evaluation_dashboard_app)"
+
+# Where the API answers, relative to the configured host: at the root when the port is
+# hit directly, under /bbox-api when nginx (or a Cloudflare tunnel) fronts Streamlit.
+API_PREFIXES = ("", "/bbox-api")
+
 
 class ApiError(RuntimeError):
     """The server refused or the request never got through."""
@@ -49,13 +57,42 @@ class ApiError(RuntimeError):
 # ------------------------------------------------------------------------ transport
 
 
+_PREFIX: dict[str, str] = {}  # configured host -> the API prefix that answered
+
+
 def _base_url(args: argparse.Namespace) -> str:
+    """The server as configured, verbatim."""
     url = (getattr(args, "url", "") or os.environ.get("EVAL_DASHBOARD_URL", "")).strip()
     if not url:
         raise ApiError(
             "No server configured. Set EVAL_DASHBOARD_URL (e.g. http://host:8502) or pass --url."
         )
     return url.rstrip("/")
+
+
+def _api_base(args: argparse.Namespace) -> str:
+    """The configured server plus whichever API prefix has been found to answer."""
+    root = _base_url(args)
+    return root + _PREFIX.get(root, "")
+
+
+def _try_next_prefix(args: argparse.Namespace) -> bool:
+    """Move to the next candidate mount point; False once they are exhausted."""
+    root = _base_url(args)
+    if any(root.endswith(p) for p in API_PREFIXES if p):
+        return False  # already pointed at a known mount; nothing to guess
+    current = _PREFIX.get(root, "")
+    remaining = API_PREFIXES[API_PREFIXES.index(current) + 1:]
+    if not remaining:
+        return False
+    _PREFIX[root] = remaining[0]
+    print(
+        f"note: the API is mounted at {remaining[0]} on this host -- using "
+        f"{root}{remaining[0]}.\n      Make it permanent: "
+        f"export EVAL_DASHBOARD_URL={root}{remaining[0]}",
+        file=sys.stderr, flush=True,
+    )
+    return True
 
 
 # ---------------------------------------------------------------- cloudflare access
@@ -256,11 +293,17 @@ def cf_status() -> str:
 # ------------------------------------------------------------------ request/response
 
 
+class _RouteMissing(ApiError):
+    """The host answered, but not with this API -- probably the wrong mount point."""
+
+
 def _api_once(args: argparse.Namespace, path: str, payload: dict[str, Any] | None) -> Any:
-    url = _base_url(args) + path
+    base = _api_base(args)
+    url = base + path
     body = json.dumps(payload or {}).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
+    request.add_header("User-Agent", USER_AGENT)
     token = os.environ.get("EVAL_EXPORT_TOKEN", "").strip()
     if token:
         request.add_header("x-export-token", token)
@@ -272,10 +315,21 @@ def _api_once(args: argparse.Namespace, path: str, payload: dict[str, Any] | Non
             content_type = response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        if "error code: 1010" in detail.lower() and _CF["headers"]:
+            # An Access session was sent and still refused at the edge: this is the
+            # browser-integrity check judging the client, not the identity.
+            raise ApiError(
+                f"Cloudflare rejected this client at the edge (403, error code 1010) for "
+                f"{url}, although the Access session is valid ({cf_status()}). The "
+                "browser-integrity check is refusing the HTTP client itself -- ask the "
+                "Access administrator to allow API clients on this hostname."
+            ) from exc
         if _looks_like_access_refusal(exc.code, exc.headers, detail):
             raise CloudflareAccessRequired(
                 f"Cloudflare Access refused {url} (HTTP {exc.code})"
             ) from exc
+        if exc.code in (404, 405):
+            raise _RouteMissing(f"{base} does not serve {path} (HTTP {exc.code})") from exc
         try:
             detail = json.loads(detail).get("error", detail)
         except Exception:
@@ -294,21 +348,30 @@ def _api_once(args: argparse.Namespace, path: str, payload: dict[str, Any] | Non
 def api(args: argparse.Namespace, path: str, payload: dict[str, Any] | None = None) -> Any:
     """POST JSON to one route; returns parsed JSON or raw bytes for streams.
 
-    An Access challenge is not an error to report but a step to take: authenticate and
-    retry once, then once more forcing a fresh login in case a cached JWT had expired.
+    Two obstacles are steps to take rather than errors to report: an Access challenge
+    (authenticate, retry; then once more with a fresh login, in case a cached JWT had
+    expired) and a 404/405 (try the next mount point).
     """
-    for attempt in range(3):
+    cf_tries = 0
+    while True:
         try:
             return _api_once(args, path, payload)
         except CloudflareAccessRequired:
-            if attempt == 2:
+            if cf_tries >= 2:
                 raise ApiError(
                     f"Still blocked by Cloudflare Access after signing in ({cf_status()}). "
                     "Your account may not be allowed on this application -- ask whoever "
                     "administers the Access policy."
                 ) from None
-            cf_authenticate(args, force=attempt > 0)
-    raise AssertionError("unreachable")
+            cf_authenticate(args, force=cf_tries > 0)
+            cf_tries += 1
+        except _RouteMissing as exc:
+            if not _try_next_prefix(args):
+                raise ApiError(
+                    f"{exc}. EVAL_DASHBOARD_URL should be the backend API base -- the "
+                    "server's API port directly, or the public hostname with the "
+                    f"{API_PREFIXES[1]} prefix."
+                ) from None
 
 
 def _print(data: Any, *, as_json: bool) -> None:
@@ -354,7 +417,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     def status(ok: bool, label: str, reason: str = "") -> None:
         print(f"{'ok  ' if ok else 'FAIL'} {label}" + (f" -- {reason}" if reason and not ok else ""))
 
-    status(True, f"server reachable at {_base_url(args)}")
+    status(True, f"server reachable at {_api_base(args)}")
     print(f"     cloudflare access: {report['cloudflare_access']}")
     status(bool(workflow.get("authorized")), "authorized", workflow.get("auth_reason", ""))
     status(bool(workflow.get("queue_enabled")), "task queue", workflow.get("queue_reason", ""))
@@ -389,7 +452,7 @@ def cmd_login(args: argparse.Namespace) -> int:
                   file=sys.stderr)
             return 2
         else:
-            print(f"ok   {_base_url(args)} answers without a Cloudflare Access challenge"
+            print(f"ok   {_api_base(args)} answers without a Cloudflare Access challenge"
                   f" ({cf_status()})")
             return 0
     mode = cf_authenticate(args, force=args.force)
@@ -399,7 +462,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         _print({"mode": mode, "status": cf_status(), "identity": identity}, as_json=True)
         return 0
     print(f"ok   {cf_status()}")
-    print(f"     {_base_url(args)} answers" + (f" as {identity}" if identity else ""))
+    print(f"     {_api_base(args)} answers" + (f" as {identity}" if identity else ""))
     return 0
 
 
