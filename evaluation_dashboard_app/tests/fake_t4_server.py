@@ -22,11 +22,22 @@ from urllib.parse import parse_qs, urlencode, urlparse
 FRAME_HEADER_STRUCT = "<8sIIQIIH"
 FIXED_HEADER_BYTES = 34
 
+# The page's own assets, which it loads from the server rather than inlining. The theme
+# module is fatal when missing -- the real page dies on "TH is not defined".
+PAGE_ASSETS = {
+    "/static/t4_theme.js": (b"window.TH = {hex: () => 0};\n", "application/javascript"),
+    "/static/favicon.svg": (b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
+    "/viewer/assets/vehicle-mesh/lexus.dae": (b"<COLLADA/>", "model/vnd.collada+xml"),
+}
+
 # A page whose fetches are root-relative, like the real viewer_three.html.
 PAGE_TEMPLATE = """<!doctype html>
 <meta charset="utf-8"><title>T4 3D — __SCENARIO_NAME__</title>
+<link rel="icon" href="/static/favicon.svg">
+<script src="/static/t4_theme.js?v=test-1"></script>
 <body data-dataset="__DATASET_ID__">
 <script>
+const EGO_MESH = "/viewer/assets/vehicle-mesh/lexus.dae";
 const params = new URLSearchParams("__QS__");
 const dataset = params.get("t4dataset_id");
 const scenario = params.get("scenario_name");
@@ -131,6 +142,15 @@ class FakeT4Handler(BaseHTTPRequestHandler):
 
         if path.endswith("/availability"):
             self._json({"t4dataset_id": self.dataset_id, "available": True, "dataset_path": "/fake"})
+            return
+
+        if path in PAGE_ASSETS:
+            body, content_type = PAGE_ASSETS[path]
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         if path == "/viewer/three":

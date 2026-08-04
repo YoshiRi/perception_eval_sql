@@ -220,6 +220,35 @@ def infer_external_bbox_alignment_query_params(df: "pd.DataFrame") -> str:
     )
 
 
+def _footprint_to_base_link(vertices: list[list[float]], box: dict) -> list[list[float]]:
+    """Place an object-local footprint at the box's pose.
+
+    The analyzer (>=0.2.0) writes footprint vertices in the object's own frame -- a
+    car-sized rectangle centred on nothing. The viewer draws footprint prisms from these
+    coordinates directly, so passing them through unrotated stacked every box on the ego
+    vehicle. ``backend.local_bbox_api`` already does this for the 2D preview; the same
+    rotate-and-translate has to happen for the 3D overlay or the two disagree.
+
+    z becomes the prism's base, since the viewer extrudes upward from it by the height.
+    """
+    cx = _as_float(box.get("x"), 0.0)
+    cy = _as_float(box.get("y"), 0.0)
+    cz = _as_float(box.get("z"), 0.0)
+    half_h = _as_float(box.get("height"), 0.0) / 2.0
+    yaw = _as_float(box.get("yaw"), 0.0)
+    try:
+        from perception_catalog_analyzer.dataframe import footprint_to_base_link
+
+        placed = footprint_to_base_link([[v[0], v[1]] for v in vertices], cx, cy, yaw)
+    except Exception:
+        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+        placed = [
+            [v[0] * cos_y - v[1] * sin_y + cx, v[0] * sin_y + v[1] * cos_y + cy]
+            for v in vertices
+        ]
+    return [[_as_float(p[0], 0.0), _as_float(p[1], 0.0), cz - half_h] for p in placed]
+
+
 def _box_corners_from_pose(box: dict) -> list[float] | None:
     try:
         cx = _as_float(box.get("x"), 0.0)
@@ -394,7 +423,7 @@ def _single_frame_layer_dict(df_frame: "pd.DataFrame", swap_length_width: bool =
         if "footprint" in row.index:
             footprint = _as_footprint_vertices(row.get("footprint"))
             if footprint is not None:
-                box["footprint"] = footprint
+                box["footprint"] = _footprint_to_base_link(footprint, box)
         return box
 
     gt_df = _dedupe_eval_rows(df_frame[df_frame["source"] == "GT"].copy())

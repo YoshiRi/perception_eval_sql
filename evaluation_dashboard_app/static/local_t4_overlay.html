@@ -45,7 +45,9 @@
     <span class="spacer"></span>
     <span class="status" id="status">Loading the cached scene...</span>
     <a class="btn" id="plainLink" href="#" title="The scene without the run's boxes">Annotations only</a>
-    <a class="btn" href="/explorer">← Explorer</a>
+    <!-- _top so the link works the same whether this page is the explorer's embedded
+         viewer or a standalone tab; without it the explorer would nest inside itself. -->
+    <a class="btn" href="/explorer" target="_top">← Explorer</a>
   </header>
   <iframe id="viewer" title="T4 3D viewer" allowfullscreen allow="fullscreen *"></iframe>
 
@@ -86,8 +88,21 @@ let iframeLoaded = false;
 
 function showViewer(url) {
   const frame = $("viewer");
-  frame.addEventListener("load", () => { iframeLoaded = true; post(); }, {once: true});
+  frame.addEventListener("load", () => { iframeLoaded = true; post(); refreshShell(); }, {once: true});
   frame.src = url;
+}
+
+// The cached page is the viewer's own code, and it ages: a scene downloaded once has no
+// download left to offer, so nothing would ever replace it. Refresh it after this frame
+// has loaded -- the new code applies next time, and offline this just fails quietly.
+async function refreshShell() {
+  try {
+    await fetch("/api/client/t4_refresh_shell", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({t4dataset_id: dataset, scenario_name: scene}),
+    });
+  } catch (err) { /* offline, or not the local client */ }
 }
 
 function bytesToBuffer(b64) {

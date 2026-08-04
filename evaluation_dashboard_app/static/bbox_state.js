@@ -5,7 +5,9 @@ var state = {
   t4Scenes: null,
   // Probe of the T4 server, fetched once and only when an uncached scene is selected;
   // and the fetch job in flight, if any.
-  t4Server: null, t4Job: null,
+  // Last sized scene, which the Download button then offers by name and size: the
+  // estimate the user agreed to, not a modal they clicked through.
+  t4Server: null, t4Job: null, t4Estimate: null,
   // True once /api/client answers: this page is served by the desktop client, whose
   // window cannot open tabs, so links go out through its process instead.
   isLocalClient: false,

@@ -530,6 +530,22 @@ def client_t4_config(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "config": view, "server": _t4_probe(view["t4_base_url"])}
 
 
+def client_t4_refresh_shell(payload: dict[str, Any]) -> dict[str, Any]:
+    """Bring a cached scene's viewer code up to date, in the background.
+
+    Called by the 3D page once its iframe has loaded, so a stale viewer is replaced for
+    the next open rather than delaying this one. Offline it fails and says so; the page
+    ignores that, since a cached scene still plays with the code it has.
+    """
+    from client import t4
+
+    dataset_id = str(payload.get("t4dataset_id") or "").strip()
+    scenario = str(payload.get("scenario_name") or "").strip() or None
+    if not dataset_id:
+        raise ValueError("A dataset id is required.")
+    return {"ok": True, **t4.refresh_scene_shell(dataset_id, scenario)}
+
+
 def client_t4_scenarios(payload: dict[str, Any]) -> dict[str, Any]:
     from client import t4
 
@@ -829,6 +845,7 @@ CLIENT_ROUTES = {
     "/api/client/t4_config": client_t4_config,
     "/api/client/t4_login": client_t4_login,
     "/api/client/t4_scenarios": client_t4_scenarios,
+    "/api/client/t4_refresh_shell": client_t4_refresh_shell,
     "/api/client/t4_estimate": client_t4_estimate,
     "/api/client/t4_fetch": client_t4_fetch,
     "/api/client/t4_fetch_status": client_t4_fetch_status,
@@ -885,6 +902,10 @@ def build_handler() -> type:
             if parsed.path == "/viewer/three" or parsed.path.startswith("/viewer/three/"):
                 self._serve_t4(parsed)
                 return
+            # The T4 page's own assets (its theme module, the ego mesh). The app's own
+            # static files win, so this only answers what this build does not have.
+            if self._serve_t4_asset(parsed.path):
+                return
             super().do_GET()
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib naming
@@ -895,6 +916,26 @@ def build_handler() -> type:
                 self._serve_t4(parsed)
                 return
             super().do_POST()
+
+        def _serve_t4_asset(self, path: str) -> bool:
+            from client import t4
+
+            name = path.rsplit("/", 1)[-1]
+            if path.startswith("/static/") and app_paths.find_static_file(name) is not None:
+                return False  # this build ships it; serve ours, not the mirror's
+            try:
+                found = t4.serve_asset(path)
+            except Exception:
+                return False
+            if found is None:
+                return False
+            body, content_type = found
+            _send_response(self, 200, [
+                ("Content-Type", content_type),
+                ("Content-Length", str(len(body))),
+                ("Cache-Control", "no-cache"),
+            ], body)
+            return True
 
         def _serve_t4(self, parsed: Any) -> None:
             from client import t4

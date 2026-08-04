@@ -341,3 +341,60 @@ def test_the_error_names_the_command_that_fixes_it(monkeypatch):
     client = t4.T4Client("https://t4.example.test", _cf_cfg())
     message = str(client._access_error())
     assert "cloudflared access login https://t4.example.test" in message
+
+
+# ------------------------------------------------------------- the page's assets
+
+# The page is not self-contained: it loads its theme module, its favicon and the ego mesh
+# from the server. Mirroring only /viewer/three* left those 404ing, and a missing theme
+# module is fatal -- the page dies on "TH is not defined" and shows nothing at all.
+
+
+def test_fetch_mirrors_the_assets_the_page_loads(fetched):
+    stats, _server = fetched
+    assert stats["assets"] == {"fetched": 3, "skipped": 0, "errors": []}
+    for url in ("/static/t4_theme.js", "/static/favicon.svg", "/viewer/assets/vehicle-mesh/lexus.dae"):
+        body, content_type = t4.serve_asset(url, allow_fetch=False)
+        assert body and content_type
+
+
+def test_asset_urls_are_read_from_the_page_ignoring_cache_busting(fetched):
+    _stats, _server = fetched
+    page = (t4.scene_dir(DATASET, SCENARIO) / "page.html").read_bytes()
+    assert "/static/t4_theme.js" in t4.page_asset_urls(page)  # page has ?v=test-1
+
+
+def test_refetching_skips_assets_already_mirrored(home, server):
+    t4.fetch_scene(DATASET, SCENARIO, base_url=server.base_url)
+    again = t4.fetch_scene(DATASET, SCENARIO, base_url=server.base_url)
+    assert again["assets"]["skipped"] == 3 and again["assets"]["fetched"] == 0
+
+
+def test_an_unmirrored_asset_is_not_invented(fetched):
+    assert t4.serve_asset("/static/never-fetched.js", allow_fetch=False) is None
+
+
+def test_only_asset_routes_are_served_from_the_mirror(fetched):
+    """Anything else would turn this into an open file server for the cache directory."""
+    assert t4.serve_asset("/viewer/three/frame.bin", allow_fetch=False) is None
+    assert t4.serve_asset("/../../etc/passwd", allow_fetch=False) is None
+
+
+def test_the_shell_refresh_replaces_the_page_but_keeps_the_frames(fetched):
+    """A scene cached once has no download left to offer, so its viewer would never age out."""
+    _stats, server = fetched
+    page = t4.scene_dir(DATASET, SCENARIO) / "page.html"
+    page.write_bytes(b"<html>stale viewer</html>")
+    frames_before = sorted(p.name for p in (t4.scene_dir(DATASET, SCENARIO) / "frames").iterdir())
+    config.Config(t4_base_url=server.base_url).save()
+
+    result = t4.refresh_scene_shell(DATASET, SCENARIO)
+
+    assert result["changed"] is True
+    assert b"stale viewer" not in page.read_bytes()
+    assert sorted(p.name for p in (t4.scene_dir(DATASET, SCENARIO) / "frames").iterdir()) == frames_before
+
+
+def test_refreshing_an_uncached_scene_says_so(home):
+    with pytest.raises(t4.CacheMiss, match="No cached 3D scene"):
+        t4.refresh_scene_shell("nothing-here")

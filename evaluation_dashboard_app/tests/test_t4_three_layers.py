@@ -1,3 +1,4 @@
+import math
 from urllib.parse import parse_qs
 
 import pandas as pd
@@ -98,7 +99,12 @@ def test_payload_keeps_length_forward_release_boxes_with_explicit_corners():
     assert _corner_extents(box["corners"]) == (4.0, 2.0, 1.5)
 
 
-def test_payload_includes_polygon_footprint_vertices_in_binary_stats():
+def test_payload_places_polygon_footprints_at_the_object_pose():
+    """Stored footprints are object-local (``footprint_to_base_link`` in the analyzer).
+
+    Passing them through untransformed drew every prism around the origin, i.e. stacked
+    on the ego vehicle -- which is what the 3D viewer showed for polygon-shaped rows.
+    """
     df = pd.DataFrame(
         {
             "frame_index": [0],
@@ -112,9 +118,9 @@ def test_payload_includes_polygon_footprint_vertices_in_binary_stats():
             "length": [0.0],
             "width": [0.0],
             "height": [1.5],
-            "yaw": [0.0],
+            "yaw": [math.pi / 2],
             "uuid": ["poly-1"],
-            "footprint": [[[9.0, 2.0, 0.0], [11.0, 2.0, 0.0], [10.5, 4.0, 0.0], [9.0, 2.0, 0.0]]],
+            "footprint": [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]],
         }
     )
 
@@ -123,7 +129,14 @@ def test_payload_includes_polygon_footprint_vertices_in_binary_stats():
     _blob, stats = _pack_three_layer_payload_binary(payload)
 
     assert box["shape_type"] == "invalid_polygon_marker"
-    assert box["footprint"] == [[9.0, 2.0, 0.0], [11.0, 2.0, 0.0], [10.5, 4.0, 0.0], [9.0, 2.0, 0.0]]
+    # Rotated by yaw about the object centre, then translated to it; z is the prism's
+    # base, which the viewer extrudes upward by the height.
+    assert [[round(v, 6) for v in pt] for pt in box["footprint"]] == [
+        [10.0, 4.0, -0.25],
+        [9.0, 3.0, -0.25],
+        [10.0, 2.0, -0.25],
+        [11.0, 3.0, -0.25],
+    ]
     assert stats["footprint_box_count"] == 1
     assert stats["footprint_point_count"] == 4
 

@@ -268,6 +268,7 @@ def fetch_scene(
     page_params["frame_index"] = 0
     page_bytes, _ = client.get("/viewer/three", page_params)
     _write_bytes(target / "page.html", page_bytes)
+    assets = mirror_page_assets(client, page_bytes, force=force)
 
     wanted = frames if frames is not None else range(total)
     wanted = [i for i in wanted if 0 <= i < total]
@@ -286,6 +287,7 @@ def fetch_scene(
         "stopped_early": False,
         "with_lanelet": with_lanelet,
         "with_camera": with_camera,
+        "assets": assets,
     }
     started = time.monotonic()
 
@@ -454,6 +456,130 @@ def remove_scene(dataset_id: str, scenario: str) -> tuple[bool, str]:
     if parent.is_dir() and not any(parent.iterdir()):
         parent.rmdir()
     return True, f"Removed {target}"
+
+
+# --------------------------------------------------------------------------- assets
+
+# The viewer page is not self-contained: it pulls its theme module, its favicon and the
+# ego-vehicle mesh from the server's own asset routes. Mirroring only /viewer/three*
+# left those 404ing, and a missing theme module is fatal -- the page dies on "TH is not
+# defined" and renders nothing at all. Assets are shared between scenes, so they live
+# beside the scenes rather than inside one.
+_ASSET_PREFIXES = ("/static/", "/viewer/assets/")
+_ASSET_URL_RE = re.compile(
+    rb"""["'](/(?:static|viewer/assets)/[A-Za-z0-9._/-]+)(?:\?[^"']*)?["']"""
+)
+_ASSET_CONTENT_TYPES = {
+    ".js": "application/javascript",
+    ".mjs": "application/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+    ".dae": "model/vnd.collada+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".glb": "model/gltf-binary",
+    ".wasm": "application/wasm",
+}
+
+
+def assets_root() -> Path:
+    return t4_root() / "_assets"
+
+
+def _asset_file(url_path: str) -> Path | None:
+    """Where an asset URL is stored, or None if the path is not one we mirror."""
+    if not any(url_path.startswith(prefix) for prefix in _ASSET_PREFIXES):
+        return None
+    parts = [_safe_name(part) for part in url_path.strip("/").split("/") if part not in ("", ".", "..")]
+    return assets_root().joinpath(*parts) if parts else None
+
+
+def page_asset_urls(page_bytes: bytes) -> list[str]:
+    seen: list[str] = []
+    for match in _ASSET_URL_RE.finditer(page_bytes):
+        url = match.group(1).decode("utf-8")
+        if url not in seen:
+            seen.append(url)
+    return seen
+
+
+def mirror_page_assets(client: T4Client, page_bytes: bytes, *, force: bool = False) -> dict[str, Any]:
+    """Download whatever the page loads from the server's asset routes."""
+    stats = {"fetched": 0, "skipped": 0, "errors": []}
+    for url in page_asset_urls(page_bytes):
+        target = _asset_file(url)
+        if target is None:
+            continue
+        if target.is_file() and not force:
+            stats["skipped"] += 1
+            continue
+        try:
+            body, _ = client.get(url)
+        except T4Error as exc:
+            # An asset the deployment does not actually serve must not fail the scene.
+            stats["errors"].append(f"{url}: {exc}")
+            continue
+        _write_bytes(target, body)
+        stats["fetched"] += 1
+    return stats
+
+
+def refresh_scene_shell(dataset_id: str, scenario: str | None = None) -> dict[str, Any]:
+    """Re-download a cached scene's page and assets, leaving its frames alone.
+
+    The frames are the expensive part and never change; the page is the viewer's own
+    code, which does. Without this a scene cached once would keep an old viewer forever
+    -- there is no "download" left to offer for it, since the frames are all present.
+    """
+    scene = find_scene(dataset_id, scenario)
+    if scene is None:
+        raise CacheMiss(f"No cached 3D scene for dataset {dataset_id}")
+    manifest = {}
+    try:
+        manifest = json.loads((scene / "manifest.json").read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    cfg = config.Config.load()
+    client = T4Client(cfg.effective_t4_base_url(), cfg, timeout=30.0)
+    params = _scene_params(
+        manifest.get("dataset_id") or dataset_id,
+        manifest.get("scenario") or scene.name,
+        manifest.get("version"),
+    )
+    params["frame_index"] = 0
+    body, _ = client.get("/viewer/three", params)
+    before = scene.joinpath("page.html").read_bytes() if (scene / "page.html").is_file() else b""
+    _write_bytes(scene / "page.html", body)
+    return {
+        "changed": before != body,
+        "bytes": len(body),
+        "assets": mirror_page_assets(client, body),
+    }
+
+
+def serve_asset(url_path: str, *, allow_fetch: bool = True) -> tuple[bytes, str] | None:
+    """A mirrored asset, fetching it once if it is missing and the server is reachable.
+
+    Self-healing matters here: scenes downloaded before assets were mirrored would
+    otherwise stay broken until the user re-fetched hundreds of megabytes of frames.
+    """
+    target = _asset_file(url_path)
+    if target is None:
+        return None
+    if not target.is_file() and allow_fetch:
+        cfg = config.Config.load()
+        base = cfg.effective_t4_base_url()
+        if base:
+            try:
+                body, _ = T4Client(base, cfg, timeout=15.0).get(url_path)
+                _write_bytes(target, body)
+            except T4Error:
+                return None
+    if not target.is_file():
+        return None
+    suffix = target.suffix.lower()
+    return target.read_bytes(), _ASSET_CONTENT_TYPES.get(suffix, "application/octet-stream")
 
 
 class CacheMiss(T4Error):

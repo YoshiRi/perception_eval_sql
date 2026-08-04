@@ -541,6 +541,10 @@ async function selectScenario(s, flash = true) {
   renderIntentPanel(s);
   renderResultPanel("Loading result explanation...");
   renderScenarioLabels(s);
+  // A sized estimate belongs to the scenario it was taken for.
+  if (!state.t4Estimate || state.t4Estimate.dataset !== String(s.t4dataset_id || "")) {
+    state.t4Estimate = null;
+  }
   update3dButton();
   // Only worth a probe when there is something to download: a dataset id with no scene.
   if (state.t4Scenes && s.t4dataset_id && !selectedT4Scene()) ensureT4ServerProbe();
@@ -1222,7 +1226,13 @@ function update3dButton() {
     get.title = `Stop fetching ${job.scenario}`;
     return;
   }
-  get.textContent = "Download 3D";
+  const sized = state.t4Estimate && state.t4Estimate.dataset === dataset ? state.t4Estimate : null;
+  get.textContent = sized ? `Download ${sized.size}` : "Download 3D";
+  if (sized) {
+    get.disabled = false;
+    get.title = `Fetch ${sized.scenario} into the local cache`;
+    return;
+  }
   const server = state.t4Server;
   if (!server) {  // not probed yet; let the click do it rather than guess
     get.disabled = false;
@@ -1284,6 +1294,24 @@ async function download3dScene() {
   const dataset = s && String(s.t4dataset_id || "");
   if (!dataset) return;
   const btn = els.get3d;
+  // Second click on a sized scene: the estimate on the button is the agreement, the
+  // way the home page does it. A modal confirm for a size the page can just show is
+  // both uglier and easier to dismiss by reflex.
+  const agreed = state.t4Estimate;
+  if (agreed && agreed.dataset === dataset) {
+    state.t4Estimate = null;
+    btn.disabled = true;
+    try {
+      const started = await api("/api/client/t4_fetch", {dataset_id: dataset, scenario: agreed.scenario});
+      state.t4Job = started.job;
+      watchT4Fetch();
+    } catch (err) {
+      setT4FetchStatus(`Download failed: ${err.message}`);
+    } finally {
+      update3dButton();
+    }
+    return;
+  }
   btn.disabled = true;
   try {
     // The probe can take seconds; say so first, or the click looks like it did nothing.
@@ -1306,15 +1334,9 @@ async function download3dScene() {
     setT4FetchStatus(`Sizing ${scenario}...`);
     const est = await api("/api/client/t4_estimate", {dataset_id: dataset, scenario});
     const size = fmtBytes(est.estimated_bytes);
-    setT4FetchStatus(`${scenario}: ${fmt(est.frames)} frames, about ${size}.`);
-    if (!confirm(`Download ${scenario} (${fmt(est.frames)} frames, about ${size})?\n\n`
-      + `${est.note || ""}`)) {
-      setT4FetchStatus("");
-      return;
-    }
-    const started = await api("/api/client/t4_fetch", {dataset_id: dataset, scenario});
-    state.t4Job = started.job;
-    watchT4Fetch();
+    state.t4Estimate = {dataset, scenario, size};
+    setT4FetchStatus(`${scenario}: ${fmt(est.frames)} frames, about ${size}. `
+      + `${est.note || ""} Click again to download.`);
   } catch (err) {
     setT4FetchStatus(`Download failed: ${err.message}`);
   } finally {
@@ -1383,9 +1405,12 @@ function open3dViewer() {
   if (s.scenario_name) p.set("eval_scenario", s.scenario_name);
   if (s.suite_name) p.set("eval_suite", s.suite_name);
   if (state.rangeMax !== "") p.set("eval_distance_max", String(state.rangeMax));
-  // Served by this same client, so make it absolute before handing it to a browser
-  // that is not pointed at localhost:<port>.
-  openExternal(new URL(`${API_BASE}/viewer/three_eval?${p.toString()}`, window.location.href).href);
+  // In the app's own viewer shell, not a browser window: this page is served by the
+  // client we are already in, and leaving for it would throw away the explorer's state
+  // for no gain. The shell's "New tab" still hands it to a real browser on request.
+  showViewer(`${API_BASE}/viewer/three_eval?${p.toString()}`);
+  els.viewerShellTitle.textContent = `3D scene · ${scenarioName(s)}`;
+  els.viewerShellMeta.textContent = `${scene.scenario || scene.dataset_id} · point cloud + this run's boxes`;
 }
 function showViewer(url, frame = null) {
   state.viewerUrl = url;

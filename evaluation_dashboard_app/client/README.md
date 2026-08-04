@@ -425,8 +425,9 @@ with a progress bar, and open, resume or delete cached scenes.
 
 The explorer's **Scenario Actions** card answers "this scene is not downloaded yet"
 without the trip back to the home page: **Download 3D** sizes the selected scenario's
-scene and fetches it into the local cache (a progress line, and the button becomes
-Cancel), and **Open 3D on server** opens the dashboard's own T4 3D Viewer page for the
+scene and then offers that size on the button itself (**Download 214.6 MB**) — clicking
+it fetches, with a progress line, and the button becomes Cancel — and **Open 3D on
+server** opens the dashboard's own T4 3D Viewer page for the
 same scene, which streams from the deployed dataset server and caches nothing. The first
 needs disk and patience once; the second needs the network every time.
 
@@ -462,11 +463,19 @@ incremental — an already-cached frame is skipped unless you pass `--force` —
 
 **Open 3D shows the run, not just the dataset.** The viewer's own boxes are the T4
 annotations; predictions and their TP/FP/FN verdicts exist only in the parquet. The
-explorer opens `/viewer/three_eval`, which wraps the cached viewer and pushes the
-scenario's boxes into it over the same `bbox_layers_binary_v1` channel the dashboard
-uses (`/api/t4_layers` packs them), applying the same filters as the 2D preview and
-opening on the first frame the run actually evaluated. **Annotations only** in that
-page's header is the plain viewer, for comparison.
+explorer opens `/viewer/three_eval` in its own viewer shell, wrapping the cached viewer
+and pushing the scenario's boxes into it over the same `bbox_layers_binary_v1` channel
+the dashboard uses (`/api/t4_layers` packs them), applying the same filters as the 2D
+preview and opening on the first frame the run actually evaluated. **Annotations only**
+in that page's header is the plain viewer, for comparison.
+
+Two things about the mirror this depends on. The page is **not** self-contained — it
+loads its theme module, its favicon and the ego mesh from the server's asset routes, so
+those are mirrored too (`~/.evaldash/t4/_assets/`, shared between scenes); a missing
+theme module is fatal, the page dies on `TH is not defined` and renders nothing. And
+because a fully cached scene has no download left to offer, its `page.html` would keep an
+old viewer forever: opening the 3D page kicks off a background shell refresh, so the next
+open has current viewer code. Both are no-ops offline.
 
 Once cached, the client serves the same `/viewer/three*` paths locally, byte-for-byte,
 including the `X-T4V-*` headers. Because every URL the viewer page fetches is
