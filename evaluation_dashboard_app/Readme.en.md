@@ -63,6 +63,11 @@ This is an evaluation dashboard built with Streamlit. It reads evaluation result
 
 3. Choose pages and filters from the sidebar to explore the data.
 
+> **Driving workflows with a coding agent:** evaluator runs, release spec-sheets,
+> trend queries and detection analysis can all be requested in plain language from
+> Claude Code or Codex (backed by `scripts/evalctl.py`). See
+> [docs/AGENT_TASKS.md](docs/AGENT_TASKS.md) for the phrasebook.
+
 ### Visualization quick start (recommended workflow)
 
 The recommended flow from downloading logs for a test to generating summaries and then reviewing the details in Overview is the following three-step process:
