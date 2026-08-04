@@ -74,8 +74,8 @@ def _run_window(server: serve.LocalServer, url: str) -> int:
     _say(f"opening   {url} (native window)")
     # GTK inside a PyInstaller bundle cannot see the system module directory, so it
     # reports optional modules such as canberra-gtk-module as failed. Cosmetic, and
-    # silencing it would mean redirecting fd 2 and hiding real errors too.
-    _say('note      any \'Failed to load module "canberra-gtk-module"\' lines below are harmless')
+    # silencing it would mean redirecting fd 2 and hiding real errors too, so the
+    # lines are simply left alone - client/README.md explains them.
     try:
         webview.create_window(WINDOW_TITLE, url, width=DEFAULT_SIZE[0], height=DEFAULT_SIZE[1])
         webview.start()
