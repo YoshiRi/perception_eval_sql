@@ -14,11 +14,23 @@ report blueprint. You are the LLM those instructions are written for.
 python scripts/evalctl.py runs --q <name>       # find exact run names first
 python scripts/evalctl.py analyze <run>                      # single run
 python scripts/evalctl.py compare <base_run> <candidate_run> # regression check
+python scripts/evalctl.py analyze <path> --kind tlr          # traffic light recognition
+python scripts/evalctl.py compare <a> <b> --kind tlr
 ```
 
 Both extract into `analysis_<run>/` or `compare_<base>_vs_<candidate>/` (choose
 `--dest` in your scratchpad). `--role devops` switches tier; `--exclude-polygons`
 matches the spec-sheet metric convention.
+
+Kinds: the default covers detection (and, when the run has `future.parquet`,
+prediction minADE/minFDE tables join the package automatically). `--kind tlr` takes a
+path relative to the data root (TLR result dirs can be nested) and yields criteria
+matrices, vehicle-status × signal-type heatmap data, scenario roll-ups, and FN frames
+with its own instructions — same workflow, different evidence.
+
+For the *official* PDF artifacts (to attach to a ticket rather than write prose):
+`python scripts/evalctl.py report <run>` (4-section dashboard PDF; add
+`--candidate-run` for A/B) or `--kind specsheet` for the release spec-sheet.
 
 ## Writing the report
 

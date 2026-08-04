@@ -16,7 +16,18 @@ python scripts/evalctl.py cancel <task_id>
 
 ## Diagnosing a failed task
 
-Fetch the log tail and read it — do not just relay "it failed". Common patterns:
+Start with the structured triage bundle — it pre-extracts what you'd otherwise regex
+out of the log:
+
+```bash
+python scripts/evalctl.py triage <task_id>          # human-readable
+python scripts/evalctl.py --json triage <task_id>   # for parsing
+```
+
+It carries the evaluator job/build/test statuses, the failed cases with reasons, the
+report/catalog/commit links, the error-mentioning log lines, and the log tail. Fall
+back to `status <task_id> --log` only when you need more of the raw log. Common
+patterns:
 
 - Evaluator job rejected / build failure right at the start → the branch existed but
   does not build; the log names the failing phase. Point the user at the evaluator

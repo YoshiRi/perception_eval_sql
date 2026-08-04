@@ -757,16 +757,75 @@ def _save_analysis_package(args: argparse.Namespace, payload: dict[str, Any], na
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    payload: dict[str, Any] = {"kind": args.kind, "run": args.run, "role": args.role}
+    if args.candidate_run:
+        payload["candidate_run"] = args.candidate_run
+    if args.kind == "specsheet":
+        payload["force"] = args.force_rebuild
+        if args.version:
+            payload["version"] = args.version
+        if args.project:
+            payload["project_id"] = args.project
+    data = api(args, "/api/report", payload)
+    if not isinstance(data, bytes):
+        raise ApiError(f"Expected a PDF stream, got: {str(data)[:200]}")
+    name = f"{args.kind}_{_package_slug(args.run)}.pdf"
+    dest = Path(args.dest or ".") / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    print(f"saved {dest} ({len(data) / 1e6:.1f} MB)")
+    return 0
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    result = api(args, "/api/workflow_triage", {"task_id": args.task_id})
+    if args.json:
+        _print(result, as_json=True)
+        return 0
+    task = result.get("task") or {}
+    print(f"task {task.get('id', '')}  {task.get('status', '?')}  {task.get('target_name', '')}")
+    if result.get("error_message"):
+        print(f"error: {result['error_message']}")
+    evaluator = result.get("evaluator") or {}
+    for key in ("job_id", "status", "build_status", "test_status", "fail_message"):
+        if evaluator.get(key):
+            print(f"evaluator {key:12} {evaluator[key]}")
+    for name, url in (result.get("links") or {}).items():
+        print(f"link {name:14} {url}")
+    failed = result.get("failed_cases") or []
+    if failed:
+        print(f"--- failed cases ({len(failed)}) ---")
+        for case in failed[:12]:
+            print(f"  {json.dumps(case, ensure_ascii=False, default=str)}")
+    error_lines = result.get("error_lines") or []
+    if error_lines:
+        print(f"--- log lines mentioning errors ({len(error_lines)}) ---")
+        for line in error_lines:
+            print(f"  {line}")
+    return 0
+
+
+def _package_slug(value: str) -> str:
+    """A path-safe folder name for extracted packages (TLR runs may be nested paths)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip("/")) or "run"
+
+
 def cmd_analyze(args: argparse.Namespace) -> int:
-    payload = {"mode": "single", "run": args.run, "role": args.role,
+    payload = {"mode": "single", "kind": args.kind, "run": args.run, "role": args.role,
                "exclude_polygons": args.exclude_polygons}
-    return _save_analysis_package(args, payload, f"analysis_{args.run}")
+    prefix = "tlr_analysis" if args.kind == "tlr" else "analysis"
+    return _save_analysis_package(args, payload, f"{prefix}_{_package_slug(args.run)}")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    payload = {"mode": "compare", "base_run": args.base, "candidate_run": args.candidate,
-               "role": args.role, "exclude_polygons": args.exclude_polygons}
-    return _save_analysis_package(args, payload, f"compare_{args.base}_vs_{args.candidate}")
+    payload = {"mode": "compare", "kind": args.kind, "base_run": args.base,
+               "candidate_run": args.candidate, "role": args.role,
+               "exclude_polygons": args.exclude_polygons}
+    prefix = "tlr_compare" if args.kind == "tlr" else "compare"
+    return _save_analysis_package(
+        args, payload, f"{prefix}_{_package_slug(args.base)}_vs_{_package_slug(args.candidate)}"
+    )
 
 
 # ------------------------------------------------------------------------------ main
@@ -865,7 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.set_defaults(func=cmd_fetch)
 
     analyze = sub.add_parser("analyze", help="fetch the LLM analysis package for one run")
-    analyze.add_argument("run")
+    analyze.add_argument("run", help="run name; for --kind tlr a path relative to the data root")
+    analyze.add_argument("--kind", choices=["detection", "tlr"], default="detection")
     analyze.add_argument("--role", default="performance")
     analyze.add_argument("--exclude-polygons", action="store_true")
     analyze.add_argument("--dest", default="")
@@ -874,10 +934,28 @@ def build_parser() -> argparse.ArgumentParser:
     compare = sub.add_parser("compare", help="fetch the base-vs-candidate analysis package")
     compare.add_argument("base")
     compare.add_argument("candidate")
+    compare.add_argument("--kind", choices=["detection", "tlr"], default="detection")
     compare.add_argument("--role", default="performance")
     compare.add_argument("--exclude-polygons", action="store_true")
     compare.add_argument("--dest", default="")
     compare.set_defaults(func=cmd_compare)
+
+    report = sub.add_parser("report", help="download an official PDF report for a run")
+    report.add_argument("run")
+    report.add_argument("--kind", choices=["dashboard", "specsheet"], default="dashboard")
+    report.add_argument("--candidate-run", default="",
+                        help="dashboard only: compare this run against `run`")
+    report.add_argument("--role", default="performance")
+    report.add_argument("--version", default="", help="specsheet title version")
+    report.add_argument("--project", default="", help="specsheet project id")
+    report.add_argument("--force-rebuild", action="store_true",
+                        help="specsheet: regenerate even when the PDF is fresh")
+    report.add_argument("--dest", default="")
+    report.set_defaults(func=cmd_report)
+
+    triage = sub.add_parser("triage", help="structured root-cause bundle for one task")
+    triage.add_argument("task_id")
+    triage.set_defaults(func=cmd_triage)
 
     return parser
 

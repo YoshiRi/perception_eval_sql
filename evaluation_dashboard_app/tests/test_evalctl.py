@@ -359,3 +359,20 @@ def test_jwt_expiry_is_read_for_the_status_line():
     body = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=")
     assert evalctl._jwt_expiry(f"aa.{body}.cc") is not None
     assert evalctl._jwt_expiry("not-a-jwt") is None
+
+
+# ------------------------------------------------------------------- analysis kinds
+
+
+def test_analyze_tlr_kind_builds_the_documented_payload(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_save(args, payload, name):
+        seen.update(payload=payload, name=name)
+        return 0
+
+    monkeypatch.setattr(evalctl, "_save_analysis_package", fake_save)
+    assert evalctl.main(["analyze", "runs/tlr_result", "--kind", "tlr"]) == 0
+    assert seen["payload"]["kind"] == "tlr"
+    assert seen["payload"]["run"] == "runs/tlr_result"
+    assert seen["name"] == "tlr_analysis_runs_tlr_result"  # nested paths become safe folder names

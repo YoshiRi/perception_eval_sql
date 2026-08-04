@@ -82,8 +82,10 @@ confirmation.
 > "Why did task 3f2a… fail?"
 > "Cancel that run"
 
-For failures the agent reads the task log and diagnoses (branch built but evaluator
-phase failed, queue congestion, download errors…) rather than just saying "failed".
+For failures the agent pulls a structured triage bundle (evaluator statuses, failed
+cases with reasons, report links, error log lines) and diagnoses — branch built but
+evaluator phase failed, queue congestion, download errors… — rather than just saying
+"failed".
 If evaluator jobs already succeeded before a later step broke, it can restart the
 release reusing those job ids instead of re-running hours of simulation.
 
@@ -94,7 +96,18 @@ release reusing those job ids instead of re-running hours of simulation.
 
 The agent pulls the same curated evidence package the Detection Stats page builds
 (class metrics, scene hotspots, FN frames, distance-band rates; degradations and FP
-diffs for comparisons) and writes the analysis report itself, verdict first.
+diffs for comparisons) and writes the analysis report itself, verdict first. When the
+run carries prediction data (`future.parquet`), minADE/minFDE tables join the package
+automatically.
+
+TLR works the same way:
+
+> "Analyze the TLR results in tlr_run_0804"
+> "Compare TLR between these two runs — did any critical signal zone regress?"
+
+And for the official PDF artifacts instead of prose:
+
+> "Get me the dashboard PDF report for that run" / "the release spec-sheet PDF"
 
 ### Trend history
 

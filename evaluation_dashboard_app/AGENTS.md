@@ -40,6 +40,9 @@ python scripts/evalctl.py runs [--q substring]
 python scripts/evalctl.py fetch <run> [--tier criteria]
 python scripts/evalctl.py analyze <run>               # LLM analysis package, single run
 python scripts/evalctl.py compare <base> <candidate>  # regression package, two runs
+python scripts/evalctl.py analyze <path> --kind tlr   # TLR packages (compare works too)
+python scripts/evalctl.py report <run> [--kind specsheet] [--candidate-run B]  # official PDFs
+python scripts/evalctl.py triage <task_id>            # structured failure root-cause bundle
 ```
 
 ## Rules
