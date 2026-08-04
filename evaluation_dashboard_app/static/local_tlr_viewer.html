@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TLR Analysis</title>
+  <link rel="stylesheet" href="tlr_viewer.css?v=tlr-initial-20260804a">
+  <!-- Loads before body paint so the saved theme applies without a flash. -->
+  <script>/*__BBOX_THEME_JS__*/</script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar" aria-label="TLR analysis header">
+      <div class="brand">
+        <a class="home-link" href="/">← Home</a>
+        <div class="brand-row">
+          <span class="signal-mark" aria-hidden="true"><i class="lamp red"></i><i class="lamp amber"></i><i class="lamp green"></i></span>
+          <div class="brand-copy">
+            <h1>TLR Analysis</h1>
+            <small>Traffic light recognition — criteria zones, motion states, frame drill-down</small>
+          </div>
+        </div>
+      </div>
+      <div class="tools">
+        <div class="field dir-field">
+          <label for="dirSelect">Result directory</label>
+          <div class="row">
+            <select id="dirSelect"></select>
+            <button id="reloadBtn" class="icon" title="Rescan TLR directories">↻</button>
+          </div>
+        </div>
+        <button id="themeToggleBtn" class="icon theme-btn" title="Switch theme">☀</button>
+      </div>
+    </header>
+
+    <section class="kpis" id="kpiStrip" aria-label="Overall recognition stats">
+      <div class="kpi kpi-rate"><b id="kTpRate">–</b><span>overall TP rate</span><div class="kpi-bar"><i id="kTpRateBar"></i></div></div>
+      <div class="kpi"><b id="kScenarios">–</b><span>scenarios</span></div>
+      <div class="kpi"><b id="kFrames">–</b><span>evaluated frames</span></div>
+      <div class="kpi kpi-good"><b id="kBest">–</b><span id="kBestLabel">best criteria</span></div>
+      <div class="kpi kpi-bad"><b id="kWorst">–</b><span id="kWorstLabel">worst criteria</span></div>
+    </section>
+
+    <main class="grid">
+      <section class="panel" aria-label="Criteria TP rates">
+        <div class="panel-head">
+          <h2>Criteria TP Rate</h2>
+          <span class="sub">distance-indexed evaluation zones · hot bars mark drops</span>
+        </div>
+        <div class="canvas-wrap tall"><canvas id="criteriaCanvas"></canvas></div>
+      </section>
+
+      <section class="panel" aria-label="Vehicle status heatmap">
+        <div class="panel-head">
+          <h2>Vehicle Status × Signal Type</h2>
+          <div class="chips" id="matrixChips">
+            <span class="chip active" data-matrix="all" role="button" tabindex="0">All criteria</span>
+            <span class="chip" data-matrix="critical" role="button" tabindex="0">Critical / priority</span>
+          </div>
+        </div>
+        <div class="canvas-wrap tall"><canvas id="heatmapCanvas"></canvas></div>
+      </section>
+
+      <section class="panel span2" aria-label="Scenario summary">
+        <div class="panel-head">
+          <h2>Scenarios</h2>
+          <span class="sub" id="scenarioMeta">select a directory to load scenarios</span>
+        </div>
+        <div class="table-wrap">
+          <table id="scenarioTable" class="data-table">
+            <thead><tr id="scenarioHead"></tr></thead>
+            <tbody id="scenarioBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <aside class="drawer" id="frameDrawer" aria-label="Frame drill-down" aria-hidden="true">
+      <div class="drawer-bar">
+        <div class="drawer-title">
+          <h2 id="drawerTitle">Frames</h2>
+          <span class="sub" id="drawerMeta"></span>
+        </div>
+        <button id="drawerCloseBtn" class="icon" title="Close frame drill-down">×</button>
+      </div>
+      <div class="canvas-wrap ribbon"><canvas id="timelineCanvas"></canvas></div>
+      <div class="drawer-cols">
+        <div class="table-wrap frames">
+          <table id="frameTable" class="data-table">
+            <thead><tr id="frameHead"></tr></thead>
+            <tbody id="frameBody"></tbody>
+          </table>
+        </div>
+        <div class="worst">
+          <h2>Worst Scenarios</h2>
+          <div class="list" id="worstList"></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="toast" id="toast"></div>
+  </div>
+  <script>window.TLR_API_BASE = "__API_BASE__";</script>
+  <script src="tlr_api.js?v=tlr-initial-20260804a"></script>
+  <script src="tlr_viewer.js?v=tlr-initial-20260804a"></script>
+</body>
+</html>

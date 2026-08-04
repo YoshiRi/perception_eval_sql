@@ -53,11 +53,11 @@ class LocalServer:
     def start(self) -> str:
         # Imported after apply_server_env() so module-level path defaults see the
         # workspace rather than the process working directory.
-        from http.server import ThreadingHTTPServer
+        from backend.local_bbox_api import QuietThreadingHTTPServer
 
         from client.webapi import build_handler
 
-        self._httpd = ThreadingHTTPServer((self.host, self.port), build_handler())
+        self._httpd = QuietThreadingHTTPServer((self.host, self.port), build_handler())
         self._thread = threading.Thread(
             target=self._httpd.serve_forever, name="evaldash-local-api", daemon=True
         )

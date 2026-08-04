@@ -18,6 +18,7 @@ from plotly.subplots import make_subplots
 from pathlib import Path
 from urllib.parse import quote
 
+from backend.local_bbox_api import DEFAULT_PORT, ensure_background_server
 from lib.tlr_eval_analyzer import TLREvaluationAnalyzer
 from lib.path_utils import get_data_root, path_display, list_tlr_result_directories
 from lib.t4_visualizer_client import DEFAULT_BASE_URL, ENV_BASE_URL, browser_base_url
@@ -1331,6 +1332,31 @@ render_page_hero(
     ),
     mode=_hero_mode,
 )
+
+
+def _running_behind_docker_nginx() -> bool:
+    data_root_env = os.environ.get("EVAL_DASHBOARD_DATA_ROOT", "")
+    return data_root_env.startswith("/app/") or Path("/app/docker-entrypoint.sh").exists()
+
+
+def _tlr_viewer_app_url() -> str:
+    configured = os.environ.get("LOCAL_BBOX_API_BROWSER_BASE_URL", "").strip()
+    if configured:
+        return f"{configured.rstrip('/')}/tlr"
+    if _running_behind_docker_nginx():
+        return "/tlr-viewer/"
+    return f"{ensure_background_server('127.0.0.1', DEFAULT_PORT).rstrip('/')}/tlr"
+
+
+_tlr_app_url = _tlr_viewer_app_url()
+_tlr_link_col, _tlr_caption_col = st.columns([1, 2])
+with _tlr_link_col:
+    st.link_button("Open TLR Analysis Viewer (standalone app)", _tlr_app_url, type="primary")
+with _tlr_caption_col:
+    st.caption(
+        "A full-page canvas app: criteria bars, vehicle-status heatmaps, and frame drill-down "
+        f"without Streamlit reruns. URL: `{_tlr_app_url}`"
+    )
 
 # ----- Labels for compare mode -----
 label_a = Path(resolved_path_a).name if resolved_path_a else "A"

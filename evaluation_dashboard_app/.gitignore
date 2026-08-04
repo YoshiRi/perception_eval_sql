@@ -13,3 +13,6 @@ deploy/.env.local
 
 # Generated per build by client/build_app.sh (baked-in server URL).
 client/_defaults.py
+
+# Browser-automation driver log: records the URLs it navigates to.
+geckodriver.log

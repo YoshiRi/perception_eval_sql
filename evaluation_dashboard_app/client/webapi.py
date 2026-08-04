@@ -668,6 +668,7 @@ def build_handler() -> type:
         _html_response,
         _json_response,
         _render_page_html,
+        _send_response,
     )
 
     def page_html(name: str) -> str:
@@ -721,13 +722,12 @@ def build_handler() -> type:
             except Exception as exc:
                 _json_response(self, 500, {"error": str(exc)})
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-cache")
-            for key, value in extra.items():
-                self.send_header(key, value)
-            self.end_headers()
-            self.wfile.write(body)
+            headers = [
+                ("Content-Type", content_type),
+                ("Content-Length", str(len(body))),
+                ("Cache-Control", "no-cache"),
+            ]
+            headers.extend(extra.items())
+            _send_response(self, 200, headers, body)
 
     return ClientHandler

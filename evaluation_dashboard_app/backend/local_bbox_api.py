@@ -24,12 +24,13 @@ from urllib.parse import parse_qs, urlparse
 import duckdb
 
 try:
-    from backend import analysis_api, app_paths, export_api, prebake, workflow_api
+    from backend import analysis_api, app_paths, export_api, prebake, report_api, workflow_api
 except ImportError:  # pragma: no cover - running the module as a bare script.
     import analysis_api  # type: ignore[no-redef]
     import app_paths  # type: ignore[no-redef]
     import export_api  # type: ignore[no-redef]
     import prebake  # type: ignore[no-redef]
+    import report_api  # type: ignore[no-redef]
     import workflow_api  # type: ignore[no-redef]
 
 try:
@@ -202,26 +203,64 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+#: A browser that navigates away, reloads, or cancels a fetch drops the socket
+#: mid-response. That is normal traffic, not a server fault, so writes swallow it
+#: and flag the handler instead of raising into the request thread.
+CLIENT_GONE_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+
+def _client_gone(handler: BaseHTTPRequestHandler) -> bool:
+    return bool(getattr(handler, "_client_gone", False))
+
+
+def _send_response(
+    handler: BaseHTTPRequestHandler,
+    status: int,
+    headers: list[tuple[str, str]],
+    body: bytes,
+) -> None:
+    if _client_gone(handler):
+        return
+    try:
+        handler.send_response(status)
+        for name, value in headers:
+            handler.send_header(name, value)
+        handler.end_headers()
+        if body:
+            handler.wfile.write(body)
+    except CLIENT_GONE_ERRORS:
+        handler._client_gone = True  # type: ignore[attr-defined]
+        handler.close_connection = True
+
+
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: Any) -> None:
     body = json.dumps(_json_safe(payload), separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Access-Control-Allow-Headers", "content-type")
-    handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-    handler.end_headers()
-    handler.wfile.write(body)
+    _send_response(
+        handler,
+        status,
+        [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Headers", "content-type"),
+            ("Access-Control-Allow-Methods", "GET,POST,OPTIONS"),
+        ],
+        body,
+    )
 
 
 def _html_response(handler: BaseHTTPRequestHandler, status: int, html_text: str) -> None:
     body = html_text.encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "text/html; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Cache-Control", "no-cache")
-    handler.end_headers()
-    handler.wfile.write(body)
+    _send_response(
+        handler,
+        status,
+        [
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-cache"),
+        ],
+        body,
+    )
 
 
 _EXPLORER_ASSET_TYPES = {
@@ -274,13 +313,16 @@ def _static_asset_response(handler: BaseHTTPRequestHandler, asset_name: str, *, 
         if not path.exists():
             continue
         body = b"" if head_only else path.read_bytes()
-        handler.send_response(200)
-        handler.send_header("Content-Type", content_type)
-        handler.send_header("Content-Length", str(path.stat().st_size))
-        handler.send_header("Cache-Control", "no-cache")
-        handler.end_headers()
-        if not head_only:
-            handler.wfile.write(body)
+        _send_response(
+            handler,
+            200,
+            [
+                ("Content-Type", content_type),
+                ("Content-Length", str(path.stat().st_size)),
+                ("Cache-Control", "no-cache"),
+            ],
+            body,
+        )
         return True
     return False
 
@@ -315,6 +357,10 @@ def _viewer_html(api_base: str = "") -> str:
 
 def _explorer_html(api_base: str = "") -> str:
     return _render_page_html("local_bbox_explorer.html", api_base)
+
+
+def _tlr_html(api_base: str = "") -> str:
+    return _render_page_html("local_tlr_viewer.html", api_base)
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -2950,6 +2996,110 @@ def compare_frames(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- TLR analysis routes ------------------------------------------------------
+# Loading a TLR run means parsing every result.json under it, so keep a small
+# in-process analyzer cache like the scenario/pickle caches above. The key is the
+# resolved directory plus a stat signature of its result.json files, so an
+# updated run is re-read while repeated dashboard hits stay cheap.
+_TLR_ANALYZER_CACHE: dict[str, tuple[str, Any]] = {}
+_TLR_ANALYZER_CACHE_MAX = 4
+_TLR_ANALYZER_LOCK = threading.Lock()
+
+
+def _tlr_analyzer(payload: dict[str, Any]) -> Any:
+    from lib.tlr_eval_analyzer import TLREvaluationAnalyzer
+
+    path = _resolve_local_path(payload.get("path"), allow_file=False)
+    probe = TLREvaluationAnalyzer(str(path))
+    signature = json.dumps(probe._source_signature(), sort_keys=True)
+    key = str(path)
+    with _TLR_ANALYZER_LOCK:
+        cached = _TLR_ANALYZER_CACHE.get(key)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+    analyzer = probe
+    analyzer.load_all_results()
+    if not analyzer.scenario_results and not analyzer.loaded_from_cache:
+        raise ValueError(f"No TLR result.json data under: {payload.get('path') or _short_path(path)}")
+    analyzer.extract_criteria_data()
+    analyzer.pre_calculate_all_data()
+    with _TLR_ANALYZER_LOCK:
+        _TLR_ANALYZER_CACHE[key] = (signature, analyzer)
+        while len(_TLR_ANALYZER_CACHE) > _TLR_ANALYZER_CACHE_MAX:
+            _TLR_ANALYZER_CACHE.pop(next(iter(_TLR_ANALYZER_CACHE)))
+    return analyzer
+
+
+def _tlr_df_json(df: Any) -> dict[str, Any]:
+    """DataFrame -> {columns, records} with NaN as null and numpy scalars as plain JSON."""
+    if df is None or getattr(df, "empty", True):
+        return {"columns": [], "records": []}
+    records = json.loads(df.to_json(orient="records"))
+    return {"columns": [str(c) for c in df.columns], "records": records}
+
+
+def tlr_dirs(payload: dict[str, Any]) -> dict[str, Any]:
+    """TLR-capable directories directly under the data root."""
+    from lib.path_utils import get_data_root, list_tlr_result_directories
+
+    root = get_data_root()
+    items: list[dict[str, Any]] = []
+    for path, count in list_tlr_result_directories():
+        try:
+            rel = str(path.resolve().relative_to(root.resolve())).replace("\\", "/")
+        except ValueError:
+            rel = path.name
+        items.append({"path": rel, "scenarios": int(count)})
+    return {"items": items, "data_root": str(root)}
+
+
+def tlr_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Overall stats + criteria matrix + per-scenario roll-up for one TLR directory."""
+    from lib.tlr_llm_package import build_tlr_scenario_summary
+
+    analyzer = _tlr_analyzer(payload)
+    return {
+        "stats": analyzer.get_summary_stats(),
+        "criteria_matrix": _tlr_df_json(analyzer.create_criteria_matrix()),
+        "scenario_summary": _tlr_df_json(
+            build_tlr_scenario_summary(analyzer.get_vehicle_status_details_df())
+        ),
+    }
+
+
+def tlr_matrices(payload: dict[str, Any]) -> dict[str, Any]:
+    """Vehicle-status heatmap matrices (TP rates + raw counts, all + critical/priority)."""
+    analyzer = _tlr_analyzer(payload)
+    return {
+        "vehicle_status": _tlr_df_json(analyzer.create_vehicle_status_matrix()),
+        "vehicle_status_counts": _tlr_df_json(analyzer.create_vehicle_status_counts_matrix()),
+        "critical_priority": _tlr_df_json(analyzer.create_vehicle_status_critical_priority_matrix()),
+        "critical_priority_counts": _tlr_df_json(
+            analyzer.create_vehicle_status_critical_priority_counts_matrix()
+        ),
+    }
+
+
+_TLR_FRAME_COLUMNS = (
+    "frame_index", "frame_name", "status", "speed_kph",
+    "traffic_light_type", "criteria", "tp", "fp", "fn", "tn",
+)
+
+
+def tlr_frames(payload: dict[str, Any]) -> dict[str, Any]:
+    """Per-frame rows for one scenario, for the frame drill-down."""
+    analyzer = _tlr_analyzer(payload)
+    scenario = str(payload.get("scenario") or "").strip()
+    if not scenario:
+        raise ValueError("scenario is required")
+    df = analyzer.get_vehicle_status_details_df()
+    if df is None or df.empty:
+        return {"scenario": scenario, "columns": [], "records": []}
+    subset = df[df["scenario"].astype(str) == scenario]
+    cols = [c for c in _TLR_FRAME_COLUMNS if c in subset.columns]
+    return {"scenario": scenario, **_tlr_df_json(subset[cols].reset_index(drop=True))}
+
+
 def _export_status(exc: Exception) -> int:
     """HTTP status for an export failure, so clients can tell apart the causes."""
     if isinstance(exc, export_api.ExportDisabledError):
@@ -2973,12 +3123,17 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         "/api/scenario_devops_frame_results": scenario_devops_frame_results,
         "/api/frames": frames,
         "/api/compare_frames": compare_frames,
+        "/api/tlr_dirs": tlr_dirs,
+        "/api/tlr_summary": tlr_summary,
+        "/api/tlr_matrices": tlr_matrices,
+        "/api/tlr_frames": tlr_frames,
     }
     # Routes that need the request itself (for the bearer token), not just a payload.
     # Workflow routes authorize through export_api, so both sets share one policy.
     auth_routes = {**export_api.JSON_ROUTES, **workflow_api.JSON_ROUTES}
     # Routes that write their own response body instead of returning JSON.
-    stream_routes = {**export_api.STREAM_ROUTES, **analysis_api.STREAM_ROUTES}
+    stream_routes = {**export_api.STREAM_ROUTES, **analysis_api.STREAM_ROUTES,
+                     **report_api.STREAM_ROUTES}
 
     def log_message(self, format: str, *args: Any) -> None:
         if os.environ.get("LOCAL_BBOX_API_DEBUG") == "1":
@@ -2996,15 +3151,19 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             self._dispatch(parsed.path, {k: v[-1] for k, v in query.items()}, head_only=True)
             return
-        if parsed.path in ("/", "/viewer", "/viewer/", "/explorer", "/explorer/", "/health", "/api/health"):
-            self.send_response(200)
-            is_html = parsed.path == "/" or "viewer" in parsed.path or "explorer" in parsed.path
-            self.send_header("Content-Type", "text/html; charset=utf-8" if is_html else "application/json")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
+        if parsed.path in ("/", "/viewer", "/viewer/", "/explorer", "/explorer/", "/tlr", "/tlr/", "/health", "/api/health"):
+            is_html = parsed.path not in ("/health", "/api/health")
+            _send_response(
+                self,
+                200,
+                [
+                    ("Content-Type", "text/html; charset=utf-8" if is_html else "application/json"),
+                    ("Cache-Control", "no-cache"),
+                ],
+                b"",
+            )
             return
-        self.send_response(404)
-        self.end_headers()
+        _send_response(self, 404, [], b"")
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -3020,6 +3179,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/explorer", "/explorer/"):
             _html_response(self, 200, _explorer_html(""))
             return
+        if parsed.path in ("/tlr", "/tlr/"):
+            _html_response(self, 200, _tlr_html(""))
+            return
         query = parse_qs(parsed.query)
         payload = {k: v[-1] for k, v in query.items()}
         self._dispatch(parsed.path, payload)
@@ -3033,6 +3195,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         if stream_route is not None:
             try:
                 stream_route(self, payload, head_only=head_only)
+            except CLIENT_GONE_ERRORS:
+                self._client_gone = True
+                self.close_connection = True
             except Exception as exc:
                 # Once the stream's headers are on the wire there is no valid way left
                 # to report an error, so only answer if nothing was sent yet.
@@ -3043,6 +3208,9 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
         if auth_route is not None:
             try:
                 _json_response(self, 200, auth_route(self, payload))
+            except CLIENT_GONE_ERRORS:
+                self._client_gone = True
+                self.close_connection = True
             except Exception as exc:
                 _json_response(self, _export_status(exc), {"error": str(exc)})
             return
@@ -3052,12 +3220,24 @@ class LocalBBoxHandler(BaseHTTPRequestHandler):
             return
         try:
             _json_response(self, 200, route(payload))
+        except CLIENT_GONE_ERRORS:
+            self._client_gone = True
+            self.close_connection = True
         except Exception as exc:
             _json_response(self, 400, {"error": str(exc)})
 
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Threading server that keeps client disconnects out of the console."""
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        if isinstance(sys.exc_info()[1], CLIENT_GONE_ERRORS):
+            return
+        super().handle_error(request, client_address)
+
+
 def run_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
-    server = ThreadingHTTPServer((host, int(port)), LocalBBoxHandler)
+    server = QuietThreadingHTTPServer((host, int(port)), LocalBBoxHandler)
     server.serve_forever()
 
 
@@ -3065,7 +3245,7 @@ def ensure_background_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT) 
     global _SERVER
     with _SERVER_LOCK:
         if _SERVER is None:
-            _SERVER = ThreadingHTTPServer((host, int(port)), LocalBBoxHandler)
+            _SERVER = QuietThreadingHTTPServer((host, int(port)), LocalBBoxHandler)
             thread = threading.Thread(target=_SERVER.serve_forever, name="local-bbox-api", daemon=True)
             thread.start()
     return f"http://{host}:{int(port)}"
