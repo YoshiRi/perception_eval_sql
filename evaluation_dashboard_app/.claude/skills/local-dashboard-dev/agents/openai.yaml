@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Dashboard Dev"
+  short_description: "Run, build, and validate the dashboard app and local client."
+  default_prompt: "Help me run, build, or validate the evaluation dashboard locally."

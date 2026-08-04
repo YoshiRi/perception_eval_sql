@@ -25,6 +25,7 @@ structure), and they are plain markdown, not Claude-specific:
 | trend history / metric trends | `.claude/skills/trend-report/SKILL.md` |
 | analyze or compare runs | `.claude/skills/analyze-run/SKILL.md` |
 | connection/auth problems | `.claude/skills/eval-setup/SKILL.md` |
+| local app/client build/development | `.claude/skills/local-dashboard-dev/SKILL.md` |
 
 ## Commands
 
