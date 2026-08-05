@@ -269,22 +269,15 @@ function previewBoundsMaxAbs() {
   }
   return Math.min(PREVIEW_MAX_VIEW_EXTENT, maxAbs);
 }
+// How much world the preview has to fit, measured from the content's own centre.
+// This must not depend on the pan: measuring it from previewPanX/Y made the extent
+// grow as you dragged away from the boxes, so the fit scale shrank and panning
+// silently zoomed the view out -- and back in on the way to the centre.
 function previewViewExtent() {
-  let extent = 4;
-  for (const f of state.previewFrames) {
-    for (const b of f.boxes || []) {
-      const add = (x, y, pad = 8) => {
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          extent = Math.max(extent, Math.abs(x - state.previewPanX) + pad, Math.abs(y - state.previewPanY) + pad);
-        }
-      };
-      add(Number(b.x), Number(b.y));
-      if (Array.isArray(b.footprint)) {
-        for (const pt of b.footprint) add(Number(pt[0]), Number(pt[1]), 4);
-      }
-    }
-  }
-  return Math.min(PREVIEW_MAX_VIEW_EXTENT, extent);
+  const bounds = previewContentBounds();
+  if (!bounds) return 4;
+  const extent = Math.max((bounds.xMax - bounds.xMin) / 2, (bounds.yMax - bounds.yMin) / 2) + 8;
+  return Math.min(PREVIEW_MAX_VIEW_EXTENT, Math.max(4, extent));
 }
 function previewScaleForRect(r) {
   const width = Number(r.width ?? r.w) || 1;
