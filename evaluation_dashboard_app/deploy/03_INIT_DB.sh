@@ -3,10 +3,11 @@
 set -euo pipefail
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DEPLOY_DIR"
-if [[ ! -f .env ]]; then
-  echo "Error: .env not found. Run 01_SETUP_ENV.sh first, then edit .env" >&2
-  exit 1
-fi
-docker compose --env-file .env up -d postgres
-docker compose --env-file .env run --rm init_db
+# shellcheck source=_compose_lib.sh
+source "$DEPLOY_DIR/_compose_lib.sh"
+require_env_file
+load_deploy_env
+setup_compose_env
+dc up -d postgres
+dc run --rm init_db
 echo "Database init finished."

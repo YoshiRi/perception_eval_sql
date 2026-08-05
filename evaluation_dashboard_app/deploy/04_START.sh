@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # 04 — Start or update the full stack with docker compose up -d.
-# Default: 2 worker replicas (EVAL_COMPOSE_SCALE_WORKER in .env). Override: ./04_START.sh --scale worker=1 (last --scale wins).
+# Replica counts come from .env: EVAL_COMPOSE_SCALE_WORKER (default 2) and
+# EVAL_COMPOSE_STREAMLIT_REPLICAS (default 1, max 3). Override workers per run:
+# ./04_START.sh --scale worker=1 (last --scale wins). Streamlit replicas: edit .env.
+# Every service is recreated when its config or .env changed, and replicas above the
+# configured count are removed, so no container can linger with a stale environment.
 # Safety: confirms before restart while queued/running tasks exist. Override with --force.
 set -euo pipefail
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DEPLOY_DIR"
-if [[ ! -f .env ]]; then
-  echo "Error: .env not found. Run 01_SETUP_ENV.sh first, then edit .env" >&2
-  exit 1
-fi
+# shellcheck source=_compose_lib.sh
+source "$DEPLOY_DIR/_compose_lib.sh"
+require_env_file
+load_deploy_env
+setup_compose_env
 
-set -a
-# shellcheck disable=SC1091
-source .env
-set +a
 WORKER_SCALE="${EVAL_COMPOSE_SCALE_WORKER:-2}"
 FORCE_START=0
 COMPOSE_ARGS=()
@@ -30,8 +31,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-dc() { docker compose --env-file .env "$@"; }
 
 check_active_tasks() {
   if [[ "$FORCE_START" == "1" ]]; then
@@ -90,8 +89,15 @@ check_active_tasks() {
 
 check_active_tasks
 
+echo "Starting: ${STREAMLIT_REPLICAS} Streamlit replica(s), ${WORKER_SCALE} worker(s)." >&2
+
 dc up -d --scale "worker=${WORKER_SCALE}" "${COMPOSE_ARGS[@]}"
 
-# Nginx resolves Docker service names at startup. Recreate it after Streamlit is
-# up so it remounts the current nginx.conf and cannot keep a stale container IP.
-dc up -d --no-deps --force-recreate nginx
+# Drop replicas left over from a higher EVAL_COMPOSE_STREAMLIT_REPLICAS: they are outside
+# the enabled profiles, so compose would neither update nor stop them.
+prune_extra_streamlit
+
+# Nginx renders its config from nginx/nginx.conf.template and resolves the Streamlit
+# service names at startup, so recreate it last — once every replica answers.
+wait_streamlit_healthy
+recreate_nginx

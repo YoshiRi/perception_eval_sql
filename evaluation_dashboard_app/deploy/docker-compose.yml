@@ -1,10 +1,11 @@
-# Production-style stack: Nginx -> Streamlit (default: one app replica) + Workers (default scale via EVAL_COMPOSE_SCALE_WORKER in .env / 04_START.sh).
-# Second Streamlit: optional HA profile — `docker compose --profile ha up -d` and uncomment streamlit2 in deploy/nginx/nginx.conf upstream.
+# Production-style stack: Nginx -> Streamlit + Workers. Replica counts live in .env:
+#   EVAL_COMPOSE_STREAMLIT_REPLICAS (1..3, default 1) and EVAL_COMPOSE_SCALE_WORKER (default 2).
 # Helper scripts (run from deploy/): 01_SETUP_ENV.sh 02_BUILD.sh 03_INIT_DB.sh 04_START.sh 05_STOP.sh
-#   06_STATUS.sh 07_LOGS.sh 08_REBUILD_AND_START.sh 09_RESTART_WORKER.sh
-# Run from deploy/: docker compose --env-file .env up -d
-# Plain `up -d` uses one worker unless you pass --scale worker=N; 04_START.sh defaults to EVAL_COMPOSE_SCALE_WORKER (2).
-# More Streamlit boxes: duplicate x-streamlit-app block as streamlit3, add server to nginx upstream.
+#   06_STATUS.sh 07_LOGS.sh 08_REBUILD_AND_START.sh 09_RESTART_WORKER.sh 10_RESTART_STREAMLIT.sh
+# Use the scripts, not bare compose: they share deploy/_compose_lib.sh, which turns the
+# replica count into compose profiles + the nginx upstream list and always recreates
+# containers so .env edits actually take effect (`docker compose restart` does not).
+# Bare `docker compose --env-file .env up -d` still works, but gives 1 Streamlit + 1 worker.
 # Build image from repo root: docker build -t evaluation-dashboard . (see Readme)
 #
 # Data is bind-mounted to the host so you can access it directly:
@@ -34,7 +35,7 @@ x-streamlit-app: &streamlit-app
   command: ["/app/docker-entrypoint.sh"]
   environment:
     - TZ=Asia/Tokyo
-    # Same value on streamlit1 + streamlit2 so session cookies validate behind nginx (see .streamlit/config.toml).
+    # Same value on every streamlit replica so session cookies validate behind nginx (see .streamlit/config.toml).
     # Override in .env for production (e.g. openssl rand -hex 32).
     - STREAMLIT_SERVER_COOKIE_SECRET=${STREAMLIT_SERVER_COOKIE_SECRET:-evaluationdashboard-streamlit-cookie-secret-change-in-production}
     # Verbose stderr logs + timing expander on Detection Stats page (see lib/detection_stats_debug.py)
@@ -103,20 +104,40 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
+    environment:
+      - TZ=Asia/Tokyo
+      # Render nginx/nginx.conf.template over /etc/nginx/nginx.conf at container start.
+      - NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx
+      # Upstream list for the streamlit_pool block; the deploy scripts derive it from
+      # EVAL_COMPOSE_STREAMLIT_REPLICAS. The default keeps a bare `docker compose up -d`
+      # (no scripts) consistent with the single-replica default.
+      - STREAMLIT_UPSTREAM_SERVERS=${STREAMLIT_UPSTREAM_SERVERS:-server streamlit1:8501;}
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
     depends_on:
       streamlit1:
         condition: service_healthy
     restart: unless-stopped
 
+  # Streamlit app servers. streamlit1 always runs; replicas 2..N are enabled by the
+  # profile of the same name, which 04_START.sh derives from EVAL_COMPOSE_STREAMLIT_REPLICAS
+  # (it exports COMPOSE_PROFILES, so `ps`/`down` see them too). Never add a replica by
+  # hand with --profile: a service outside the scripts' view stops getting recreated and
+  # ends up serving a months-old environment.
+  # A 4th replica = copy the block below as streamlit4 with profile streamlit4 and raise
+  # MAX_STREAMLIT_REPLICAS in _compose_lib.sh.
   streamlit1:
     <<: *streamlit-app
 
   streamlit2:
     <<: *streamlit-app
     profiles:
-      - ha
+      - streamlit2
+
+  streamlit3:
+    <<: *streamlit-app
+    profiles:
+      - streamlit3
 
   redis:
     image: redis:7-alpine

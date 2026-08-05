@@ -327,7 +327,7 @@ flowchart LR
   W2 --> DataRoot
 ```
 
-- **ビルド**: 上記「ビルド手順」のとおり `evaluation_dashboard_app/` で `docker build ... -t evaluation-dashboard .`（compose の `streamlit1`（既定）・任意の `streamlit2`（`--profile ha`）・`worker` はこのイメージを参照します）。
+- **ビルド**: 上記「ビルド手順」のとおり `evaluation_dashboard_app/` で `docker build ... -t evaluation-dashboard .`（compose の `streamlit1`〜`streamlit3`・`worker` はこのイメージを参照します）。
 - **推奨フロー（`deploy/` の番号付きスクリプト）**: `deploy/` に移動して順に実行します（すべて `docker compose --env-file .env` を使います）。
 
   | スクリプト | 内容 |
@@ -335,18 +335,18 @@ flowchart LR
   | `01_SETUP_ENV.sh` | `.env` が無ければ `.env.example` から作成（**編集は手動**） |
   | `02_BUILD.sh` | イメージビルド（引数で `--no-cache` など可） |
   | `03_INIT_DB.sh` | **初回のみ**: Postgres 起動後に `init_db` でタスク用テーブル作成 |
-  | `04_START.sh` | スタック起動（デフォルト worker 数は `.env` の `EVAL_COMPOSE_SCALE_WORKER`、例: `./04_START.sh --scale worker=3` で上書き可） |
+  | `04_START.sh` | スタック起動。worker 数は `.env` の `EVAL_COMPOSE_SCALE_WORKER`（例: `./04_START.sh --scale worker=3` で上書き可）、Streamlit 台数は `EVAL_COMPOSE_STREAMLIT_REPLICAS`（1〜3）。設定より多い replica は削除し、最後に Nginx を作り直します |
   | `05_STOP.sh` | 停止 |
   | `06_STATUS.sh` | 状態確認 |
   | `07_LOGS.sh` | `docker compose logs -f`（省略時は全サービス、例: `./07_LOGS.sh worker`） |
   | `08_REBUILD_AND_START.sh` | ビルド後に `04_START.sh` と同じ起動（worker 既定本数あり） |
   | `09_RESTART_WORKER.sh` | ワーカー再起動（コード変更を worker に反映） |
-  | `10_RESTART_STREAMLIT.sh` | 起動中の Streamlit サービスのみ再起動。worker とキュー中タスクはそのまま |
+  | `10_RESTART_STREAMLIT.sh` | Streamlit のみ**作り直し**（`restart` と違い `.env` の変更が反映されます）。worker とキュー中タスクはそのまま |
 
 - **手動でも同じことは可能**: `cd deploy && cp .env.example .env` → `.env` を編集 → `docker compose --env-file .env up -d`。初回のみ `docker compose --env-file .env run --rm init_db`（`03_INIT_DB.sh` と同等）。
-- **アクセス**: 本番 compose では **Nginx がポート 80**、Streamlit はプロキシ経由（`docker-compose.yml` / `nginx/nginx.conf` 参照）。ソースや `lib/` はマウントされているため **Streamlit はファイル変更でリロード**しやすい一方、**ワーカーは Python 変更後に再起動**が必要です。
-- **UI がずっとロード中になるとき**: Streamlit はブラウザと **WebSocket** でつながります。対処の目安: (1) **ハードリロード**（キャッシュ削除込み）や別タブで開き直す。(2) **既定は Streamlit アプリ 1 台**（`streamlit1`）のみ Nginx が向き先にしています。2 台目が必要な場合のみ `docker compose --profile ha up -d` と `nginx.conf` の upstream 追記を参照。(3) compose で **`STREAMLIT_SERVER_COOKIE_SECRET`**（`deploy/.env.example`）。(4) **`.streamlit/config.toml`** の `enableWebsocketCompression = false` と Nginx の **`proxy_buffering off`** / `proxy_*_timeout`。(5) ログ: `docker compose logs streamlit1 nginx`。
-- **502 Bad Gateway**: Nginx が **Streamlit に繋がらない**ときに出ます（プロセス落ち・OOM・長時間ブロックで切断など）。`docker compose logs streamlit1` とホストの **`dmesg`（OOM）** を確認。重いページはメモリを食うため、**既定の 1 台構成**と `deploy/nginx/nginx.conf` の単一 upstream を推奨します。
+- **アクセス**: 本番 compose では **Nginx がポート 80**、Streamlit はプロキシ経由（`docker-compose.yml` / `nginx/nginx.conf.template` 参照）。ソースや `lib/` はマウントされているため **Streamlit はファイル変更でリロード**しやすい一方、**ワーカーは Python 変更後に再起動**が必要です。
+- **UI がずっとロード中になるとき**: Streamlit はブラウザと **WebSocket** でつながります。対処の目安: (1) **ハードリロード**（キャッシュ削除込み）や別タブで開き直す。(2) **既定は Streamlit アプリ 1 台**（`streamlit1`）。増やす場合は `.env` の `EVAL_COMPOSE_STREAMLIT_REPLICAS`（1〜3）を変えて `./04_START.sh`（profiles と Nginx upstream の両方が自動で揃います。`--profile` を手打ちしないでください）。(3) compose で **`STREAMLIT_SERVER_COOKIE_SECRET`**（`deploy/.env.example`）。(4) **`.streamlit/config.toml`** の `enableWebsocketCompression = false` と Nginx の **`proxy_buffering off`** / `proxy_*_timeout`。(5) ログ: `docker compose logs streamlit1 nginx`。
+- **502 Bad Gateway**: Nginx が **Streamlit に繋がらない**ときに出ます（プロセス落ち・OOM・長時間ブロックで切断など）。`docker compose logs streamlit1` とホストの **`dmesg`（OOM）** を確認。重いページはメモリを食うため、**既定の 1 台構成**（`EVAL_COMPOSE_STREAMLIT_REPLICAS=1`）を推奨します。設定は `deploy/nginx/nginx.conf.template` に反映されます。
 - **Detection Stats のフリーズ / 502 切り分け**: `.env` に **`EVAL_DETECTION_STATS_DEBUG=1`**（compose の `streamlit1` に渡る）を入れて再起動。ページ下部の **Detection Stats debug** 展開と **`docker compose logs streamlit1`** の stderr に、セクション境界・`getrusage` メモリ・DuckDB 前後の経過時間が出ます。
 - **サブページで「Overview で読み込み」と出るのに Overview は済んでいるとき**: セッション状態は **レプリカごとのメモリ**にあります。Overview は URL に `mode` / `run_a` / `run_b`…を同期するため、**同じ URL のクエリが付いたまま**ならサブページ（Detection Stats など）が **`run_a` から `runA` を再構築**します（`lib/overview_url_hydrate.py`）。一度 **Overview を開いて**アドレスバーに `run_a=` があることを確認してからサブページへ進むか、または **Overview の共有リンク**から開き直してください。
 - **設定の二重管理を避ける**: compose 実行時は `deploy/configs/autoware_evaluator_dl_config.json` がコンテナ内 `EVAL_DASHBOARD_CONFIG`（`/app/docker_config/...`）としてマウントされます。ホストの `configs/` とは別ファイルなので、Docker 用に変えたい値はこちらを編集します。

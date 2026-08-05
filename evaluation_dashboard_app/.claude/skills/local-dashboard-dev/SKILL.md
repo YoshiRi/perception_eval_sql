@@ -129,16 +129,23 @@ cd deploy
 
 Operational rules:
 
-- `deploy/04_START.sh` runs `docker compose --env-file .env up -d` and scales
-  workers from `EVAL_COMPOSE_SCALE_WORKER` unless overridden.
+- `deploy/04_START.sh` runs `docker compose --env-file .env up -d`, scales workers from
+  `EVAL_COMPOSE_SCALE_WORKER` unless overridden, and starts
+  `EVAL_COMPOSE_STREAMLIT_REPLICAS` (1..3) Streamlit replicas, removing any above that
+  count and recreating nginx last.
+- Streamlit replica count is set only via `EVAL_COMPOSE_STREAMLIT_REPLICAS` in
+  `deploy/.env`. All scripts share `deploy/_compose_lib.sh`, which derives the compose
+  profiles and the nginx upstream list from it. Never start a replica with a bare
+  `docker compose --profile ...`: it then sits outside the scripts' view and keeps
+  running a stale environment.
 - `deploy/04_START.sh` checks for active queued/running tasks before restart; do not
   bypass with `--force` unless the user explicitly accepts that risk.
 - `deploy/09_RESTART_WORKER.sh` is the narrow restart for worker/lib/backend changes.
   Use `--idle-only` when active work may be running.
-- `deploy/10_RESTART_STREAMLIT.sh` restarts running Streamlit services only. It does
-  not recreate containers or reread new environment variables.
-- New `.env` variables require container recreation with `docker compose --env-file
-  .env up -d --no-build <service>`, not a plain restart.
+- `deploy/10_RESTART_STREAMLIT.sh` recreates the Streamlit replicas (and nginx after
+  them), so it does pick up new `.env` values. Workers and queued tasks are untouched.
+- A hand-typed `docker compose restart` still never rereads `env_file`; use
+  `docker compose --env-file .env up -d --no-build <service>` if you bypass the scripts.
 - Never print full `.env` values, tokens, Cloudflare credentials, or client secrets.
 
 ## Export API and client server setup

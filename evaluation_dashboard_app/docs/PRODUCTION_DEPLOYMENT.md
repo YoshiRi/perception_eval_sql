@@ -125,16 +125,16 @@ docker compose build --no-cache
 4. **Access the app**
 
    - Via Nginx: **http://localhost** (port 80)
-   - Streamlit directly (if you expose ports in compose): 8501 on `streamlit1` / `streamlit2` (not exposed by default when using Nginx)
+   - Streamlit directly (if you expose ports in compose): 8501 on each `streamlitN` (not exposed by default when using Nginx)
 
 ## Scaling
 
 - **Workers**: Default replica count is `EVAL_COMPOSE_SCALE_WORKER` (see `.env.example`; [`04_START.sh`](deploy/04_START.sh) passes `--scale worker=…`). From the `deploy/` directory you can also run `docker compose up -d --scale worker=N` (e.g. three workers); all consume from the same RQ queue.
-- **Streamlit replicas**: By default, `streamlit1` and `streamlit2` share one Nginx `upstream` with `ip_hash` for session stickiness. To add more, duplicate the `x-streamlit-app` service in [`deploy/docker-compose.yml`](deploy/docker-compose.yml), add `depends_on` for Nginx, and add `server streamlit3:8501;` (etc.) in [`deploy/nginx/nginx.conf`](deploy/nginx/nginx.conf).
+- **Streamlit replicas**: Set `EVAL_COMPOSE_STREAMLIT_REPLICAS` (1..3, default 1) in `deploy/.env` and run [`04_START.sh`](deploy/04_START.sh) or [`10_RESTART_STREAMLIT.sh`](deploy/10_RESTART_STREAMLIT.sh). [`deploy/_compose_lib.sh`](deploy/_compose_lib.sh) turns that one number into both the compose profiles (`streamlit2`, `streamlit3`) and the `ip_hash` upstream list rendered into [`deploy/nginx/nginx.conf.template`](deploy/nginx/nginx.conf.template), so the proxy and the running replicas cannot disagree; lowering the number removes the extra containers. `ip_hash` is required — a Streamlit session lives in the process holding its WebSocket, and `/media/...` and `/_stcore/upload_file` are served from that same process. Each replica also holds its own copy of the app caches, so check free RAM first. Do not start a replica by hand with `docker compose --profile ...`: outside the scripts it stops being recreated and drifts to a stale environment. Beyond 3, add a `streamlit4` service in [`deploy/docker-compose.yml`](deploy/docker-compose.yml) and raise `MAX_STREAMLIT_REPLICAS`.
 
 ## TLS (HTTPS)
 
-To serve over HTTPS, configure Nginx with SSL certificates (e.g. Let's Encrypt) and add a `server { listen 443 ssl; ... }` block in `deploy/nginx/nginx.conf`. Point your domain to the host and ensure port 443 is open.
+To serve over HTTPS, configure Nginx with SSL certificates (e.g. Let's Encrypt) and add a `server { listen 443 ssl; ... }` block in `deploy/nginx/nginx.conf.template`. Point your domain to the host and ensure port 443 is open.
 
 ## Running without the task queue (POC / single user)
 

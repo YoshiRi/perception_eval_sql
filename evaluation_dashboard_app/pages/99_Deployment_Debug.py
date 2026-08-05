@@ -268,7 +268,7 @@ def _render_docker_disabled(reason: str) -> None:
         """
 **Enable Docker debug (trusted operators only)**
 
-1. From the `deploy/` directory, ensure `docker-compose.yml` mounts `/var/run/docker.sock` into each Streamlit service (`streamlit1`, `streamlit2`) and sets `EVAL_DEPLOYMENT_DEBUG_DOCKER=1`, then run `docker compose up -d` (or recreate those services after editing compose).
+1. From the `deploy/` directory, ensure `docker-compose.yml` mounts `/var/run/docker.sock` into each Streamlit service (`streamlit1`..`streamlitN`) and sets `EVAL_DEPLOYMENT_DEBUG_DOCKER=1`, then run `./04_START.sh` (a plain `docker compose restart` keeps the old environment).
 
 2. Set `EVAL_DEPLOYMENT_DEBUG_COMPOSE_PROJECT` in `.env` to your Compose project name
    (same value as in `docker compose ls`) so the UI lists only this stack’s containers.

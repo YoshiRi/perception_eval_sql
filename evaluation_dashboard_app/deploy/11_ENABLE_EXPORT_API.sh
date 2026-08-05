@@ -67,11 +67,11 @@ if [[ "$MODE" == "--apply" ]]; then
   echo "==> appended EVAL_EXPORT_TOKEN to $ENV_FILE"
   warn_stray_local
   echo
-  echo "Now RECREATE the container so it picks up the new variable:"
-  echo "    cd deploy && docker compose --env-file .env up -d --no-build streamlit1"
+  echo "Now RECREATE the containers so they pick up the new variable:"
+  echo "    cd deploy && ./10_RESTART_STREAMLIT.sh"
   echo
-  echo "  (10_RESTART_STREAMLIT.sh is NOT enough: 'docker compose restart' reuses the"
-  echo "   existing container config and does not re-read env_file.)"
+  echo "  (That script recreates the replicas; a plain 'docker compose restart' would"
+  echo "   reuse the existing container config and not re-read env_file.)"
   echo
   echo "Then verify:"
   echo "    ./deploy/12_VERIFY_EXPORT_API.sh http://localhost $TOKEN"

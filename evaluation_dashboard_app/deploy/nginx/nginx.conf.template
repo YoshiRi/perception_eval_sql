@@ -1,16 +1,32 @@
 # Nginx: reverse proxy to Streamlit with WebSocket support.
 #
-# Default upstream is streamlit1 only. A second replica (streamlit2) is optional in docker-compose
-# (profile "ha"); if you add it, duplicate the server line below and use ip_hash for sticky sessions.
-# Pointing nginx at a dead/crashed upstream yields 502 — single replica reduces RAM pressure and failure modes.
+# TEMPLATE: the nginx image renders this to /etc/nginx/nginx.conf at container start
+# (envsubst, NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx). Only STREAMLIT_UPSTREAM_SERVERS is
+# substituted — nginx's own $host / $remote_addr / $1 are lowercase and stay intact.
+# Do not edit the rendered file inside the container; edit this template and recreate
+# nginx (any deploy script does that for you).
+#
+# Replica count comes from EVAL_COMPOSE_STREAMLIT_REPLICAS in .env, which drives both
+# the compose profiles and this upstream list (deploy/_compose_lib.sh) so they cannot
+# disagree. Pointing nginx at a dead upstream yields 502, and every replica costs a
+# full copy of the app's caches in RAM — 1 is the right default on a small host.
 events {
     worker_connections 2048;
 }
 
 http {
-    # Docker's embedded DNS. Resolve Streamlit at request time so nginx does not keep
-    # a stale container IP after `docker compose up -d` recreates streamlit1.
+    # Docker's embedded DNS. Used by the /bbox-* locations below, which resolve their
+    # upstream per request (variable in proxy_pass) and so survive a streamlit1 recreate.
     resolver 127.0.0.11 valid=10s ipv6=off;
+
+    upstream streamlit_pool {
+        # ip_hash = sticky sessions, which Streamlit requires: session state lives in the
+        # process holding the WebSocket, and /media/... plus /_stcore/upload_file are served
+        # from that same process. Round-robin would break images, downloads and uploads.
+        ip_hash;
+        # Rendered from STREAMLIT_UPSTREAM_SERVERS: one "server streamlitN:8501;" per replica.
+        ${STREAMLIT_UPSTREAM_SERVERS}
+    }
 
     server {
         listen 80;
@@ -79,8 +95,7 @@ http {
         }
 
         location / {
-            set $streamlit_upstream streamlit1:8501;
-            proxy_pass http://$streamlit_upstream;
+            proxy_pass http://streamlit_pool;
             proxy_http_version 1.1;
             proxy_buffering off;
             proxy_set_header Host $host;

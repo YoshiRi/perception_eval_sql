@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # 09 — Restart worker containers (pick up worker/ or lib/ code changes without full rebuild).
+# Default path recreates them (so .env changes apply — plain `restart` reuses the old
+# environment) at the configured EVAL_COMPOSE_SCALE_WORKER count.
 set -euo pipefail
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DEPLOY_DIR"
+# shellcheck source=_compose_lib.sh
+source "$DEPLOY_DIR/_compose_lib.sh"
+load_deploy_env
+setup_compose_env
 
 IDLE_ONLY=0
 RESTART_ARGS=()
 
 usage() {
   cat >&2 <<'EOF'
-Usage: ./09_RESTART_WORKER.sh [--idle-only|--idle] [docker compose restart options]
+Usage: ./09_RESTART_WORKER.sh [--idle-only|--idle] [extra docker compose up options]
 
-By default, restarts all worker containers.
-With --idle-only, restarts only worker containers whose RQ worker state is idle.
+By default, recreates all worker containers at EVAL_COMPOSE_SCALE_WORKER replicas, so
+edits to .env take effect.
+With --idle-only, restarts in place (no env refresh) only worker containers whose RQ
+worker state is idle, leaving busy ones alone.
 EOF
 }
 
@@ -33,16 +41,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-COMPOSE=(docker compose)
-if [[ -f .env ]]; then
-  COMPOSE+=(--env-file .env)
-fi
+WORKER_SCALE="${EVAL_COMPOSE_SCALE_WORKER:-2}"
 
 if [[ "$IDLE_ONLY" != "1" ]]; then
-  exec "${COMPOSE[@]}" restart worker "${RESTART_ARGS[@]}"
+  dc up -d --no-deps --force-recreate --scale "worker=${WORKER_SCALE}" worker "${RESTART_ARGS[@]}"
+  exit 0
 fi
 
-mapfile -t WORKER_CONTAINERS < <("${COMPOSE[@]}" ps -q worker)
+mapfile -t WORKER_CONTAINERS < <(dc ps -q worker)
 if [[ "${#WORKER_CONTAINERS[@]}" -eq 0 ]]; then
   echo "No worker containers found." >&2
   exit 0

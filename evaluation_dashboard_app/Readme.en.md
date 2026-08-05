@@ -327,7 +327,7 @@ flowchart LR
   W2 --> DataRoot
 ```
 
-- **Build**: As described above in "Build Steps", run `docker build ... -t evaluation-dashboard .` in `evaluation_dashboard_app/`. The compose services `streamlit1` (default), optional `streamlit2` (`--profile ha`), and `worker` all use this image.
+- **Build**: As described above in "Build Steps", run `docker build ... -t evaluation-dashboard .` in `evaluation_dashboard_app/`. The compose services `streamlit1`..`streamlit3` and `worker` all use this image.
 - **Recommended flow (`deploy/` numbered scripts)**: Move into `deploy/` and run the scripts in order. All of them use `docker compose --env-file .env`.
 
   | Script | Description |
@@ -335,18 +335,18 @@ flowchart LR
   | `01_SETUP_ENV.sh` | Create `.env` from `.env.example` if it does not exist. **You still edit it manually.** |
   | `02_BUILD.sh` | Build the image. You can pass arguments such as `--no-cache`. |
   | `03_INIT_DB.sh` | **First time only**: after Postgres starts, run `init_db` to create task tables. |
-  | `04_START.sh` | Start the stack. Default worker count comes from `.env` `EVAL_COMPOSE_SCALE_WORKER`; for example `./04_START.sh --scale worker=3` overrides it. |
+  | `04_START.sh` | Start the stack. Worker count comes from `.env` `EVAL_COMPOSE_SCALE_WORKER` (`./04_START.sh --scale worker=3` overrides it); Streamlit replicas from `EVAL_COMPOSE_STREAMLIT_REPLICAS` (1..3). Replicas above that count are removed and nginx is recreated last. |
   | `05_STOP.sh` | Stop the stack. |
   | `06_STATUS.sh` | Check service status. |
   | `07_LOGS.sh` | Run `docker compose logs -f`. Without arguments it shows all services; for example `./07_LOGS.sh worker`. |
   | `08_REBUILD_AND_START.sh` | Build and then start the stack, same startup behavior as `04_START.sh`. |
   | `09_RESTART_WORKER.sh` | Restart workers so code changes are reflected on the worker side. |
-  | `10_RESTART_STREAMLIT.sh` | Restart only running Streamlit services, leaving workers and queued tasks alone. |
+  | `10_RESTART_STREAMLIT.sh` | **Recreate** the Streamlit replicas only (unlike `restart`, this applies `.env` changes), leaving workers and queued tasks alone. |
 
 - **Manual setup is also possible**: `cd deploy && cp .env.example .env` -> edit `.env` -> `docker compose --env-file .env up -d`. For first-time setup only, run `docker compose --env-file .env run --rm init_db` (equivalent to `03_INIT_DB.sh`).
-- **Access**: In production compose, **Nginx listens on port 80**, and Streamlit is accessed through the proxy (see `docker-compose.yml` / `nginx/nginx.conf`). Since the source code and `lib/` are mounted, **Streamlit reloads easily when files change**, but **workers must be restarted after Python code changes**.
-- **If the UI keeps loading forever**: Streamlit communicates with the browser over **WebSocket**. Suggested checks: (1) do a **hard reload** including cache reset or reopen in another tab, (2) by default Nginx points only to **one Streamlit app** (`streamlit1`), and a second instance should be enabled only when needed with `docker compose --profile ha up -d` plus upstream changes in `nginx.conf`, (3) set **`STREAMLIT_SERVER_COOKIE_SECRET`** in `deploy/.env.example`, (4) use `.streamlit/config.toml` `enableWebsocketCompression = false` and Nginx `proxy_buffering off` plus suitable `proxy_*_timeout`, and (5) check logs with `docker compose logs streamlit1 nginx`.
-- **502 Bad Gateway**: This happens when Nginx **cannot reach Streamlit** because the process exited, was killed by OOM, or stayed blocked for too long. Check `docker compose logs streamlit1` and host **`dmesg`** for OOM messages. Heavy pages can consume significant memory, so the **default single-instance setup** and the single upstream in `deploy/nginx/nginx.conf` are recommended.
+- **Access**: In production compose, **Nginx listens on port 80**, and Streamlit is accessed through the proxy (see `docker-compose.yml` / `nginx/nginx.conf.template`). Since the source code and `lib/` are mounted, **Streamlit reloads easily when files change**, but **workers must be restarted after Python code changes**.
+- **If the UI keeps loading forever**: Streamlit communicates with the browser over **WebSocket**. Suggested checks: (1) do a **hard reload** including cache reset or reopen in another tab, (2) by default Nginx points only to **one Streamlit app** (`streamlit1`); add more by setting `EVAL_COMPOSE_STREAMLIT_REPLICAS` (1..3) in `.env` and running `./04_START.sh`, which keeps the compose profiles and the nginx upstream in sync — never enable a replica by hand with `--profile`, (3) set **`STREAMLIT_SERVER_COOKIE_SECRET`** in `deploy/.env.example`, (4) use `.streamlit/config.toml` `enableWebsocketCompression = false` and Nginx `proxy_buffering off` plus suitable `proxy_*_timeout`, and (5) check logs with `docker compose logs streamlit1 nginx`.
+- **502 Bad Gateway**: This happens when Nginx **cannot reach Streamlit** because the process exited, was killed by OOM, or stayed blocked for too long. Check `docker compose logs streamlit1` and host **`dmesg`** for OOM messages. Heavy pages can consume significant memory, so the **default single-instance setup** (`EVAL_COMPOSE_STREAMLIT_REPLICAS=1`) is recommended; the upstream list is rendered from `deploy/nginx/nginx.conf.template`.
 - **Troubleshooting Detection Stats freezes / 502**: Set **`EVAL_DETECTION_STATS_DEBUG=1`** in `.env` so it is passed into the compose `streamlit1` service, then restart. The **Detection Stats debug** expander at the bottom of the page and the stderr of **`docker compose logs streamlit1`** will show section boundaries, `getrusage` memory values, and elapsed time before / after DuckDB calls.
 - **If a subpage says "load in Overview" even though Overview was already opened**: Session state is stored **in memory per replica**. Overview also syncs `mode` / `run_a` / `run_b`... into the URL, so when those query parameters remain in the address bar, subpages such as Detection Stats can **rebuild `run_a` into `runA`** via `lib/overview_url_hydrate.py`. Open **Overview once**, confirm the address bar contains `run_a=`, then move to the subpage, or reopen from the **Overview share link**.
 - **Avoid duplicate config management**: During compose runs, `deploy/configs/autoware_evaluator_dl_config.json` is mounted inside the container as `EVAL_DASHBOARD_CONFIG` (`/app/docker_config/...`). This is a separate file from the host `configs/` version, so edit the one under `deploy/configs/` for Docker-specific settings.

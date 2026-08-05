@@ -131,9 +131,11 @@ Two traps worth knowing, both of which cost time to discover:
   as `docker compose --env-file .env` (`deploy/04_START.sh:34`). `deploy/.env.local` is
   only a naming convention mentioned in a `.env.example` comment — nothing loads it, so a
   token written there silently has no effect.
-* **A restart is not enough.** `docker compose restart` (what
-  `10_RESTART_STREAMLIT.sh` does) reuses the existing container config and never
-  re-reads `env_file`. A new variable needs `up -d`, which recreates the container.
+* **A restart is not enough.** `docker compose restart` reuses the existing container
+  config and never re-reads `env_file`; a new variable needs `up -d`, which recreates the
+  container. The deploy scripts do that for you now — `10_RESTART_STREAMLIT.sh` recreates
+  rather than restarts — but a hand-typed `docker compose restart` still silently keeps
+  the old environment.
 
 The routes ride on the existing `/bbox-api/` nginx mapping — no new port, no compose
 change. Then verify through the real edge:
