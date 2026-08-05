@@ -40,7 +40,6 @@ from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, 
 from lib.t4_dataset_embed import t4_share_query_params
 from lib.t4_three_layers import (
     EXTERNAL_BBOX_ALIGNMENT_VERSION,
-    POLYGON_SHAPE_TYPES,
     build_three_layer_payload_all_frames,
     infer_external_bbox_alignment_query_params,
     infer_legacy_width_length_swapped,
@@ -1090,24 +1089,7 @@ else:
             _q_three = f"{_q_three}&compare_view={_viewer_compare_mode}"
         _q_three = f"{_q_three}&{infer_external_bbox_alignment_query_params(df)}"
         _viewer_three_url = f"{browser_url_t4.rstrip('/')}/viewer/three?{_q_three}"
-
-        # Most polygon rows are sub-metre, so a scene full of them reads as noise. The
-        # control belongs with the scene it changes rather than in the sidebar, and it
-        # affects only the overlay -- the counts and tables above still describe the run.
-        _shape_col = df["shape_type"].astype(str).str.strip().str.lower() if "shape_type" in df.columns else None
-        _polygon_rows = int(_shape_col.isin(POLYGON_SHAPE_TYPES).sum()) if _shape_col is not None else 0
-        _overlay_df = df
-        if _polygon_rows:
-            _show_polygons = st.checkbox(
-                f"Polygon objects ({_polygon_rows:,} rows)",
-                value=True,
-                key="bbox_viewer_show_polygons",
-                help="Polygon-shaped rows, most of them sub-metre. Uncheck to leave them "
-                     "out of the 3D scene; the numbers above are unaffected.",
-            )
-            if not _show_polygons:
-                _overlay_df = df[~_shape_col.isin(POLYGON_SHAPE_TYPES)]
-        _layer_payload = build_three_layer_payload_all_frames(_overlay_df)
+        _layer_payload = build_three_layer_payload_all_frames(df)
 
         _viewer_three_h = 1400
         _transport_stats = render_t4_three_js_embed(_viewer_three_url, _layer_payload, height=_viewer_three_h)

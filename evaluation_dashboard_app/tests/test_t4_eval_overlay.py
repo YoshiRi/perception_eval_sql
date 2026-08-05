@@ -231,63 +231,12 @@ def test_the_dashboard_3d_page_selects_the_footprint_column():
 # ------------------------------------------------------------- hiding polygon rows
 
 # Most polygon rows are sub-metre, so a scene full of them reads as noise. Every viewer
-# offers a toggle; they all mean the same two shape_type values, and all default to on.
-
-
-def _polygon_row(frame, x):
-    """As stored: shape_type 'polygon' with zero box dimensions.
-
-    The payload builder renames those to 'invalid_polygon_marker', which is why both
-    names have to count as "polygon" wherever a viewer filters them.
-    """
-    return {**_row(frame, "EST", "FP", x, "unknown"),
-            "shape_type": "polygon", "length": 0.0, "width": 0.0}
-
-
-@pytest.fixture()
-def parquet_with_polygons(tmp_path: Path, monkeypatch) -> Path:
-    monkeypatch.setenv("LOCAL_BBOX_ALLOWED_ROOTS", str(tmp_path))
-    path = tmp_path / "polygons.parquet"
-    rows = [_row(1, "GT", "TP", 10.0), _row(1, "EST", "TP", 10.2)]
-    rows += [_polygon_row(1, 20.0), _polygon_row(1, 21.0), _polygon_row(1, 22.0)]
-    df = pd.DataFrame(rows)
-    df["footprint"] = [[[0.5, 0.5], [-0.5, 0.5], [-0.5, -0.5], [0.5, -0.5]]] * len(df)
-    df.to_parquet(path)
-    return path
-
-
-def _layers_of(parquet, **extra):
-    return t4_layers({
-        "path": str(parquet),
-        "filters": {"suite_name": SUITE, "scenario_name": SCENARIO, "topic_name": TOPIC},
-        **extra,
-    })
-
-
-def test_polygons_are_included_by_default(parquet_with_polygons):
-    """They are real detections, just small ones, so nothing disappears unasked."""
-    stats = _layers_of(parquet_with_polygons)["stats"]
-    assert stats["pred_box_count"] == 4  # one box-shaped EST plus three polygons
-
-
-def test_hiding_polygons_leaves_the_box_shaped_rows(parquet_with_polygons):
-    stats = _layers_of(parquet_with_polygons, hide_polygons=True)["stats"]
-    assert stats["pred_box_count"] == 1
-    assert stats["gt_box_count"] == 1
-
-
-def test_hiding_polygons_applies_to_every_compared_run(parquet_with_polygons):
-    out = t4_layers({
-        "runs": [{"label": "A", "path": str(parquet_with_polygons)},
-                 {"label": "B", "path": str(parquet_with_polygons)}],
-        "filters": {"suite_name": SUITE, "scenario_name": SCENARIO, "topic_name": TOPIC},
-        "hide_polygons": True,
-    })
-    assert out["stats"]["pred_box_count"] == 2  # one per run, polygons gone from both
+# offers a toggle -- the 3D ones in t4-server's own layer panel, the 2D ones here -- and
+# they all have to mean the same two shape_type values.
 
 
 def test_every_viewer_agrees_on_what_a_polygon_is():
-    """Four surfaces filter these rows; a fifth name in one of them would be a silent hole."""
+    """A fifth name here and not in the viewers would be a silent hole in the filter."""
     from lib.t4_three_layers import POLYGON_SHAPE_TYPES
 
     js = _explorer_js() + (Path(__file__).resolve().parents[1] / "static" / "bbox_viewer_timeline.js").read_text(encoding="utf-8")
