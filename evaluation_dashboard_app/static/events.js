@@ -1319,7 +1319,10 @@ function dashboard3dUrl(s) {
   const dataset = t4DatasetKey(s);
   if (dataset) p.set("viewer_t4dataset", dataset);
   if (s.topic_name) p.set("viewer_topic", s.topic_name);
-  p.set("viewer_compare", "side_by_side");
+  // Only when there are two runs to place side by side. The page takes this param at
+  // face value, so sending it for a single run split the scene into A|B panes with
+  // nothing in B; left unset it picks the right thing on its own.
+  if (comparing) p.set("viewer_compare", "side_by_side");
   return `${base}/T4_3D_Viewer?${p.toString()}`;
 }
 function openServer3dViewer() {

@@ -67,7 +67,7 @@ var els = {
   analysisErr: $("analysisErr"), analysisRecall: $("analysisRecall"), analysisPrecision: $("analysisPrecision"),
   analysisGt: $("analysisGt"), analysisEst: $("analysisEst"), prevHotFrame: $("prevHotFrame"), nextHotFrame: $("nextHotFrame"),
   labelFrameBreakdown: $("labelFrameBreakdown"), labelFrameMeta: $("labelFrameMeta"), zoneBreakdown: $("zoneBreakdown"), hotspotModes: $("hotspotModes"), hotspotModeMeta: $("hotspotModeMeta"),
-  cntGtTp: $("cntGtTp"), cntGtFn: $("cntGtFn"), cntEstTp: $("cntEstTp"), cntEstFp: $("cntEstFp"),
+  cntGtTp: $("cntGtTp"), cntGtFn: $("cntGtFn"), cntEstTp: $("cntEstTp"), cntEstFp: $("cntEstFp"), cntPolygon: $("cntPolygon"),
   compareSummary: $("compareSummary"), compareAStats: $("compareAStats"), compareBStats: $("compareBStats"), compareDeltaStats: $("compareDeltaStats"), compareFrameNote: $("compareFrameNote"),
   devopsViewerPanel: $("devopsViewerPanel"),
   compareBanner: $("compareBanner"), compareBannerText: $("compareBannerText"), splitLabelA: $("splitLabelA"), splitLabelB: $("splitLabelB"), curtainHandle: $("curtainHandle")
@@ -119,7 +119,12 @@ function applyViewerPrefs({camera = false, controls = false} = {}) {
     if (prefs.curtainX != null) state.curtainX = Math.max(0.08, Math.min(0.92, finiteNumber(prefs.curtainX, state.curtainX)));
     if (Array.isArray(prefs.activeLayers)) {
       const active = new Set(prefs.activeLayers);
-      els.layerChips.querySelectorAll(".chip").forEach(chip => chip.classList.toggle("active", active.has(chip.dataset.layer)));
+      // A chip the saved session predates keeps its default: absence from activeLayers
+      // means "switched off" only for layers that existed when it was written.
+      const known = new Set(Array.isArray(prefs.knownLayers) ? prefs.knownLayers : prefs.activeLayers);
+      els.layerChips.querySelectorAll(".chip").forEach(chip => {
+        if (known.has(chip.dataset.layer)) chip.classList.toggle("active", active.has(chip.dataset.layer));
+      });
     }
     els.hotspotModes.querySelectorAll("button").forEach(btn => btn.classList.toggle("active", btn.dataset.hotspot === state.hotspotMode));
   }
@@ -155,6 +160,7 @@ function captureViewerPrefs() {
     hotspotMode: state.hotspotMode,
     curtainX: state.curtainX,
     activeLayers: [...els.layerChips.querySelectorAll(".chip.active")].map(chip => chip.dataset.layer).filter(Boolean),
+    knownLayers: [...els.layerChips.querySelectorAll(".chip")].map(chip => chip.dataset.layer).filter(Boolean),
     camera: {
       yaw: state.yaw,
       pitch: state.pitch,

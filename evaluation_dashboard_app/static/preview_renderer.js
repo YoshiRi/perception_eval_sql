@@ -328,11 +328,17 @@ function previewLayerKey(b) {
   if (source === "EST") return "est_tp";
   return "";
 }
-function previewLayerVisible(b) {
-  const key = previewLayerKey(b);
-  if (!key) return true;
+function previewLayerActive(key) {
   const btn = els.previewLayers.querySelector(`[data-layer="${key}"]`);
   return !!(btn && btn.classList.contains("active"));
+}
+function previewLayerVisible(b) {
+  // Polygons cut across the GT/EST tuples rather than forming a fifth one, so this is a
+  // second gate rather than another key.
+  if (isPolygonShape(b) && !previewLayerActive("polygon")) return false;
+  const key = previewLayerKey(b);
+  if (!key) return true;
+  return previewLayerActive(key);
 }
 function previewIsDevops() {
   return !!(state.selected && devopsContext(state.selected).is_devops);

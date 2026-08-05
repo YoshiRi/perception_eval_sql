@@ -29,7 +29,15 @@ function evalTupleVisible(box) {
   if (source === "EST") return layerActive("est_tp") || layerActive("est_fp");
   return true;
 }
+// The analyzer writes "invalid_polygon_marker" for polygons whose box dimensions are
+// zero, which is most of them, so both names mean "polygon" here.
+const POLYGON_SHAPE_TYPES = new Set(["polygon", "invalid_polygon_marker"]);
+function isPolygonShape(box) {
+  return POLYGON_SHAPE_TYPES.has(String((box && box.shape_type) || "").toLowerCase());
+}
 function visibleByLayerControls(box) {
+  // Polygons cut across the GT/EST tuples rather than forming a fifth one.
+  if (isPolygonShape(box) && !layerActive("polygon")) return false;
   if (!evalTupleVisible(box)) return false;
   if (!chipAllows(els.labels, box.label, true)) return false;
   if (els.confMin.value !== "" && box.confidence != null) {

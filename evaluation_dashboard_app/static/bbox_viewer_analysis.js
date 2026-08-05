@@ -153,7 +153,7 @@ function runMetrics(frame, run) {
   return out;
 }
 function layerCounts(frame) {
-  const out = {gtTp: 0, gtFn: 0, estTp: 0, estFp: 0};
+  const out = {gtTp: 0, gtFn: 0, estTp: 0, estFp: 0, polygon: 0};
   for (const b of (frame && frame.boxes) || []) {
     const source = String(b.source || "").toUpperCase();
     const status = String(b.status || "").toUpperCase();
@@ -161,6 +161,8 @@ function layerCounts(frame) {
     else if (source === "GT" && status === "FN") out.gtFn++;
     else if (source === "EST" && status === "TP") out.estTp++;
     else if (source === "EST" && status === "FP") out.estFp++;
+    // Counted alongside, not instead: a polygon is still a GT or EST row.
+    if (isPolygonShape(b)) out.polygon++;
   }
   return out;
 }
@@ -235,6 +237,7 @@ function updateAnalysis(frame, visible) {
   els.cntGtFn.textContent = String(layers.gtFn);
   els.cntEstTp.textContent = String(layers.estTp);
   els.cntEstFp.textContent = String(layers.estFp);
+  if (els.cntPolygon) els.cntPolygon.textContent = String(layers.polygon);
   els.compareSummary.classList.toggle("show", state.compare);
   els.compareFrameNote.classList.toggle("show", state.compare);
   if (state.compare) {

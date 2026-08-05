@@ -35,6 +35,11 @@
       border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px;
     }
     a.btn:hover { border-color: var(--accent); }
+    label.toggle {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+      color: var(--muted); cursor: pointer; user-select: none;
+    }
+    label.toggle input { accent-color: var(--accent); cursor: pointer; }
     iframe { flex: 1; width: 100%; border: 0; background: var(--bg); }
   </style>
 </head>
@@ -44,6 +49,9 @@
     <span class="meta" id="sceneMeta"></span>
     <span class="spacer"></span>
     <span class="status" id="status">Loading the cached scene...</span>
+    <!-- Polygon rows are mostly sub-metre, so a scene full of them reads as noise. The
+         viewer holds the boxes, so hiding them means rebuilding the payload. -->
+    <label class="toggle"><input type="checkbox" id="polygonToggle" checked> Polygons</label>
     <a class="btn" id="plainLink" href="#" title="The scene without the run's boxes">Annotations only</a>
     <!-- _top so the link works the same whether this page is the explorer's embedded
          viewer or a standalone tab; without it the explorer would nest inside itself. -->
@@ -141,7 +149,10 @@ async function start() {
     const res = await fetch("/api/t4_layers", {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({path, runs, filters, max_rows: 400000, dedupe: true}),
+      body: JSON.stringify({
+        path, runs, filters, max_rows: 400000, dedupe: true,
+        hide_polygons: !$("polygonToggle").checked,
+      }),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
@@ -151,7 +162,8 @@ async function start() {
     setStatus(`${(stats.gt_box_count || 0).toLocaleString()} GT · `
       + `${(stats.pred_box_count || 0).toLocaleString()} EST over `
       + `${(stats.frame_count || 0).toLocaleString()} frames`
-      + (compareRuns.length > 1 ? ` · ${compareRuns.join(" vs ")} side by side` : ""), "ok");
+      + (compareRuns.length > 1 ? ` · ${compareRuns.join(" vs ")} side by side` : "")
+      + ($("polygonToggle").checked ? "" : " · polygons hidden"), "ok");
     // Never overlay: two runs' boxes stacked in one scene cannot be told apart.
     const query = [data.viewer_query || "", compareRuns.length > 1 ? "compare_view=side_by_side" : ""]
       .filter(Boolean).join("&");
@@ -161,6 +173,16 @@ async function start() {
     showViewer(viewerUrl());
   }
 }
+
+$("polygonToggle").addEventListener("change", () => {
+  // The buffer is transferred into the iframe and cannot be re-sent, so a changed
+  // filter means loading the scene again with a freshly packed payload.
+  iframeLoaded = false;
+  payloadBuffer = null;
+  $("viewer").removeAttribute("src");
+  setStatus("Rebuilding the overlay...");
+  start();
+});
 
 start();
 </script>

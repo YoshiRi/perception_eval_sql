@@ -2989,6 +2989,7 @@ def t4_layers(payload: dict[str, Any]) -> dict[str, Any]:
     import base64
 
     from lib.t4_three_layers import (
+        POLYGON_SHAPE_TYPES,
         _pack_three_layer_payload_binary,
         build_three_layer_payload_all_frames,
         infer_external_bbox_alignment_query_params,
@@ -2996,6 +2997,13 @@ def t4_layers(payload: dict[str, Any]) -> dict[str, Any]:
 
     import pandas as pd
 
+    def drop_polygons(frame: "pd.DataFrame") -> "pd.DataFrame":
+        if "shape_type" not in frame.columns:
+            return frame
+        shape = frame["shape_type"].map(_as_text).str.lower()
+        return frame[~shape.isin(POLYGON_SHAPE_TYPES)]
+
+    hide_polygons = payload.get("hide_polygons") is True
     runs = payload.get("runs")
     if isinstance(runs, list) and runs:
         frames_per_run = []
@@ -3008,6 +3016,8 @@ def t4_layers(payload: dict[str, Any]) -> dict[str, Any]:
         df = _frames_dataframe(payload)
     if "frame_index" not in df.columns and "_frame_index_int" in df.columns:
         df = df.assign(frame_index=df["_frame_index_int"])
+    if hide_polygons:
+        df = drop_polygons(df)
     layer_payload = build_three_layer_payload_all_frames(df)
     blob, stats = _pack_three_layer_payload_binary(layer_payload)
     return {

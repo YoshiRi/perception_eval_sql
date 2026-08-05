@@ -68,6 +68,11 @@ _BINARY_FOOTPRINT_POINT_STRUCT = struct.Struct("<fff")
 _VEHICLE_LABELS = {"car", "truck", "bus", "trailer"}
 _EXTERNAL_EVAL_TO_T4_YAW_OFFSET = 0.0
 EXTERNAL_BBOX_ALIGNMENT_VERSION = "eval-yaw0-explicit-corners-v3"
+# Polygon-shaped rows. The analyzer writes "invalid_polygon_marker" for polygons whose
+# box dimensions are zero, which is most of them, so both names mean "polygon" wherever
+# a viewer offers to hide them.
+POLYGON_SHAPE_TYPES = ("polygon", "invalid_polygon_marker")
+
 PLACEHOLDER_T4_DATASET_IDS = {
     "00000000-0000-0000-0000-000000000000",
     "00000000-0000-0000-0000-000000000001",

@@ -60,6 +60,12 @@ function escapeHtml(v) {
 }
 function rate(v) { return Number.isFinite(Number(v)) ? `${Math.round(Number(v) * 100)}%` : "-"; }
 function fmt(n) { return Number(n || 0).toLocaleString(); }
+// A polygon-shaped row. The analyzer writes "invalid_polygon_marker" for polygons whose
+// box dimensions are zero, which is most of them, so both names mean "polygon" here.
+var POLYGON_SHAPE_TYPES = new Set(["polygon", "invalid_polygon_marker"]);
+function isPolygonShape(b) {
+  return POLYGON_SHAPE_TYPES.has(String((b && b.shape_type) || "").toLowerCase());
+}
 function fmtBytes(n) {
   if (n === null || n === undefined) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
