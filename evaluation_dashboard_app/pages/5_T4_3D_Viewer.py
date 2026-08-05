@@ -5,6 +5,7 @@ import requests
 import streamlit as st
 import numpy as np
 import pandas as pd
+import functools
 import os
 import re
 from pathlib import Path
@@ -37,9 +38,11 @@ from lib.auth import (
 from lib.path_utils import path_display
 from lib.overview_url_hydrate import try_hydrate_session_from_overview_query_params
 from lib.page_chrome import inject_app_page_styles, render_loaded_data_section, render_page_hero
+from lib.scene_name_match import resolve_scene_name_option, scene_name_predicate
 from lib.t4_dataset_embed import t4_share_query_params
 from lib.t4_three_layers import (
     EXTERNAL_BBOX_ALIGNMENT_VERSION,
+    PLACEHOLDER_T4_DATASET_IDS,
     build_three_layer_payload_all_frames,
     infer_external_bbox_alignment_query_params,
     infer_legacy_width_length_swapped,
@@ -165,17 +168,8 @@ def _resolve_annotation_dataset_id_from_name(t4dataset_name: str) -> str:
 
 
 def _legacy_prefixed_match(options: list[str], base_name: str, suffix_prefix: str = "") -> str:
-    base = _clean_text(base_name)
-    if not base:
-        return ""
-    if base in options:
-        return base
-    if suffix_prefix:
-        wanted = f"{base}_{suffix_prefix}"
-        if wanted in options:
-            return wanted
-    matches = [opt for opt in options if opt.startswith(f"{base}_")]
-    return matches[0] if len(matches) == 1 else ""
+    """Resolve a linked suite/scenario name against the names this run actually offers."""
+    return resolve_scene_name_option(options, base_name, suffix_prefix)
 
 
 def _prime_viewer_state_from_query_params() -> None:
@@ -361,6 +355,23 @@ with st.sidebar:
     filter_file = selected_files.get(first_shown) or parquet_lists[run_labels_list.index(first_shown)][0]
 
 con = duckdb.connect()
+
+
+@functools.lru_cache(maxsize=64)
+def _file_columns(file_path: str) -> frozenset:
+    """Column names in one run's parquet.
+
+    Runs selected side by side are often months apart and do not share a schema,
+    so every predicate and projection has to be checked against the file it will
+    actually run on, not against run A's columns.
+    """
+    try:
+        return frozenset(
+            con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [file_path]).df()["column_name"].tolist()
+        )
+    except Exception:
+        return frozenset()
+
 
 cols = con.execute("DESCRIBE SELECT * FROM parquet_scan(?)", [filter_file]).df()["column_name"].tolist()
 has_visibility = "visibility" in cols
@@ -608,21 +619,30 @@ except (TypeError, ValueError):
     _load_entry_frame_hint = None
 
 
-def _duckdb_like_prefix(text: str) -> str:
-    """Escape a user/data string for DuckDB LIKE and append a trailing wildcard."""
-    return (
-        str(text)
-        .replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-        + "%"
-    )
+def _usable_dataset_filter(file_path: str) -> str | None:
+    """The selected t4dataset_name, when it can actually narrow this file.
+
+    Legacy exports store a single placeholder id for every dataset, which must not
+    be pushed into a modern run's query where it matches nothing.
+    """
+    if selected_t4dataset is None or "t4dataset_name" not in _file_columns(file_path):
+        return None
+    value = str(selected_t4dataset)
+    if value in PLACEHOLDER_T4_DATASET_IDS:
+        return None
+    return value
 
 
-def _label_visibility_filters() -> tuple[list[str], list[Any]]:
+def _label_visibility_filters(file_path: str | None = None) -> tuple[list[str], list[Any]]:
+    """Label/visibility predicates, restricted to columns the target file actually has.
+
+    `visibility` is optional in older exports, so referencing it against a run that
+    lacks it would make every probe below raise and silently degrade the match.
+    """
     filters = [f"label IN ({','.join(['?'] * len(selected_labels))})"]
     params_out: List[Any] = list(selected_labels)
-    if has_visibility and selected_visibility:
+    file_has_visibility = has_visibility if file_path is None else ("visibility" in _file_columns(file_path))
+    if file_has_visibility and selected_visibility:
         filters.append(f"COALESCE(visibility,'UNKNOWN') IN ({','.join(['?'] * len(selected_visibility))})")
         params_out.extend(selected_visibility)
     return filters, params_out
@@ -728,15 +748,22 @@ def _nearest_gt_geometry_match(
     prefix_params: list[Any],
     label_filters: list[str],
     label_params: list[Any],
+    group_cols: list[str],
 ) -> tuple | None:
-    """Pick a legacy candidate whose GT layout best matches the selected reference dataset."""
+    """Pick the candidate scene whose GT layout best matches the selected reference dataset.
+
+    `group_cols` are the scene-identifying columns this run's parquet actually has,
+    so a run missing e.g. `t4dataset_name` is still comparable.
+    """
     ref_df = _geometry_reference_df
     if ref_df.empty or not {"label", "x", "y"}.issubset(ref_df.columns):
+        return None
+    if not group_cols:
         return None
     try:
         cand_df = con.execute(
             f"""
-            SELECT suite_name, scenario_name, t4dataset_name, label, x, y
+            SELECT {", ".join(group_cols)}, label, x, y
             FROM parquet_scan(?)
             WHERE {" AND ".join(prefix_parts + label_filters)}
               AND source = 'GT'
@@ -757,9 +784,12 @@ def _nearest_gt_geometry_match(
     if ref_count <= 0:
         return None
 
-    best: tuple[float, int, str, str, str, int] | None = None
-    group_cols = ["suite_name", "scenario_name", "t4dataset_name"]
-    for (suite_hit, scenario_hit, dataset_hit), group in cand_df.groupby(group_cols, dropna=False):
+    best_key: tuple[float, int, str] | None = None
+    best_scene: dict[str, str] = {}
+    best_count = 0
+    for group_key, group in cand_df.groupby(group_cols, dropna=False):
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
         total_distance = 0.0
         matched_count = 0
         for label, ref_points in ref_groups.items():
@@ -783,26 +813,29 @@ def _nearest_gt_geometry_match(
         cand_count = int(len(group))
         count_delta = abs(cand_count - ref_count)
         score = (total_distance / matched_count) + (0.05 * count_delta)
-        dataset_text = "" if pd.isna(dataset_hit) else str(dataset_hit)
-        candidate = (
+        scene = {
+            col: ("" if pd.isna(val) else str(val))
+            for col, val in zip(group_cols, group_key)
+        }
+        candidate_key = (
             float(score),
             int(count_delta),
-            str(scenario_hit),
-            str(suite_hit),
-            dataset_text,
-            cand_count,
+            # Tie-break on scene identity so the pick is stable from run to run.
+            "|".join(scene.get(c, "") for c in group_cols),
         )
-        if best is None or candidate < best:
-            best = candidate
-    if best is None:
+        if best_key is None or candidate_key < best_key:
+            best_key = candidate_key
+            best_scene = scene
+            best_count = cand_count
+    if best_key is None:
         return None
 
-    score, count_delta, scenario_hit, suite_hit, dataset_hit, cand_count = best
-    return suite_hit, scenario_hit, dataset_hit, int(cand_count), {
+    score, count_delta, _identity = best_key
+    return best_scene, int(best_count), {
         "geometry_score": score,
         "geometry_count_delta": count_delta,
         "geometry_ref_count": ref_count,
-        "geometry_candidate_count": cand_count,
+        "geometry_candidate_count": best_count,
         "topic": topic,
     }
 
@@ -810,13 +843,21 @@ def _nearest_gt_geometry_match(
 def _resolve_load_filter_for_file(file_path: str) -> tuple[str, list[Any], dict]:
     """Resolve one concrete scene/topic for this run's parquet.
 
-    Modern release parquet can be filtered exactly by t4dataset_name. Older pilot
-    exports use suffixed suite/scenario names plus a tracking topic, so comparing
-    with a modern release needs a per-run fallback that picks one concrete
-    suffixed scenario instead of aggregating every matching dataset.
+    The scene is chosen in the sidebar from run A's names, but each run gets its own
+    predicate, because runs compared side by side often come from different exporter
+    generations: release parquet has plain suite/scenario names plus real
+    `t4dataset_name` values, while older pilot parquet has hash-suffixed
+    suite/scenario names, a single placeholder dataset id, and sometimes a tracking
+    topic. Resolution goes most-specific first — exact dataset, exact scene, then
+    suffix-aliased candidates narrowed to one concrete scene — and gives up rather
+    than widening, since every step must end at a single scene. Aggregating several
+    datasets would stack their boxes onto the same `frame_index` values, because
+    `frame_index` restarts at 0 for each dataset.
     """
-    label_filters, label_params = _label_visibility_filters()
+    label_filters, label_params = _label_visibility_filters(file_path)
     topics = _candidate_topics_for_file(file_path)
+    file_cols = _file_columns(file_path)
+    dataset_filter = _usable_dataset_filter(file_path)
 
     def _count(where_parts: list[str], params_tail: list[Any]) -> int:
         q = f"SELECT COUNT(*) FROM parquet_scan(?) WHERE {' AND '.join(where_parts + label_filters)}"
@@ -825,52 +866,89 @@ def _resolve_load_filter_for_file(file_path: str) -> tuple[str, list[Any], dict]
         except Exception:
             return 0
 
+    def _distinct_dataset_count(where_parts: list[str], params_tail: list[Any]) -> int:
+        """How many datasets a candidate predicate spans; 1 when the run has no such column."""
+        if "t4dataset_name" not in file_cols:
+            return 1
+        q = (
+            "SELECT COUNT(DISTINCT t4dataset_name) FROM parquet_scan(?) "
+            f"WHERE {' AND '.join(where_parts + label_filters)}"
+        )
+        try:
+            return int(con.execute(q, [file_path] + params_tail + label_params).fetchone()[0])
+        except Exception:
+            return 1
+
+    # Only name columns this run actually has can constrain it.
+    scene_suite = selected_suite if "suite_name" in file_cols else None
+    scene_scenario = selected_scenario if "scenario_name" in file_cols else None
+    scene_group_cols = [
+        c for c in ("suite_name", "scenario_name", "t4dataset_name") if c in file_cols
+    ]
+
     exact_parts: list[str] = []
     exact_params: list[Any] = []
-    if selected_suite is not None:
+    if scene_suite is not None:
         exact_parts.append("suite_name = ?")
-        exact_params.append(selected_suite)
-    if selected_scenario is not None:
+        exact_params.append(scene_suite)
+    if scene_scenario is not None:
         exact_parts.append("scenario_name = ?")
-        exact_params.append(selected_scenario)
+        exact_params.append(scene_scenario)
 
-    for topic in topics:
-        parts = list(exact_parts)
-        params_tail = list(exact_params)
-        if selected_t4dataset is not None:
-            parts.append("t4dataset_name = ?")
-            params_tail.append(selected_t4dataset)
-        parts.append("topic_name = ?")
-        params_tail.append(topic)
-        if _count(parts, params_tail) > 0:
-            return " AND ".join(parts + label_filters), params_tail + label_params, {
-                "topic": topic,
-                "match": "exact_dataset" if selected_t4dataset is not None else "exact_scene",
-            }
+    if dataset_filter is not None:
+        for topic in topics:
+            parts = list(exact_parts) + ["t4dataset_name = ?", "topic_name = ?"]
+            params_tail = list(exact_params) + [dataset_filter, topic]
+            if _count(parts, params_tail) > 0:
+                return " AND ".join(parts + label_filters), params_tail + label_params, {
+                    "topic": topic,
+                    "match": "exact_dataset",
+                    "t4dataset": dataset_filter,
+                }
 
-    for topic in topics:
-        parts = list(exact_parts) + ["topic_name = ?"]
-        params_tail = list(exact_params) + [topic]
-        if _count(parts, params_tail) > 0:
+    if exact_parts:
+        for topic in topics:
+            parts = list(exact_parts) + ["topic_name = ?"]
+            params_tail = list(exact_params) + [topic]
+            if _count(parts, params_tail) <= 0:
+                continue
+            # A scenario name alone can cover many datasets in release exports (one
+            # scenario ran against ~100 of them). Accept the name match only when it
+            # identifies a single dataset; otherwise let the narrowing pass below pick one.
+            if _distinct_dataset_count(parts, params_tail) > 1:
+                break
             return " AND ".join(parts + label_filters), params_tail + label_params, {
                 "topic": topic,
                 "match": "exact_scene",
             }
 
-    if selected_suite is not None and selected_scenario is not None:
+    if scene_suite is not None or scene_scenario is not None:
         for topic in topics:
-            prefix_parts = [
-                "(suite_name = ? OR suite_name LIKE ? ESCAPE '\\')",
-                "(scenario_name = ? OR scenario_name LIKE ? ESCAPE '\\')",
-                "topic_name = ?",
-            ]
-            prefix_params = [
-                selected_suite,
-                _duckdb_like_prefix(f"{selected_suite}_"),
-                selected_scenario,
-                _duckdb_like_prefix(f"{selected_scenario}_"),
-                topic,
-            ]
+            prefix_parts = []
+            prefix_params: List[Any] = []
+            if scene_suite is not None:
+                clause, clause_params = scene_name_predicate("suite_name", scene_suite)
+                prefix_parts.append(clause)
+                prefix_params.extend(clause_params)
+            if scene_scenario is not None:
+                clause, clause_params = scene_name_predicate("scenario_name", scene_scenario)
+                prefix_parts.append(clause)
+                prefix_params.extend(clause_params)
+            prefix_parts.append("topic_name = ?")
+            prefix_params.append(topic)
+
+            def _concrete(scene: dict[str, str]) -> tuple[str, List[Any]]:
+                """Pin the run to the one scene that was picked, never to a name pattern."""
+                parts = ["topic_name = ?"]
+                params: List[Any] = [topic]
+                for col in scene_group_cols:
+                    value = scene.get(col, "")
+                    if value == "":
+                        continue
+                    parts.append(f"{col} = ?")
+                    params.append(value)
+                return " AND ".join(parts + label_filters), params + label_params
+
             geometry_hit = _nearest_gt_geometry_match(
                 file_path,
                 topic,
@@ -878,35 +956,30 @@ def _resolve_load_filter_for_file(file_path: str) -> tuple[str, list[Any], dict]
                 prefix_params,
                 label_filters,
                 label_params,
+                scene_group_cols,
             )
             if geometry_hit is not None:
-                suite_hit, scenario_hit, dataset_hit, row_count, geometry_debug = geometry_hit
-                concrete_parts = ["suite_name = ?", "scenario_name = ?", "topic_name = ?"]
-                concrete_params: List[Any] = [suite_hit, scenario_hit, topic]
-                if dataset_hit:
-                    concrete_parts.append("t4dataset_name = ?")
-                    concrete_params.append(dataset_hit)
-                return " AND ".join(concrete_parts + label_filters), concrete_params + label_params, {
+                scene, row_count, geometry_debug = geometry_hit
+                where_sql, where_params = _concrete(scene)
+                return where_sql, where_params, {
                     "topic": topic,
-                    "match": "legacy_geometry_scene",
-                    "suite": str(suite_hit),
-                    "scenario": str(scenario_hit),
-                    "t4dataset": str(dataset_hit),
+                    "match": "aliased_geometry_scene",
                     "row_count": int(row_count or 0),
+                    **{k: v for k, v in scene.items()},
                     **geometry_debug,
                 }
 
+            # No reference geometry to compare against: fall back to whichever single
+            # candidate scene has rows on the entry frame.
             group_sql = f"""
                 SELECT
-                    suite_name,
-                    scenario_name,
-                    t4dataset_name,
+                    {", ".join(scene_group_cols)},
                     SUM(CASE WHEN TRY_CAST(frame_index AS INTEGER) = ? THEN 1 ELSE 0 END) AS entry_frame_rows,
                     COUNT(*) AS row_count
                 FROM parquet_scan(?)
                 WHERE {" AND ".join(prefix_parts + label_filters)}
-                GROUP BY suite_name, scenario_name, t4dataset_name
-                ORDER BY entry_frame_rows DESC, scenario_name ASC, row_count DESC
+                GROUP BY {", ".join(scene_group_cols)}
+                ORDER BY entry_frame_rows DESC, row_count DESC, {", ".join(f"{c} ASC" for c in scene_group_cols)}
                 LIMIT 1
             """
             try:
@@ -918,47 +991,92 @@ def _resolve_load_filter_for_file(file_path: str) -> tuple[str, list[Any], dict]
                 hit = None
             if hit is None:
                 continue
-            suite_hit, scenario_hit, dataset_hit, entry_rows, row_count = hit
-            concrete_parts = ["suite_name = ?", "scenario_name = ?", "topic_name = ?"]
-            concrete_params: List[Any] = [suite_hit, scenario_hit, topic]
-            if dataset_hit is not None:
-                concrete_parts.append("t4dataset_name = ?")
-                concrete_params.append(dataset_hit)
-            return " AND ".join(concrete_parts + label_filters), concrete_params + label_params, {
+            scene = {
+                col: ("" if value is None else str(value))
+                for col, value in zip(scene_group_cols, hit[: len(scene_group_cols)])
+            }
+            entry_rows, row_count = hit[len(scene_group_cols)], hit[len(scene_group_cols) + 1]
+            where_sql, where_params = _concrete(scene)
+            return where_sql, where_params, {
                 "topic": topic,
-                "match": "legacy_prefixed_scene",
-                "suite": str(suite_hit),
-                "scenario": str(scenario_hit),
-                "t4dataset": "" if dataset_hit is None else str(dataset_hit),
+                "match": "aliased_prefixed_scene",
+                **scene,
                 "entry_frame_rows": int(entry_rows or 0),
                 "row_count": int(row_count or 0),
             }
+
+    if scene_suite is not None or scene_scenario is not None:
+        # A scene was requested but nothing in this run answers to it under any naming
+        # generation. Loading on topic alone would pull every scenario and dataset in the
+        # file and pile them onto the same frame indices, so refuse and report instead.
+        return "1=0", [], {
+            "topic": topics[0],
+            "match": "unresolved_scene",
+            "requested_suite": "" if selected_suite is None else str(selected_suite),
+            "requested_scenario": "" if selected_scenario is None else str(selected_scenario),
+        }
 
     fallback_parts = ["topic_name = ?"]
     fallback_params: List[Any] = [topics[0]]
     return " AND ".join(fallback_parts + label_filters), fallback_params + label_params, {
         "topic": topics[0],
-        "match": "topic_only_fallback",
+        "match": "topic_only_no_scene_columns",
     }
 
 dfs = []
+_run_filter_debug: dict[str, dict] = {}
+_unresolved_runs: list[tuple[str, dict]] = []
 for file_path, run_label in files_to_load:
-    run_where, run_params, _ = _resolve_load_filter_for_file(file_path)
+    run_where, run_params, run_match = _resolve_load_filter_for_file(file_path)
+    # Project only columns this run has: an optional column that exists in run A but
+    # not here (footprint, visibility, t4dataset_name, …) would otherwise fail the query.
+    _file_cols = _file_columns(file_path)
+    _run_select = [c for c in _select_cols if c in _file_cols] or list(_select_cols)
+    _missing_cols = [c for c in _select_cols if c not in _file_cols]
     sql = f"""
-SELECT {", ".join(_select_cols)}
+SELECT {", ".join(_run_select)}
 FROM parquet_scan(?)
 WHERE {run_where}
 ORDER BY frame_index
 """
     qparams = [file_path] + run_params
-    df_part = con.execute(sql, qparams).df()
+    try:
+        df_part = con.execute(sql, qparams).df()
+    except Exception as ex:
+        df_part = pd.DataFrame()
+        run_match = {**run_match, "query_error": str(ex)}
+    _run_filter_debug[run_label] = {
+        **run_match,
+        "file": os.path.basename(str(file_path)),
+        "rows": int(len(df_part)),
+        "missing_columns": _missing_cols,
+    }
+    if run_match.get("match") == "unresolved_scene" or run_match.get("query_error"):
+        _unresolved_runs.append((run_label, _run_filter_debug[run_label]))
     if not df_part.empty:
         df_part = df_part.copy()
         df_part["run"] = run_label
         dfs.append(df_part)
 
+for _run_label, _info in _unresolved_runs:
+    if _info.get("query_error"):
+        st.warning(
+            f"Run **{_run_label}** could not be loaded: {_info['query_error']}"
+        )
+        continue
+    st.warning(
+        f"Run **{_run_label}** (`{_info['file']}`) has no data for the selected scene "
+        f"(suite `{_info.get('requested_suite') or '-'}`, scenario "
+        f"`{_info.get('requested_scenario') or '-'}`, topic `{_info.get('topic')}`), "
+        "under that name or any suffix variant of it. Showing nothing for this run rather "
+        "than every scenario in its file — pick a scene both runs contain, or compare runs "
+        "from the same evaluation catalog."
+    )
+
 if not dfs:
     st.warning("No data matches the selected filters.")
+    with st.expander("Per-run filter resolution", expanded=True):
+        st.json(_run_filter_debug)
     st.stop()
 
 df = pd.concat(dfs, ignore_index=True)
@@ -971,11 +1089,16 @@ if "frame_index" in df.columns and not np.issubdtype(df["frame_index"].dtype, np
         pd.to_numeric(df["frame_index"], errors="coerce").fillna(0).astype(int)
     )
 
-if len(files_to_load) == 1:
-    st.info(f"**Currently showing:** Run {files_to_load[0][1]} only")
+# Name the runs that actually contributed boxes, not the ones that were selected: a run
+# whose scene could not be resolved is warned about above and has nothing in the scene.
+_loaded_runs = [lbl for _, lbl in files_to_load if lbl in set(df["run"].dropna().unique())]
+if len(_loaded_runs) == 1:
+    st.info(f"**Currently showing:** Run {_loaded_runs[0]} only")
 else:
-    run_names = [f[1] for f in files_to_load]
-    st.info(f"**Currently showing:** Runs {', '.join(run_names)} — 3D layers include boxes from all selected runs.")
+    st.info(
+        f"**Currently showing:** Runs {', '.join(_loaded_runs)} — "
+        "3D layers include boxes from all selected runs."
+    )
 
 f_min, f_max = int(df.frame_index.min()), int(df.frame_index.max())
 
@@ -1007,7 +1130,10 @@ browser_url_t4 = browser_base_url(base_url_t4)
 
 _ds_t4 = resolve_t4_dataset_id(df_frame)
 if not _ds_t4 and selected_t4dataset is not None:
-    _ds_t4 = str(selected_t4dataset)
+    # Never fall back to a legacy placeholder id: the T4 server has no such dataset.
+    _candidate_ds = str(selected_t4dataset)
+    if _candidate_ds not in PLACEHOLDER_T4_DATASET_IDS:
+        _ds_t4 = _candidate_ds
 _sc_t4 = resolve_t4_scenario(df_frame, selected_scenario)
 
 if not _ds_t4:
@@ -1104,6 +1230,10 @@ else:
             st.write(f"Payload summary: {len(_all_frames)} frames, total GT={_total_gt}, total EST={_total_pred}, total pairs={_total_pairs}")
             st.write(f"Frames with GT={_frames_with_gt}, frames with EST={_frames_with_pred}")
             st.write(f"compare_runs in payload: {_layer_payload.get('compare_runs', [])}")
+            # Which branch each run's scene filter resolved through, and how many rows it
+            # loaded — the first thing to check when one run shows far more boxes than another.
+            st.write("Per-run filter resolution:")
+            st.json(_run_filter_debug, expanded=False)
             first_frame_key = next(iter(sorted(_all_frames.keys(), key=lambda v: int(v))), "")
             first_frame_payload = _all_frames.get(first_frame_key, {})
             first_gt = (first_frame_payload.get("gt") or [{}])[0]
