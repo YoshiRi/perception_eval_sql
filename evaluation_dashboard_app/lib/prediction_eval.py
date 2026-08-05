@@ -455,6 +455,55 @@ def build_distance_bin_metrics(track_df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
+def _load_prediction_evaluator_api():
+    """Return the analyzer's evaluator classes, or ``(None, None)`` on the older dataframe-only API."""
+    try:
+        from perception_catalog_analyzer.dataframe.future import FutureArray
+        from perception_catalog_analyzer.dataframe.prediction import PredictionEvaluator
+    except ImportError:
+        return None, None
+    return PredictionEvaluator, FutureArray
+
+
+def _build_label_prediction_evaluator(
+    evaluator_cls,
+    future_array_cls,
+    label_groups: Sequence[tuple[tuple[object, object], pd.DataFrame]],
+    *,
+    max_seconds: float,
+    time_step: float,
+    on_bin: Callable[[int, object, object], None],
+):
+    """Build one evaluator per label, one polar bin at a time so progress stays visible.
+
+    Mirrors ``FutureArray.from_filtered_dataframe`` but reports progress per bin, and the
+    resulting evaluator carries the error/result caches shared by every metric of the label.
+    """
+    bins: dict[tuple[str, str], object] = {}
+    for group_idx, ((r_name, theta_name), sub_df) in enumerate(label_groups, start=1):
+        on_bin(group_idx, r_name, theta_name)
+        bins[(str(r_name), str(theta_name))] = future_array_cls.from_dataframe(
+            sub_df, max_seconds=max_seconds, time_step=time_step
+        )
+
+    if not bins:
+        return evaluator_cls(
+            future_array_cls.from_dataframe(pd.DataFrame(), max_seconds=max_seconds, time_step=time_step)
+        )
+
+    time_steps = next(iter(bins.values())).time_steps
+    steps = len(time_steps)
+    future = future_array_cls(
+        ground_truth=np.empty((0, steps, 2)),
+        estimation=np.empty((0, 0, steps, 2)),
+        mask=np.empty((0, 0, steps), dtype=bool),
+        confidence=np.empty((0, 0)),
+        time_steps=time_steps,
+        bins=bins,
+    )
+    return evaluator_cls(future)
+
+
 def build_specsheet_aligned_prediction_artifacts(
     future_df: pd.DataFrame,
     *,
@@ -468,6 +517,7 @@ def build_specsheet_aligned_prediction_artifacts(
         from perception_catalog_analyzer.specsheet.metrics.functional import FUTURE_ARRAY_CACHE
     except ImportError:
         FUTURE_ARRAY_CACHE = None
+    evaluator_cls, future_array_cls = _load_prediction_evaluator_api()
 
     report = progress_callback or _noop_progress
     if FUTURE_ARRAY_CACHE is not None:
@@ -517,15 +567,31 @@ def build_specsheet_aligned_prediction_artifacts(
 
         label_groups = list(scoped.groupby(["r", "theta"], observed=True))
         total_groups = max(len(label_groups), 1)
-        for group_idx, ((r_name, theta_name), sub_df) in enumerate(label_groups, start=1):
+
+        def report_bin(group_idx: int, r_name: object, theta_name: object) -> None:
             warmup_progress = label_start + ((label_end - label_start) * 0.35 * group_idx / total_groups)
             report(
                 warmup_progress,
                 f"Preparing label `{label_name}` ({label_idx}/{total_labels}) future arrays: bin `{r_name}` / `{theta_name}` ({group_idx}/{total_groups})...",
             )
-            for metric_name in metric_order:
-                metric = metric_map[metric_name]
-                metric.apply(sub_df)
+
+        if evaluator_cls is not None:
+            # Newer analyzers compute prediction metrics from an evaluator, not from a dataframe.
+            metric_input: object = _build_label_prediction_evaluator(
+                evaluator_cls,
+                future_array_cls,
+                label_groups,
+                max_seconds=float(max(checkpoints)),
+                time_step=time_step,
+                on_bin=report_bin,
+            )
+        else:
+            metric_input = scoped
+            for group_idx, ((r_name, theta_name), sub_df) in enumerate(label_groups, start=1):
+                report_bin(group_idx, r_name, theta_name)
+                for metric_name in metric_order:
+                    metric = metric_map[metric_name]
+                    metric.apply(sub_df)
 
         row: dict[str, object] = {
             "label": label_name,
@@ -540,9 +606,9 @@ def build_specsheet_aligned_prediction_artifacts(
                 f"Aggregating label `{label_name}` ({label_idx}/{total_labels}), metric `{metric_name}` ({metric_idx}/{total_metrics})...",
             )
             metric = metric_map[metric_name]
-            metric_df = metric.apply(scoped)
+            metric_df = metric.apply(metric_input)
             each_bin_df = metric.get_each_bin(metric_df)
-            around_df = metric.get_all_around(scoped).dropna(subset=[metric_name]).copy()
+            around_df = metric.get_all_around(metric_input).dropna(subset=[metric_name]).copy()
             near_mask = around_df["r"].map(_parse_r_upper_bound) <= 60.0
             near_values = around_df.loc[near_mask, metric_name].dropna()
             row[metric_name] = float(np.nanmean(near_values.to_numpy(dtype=float))) if not near_values.empty else None
