@@ -1721,6 +1721,10 @@ els.preview.addEventListener("pointerup", stopPreviewPan);
 els.preview.addEventListener("pointercancel", stopPreviewPan);
 els.preview.addEventListener("wheel", e => {
   e.preventDefault();
+  // Wheel ticks emitted while panning (the middle button is the wheel) are jitter, not
+  // a zoom request -- zooming here would also rewrite the pan offsets below.
+  if (state.previewPanning) return;
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
   const rect = els.preview.getBoundingClientRect();
   const vp = previewInteractionViewport(rect, e.clientX);
   const oldScale = Math.max(.001, previewScaleForRect(vp));
@@ -1799,6 +1803,7 @@ els.canvas.addEventListener("pointerup", e => {
   }
   const moved = Math.hypot(e.clientX - state.downX, e.clientY - state.downY);
   state.dragging = false;
+  state.dragEndedAt = performance.now();
   if (state.explorerMode === "devops") {
     const hit = state.devopsHoverHit;
     if (hit && hit.kind === "scenario") selectScenario(hit.s);
@@ -1839,6 +1844,15 @@ els.canvas.addEventListener("pointermove", e => {
   render();
 });
 els.canvas.addEventListener("contextmenu", e => e.preventDefault());
+// The middle mouse button is the scroll wheel; without this the browser starts its
+// autoscroll when a middle-drag pan begins.
+els.canvas.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });
+els.canvas.addEventListener("auxclick", e => e.preventDefault());
+els.canvas.addEventListener("pointercancel", e => {
+  state.dragging = false;
+  state.dragEndedAt = performance.now();
+  try { els.canvas.releasePointerCapture(e.pointerId); } catch (_err) {}
+});
 els.canvas.addEventListener("pointerleave", () => { state.hover = null; state.statsHover = null; state.devopsHoverHit = null; els.hoverCard.classList.remove("show"); });
 els.canvas.addEventListener("wheel", e => {
   if (state.stageView === "stats") return;
@@ -1849,6 +1863,10 @@ els.canvas.addEventListener("wheel", e => {
     return;
   }
   e.preventDefault();
+  // Same as the viewer: a tick during (or right after) a pan drag is wheel jitter.
+  if (state.dragging) return;
+  if (performance.now() - (state.dragEndedAt || 0) < 250) return;
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
   state.scale = Math.max(.2, Math.min(8, state.scale * (e.deltaY > 0 ? .92 : 1.08)));
   render();
 }, {passive: false});

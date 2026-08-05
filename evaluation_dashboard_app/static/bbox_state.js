@@ -19,7 +19,7 @@ var state = {
   previewHoverBox: null, previewMouseX: 0, previewMouseY: 0, previewShowRings: true, previewShowLabels: false,
   summaryRequestId: 0, curveRequestId: 0, previewRequestId: 0, resultRequestId: 0,
   lens: "fp", label: "", rangeMax: "", explorerMode: "hotspots", expandedSuites: new Set(), layout: "galaxy", stageView: "map", statsDistanceStyle: "line", statsFrameFocus: "degraded", scale: 1, panX: 0, panY: 0,
-  dragging: false, lastX: 0, lastY: 0, downX: 0, downY: 0, hover: null, hoverLabel: null, labelNodes: [], statNodes: [],
+  dragging: false, dragEndedAt: 0, lastX: 0, lastY: 0, downX: 0, downY: 0, hover: null, hoverLabel: null, labelNodes: [], statNodes: [],
   statsHover: null, statsDetail: null, devopsCanvasHits: [], devopsHoverHit: null, devopsCanvasScroll: 0, devopsCanvasMaxScroll: 0, viewerUrl: "", mouseX: 0, mouseY: 0,
   restoreSession: null, restoreSessionApplied: false, savingSession: false
 };

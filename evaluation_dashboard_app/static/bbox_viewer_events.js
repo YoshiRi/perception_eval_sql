@@ -1,3 +1,12 @@
+// Firefox reports wheel deltas in lines and Chrome in pixels, so the raw deltaY is
+// ~30x bigger on one than the other. Normalize to pixels and cap a single event so no
+// one tick can slam the camera across the scene.
+function wheelPixels(e) {
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16;
+  else if (e.deltaMode === 2) dy *= (window.innerHeight || 800);
+  return Math.max(-120, Math.min(120, dy));
+}
 function loop() {
   const now = performance.now();
   if (!state.lastPlayTs) state.lastPlayTs = now;
@@ -210,9 +219,24 @@ els.canvas.addEventListener("pointerdown", e => {
   const rect = els.canvas.getBoundingClientRect();
   state.dragging = true;
   state.dragButton = e.button || 0;
+  state.dragMode = (e.shiftKey || e.button === 1 || e.button === 2) ? "pan" : "orbit";
   state.dragViewport = canvasViewportForPoint(e.clientX - rect.left, e.clientY - rect.top).viewport;
   state.lastX = e.clientX; state.lastY = e.clientY; state.downX = e.clientX; state.downY = e.clientY; els.canvas.setPointerCapture(e.pointerId);
 });
+// The middle mouse button is the scroll wheel, so a middle-drag pan would otherwise
+// trigger the browser's autoscroll. preventDefault on pointerdown does not stop it.
+els.canvas.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });
+els.canvas.addEventListener("auxclick", e => e.preventDefault());
+function clearCanvasDrag(e) {
+  state.dragging = false;
+  state.dragButton = 0;
+  state.dragMode = "orbit";
+  state.dragViewport = null;
+  state.dragEndedAt = performance.now();
+  if (e) { try { els.canvas.releasePointerCapture(e.pointerId); } catch (_err) {} }
+}
+els.canvas.addEventListener("pointercancel", clearCanvasDrag);
+els.canvas.addEventListener("lostpointercapture", () => { if (state.dragging) clearCanvasDrag(null); });
 els.canvas.addEventListener("pointerup", e => {
   if (state.draggingCurtain) {
     state.draggingCurtain = false;
@@ -220,8 +244,7 @@ els.canvas.addEventListener("pointerup", e => {
     return;
   }
   const moved = Math.hypot(e.clientX - state.downX, e.clientY - state.downY);
-  state.dragging = false;
-  state.dragViewport = null;
+  clearCanvasDrag(null);
   if (moved < 5) {
     const rect = els.canvas.getBoundingClientRect();
     state.selected = nearestBox(e.clientX - rect.left, e.clientY - rect.top);
@@ -241,7 +264,7 @@ els.canvas.addEventListener("pointermove", e => {
   const localY = e.clientY - rect.top;
   const hitView = state.dragViewport || canvasViewportForPoint(localX, localY).viewport;
   if (els.viewMode.value === "perspective") {
-    if (e.shiftKey || state.dragButton === 1 || state.dragButton === 2) {
+    if (state.dragMode === "pan") {
       panPerspectiveByScreenDelta(e.clientX - state.lastX, e.clientY - state.lastY, hitView);
     } else {
       state.yaw -= (e.clientX - state.lastX) * .008;
@@ -265,12 +288,18 @@ els.canvas.addEventListener("dblclick", e => {
 els.canvas.addEventListener("pointerleave", () => els.hoverCard.classList.remove("show"));
 els.canvas.addEventListener("wheel", e => {
   e.preventDefault();
+  // A wheel tick during a drag (or just after one) is wheel jitter from the middle
+  // button being held down to pan, not a zoom request. Dollying here would also
+  // rewrite panX/panY through the zoom-to-cursor block below and jump the view.
+  if (state.dragging || state.draggingCurtain) return;
+  if (performance.now() - (state.dragEndedAt || 0) < 250) return;
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
   const rect = els.canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
   const hitView = canvasViewportForPoint(sx, sy).viewport;
   const before = els.viewMode.value === "bev" ? bevScreenToWorld(sx, sy, state.distance, hitView) : null;
-  state.distance = Math.max(BBOX_VIEWER_MIN_DISTANCE, Math.min(420, state.distance + e.deltaY * .08));
+  state.distance = Math.max(BBOX_VIEWER_MIN_DISTANCE, Math.min(420, state.distance + wheelPixels(e) * .08));
   if (before && els.viewMode.value === "bev") {
     const afterScale = Math.min(hitView.w, hitView.h) / Math.max(BBOX_VIEWER_MIN_PROJECTION_DISTANCE, state.distance * 2.15);
     state.panX = before.x + (sy - (hitView.y + hitView.h / 2)) / Math.max(0.001, afterScale);

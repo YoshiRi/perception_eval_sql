@@ -20,6 +20,11 @@ var state = {
   panY: 0,
   dragging: false,
   dragButton: 0,
+  // Latched at pointerdown so a modifier pressed mid-drag cannot flip pan <-> orbit.
+  dragMode: "orbit",
+  // Timestamp of the last drag end: the middle button is the scroll wheel, so it keeps
+  // emitting wheel ticks for a moment after the drag, and those must not dolly.
+  dragEndedAt: 0,
   dragViewport: null,
   lastX: 0,
   lastY: 0,
